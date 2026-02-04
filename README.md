@@ -6,7 +6,7 @@
 - **Please download the ASSETS of the ARENA from https://dist.bj.bcebos.com/motphys-arena/starter_kit.zip**
 - For further imfomation of our event:
 
-<img src="./MotrixArema-S1-post.jpg" width="30%" alt="description">
+<img src="./MotrixArema-S1-post.jpg" width="50%" alt="description">
 
 # MotrixLab
 
