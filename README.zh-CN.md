@@ -6,7 +6,7 @@
 - **请从 https://dist.bj.bcebos.com/motphys-arena/starter_kit.zip 下载 ARENA 的资源文件**
 - 关于我们活动的更多信息：
 
-<img src="./MotrixArema-S1-post.jpg" width="50%" alt="description">
+<img src="./MotrixArema-S1-post.jpg" width="70%" alt="description">
 
 # MotrixLab
 
