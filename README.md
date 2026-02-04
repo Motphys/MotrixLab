@@ -1,5 +1,13 @@
 **Language**: [English](README.md) | [简体中文](README.zh-CN.md)
 
+# MotrixArena-S1
+
+- This is the branch of MotrixLab for MotrixArena-S1. The event is restrict to this branch.
+- **Please download the ASSETS of the ARENA from https://dist.bj.bcebos.com/motphys-arena/starter_kit.zip**
+- For further imfomation of our event:
+
+<img src="./MotrixArema-S1-post.jpg" width="30%" alt="description">
+
 # MotrixLab
 
 ![GitHub License](https://img.shields.io/github/license/Motphys/MotrixLab)
@@ -11,18 +19,18 @@
 
 The project is divided into two core components:
 
--   **motrix_envs**: Various RL simulation environments built on MotrixSim, defining observation, action, and reward. Framework-agnostic and currently supports MotrixSim's CPU backend
--   **motrix_rl**: Integrates RL frameworks and uses various environment parameters from motrix_envs for training. Currently supports SKRL framework's PPO algorithm
+- **motrix_envs**: Various RL simulation environments built on MotrixSim, defining observation, action, and reward. Framework-agnostic and currently supports MotrixSim's CPU backend
+- **motrix_rl**: Integrates RL frameworks and uses various environment parameters from motrix_envs for training. Currently supports SKRL framework's PPO algorithm
 
 > Documentation: https://motrixlab.readthedocs.io
 
 ## Key Features
 
--   **Unified Interface**: Provides a concise and unified reinforcement learning training and evaluation interface
--   **Multi-backend Support**: Supports JAX and PyTorch training backends, with flexible selection based on hardware environment
--   **Rich Environments**: Includes various robot simulation environments such as basic control, locomotion, and manipulation tasks
--   **High-performance Simulation**: Built on MotrixSim's high-performance physics simulation engine
--   **Visual Training**: Supports real-time rendering and training process visualization
+- **Unified Interface**: Provides a concise and unified reinforcement learning training and evaluation interface
+- **Multi-backend Support**: Supports JAX and PyTorch training backends, with flexible selection based on hardware environment
+- **Rich Environments**: Includes various robot simulation environments such as basic control, locomotion, and manipulation tasks
+- **High-performance Simulation**: Built on MotrixSim's high-performance physics simulation engine
+- **Visual Training**: Supports real-time rendering and training process visualization
 
 ## 🚀 Quick Start
 
@@ -98,5 +106,5 @@ For more usage methods, please refer to the [User Documentation](https://motrixl
 
 Have questions or suggestions? Feel free to contact us through:
 
--   GitHub Issues: [Submit Issues](https://github.com/Motphys/MotrixLab/issues)
--   Discussions: [Join Discussion](https://github.com/Motphys/MotrixLab/discussions)
+- GitHub Issues: [Submit Issues](https://github.com/Motphys/MotrixLab/issues)
+- Discussions: [Join Discussion](https://github.com/Motphys/MotrixLab/discussions)
