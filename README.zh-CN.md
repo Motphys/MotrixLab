@@ -114,3 +114,30 @@ uv run scripts/play.py --env cartpole
 
 -   GitHub Issues: [提交问题](https://github.com/Motphys/MotrixLab/issues)
 -   Discussions: [加入讨论](https://github.com/Motphys/MotrixLab/discussions)
+
+
+## 引用
+
+如果您在研究中使用了 MotrixLab，请按以下方式引用：
+
+```bibtex
+@software{motrixlab2026,
+  title  = {MotrixLab: A Reinforcement Learning Framework for Robot Simulation},
+  author = {{Motphys Team}},
+  year   = {2026},
+  url    = {https://motrixlab.readthedocs.io/},
+  note   = {Source code available at GitHub - Motphys/MotrixLab: A general-purpose machine learning architecture designed for robot train}
+}
+```
+
+MotrixLab 基于 MotrixSim 构建。如果您的工作也直接使用了 MotrixSim，请同时引用：
+
+```bibtex
+@software{motrixsim2026,
+  title  = {MotrixSim: A Physics Simulation Engine for Robotics and Embodied AI},
+  author = {{Motphys Team}},
+  year   = {2026},
+  url    = {https://motrixsim.readthedocs.io/},
+  note   = {Python binary package}
+}
+```

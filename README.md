@@ -114,3 +114,30 @@ Have questions or suggestions? Feel free to contact us through:
 
 -   GitHub Issues: [Submit Issues](https://github.com/Motphys/MotrixLab/issues)
 -   Discussions: [Join Discussion](https://github.com/Motphys/MotrixLab/discussions)
+
+
+## Citation
+
+If you use MotrixLab in your research, please cite it as:
+
+```bibtex
+@software{motrixlab2026,
+  title  = {MotrixLab: A Reinforcement Learning Framework for Robot Simulation},
+  author = {{Motphys Team}},
+  year   = {2026},
+  url    = {https://motrixlab.readthedocs.io/},
+  note   = {Source code available at GitHub - Motphys/MotrixLab: A general-purpose machine learning architecture designed for robot train}
+}
+```
+
+MotrixLab is built on MotrixSim. If your work also uses MotrixSim directly, please also cite:
+
+```bibtex
+@software{motrixsim2026,
+  title  = {MotrixSim: A Physics Simulation Engine for Robotics and Embodied AI},
+  author = {{Motphys Team}},
+  year   = {2026},
+  url    = {https://motrixsim.readthedocs.io/},
+  note   = {Python binary package}
+}
+```
