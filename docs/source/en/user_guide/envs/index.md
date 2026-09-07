@@ -66,6 +66,8 @@ uv run scripts/view.py env=<env-id>
 | <img src="../../_static/images/poster/k1-walk-flat.jpg" alt="k1-walk-flat" width="240"> | `k1-walk-flat` | Track walking commands with Booster K1 on flat ground. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/k1-walk-rough.jpg" alt="k1-walk-rough" width="240"> | `k1-walk-rough` | Track walking commands with Booster K1 over uneven terrain. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/k1-wbt-freekick.jpg" alt="k1-wbt-freekick" width="240"> | `k1-wbt-freekick` | Track a free-kick reference motion with Booster K1. | `motrix.fastsac` |
+| <img src="../../_static/images/poster/microduck-walk-flat.jpg" alt="microduck-walk-flat" width="240"> | `microduck-walk-flat` | Track walking commands with Microduck on flat ground. | `motrix.fastsac` |
+| <img src="../../_static/images/poster/microduck-walk-rough.jpg" alt="microduck-walk-rough" width="240"> | `microduck-walk-rough` | Track walking commands with Microduck over uneven terrain. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/peg-insert.jpg" alt="peg-insert" width="240"> | `peg-insert` | Control RM65 to grasp, align, and insert a peg into a socket. | `motrix.fastsac`, `skrl.ppo` |
 | <img src="../../_static/images/poster/pendulum.jpg" alt="pendulum" width="240"> | `pendulum` | Apply joint torque to swing up and balance a pendulum. | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/point_mass.jpg" alt="point_mass" width="240"> | `point_mass` | Move a two-dimensional point mass to a random target. | `skrl.ppo` |

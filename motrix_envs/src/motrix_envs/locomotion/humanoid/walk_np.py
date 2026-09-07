@@ -171,6 +171,11 @@ class HumanoidVelocityTrackingEnv(DirectEnv[HumanoidVelocityTrackingEnvCfg]):
         self._phase_dt = 2.0 * np.pi * self._gait_freq * cfg.ctrl_dt
         self._termination_geoms = self._resolve_termination_geoms()
         self._num_termination_pairs = len(self._termination_geoms)
+        # Foot-link gravity direction at the default pose, captured on first
+        # reset. Foot orientation penalties are measured against this
+        # reference so robots whose ankle-link frames are not world-aligned
+        # (e.g. onshape-to-robot exports) are scored correctly.
+        self._default_foot_gravity: np.ndarray | None = None
 
         cur = cfg.curriculum
         self._penalty_terms = set(cur.penalty_terms)
@@ -392,6 +397,9 @@ class HumanoidVelocityTrackingEnv(DirectEnv[HumanoidVelocityTrackingEnvCfg]):
         self._reset_joint_velocity[env_ids] = 0.0
         self._reset_program.execute(env_ids)
         self.sim_data.execute(row_ids)
+        if self._default_foot_gravity is None:
+            foot_quat = self.sim_data["foot_quat"][row_ids[0]]
+            self._default_foot_gravity = quaternion.rotate_inverse(foot_quat, self.gravity_vec)
 
         info = {
             "current_actions": np.zeros((num_reset, self._num_action), dtype=np.float32),
@@ -462,8 +470,12 @@ class HumanoidVelocityTrackingEnv(DirectEnv[HumanoidVelocityTrackingEnvCfg]):
         return (distance < threshold).astype(np.float32)
 
     def _r_feet_ori(self, q: StateQuantities) -> np.ndarray:
+        # Magnitude of the cross product between the current foot-frame gravity
+        # and its default-pose reference. With a world-aligned default
+        # (gravity = (0, 0, -1)) this reduces exactly to sqrt(gx^2 + gy^2).
         total = np.zeros((q.foot_quat.shape[0],), dtype=np.float32)
         for foot_index in range(2):
             foot_gravity = quaternion.rotate_inverse(q.foot_quat[:, foot_index], self.gravity_vec)
-            total = total + np.sqrt(np.sum(np.square(foot_gravity[:, :2]), axis=1))
+            reference = self._default_foot_gravity[foot_index]
+            total = total + np.linalg.norm(np.cross(foot_gravity, reference), axis=1)
         return total

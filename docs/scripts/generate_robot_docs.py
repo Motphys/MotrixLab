@@ -38,6 +38,7 @@ _ROBOT_METADATA = {
     "go1": {"kind": "quadruped", "lookat": (0.0, 0.0, 0.3), "distance": 1.4},
     "go2": {"kind": "quadruped", "lookat": (0.0, 0.0, 0.3), "distance": 1.4},
     "k1": {"kind": "humanoid", "lookat": (0.0, 0.0, 0.8), "distance": 2.1},
+    "microduck": {"kind": "humanoid", "lookat": (0.0, 0.0, 0.15), "distance": 0.8},
 }
 
 _DOC_CONFIGS = {

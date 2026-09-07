@@ -8,15 +8,15 @@ be composed into different scenes and tasks. The table below is generated direct
 <!-- ROBOT_TABLE_START -->
 
 <!-- This table is generated; do not edit this block manually. -->
-
-| Screenshot                                                                   | Registry name | Configuration class | Type      | Model format | DoF |
-| ---------------------------------------------------------------------------- | ------------- | ------------------- | --------- | ------------ | --- |
-| <img src="../_static/images/robots/anymal_c.png" alt="anymal_c" width="180"> | `anymal_c`    | `AnymalC`           | Quadruped | MJCF         | 12  |
-| <img src="../_static/images/robots/dex-evt.png" alt="dex-evt" width="180">   | `dex-evt`     | `DexEvt`            | Humanoid  | URDF         | 23  |
-| <img src="../_static/images/robots/g1-29dof.png" alt="g1-29dof" width="180"> | `g1-29dof`    | `UnitreeG129Dof`    | Humanoid  | MJCF         | 29  |
-| <img src="../_static/images/robots/go1.png" alt="go1" width="180">           | `go1`         | `UnitreeGo1Robot`   | Quadruped | MJCF         | 12  |
-| <img src="../_static/images/robots/go2.png" alt="go2" width="180">           | `go2`         | `UnitreeGo2Robot`   | Quadruped | MJCF         | 12  |
-| <img src="../_static/images/robots/k1.png" alt="k1" width="180">             | `k1`          | `BoosterK1`         | Humanoid  | MJCF         | 22  |
+| Screenshot | Registry name | Configuration class | Type | Model format | DoF |
+| --- | --- | --- | --- | --- | --- |
+| <img src="../_static/images/robots/anymal_c.png" alt="anymal_c" width="180"> | `anymal_c` | `AnymalC` | Quadruped | MJCF | 12 |
+| <img src="../_static/images/robots/dex-evt.png" alt="dex-evt" width="180"> | `dex-evt` | `DexEvt` | Humanoid | URDF | 23 |
+| <img src="../_static/images/robots/g1-29dof.png" alt="g1-29dof" width="180"> | `g1-29dof` | `UnitreeG129Dof` | Humanoid | MJCF | 29 |
+| <img src="../_static/images/robots/go1.png" alt="go1" width="180"> | `go1` | `UnitreeGo1Robot` | Quadruped | MJCF | 12 |
+| <img src="../_static/images/robots/go2.png" alt="go2" width="180"> | `go2` | `UnitreeGo2Robot` | Quadruped | MJCF | 12 |
+| <img src="../_static/images/robots/k1.png" alt="k1" width="180"> | `k1` | `BoosterK1` | Humanoid | MJCF | 22 |
+| <img src="../_static/images/robots/microduck.png" alt="microduck" width="180"> | `microduck` | `Microduck` | Humanoid | MJCF | 14 |
 
 <!-- ROBOT_TABLE_END -->
 

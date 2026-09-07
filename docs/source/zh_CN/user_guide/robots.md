@@ -8,15 +8,15 @@ scene 和 task 中。下表直接根据 registry 和 robot 配置生成。
 <!-- ROBOT_TABLE_START -->
 
 <!-- This table is generated; do not edit this block manually. -->
-
-| 截图                                                                         | Registry 名称 | 配置类            | 类型       | 模型格式 | 自由度 |
-| ---------------------------------------------------------------------------- | ------------- | ----------------- | ---------- | -------- | ------ |
-| <img src="../_static/images/robots/anymal_c.png" alt="anymal_c" width="180"> | `anymal_c`    | `AnymalC`         | 四足机器人 | MJCF     | 12     |
-| <img src="../_static/images/robots/dex-evt.png" alt="dex-evt" width="180">   | `dex-evt`     | `DexEvt`          | 人形机器人 | URDF     | 23     |
-| <img src="../_static/images/robots/g1-29dof.png" alt="g1-29dof" width="180"> | `g1-29dof`    | `UnitreeG129Dof`  | 人形机器人 | MJCF     | 29     |
-| <img src="../_static/images/robots/go1.png" alt="go1" width="180">           | `go1`         | `UnitreeGo1Robot` | 四足机器人 | MJCF     | 12     |
-| <img src="../_static/images/robots/go2.png" alt="go2" width="180">           | `go2`         | `UnitreeGo2Robot` | 四足机器人 | MJCF     | 12     |
-| <img src="../_static/images/robots/k1.png" alt="k1" width="180">             | `k1`          | `BoosterK1`       | 人形机器人 | MJCF     | 22     |
+| 截图 | Registry 名称 | 配置类 | 类型 | 模型格式 | 自由度 |
+| --- | --- | --- | --- | --- | --- |
+| <img src="../_static/images/robots/anymal_c.png" alt="anymal_c" width="180"> | `anymal_c` | `AnymalC` | 四足机器人 | MJCF | 12 |
+| <img src="../_static/images/robots/dex-evt.png" alt="dex-evt" width="180"> | `dex-evt` | `DexEvt` | 人形机器人 | URDF | 23 |
+| <img src="../_static/images/robots/g1-29dof.png" alt="g1-29dof" width="180"> | `g1-29dof` | `UnitreeG129Dof` | 人形机器人 | MJCF | 29 |
+| <img src="../_static/images/robots/go1.png" alt="go1" width="180"> | `go1` | `UnitreeGo1Robot` | 四足机器人 | MJCF | 12 |
+| <img src="../_static/images/robots/go2.png" alt="go2" width="180"> | `go2` | `UnitreeGo2Robot` | 四足机器人 | MJCF | 12 |
+| <img src="../_static/images/robots/k1.png" alt="k1" width="180"> | `k1` | `BoosterK1` | 人形机器人 | MJCF | 22 |
+| <img src="../_static/images/robots/microduck.png" alt="microduck" width="180"> | `microduck` | `Microduck` | 人形机器人 | MJCF | 14 |
 
 <!-- ROBOT_TABLE_END -->
 

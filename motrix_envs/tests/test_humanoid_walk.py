@@ -16,6 +16,10 @@ from motrix_envs.locomotion.humanoid.g1 import (
     make_g129dof_walk_rough_cfg,
 )
 from motrix_envs.locomotion.humanoid.k1 import make_k1_walk_flat_cfg, make_k1_walk_rough_cfg
+from motrix_envs.locomotion.humanoid.microduck import (
+    make_microduck_walk_flat_cfg,
+    make_microduck_walk_rough_cfg,
+)
 from motrix_envs.locomotion.humanoid.walk_np import HumanoidVelocityTrackingEnv
 
 
@@ -28,6 +32,8 @@ from motrix_envs.locomotion.humanoid.walk_np import HumanoidVelocityTrackingEnv
         ("dex-evt-walk-rough", 23, 82, 85),
         ("k1-walk-flat", 22, 79, 82),
         ("k1-walk-rough", 22, 79, 82),
+        ("microduck-walk-flat", 14, 55, 58),
+        ("microduck-walk-rough", 14, 55, 58),
     ],
 )
 def test_walk_presets_use_shared_humanoid_env(env_name, action_dim, policy_dim, value_dim):
@@ -76,12 +82,27 @@ def test_k1_walk_uses_shared_reward_scales_and_named_contact_termination():
     np.testing.assert_allclose(quantities.foot_clearance, 0.00716, atol=2e-3)
 
 
+def test_microduck_walk_uses_named_contact_termination():
+    walk_cfg = make_microduck_walk_flat_cfg()
+    env = HumanoidVelocityTrackingEnv(walk_cfg, num_envs=2)
+    env.init_state()
+    quantities = env._state_quantities(slice(None), np.arange(2, dtype=np.int64))
+
+    assert env._num_termination_pairs == 1
+    np.testing.assert_allclose(quantities.foot_clearance, 0.0, atol=4e-3)
+    # Microduck ankle-link frames are ~90 degrees away from world-aligned, so
+    # the foot-orientation penalty must be measured against the default-pose
+    # reference: it is zero at the default stance for any link orientation.
+    np.testing.assert_allclose(env._r_feet_ori(quantities), 0.0, atol=1e-3)
+
+
 @pytest.mark.parametrize(
     ("make_flat_cfg", "make_rough_cfg"),
     [
         (make_g129dof_walk_flat_cfg, make_g129dof_walk_rough_cfg),
         (make_dex_evt_walk_flat_cfg, make_dex_evt_walk_rough_cfg),
         (make_k1_walk_flat_cfg, make_k1_walk_rough_cfg),
+        (make_microduck_walk_flat_cfg, make_microduck_walk_rough_cfg),
     ],
 )
 def test_walk_rough_only_overrides_scene_spawn_range_and_render_spacing(make_flat_cfg, make_rough_cfg):
@@ -104,22 +125,24 @@ def test_walk_rough_only_overrides_scene_spawn_range_and_render_spacing(make_fla
 
 
 @pytest.mark.parametrize(
-    "make_cfg",
+    ("make_cfg", "camera_distance", "camera_lookat"),
     [
-        make_g129dof_walk_flat_cfg,
-        make_g129dof_walk_rough_cfg,
-        make_dex_evt_walk_flat_cfg,
-        make_dex_evt_walk_rough_cfg,
-        make_k1_walk_flat_cfg,
-        make_k1_walk_rough_cfg,
+        (make_g129dof_walk_flat_cfg, 6.0, None),
+        (make_g129dof_walk_rough_cfg, 6.0, None),
+        (make_dex_evt_walk_flat_cfg, 6.0, None),
+        (make_dex_evt_walk_rough_cfg, 6.0, None),
+        (make_k1_walk_flat_cfg, 6.0, None),
+        (make_k1_walk_rough_cfg, 6.0, None),
+        (make_microduck_walk_flat_cfg, 0.35, (0.0, 0.0, 0.12)),
+        (make_microduck_walk_rough_cfg, 0.35, (0.0, 0.0, 0.12)),
     ],
 )
-def test_walk_presets_use_shared_system_camera(make_cfg):
+def test_walk_presets_use_shared_system_camera(make_cfg, camera_distance, camera_lookat):
     scene = make_cfg().scene
 
     assert isinstance(scene, HumanoidWalkSceneCfg)
-    assert scene.system_camera.lookat is None
-    assert scene.system_camera.distance == pytest.approx(6.0)
+    assert scene.system_camera.lookat == camera_lookat
+    assert scene.system_camera.distance == pytest.approx(camera_distance)
     assert scene.system_camera.elevation == pytest.approx(-20.0)
     assert scene.system_camera.azimuth == pytest.approx(180.0)
 

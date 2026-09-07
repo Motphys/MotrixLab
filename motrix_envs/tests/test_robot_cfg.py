@@ -27,6 +27,7 @@ from motrix_envs.robot import (
     BoosterK1,
     DexEvt,
     HumanoidRobotCfg,
+    Microduck,
     QuadrupedLegCfg,
     QuadrupedRobotCfg,
     UnitreeG129Dof,
@@ -36,6 +37,7 @@ from motrix_envs.robot import (
 from motrix_envs.robot.anymal import ANYMAL_C_ASSET_DIR
 from motrix_envs.robot.booster import BOOSTER_K1_ASSET_DIR
 from motrix_envs.robot.dex_evt import DEX_EVT_ASSET_DIR
+from motrix_envs.robot.microduck import MICRODUCK_ASSET_DIR
 from motrix_envs.robot.unitree import UNITREE_G1_ASSET_DIR, UNITREE_GO1_ASSET_DIR, UNITREE_GO2_ASSET_DIR
 
 
@@ -69,6 +71,11 @@ class AnymalCSceneObjsCfg(SceneObjsCfg):
     robot: AnymalC = AnymalC()
 
 
+@configclass
+class MicroduckSceneObjsCfg(SceneObjsCfg):
+    robot: Microduck = Microduck()
+
+
 def test_builtin_robot_configs_are_registered():
     expected_types = {
         "anymal_c": AnymalC,
@@ -77,6 +84,7 @@ def test_builtin_robot_configs_are_registered():
         "go1": UnitreeGo1Robot,
         "go2": UnitreeGo2Robot,
         "k1": BoosterK1,
+        "microduck": Microduck,
     }
 
     assert set(expected_types).issubset(registry.list_registered_robots())
@@ -91,11 +99,12 @@ def test_builtin_robot_configs_use_robot_only_files():
     go1 = UnitreeGo1Robot()
     go2 = UnitreeGo2Robot()
     dex_evt = DexEvt()
+    microduck = Microduck()
 
-    assert all(isinstance(robot, RobotCfg) for robot in (anymal_c, k1, g1, go1, go2, dex_evt))
+    assert all(isinstance(robot, RobotCfg) for robot in (anymal_c, k1, g1, go1, go2, dex_evt, microduck))
     assert isinstance(anymal_c, QuadrupedRobotCfg)
     assert isinstance(anymal_c.model, MjcfFileCfg)
-    assert all(isinstance(robot, HumanoidRobotCfg) for robot in (k1, g1, dex_evt))
+    assert all(isinstance(robot, HumanoidRobotCfg) for robot in (k1, g1, dex_evt, microduck))
     assert isinstance(k1.model, MjcfFileCfg)
     assert isinstance(g1.model, MjcfFileCfg)
     assert isinstance(go1, QuadrupedRobotCfg)
@@ -109,6 +118,9 @@ def test_builtin_robot_configs_use_robot_only_files():
     assert Path(go1.model.file).parent == UNITREE_GO1_ASSET_DIR
     assert Path(go2.model.file).parent == UNITREE_GO2_ASSET_DIR
     assert Path(dex_evt.model.file).parent == DEX_EVT_ASSET_DIR
+    assert Path(microduck.model.file).parent == MICRODUCK_ASSET_DIR
+    assert Path(microduck.model.file).name == "microduck.xml"
+    assert not Path(microduck.model.file).name.startswith("scene_")
     assert Path(k1.model.file).name == "k1_22dof.xml"
     assert Path(g1.model.file).name == "g1_29dof.xml"
     assert Path(go1.model.file).name == "go1_position_actuator.xml"
@@ -129,6 +141,7 @@ def test_builtin_robot_configs_use_robot_only_files():
         (UnitreeG129Dof(), ("left_ankle_roll_link", "right_ankle_roll_link")),
         (DexEvt(), ("ankle_roll_l_link", "ankle_roll_r_link")),
         (BoosterK1(), ("left_foot_link", "right_foot_link")),
+        (Microduck(), ("ankle_left", "ankle_right")),
     ],
 )
 def test_builtin_humanoids_expose_foot_link_semantics(robot, foot_link_names):
@@ -335,6 +348,30 @@ def test_builtin_go2_asset_contains_all_referenced_meshes():
     root = ET.parse(UNITREE_GO2_ASSET_DIR / "go2_mjx.xml").getroot()
     referenced_meshes = {mesh.get("file") for mesh in root.findall("./asset/mesh")}
     packaged_meshes = {f"assets/{path.name}" for path in (UNITREE_GO2_ASSET_DIR / "assets").iterdir() if path.is_file()}
+
+    assert referenced_meshes == packaged_meshes
+
+
+def test_builtin_microduck_robot_builds_model():
+    model = build_scene_model(SceneCfg(objs=MicroduckSceneObjsCfg()))
+
+    assert model.body_names == ["trunk_base"]
+    assert model.get_body("trunk_base").floatingbase is not None
+    assert model.num_actuators == 14
+    assert "left_hip_yaw" in model.joint_names
+    assert "right_ankle" in model.joint_names
+    assert model.get_site("left_foot").parent_link.name == "ankle_left"
+    assert model.get_site("right_foot").parent_link.name == "ankle_right"
+    assert all(actuator.ctrl_range is not None for actuator in model.actuators)
+    assert all(actuator.force_range is not None for actuator in model.actuators)
+    assert [actuator.target_name for actuator in model.actuators] == Microduck().key_pose.joint_names
+    assert len(Microduck().key_pose.poses["default"]) == model.num_actuators
+
+
+def test_builtin_microduck_asset_contains_only_referenced_meshes():
+    root = ET.parse(MICRODUCK_ASSET_DIR / "microduck.xml").getroot()
+    referenced_meshes = {mesh.get("file") for mesh in root.findall("./asset/mesh")}
+    packaged_meshes = {path.name for path in (MICRODUCK_ASSET_DIR / "assets").iterdir() if path.is_file()}
 
     assert referenced_meshes == packaged_meshes
 

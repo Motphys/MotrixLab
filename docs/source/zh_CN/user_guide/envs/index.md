@@ -66,6 +66,8 @@ uv run scripts/view.py env=<env-id>
 | <img src="../../_static/images/poster/k1-walk-flat.jpg" alt="k1-walk-flat" width="240"> | `k1-walk-flat` | 控制 Booster K1 在平地上跟踪行走指令。 | `motrix.fastsac` |
 | <img src="../../_static/images/poster/k1-walk-rough.jpg" alt="k1-walk-rough" width="240"> | `k1-walk-rough` | 控制 Booster K1 在起伏地形上跟踪行走指令。 | `motrix.fastsac` |
 | <img src="../../_static/images/poster/k1-wbt-freekick.jpg" alt="k1-wbt-freekick" width="240"> | `k1-wbt-freekick` | 让 Booster K1 跟踪任意球射门参考动作。 | `motrix.fastsac` |
+| <img src="../../_static/images/poster/microduck-walk-flat.jpg" alt="microduck-walk-flat" width="240"> | `microduck-walk-flat` | 控制 Microduck 小型双足机器人在平地上跟踪行走指令。 | `motrix.fastsac` |
+| <img src="../../_static/images/poster/microduck-walk-rough.jpg" alt="microduck-walk-rough" width="240"> | `microduck-walk-rough` | 控制 Microduck 小型双足机器人在起伏地形上跟踪行走指令。 | `motrix.fastsac` |
 | <img src="../../_static/images/poster/peg-insert.jpg" alt="peg-insert" width="240"> | `peg-insert` | 控制 RM65 抓取插销、对准插座并完成插入。 | `motrix.fastsac`, `skrl.ppo` |
 | <img src="../../_static/images/poster/pendulum.jpg" alt="pendulum" width="240"> | `pendulum` | 施加关节力矩使单摆摆起并保持直立。 | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/point_mass.jpg" alt="point_mass" width="240"> | `point_mass` | 控制二维质点移动到随机目标位置。 | `skrl.ppo` |
