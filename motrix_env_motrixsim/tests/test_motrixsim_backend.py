@@ -10,6 +10,7 @@ import pytest
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config.scene import SceneCfg, SceneCompiler
 from motrix_env_core.sim import (
+    ActuatorCtrlQuery,
     ActuatorKdQuery,
     ActuatorKpQuery,
     BodyAngularVelocityWrite,
@@ -35,7 +36,7 @@ from motrix_env_core.sim import (
 )
 from motrix_env_core.sim.backend import SimModel
 from motrix_env_core.sim.registry import create_sim_backend, list_sim_backends
-from motrix_env_core.sim.write import BodyJointVelocityWrite, DofVelocityWrite, JointVelocityWrite
+from motrix_env_core.sim.write import BodyJointVelocityWrite, CtrlTargetsWrite, DofVelocityWrite, JointVelocityWrite
 from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler
 from motrix_env_motrixsim.runtime import MotrixSimBackend
 
@@ -383,3 +384,98 @@ def test_sim_cfg_preserves_unspecified_solver_options():
 
     assert options.max_iterations == 7
     assert options.solver_tolerance == pytest.approx(2e-4)
+
+
+def test_ctrl_targets_write_routes_named_actuators_through_native_plan():
+    import motrix_envs  # noqa: F401
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("go2-walk-flat", mode="play")
+    backend = MotrixSimBackend(cfg.scene, cfg.sim, 3)
+    actuator_names = tuple(actuator.name for actuator in backend._model.actuators)
+    reordered = (actuator_names[-1], actuator_names[0])
+    ctrl = backend.write_compiler.compile({"ctrl": CtrlTargetsWrite(reordered)})
+
+    assert ctrl.buffer("ctrl").shape == (3, 2)
+    ctrl.buffer("ctrl")[:] = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+    ctrl.execute(np.asarray([1], dtype=np.int64))
+
+    read = backend.compile_reads({"ctrl_values": ActuatorCtrlQuery()})
+    read.execute()
+    # The declared order defines the buffer layout: column 0 goes to the last
+    # declared actuator, column 1 to the first. Full model order is read back.
+    expected = np.zeros(len(actuator_names), dtype=np.float32)
+    expected[[len(actuator_names) - 1, 0]] = [3.0, 4.0]
+    np.testing.assert_allclose(read["ctrl_values"][1], expected)
+    np.testing.assert_allclose(read["ctrl_values"][0], np.zeros(len(actuator_names), dtype=np.float32))
+
+
+def test_partial_env_ids_leave_other_rows_untouched_with_native_writes():
+    import motrix_envs  # noqa: F401
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("dm-humanoid-walk", mode="play")
+    body = "torso"
+    backend = MotrixSimBackend(cfg.scene, cfg.sim, 2)
+    program = backend.write_compiler.compile(
+        {
+            "body_position": BodyPositionWrite((body,)),
+            "body_rotation": BodyRotationWrite((body,)),
+        }
+    )
+    read = backend.compile_reads(
+        {"position": LinkPositionQuery(link=body), "rotation": LinkQuaternionQuery(link=body)}
+    )
+    program.buffer("body_position")[1, 0] = [1.0, 2.0, 3.0]
+    program.buffer("body_rotation")[1, 0] = [0.0, 0.0, 0.0, 1.0]
+
+    program.execute(np.asarray([1], dtype=np.int64))
+    read.execute()
+
+    np.testing.assert_allclose(read["position"][1], [1.0, 2.0, 3.0])
+    np.testing.assert_allclose(read["rotation"][1], [0.0, 0.0, 0.0, 1.0])
+    assert not np.allclose(read["position"][0], [1.0, 2.0, 3.0])
+
+
+def test_ctrl_targets_reject_duplicated_actuators_with_stable_message():
+    import motrix_envs  # noqa: F401
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("go2-walk-flat", mode="play")
+    backend = MotrixSimBackend(cfg.scene, cfg.sim, 1)
+    name = backend._model.actuators[0].name
+    with pytest.raises(ValueError, match="both target actuator"):
+        backend.write_compiler.compile(
+            {
+                "first": CtrlTargetsWrite((name,)),
+                "second": CtrlTargetsWrite((name,)),
+            }
+        )
+
+
+def test_mixed_dof_and_native_writes_execute_in_one_program():
+    import motrix_envs  # noqa: F401
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("dm-humanoid-walk", mode="play")
+    body = "torso"
+    backend = MotrixSimBackend(cfg.scene, cfg.sim, 2)
+    program = backend.write_compiler.compile(
+        {
+            "joint_position": BodyJointPositionWrite(body),
+            "base_position": BodyPositionWrite((body,)),
+        }
+    )
+    read = backend.compile_reads(
+        {"joint_pos": BodyJointPositionQuery(body=body), "position": LinkPositionQuery(link=body)}
+    )
+    program.buffer("joint_position")[0] = 0.0
+    program.buffer("base_position")[0, 0] = [0.5, -0.5, 1.5]
+
+    program.execute(np.asarray([0], dtype=np.int64))
+    read.execute(np.asarray([0], dtype=np.int64))
+
+    # Legacy DOF-channel scatter and the native body write land in the same
+    # step, and forward kinematics still refreshes link poses once.
+    np.testing.assert_allclose(read["position"][0], [0.5, -0.5, 1.5])
+    np.testing.assert_allclose(read["joint_pos"][0], program.buffer("joint_position")[0])
