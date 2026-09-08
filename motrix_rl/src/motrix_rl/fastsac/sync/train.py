@@ -20,7 +20,7 @@ from motrix_rl.fastsac.wrap import FastSacEnvWrap
 from motrix_rl.fastsac.wrap_np import FastSacNpEnvWrap
 from motrix_rl.fastsac.wrap_torch import FastSacTorchEnvWrap
 from motrix_rl.frameworks import TrainerBase, TrainerContext
-from motrix_rl.system_metrics import CpuLoadSampler
+from motrix_rl.system_metrics import CpuLoadSampler, GpuMemoryUsageSampler, GpuUtilizationSampler, MemoryUsageSampler
 
 # Enable TF32 matmul on Ampere+ GPUs. SAC training has no precision concern with
 # TF32 (10 mantissa bits), and the speedup is meaningful when AMP is off.
@@ -215,6 +215,10 @@ class Trainer(TrainerBase):
         t_collect = 0.0
         t_learn = 0.0
         cpu_sampler = CpuLoadSampler()
+        gpu_sampler = GpuUtilizationSampler()
+        memory_sampler = MemoryUsageSampler()
+        gpu_memory_sampler = GpuMemoryUsageSampler()
+        last_checkpoint_path: str | None = None
 
         # optional live console that refreshes one panel in place
         console, live = open_training_live()
@@ -321,8 +325,12 @@ class Trainer(TrainerBase):
                         reward_terms=term_means,
                         env_metrics=env_metrics,
                         cpu_load=cpu_sampler.sample(),
+                        gpu_utilization_percent=gpu_sampler.sample(),
+                        memory_usage=memory_sampler.sample(),
+                        gpu_memory_usage=gpu_memory_sampler.sample(),
+                        checkpoint_path=last_checkpoint_path,
                     )
-                    emit_training_panel(live, stats, title="motrix.fastsac (sync)")
+                    emit_training_panel(live, stats, title=f"{self._env_name}/motrix.fastsac")
                     if self._writer is not None:
                         self._writer.add_scalar("rollout/mean_return", mean_ret, agent.global_step)
                         self._writer.add_scalar("rollout/mean_ep_len", mean_len, agent.global_step)
@@ -347,9 +355,10 @@ class Trainer(TrainerBase):
                         path = Path(self._context.checkpoint_dir) / f"model_{agent.global_step:07d}.pt"
                         torch.save(agent.state_dict(), path)
                         record_checkpoint(path)
-                        emit_msg(
-                            f"[green]✓[/] saved checkpoint [dim]{path}[/]" if console else f"saved checkpoint {path}"
-                        )
+                        if console is not None:
+                            last_checkpoint_path = str(path)
+                        else:
+                            emit_msg(f"saved checkpoint {path}")
 
                 local += 1
                 agent.global_step += 1

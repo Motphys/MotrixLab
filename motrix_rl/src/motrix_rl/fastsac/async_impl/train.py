@@ -198,6 +198,7 @@ class Trainer(TrainerBase):
                 logging_interval,
                 save_interval,
                 str(self._context.run_dir),
+                self._env_name,
                 str(self._context.checkpoint_dir),
                 self._context.checkpoint_format,
                 self._resume_from,

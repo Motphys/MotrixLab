@@ -1,13 +1,22 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Low-overhead host metrics sampled at training-panel refresh boundaries."""
+"""Low-overhead host metrics sampled at training-panel refresh boundaries.
+
+CPU samplers read Linux ``/proc`` interfaces and return ``None`` where they
+are unavailable, so panels degrade to ``n/a`` fields; memory sampling also
+supports Windows via ``GlobalMemoryStatusEx``. The GPU samplers use NVML,
+which works on any platform with an NVIDIA driver.
+"""
 
 from __future__ import annotations
 
+import ctypes
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -121,3 +130,116 @@ class CpuLoadSampler:
         except (OSError, ValueError):
             return None
         return len(cores)
+
+
+@dataclass(frozen=True)
+class MemoryUsage:
+    """Memory usage in bytes for a host or accelerator device."""
+
+    used_bytes: int
+    total_bytes: int
+
+
+class _MemoryStatusEx(ctypes.Structure):
+    """``MEMORYSTATUSEX`` layout for the Windows ``GlobalMemoryStatusEx`` call."""
+
+    _fields_ = [
+        ("dwLength", ctypes.c_ulong),
+        ("dwMemoryLoad", ctypes.c_ulong),
+        ("ullTotalPhys", ctypes.c_ulonglong),
+        ("ullAvailPhys", ctypes.c_ulonglong),
+        ("ullTotalPageFile", ctypes.c_ulonglong),
+        ("ullAvailPageFile", ctypes.c_ulonglong),
+        ("ullTotalVirtual", ctypes.c_ulonglong),
+        ("ullAvailVirtual", ctypes.c_ulonglong),
+        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+    ]
+
+
+def _windows_memory_status() -> MemoryUsage | None:
+    """Physical memory usage via ``GlobalMemoryStatusEx``, mirroring the /proc semantics."""
+    status = _MemoryStatusEx()
+    status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        return None
+    return MemoryUsage(used_bytes=status.ullTotalPhys - status.ullAvailPhys, total_bytes=status.ullTotalPhys)
+
+
+class MemoryUsageSampler:
+    """Read host memory usage from Linux ``/proc/meminfo`` or the Windows memory API."""
+
+    def __init__(self, *, meminfo_path: str | Path = "/proc/meminfo") -> None:
+        self._meminfo_path = Path(meminfo_path)
+
+    def sample(self) -> MemoryUsage | None:
+        if sys.platform == "win32":
+            return _windows_memory_status()
+        try:
+            values: dict[str, int] = {}
+            for line in self._meminfo_path.read_text().splitlines():
+                key, value, *_ = line.split()
+                if key in {"MemTotal:", "MemAvailable:"}:
+                    values[key] = int(value) * 1024
+        except (OSError, ValueError):
+            return None
+        total = values.get("MemTotal:")
+        available = values.get("MemAvailable:")
+        if total is None or available is None:
+            return None
+        return MemoryUsage(used_bytes=max(0, total - available), total_bytes=total)
+
+
+# NVML reads the same counters nvidia-smi reports, but in-process at
+# microsecond cost instead of a subprocess spawn per query.
+_nvml_state: tuple[Any, list[Any]] | tuple[()] | None = None  # None: untried; (): unavailable
+
+
+def _nvml() -> tuple[Any, list[Any]] | None:
+    """Lazily initialize NVML and return ``(module, device_handles)``, or ``None``."""
+    global _nvml_state
+    if _nvml_state is None:
+        try:
+            import pynvml
+
+            pynvml.nvmlInit()
+            devices = [pynvml.nvmlDeviceGetHandleByIndex(index) for index in range(pynvml.nvmlDeviceGetCount())]
+            _nvml_state = (pynvml, devices)
+        except Exception:  # ImportError (pynvml missing) or NVML init failure (no driver/GPU)
+            _nvml_state = ()
+    return _nvml_state or None
+
+
+class GpuMemoryUsageSampler:
+    """Read aggregate NVIDIA memory usage across all visible GPUs via NVML."""
+
+    def sample(self) -> MemoryUsage | None:
+        session = _nvml()
+        if session is None:
+            return None
+        pynvml, devices = session
+        used = total = 0
+        try:
+            for device in devices:
+                info = pynvml.nvmlDeviceGetMemoryInfo(device)
+                used += info.used
+                total += info.total
+        except pynvml.NVMLError:
+            return None
+        return MemoryUsage(used_bytes=used, total_bytes=total) if total > 0 else None
+
+
+class GpuUtilizationSampler:
+    """Read aggregate NVIDIA GPU utilization across all visible GPUs via NVML."""
+
+    def sample(self) -> float | None:
+        session = _nvml()
+        if session is None:
+            return None
+        pynvml, devices = session
+        values: list[int] = []
+        try:
+            for device in devices:
+                values.append(pynvml.nvmlDeviceGetUtilizationRates(device).gpu)
+        except pynvml.NVMLError:
+            return None
+        return sum(values) / len(values) if values else None

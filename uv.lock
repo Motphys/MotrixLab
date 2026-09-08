@@ -1090,6 +1090,7 @@ dependencies = [
     { name = "motrix-env-core" },
     { name = "motrix-env-motrixsim" },
     { name = "numpy" },
+    { name = "nvidia-ml-py" },
     { name = "omegaconf" },
     { name = "python-abc" },
     { name = "rich" },
@@ -1142,6 +1143,7 @@ requires-dist = [
     { name = "motrix-env-core", editable = "motrix_env_core" },
     { name = "motrix-env-motrixsim", editable = "motrix_env_motrixsim" },
     { name = "numpy", specifier = ">=1.26" },
+    { name = "nvidia-ml-py", specifier = ">=13.610.43" },
     { name = "omegaconf", specifier = ">=2.3,<2.4" },
     { name = "onnx", marker = "extra == 'onnx'", specifier = "==1.20.1" },
     { name = "onnx", marker = "extra == 'rslrl'", specifier = "==1.20.1" },
@@ -1464,6 +1466,15 @@ version = "0.6.3"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3b/9a/72ef35b399b0e183bc2e8f6f558036922d453c4d8237dab26c666a04244b/nvidia_cusparselt_cu12-0.6.3-py3-none-manylinux2014_x86_64.whl", hash = "sha256:e5c8a26c36445dd2e6812f1177978a24e2d37cacce7e090f297a688d1ec44f46", size = 156785796, upload-time = "2024-10-15T21:29:17.709Z" },
+]
+
+[[package]]
+name = "nvidia-ml-py"
+version = "13.610.43"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/b5/a8fbc356f768fa5c9cfd646668fd7d34bf55bdd1c6e20754642a64d930d4/nvidia_ml_py-13.610.43.tar.gz", hash = "sha256:65437eb73d68d0c62c931ca4d45038472faff03bd0b8729abba4b899f70d60f2", size = 52109, upload-time = "2026-06-01T18:54:08.829Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/45/caa600acfab94560807a20a64b5830d2cd3c3202b7f1328644d70b7d6bd8/nvidia_ml_py-13.610.43-py3-none-any.whl", hash = "sha256:f13c72698edef492f985cc225f14faafe68ae065a2e407f45bdf6f4b9b43fde8", size = 53163, upload-time = "2026-06-01T18:54:07.704Z" },
 ]
 
 [[package]]
