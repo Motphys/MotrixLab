@@ -38,7 +38,7 @@ uv sync --all-packages --extra skrl-jax   # Linux only
 uv sync --all-packages --extra rslrl
 ```
 
-The workspace contains ten packages. Package-local changes should use the
+The workspace contains nine packages. Package-local changes should use the
 smallest required extra; changes involving the simulator, built-in assets, or
 training integrations should be tested with the corresponding package and
 extra enabled.
@@ -267,6 +267,6 @@ fork](https://docs.github.com/en/pull-requests/how-tos/create-pull-requests/crea
 and [secure use of GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions).
 
 All source files should retain the Apache-2.0 SPDX header used by this
-repository. Keep the ten workspace package versions synchronized when making a
+repository. Keep the nine workspace package versions synchronized when making a
 release, and update `THIRD_PARTY_NOTICES.md` whenever a dependency or bundled
 asset changes.

@@ -9,7 +9,7 @@ MotrixLab 是构建在 MotrixSim 仿真后端之上的强化学习框架，提�
 
 ## Workspace 结构
 
-项目使用 UV workspace，包含十个 package：
+项目使用 UV workspace，包含九个 package：
 
 - `motrix_env_core`：backend 无关的环境框架（不依赖任何 simulator）
 - `motrix_env_motrixsim`：MotrixSim 仿真后端（SimBackend、scene compiler、renderer、torch frontend）
@@ -96,7 +96,7 @@ Python 方法，由 manager 运行时契约定义（`wiki/design/manager/runtime
 
 ### 版本与依赖一致性
 
-- 所有 workspace package（见上文 Workspace 结构，共十个）的 `pyproject.toml` 中 `version` 字段必须保持一致。
+- 所有 workspace package（见上文 Workspace 结构，共九个）的 `pyproject.toml` 中 `version` 字段必须保持一致。
 - MotrixSim 相关依赖版本必须在使用该依赖的 workspace package 之间保持一致。
 - 关键第三方依赖使用精确版本锁定（`===`）；新增或升级依赖时同步更新 `uv.lock`。
 

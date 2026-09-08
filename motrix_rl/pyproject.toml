@@ -21,13 +21,13 @@ dependencies = [
     "numpy>=1.26",
     "omegaconf>=2.3,<2.4",
     "nvidia-ml-py>=13.610.43",
+    # Default training backend; also required by scripts/view.py. Resolved
+    # from the pytorch-cu128 index via the workspace root tool.uv.sources.
+    "torch==2.7.0",
 ]
 
 [project.optional-dependencies]
-onnx = [
-    "onnx==1.20.1",
-    "onnxruntime==1.23.2",
-]
+onnx = ["onnx==1.20.1", "onnxruntime==1.23.2"]
 skrl-jax = [
     "skrl>=2.1,<2.2; sys_platform == 'linux'",
     "jax[cuda12]==0.4.34; sys_platform == 'linux'",

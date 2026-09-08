@@ -12,3 +12,4 @@
 *.npz filter=lfs diff=lfs merge=lfs -text
 docs/source/_static/data/performance/*.json filter=lfs diff=lfs merge=lfs -text
 docs/source/_static/images/performance/*.svg filter=lfs diff=lfs merge=lfs -text
+*.gif filter=lfs diff=lfs merge=lfs -text

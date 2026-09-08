@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="500" viewBox="0 0 1160 500" role="img" aria-label="MotrixLab architecture: define an environment once, train it with SKRL, RSL-RL or FastSAC on thousands of parallel MotrixSim environments, then deploy the same policy artifact to MuJoCo or Unitree hardware, with more hardware backends planned. Built-in environments cover basic control, locomotion, manipulation and whole-body tracking.">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#818cf8"/>
+    </marker>
+  </defs>
+  <style>
+    .sans { font-family: -apple-system, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; }
+    .mono { font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; }
+    .stage   { font-size: 15px; font-weight: 700; letter-spacing: 2px; fill: #818cf8; }
+    .title   { font-size: 15.5px; font-weight: 700; fill: #e6edf3; }
+    .chip    { font-size: 15px; font-weight: 700; fill: #e6edf3; }
+    .body    { font-size: 13.5px; fill: #e6edf3; }
+    .sub     { font-size: 12px; fill: #9198a1; }
+    .tag     { font-size: 11.5px; font-weight: 600; }
+    .badge   { font-size: 12.5px; font-weight: 600; fill: #a5b4fc; }
+    .card    { fill: #161b22; stroke: #30363d; stroke-width: 1.2; }
+    .flow    { fill: none; stroke: #818cf8; stroke-width: 1.8; marker-end: url(#arrow); }
+    .flow-future { fill: none; stroke: #818cf8; stroke-width: 1.8; stroke-dasharray: 5 4; opacity: 0.7; marker-end: url(#arrow); }
+  </style>
+
+  <rect x="0" y="0" width="1160" height="500" rx="18" fill="#0d1117"/>
+
+  <!-- ============ top CLI bar ============ -->
+  <rect x="36" y="24" width="1088" height="40" rx="20" class="card"/>
+  <text x="580" y="49" text-anchor="middle" class="sans" font-size="13"><tspan font-weight="700" fill="#e6edf3">One CLI, end to end:&#160;&#160;</tspan><tspan class="mono" font-size="12.5" fill="#818cf8">train</tspan><tspan fill="#9198a1">&#160; &#183; &#160;</tspan><tspan class="mono" font-size="12.5" fill="#818cf8">play</tspan><tspan fill="#9198a1">&#160; &#183; &#160;</tspan><tspan class="mono" font-size="12.5" fill="#818cf8">view</tspan><tspan fill="#9198a1">&#160; &#183; &#160;</tspan><tspan class="mono" font-size="12.5" fill="#818cf8">export</tspan><tspan fill="#9198a1">&#160; &#183; &#160;</tspan><tspan class="mono" font-size="12.5" fill="#818cf8">deploy</tspan></text>
+
+  <!-- ============ stage headers ============ -->
+  <text x="168" y="104" text-anchor="middle" class="sans stage">DEFINE ONCE</text>
+  <text x="541" y="104" text-anchor="middle" class="sans stage">TRAIN FAST</text>
+  <text x="1008" y="104" text-anchor="middle" class="sans stage">DEPLOY ANYWHERE</text>
+
+  <!-- ============ stage 1: environment definition ============ -->
+  <rect x="36" y="130" width="264" height="158" rx="12" class="card"/>
+  <text x="168" y="160" text-anchor="middle" class="sans title">Environment definition</text>
+  <line x1="60" y1="174" x2="276" y2="174" stroke="#30363d" stroke-width="1"/>
+  <text x="64" y="198" class="sans body"><tspan fill="#818cf8">&#9656;</tspan><tspan dx="8">Observations &amp; actions</tspan></text>
+  <text x="64" y="224" class="sans body"><tspan fill="#818cf8">&#9656;</tspan><tspan dx="8">Rewards &amp; terminations</tspan></text>
+  <text x="64" y="250" class="sans body"><tspan fill="#818cf8">&#9656;</tspan><tspan dx="8">Scene, robot &amp; assets</tspan></text>
+  <text x="64" y="276" class="sans body"><tspan fill="#818cf8">&#9656;</tspan><tspan dx="8">One shared config schema</tspan></text>
+
+  <text x="168" y="312" text-anchor="middle" class="sans" font-size="11" font-weight="600" letter-spacing="1.5" fill="#9198a1">BUILT-IN LIBRARY</text>
+  <rect x="36" y="320" width="128" height="26" rx="13" class="card"/>
+  <text x="100" y="337" text-anchor="middle" class="sans" font-size="11.5" fill="#e6edf3">Basic control</text>
+  <rect x="172" y="320" width="128" height="26" rx="13" class="card"/>
+  <text x="236" y="337" text-anchor="middle" class="sans" font-size="11.5" fill="#e6edf3">Locomotion</text>
+  <rect x="36" y="354" width="128" height="26" rx="13" class="card"/>
+  <text x="100" y="371" text-anchor="middle" class="sans" font-size="11.5" fill="#e6edf3">Manipulation</text>
+  <rect x="172" y="354" width="128" height="26" rx="13" class="card"/>
+  <text x="236" y="371" text-anchor="middle" class="sans" font-size="11.5" fill="#e6edf3">Whole-body tracking</text>
+
+  <!-- ============ stage 2: training frameworks ============ -->
+  <rect x="386" y="130" width="310" height="56" rx="10" class="card"/>
+  <text x="406" y="163" class="sans chip">SKRL</text>
+  <rect x="593" y="146" width="97" height="24" rx="12" fill="#202542" stroke="#3b4468" stroke-width="1"/>
+  <text x="641.5" y="162" text-anchor="middle" class="sans tag" fill="#a5b4fc">JAX &#183; PyTorch</text>
+
+  <rect x="386" y="200" width="310" height="56" rx="10" class="card"/>
+  <text x="406" y="233" class="sans chip">RSL-RL</text>
+  <rect x="629" y="216" width="61" height="24" rx="12" fill="#202542" stroke="#3b4468" stroke-width="1"/>
+  <text x="659.5" y="232" text-anchor="middle" class="sans tag" fill="#a5b4fc">PyTorch</text>
+
+  <rect x="386" y="270" width="310" height="56" rx="10" class="card"/>
+  <text x="406" y="303" class="sans chip">FastSAC</text>
+  <rect x="618" y="286" width="72" height="24" rx="12" fill="#5450d6"/>
+  <text x="654" y="302" text-anchor="middle" class="sans tag" fill="#fefefe">built-in &#9733;</text>
+
+  <rect x="386" y="352" width="310" height="46" rx="10" fill="none" stroke="#30363d" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <text x="541" y="373" text-anchor="middle" class="sans" font-size="13" font-weight="600" fill="#e6edf3">Thousands of parallel environments</text>
+  <text x="541" y="392" text-anchor="middle" class="sans" font-size="13" fill="#9198a1">on <tspan fill="#818cf8" font-weight="700">MotrixSim</tspan></text>
+
+  <!-- ============ artifact pill ============ -->
+  <rect x="736" y="206" width="132" height="64" rx="32" fill="#202542" stroke="#818cf8" stroke-width="1.4"/>
+  <text x="802" y="234" text-anchor="middle" class="sans" font-size="13" font-weight="700" fill="#a5b4fc">policy artifact</text>
+  <text x="802" y="252" text-anchor="middle" class="mono" font-size="11" fill="#9198a1">.onnx / .pt</text>
+
+  <!-- ============ stage 3: deployment targets ============ -->
+  <rect x="892" y="144" width="232" height="52" rx="10" class="card"/>
+  <text x="912" y="168" class="sans chip">MuJoCo</text>
+  <text x="912" y="187" class="sans sub">simulation replay</text>
+  <rect x="1054" y="158" width="50" height="24" rx="12" fill="#102a45" stroke="#4493f8" stroke-width="1"/>
+  <text x="1079" y="174" text-anchor="middle" class="sans tag" font-size="11" fill="#4493f8">SIM</text>
+
+  <rect x="892" y="208" width="232" height="52" rx="10" class="card"/>
+  <text x="912" y="232" class="sans chip">Unitree</text>
+  <text x="912" y="251" class="sans sub">real hardware &#183; DDS</text>
+  <rect x="1054" y="222" width="50" height="24" rx="12" fill="#122d1f" stroke="#2ea043" stroke-width="1"/>
+  <text x="1079" y="238" text-anchor="middle" class="sans tag" font-size="11" fill="#3fb950">REAL</text>
+
+  <rect x="892" y="272" width="232" height="52" rx="10" fill="none" stroke="#30363d" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <text x="1008" y="295" text-anchor="middle" class="sans" font-size="13.5" font-weight="700" fill="#9198a1">+ more hardware</text>
+  <text x="1008" y="313" text-anchor="middle" class="sans sub" font-size="11.5">on the roadmap</text>
+
+  <!-- ============ connectors ============ -->
+  <path class="flow" d="M 300 235 C 338 235 348 158 386 158"/>
+  <path class="flow" d="M 300 235 C 338 235 348 228 386 228"/>
+  <path class="flow" d="M 300 235 C 338 235 348 298 386 298"/>
+  <path class="flow" d="M 696 158 C 716 158 716 238 736 238"/>
+  <path class="flow" d="M 696 228 C 712 228 720 238 736 238"/>
+  <path class="flow" d="M 696 298 C 716 298 716 238 736 238"/>
+  <path class="flow" d="M 868 238 C 880 238 880 170 892 170"/>
+  <path class="flow" d="M 868 238 C 880 238 880 234 892 234"/>
+  <path class="flow-future" d="M 868 238 C 880 238 880 298 892 298"/>
+
+  <!-- ============ takeaway badges ============ -->
+  <rect x="49" y="424" width="238" height="38" rx="19" fill="#202542" stroke="#3b4468" stroke-width="1"/>
+  <text x="168" y="448" text-anchor="middle" class="sans badge">One definition, every framework</text>
+
+  <rect x="430" y="424" width="232" height="38" rx="19" fill="#202542" stroke="#3b4468" stroke-width="1"/>
+  <text x="546" y="448" text-anchor="middle" class="sans badge">Minutes to converge, not hours</text>
+
+  <rect x="892" y="424" width="232" height="38" rx="19" fill="#202542" stroke="#3b4468" stroke-width="1"/>
+  <text x="1008" y="448" text-anchor="middle" class="sans badge">From sim to real, one artifact</text>
+</svg>

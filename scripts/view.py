@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import time
+from typing import TYPE_CHECKING
 
 import gymnasium as gym
 import hydra
 import motrixsim as mtx
 import numpy as np
-import torch
 from motrixsim.render import RenderApp, RenderClosedError, RenderSettings
 from omegaconf import DictConfig
 
@@ -19,10 +19,12 @@ from motrix_env_core.config import SimCfg
 from motrix_env_core.config.scene import RobotCfg, SystemCameraCfg
 from motrix_env_core.renderer import RenderConfig, create_renderer
 from motrix_env_motrixsim.compiler import build_scene_model
-from motrix_env_motrixsim.torch_env import TorchEnv
 from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
 from motrix_rl.cli import to_typed_config
 from motrix_rl.config import ViewConfig
+
+if TYPE_CHECKING:
+    from motrix_env_motrixsim.torch_env import TorchEnv
 
 DEFAULT_ENV_NAME = "cartpole"
 ROBOT_VIEW_FPS = 60
@@ -137,7 +139,9 @@ def _run_robot(robot_cfg: RobotCfg, sim: str | None = None) -> None:
         raise ValueError(f"Unsupported robot view sim {backend!r}; expected 'motrixsim' or 'mujoco'")
 
 
-def _run_torch(env: TorchEnv):
+def _run_torch(env: "TorchEnv"):
+    import torch
+
     renderer = create_renderer(env, RenderConfig())
     env.init_state()
     env_dt = env.cfg.ctrl_dt
@@ -157,6 +161,13 @@ def _run_torch(env: TorchEnv):
             time.sleep(sleep_dt)
 
 
+def _torch_frontend_missing(env_name: str) -> ModuleNotFoundError:
+    return ModuleNotFoundError(
+        f"Environment '{env_name}' uses the torch frontend, but PyTorch is not installed; install torch "
+        f"(for example `uv sync --all-packages`) or view a NumPy-frontend environment such as '{DEFAULT_ENV_NAME}'"
+    )
+
+
 def run(cfg: ViewConfig) -> None:
     if cfg.env is not None and cfg.robot is not None:
         raise ValueError("env and robot are mutually exclusive; set only one")
@@ -167,11 +178,27 @@ def run(cfg: ViewConfig) -> None:
         _run_robot(registry.make_robot_config(cfg.robot), cfg.sim)
         return
 
-    env = registry.make(cfg.env or DEFAULT_ENV_NAME, num_envs=cfg.num_envs)
+    env_name = cfg.env or DEFAULT_ENV_NAME
+    try:
+        env = registry.make(env_name, num_envs=cfg.num_envs)
+    except ModuleNotFoundError as exc:
+        # Torch-frontend environments import torch when their factory resolves the env class.
+        if exc.name == "torch":
+            raise _torch_frontend_missing(env_name) from exc
+        raise
 
     if isinstance(env, ArrayEnv):
         _run_np(env)
-    elif isinstance(env, TorchEnv):
+        return
+
+    try:
+        from motrix_env_motrixsim.torch_env import TorchEnv
+    except ModuleNotFoundError as exc:
+        if exc.name == "torch":
+            raise _torch_frontend_missing(env_name) from exc
+        raise
+
+    if isinstance(env, TorchEnv):
         _run_torch(env)
     else:
         raise TypeError(f"Unsupported environment type '{type(env).__name__}'.")
