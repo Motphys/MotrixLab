@@ -28,7 +28,7 @@ docs = [
     "sphinxcontrib-video",
     "sphinx-togglebutton",
     "sphinx-design",
-    "tensorboard==2.20.0",
+    "tensorboard==2.21.0",
 ]
 # Mutually exclusive GPU wheel profiles: `cuda` pulls the NVIDIA wheels from
 # the pytorch-cu128 index, `rocm` the AMD wheels from the pytorch-rocm72
