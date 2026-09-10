@@ -131,35 +131,35 @@ If `NaN` appears in the observations
 ### 1. Environment Preview (random actions)
 
 ```bash
-uv run scripts/view.py env=dm-finger-spin
+python scripts/view.py env=dm-finger-spin
 ```
 
 ```bash
-uv run scripts/view.py env=dm-finger-turn-easy
+python scripts/view.py env=dm-finger-turn-easy
 ```
 
 ```bash
-uv run scripts/view.py env=dm-finger-turn-hard
+python scripts/view.py env=dm-finger-turn-hard
 ```
 
 ### 2. Start Training
 
 ```bash
-uv run scripts/train.py task=dm-finger-spin/skrl.ppo task.train_backend=torch
+python scripts/train.py task=dm-finger-spin/skrl.ppo task.train_backend=torch
 ```
 
 ```bash
-uv run scripts/train.py task=dm-finger-turn-easy/skrl.ppo task.train_backend=torch
+python scripts/train.py task=dm-finger-turn-easy/skrl.ppo task.train_backend=torch
 ```
 
 ```bash
-uv run scripts/train.py task=dm-finger-turn-hard/skrl.ppo task.train_backend=torch
+python scripts/train.py task=dm-finger-turn-hard/skrl.ppo task.train_backend=torch
 ```
 
 ### 3. View Training Progress
 
 ```bash
-uv run tensorboard --logdir runs/dm-finger-spin
+tensorboard --logdir runs/dm-finger-spin
 ```
 
 ### 4. Test Training Results
@@ -167,7 +167,7 @@ uv run tensorboard --logdir runs/dm-finger-spin
 `scripts/play.py` auto-discovers the latest metadata-backed run under `runs/{env-name}/` and loads its `best_policy` artifact. Use `policy=...` to select a checkpoint explicitly:
 
 ```bash
-uv run scripts/play.py env=dm-finger-turn-hard
+python scripts/play.py env=dm-finger-turn-hard
 ```
 
 ---

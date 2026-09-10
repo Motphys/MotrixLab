@@ -269,17 +269,17 @@ The task currently provides an Async FastSAC configuration with `2048` parallel 
 ### Training
 
 ```bash
-uv run scripts/train.py task=rm65_insert_peg/motrix.fastsac
+python scripts/train.py task=rm65_insert_peg/motrix.fastsac
 ```
 
 ### Policy Evaluation
 
 ```bash
-uv run scripts/play.py env=rm65_insert_peg num_envs=16
+python scripts/play.py env=rm65_insert_peg num_envs=16
 ```
 
 ### TensorBoard
 
 ```bash
-uv run tensorboard --logdir runs/rm65_insert_peg/fastsac
+tensorboard --logdir runs/rm65_insert_peg/fastsac
 ```

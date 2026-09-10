@@ -15,25 +15,25 @@ CartPole is a classic control task in reinforcement learning. The goal is to kee
 ### 1. Environment Preview
 
 ```bash
-uv run scripts/view.py env=cartpole
+python scripts/view.py env=cartpole
 ```
 
 ### 2. Start Training
 
 ```bash
-uv run scripts/train.py task=cartpole/skrl.ppo
+python scripts/train.py task=cartpole/skrl.ppo
 ```
 
 ### 3. View Training Progress
 
 ```bash
-uv run tensorboard --logdir runs/cartpole
+tensorboard --logdir runs/cartpole
 ```
 
 ### 4. Test Training Results
 
 ```bash
-uv run scripts/play.py env=cartpole
+python scripts/play.py env=cartpole
 ```
 
 > **Tip**: The system finds the latest metadata-backed run under `runs/cartpole/` and loads its `best_policy` artifact. Use `policy=...` to select another checkpoint from a metadata-backed run.

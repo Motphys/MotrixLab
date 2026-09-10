@@ -10,7 +10,7 @@ The default sim2sim recipe targets `go2-walk-rough`; the default sim2real recipe
 workspace config path with:
 
 ```bash
-uv run motrix-deploy sim2sim \
+motrix-deploy sim2sim \
   --config-name go2_walk_flat_sim2sim \
   artifact=artifacts/go2-walk-flat.deploy
 ```

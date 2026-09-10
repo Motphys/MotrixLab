@@ -5,18 +5,19 @@ interfaces. Concrete providers currently support SKRL PPO with JAX or PyTorch, R
 FastSAC implementation.
 
 Environment-specific training presets live under `configs/task/`, while shared provider defaults live under
-`configs/algo_base/`. From the workspace root, select a preset with Hydra's `task=<env-id>/<method>` syntax:
+`configs/algo_base/`. From the workspace root, select a preset with Hydra's `task=<env-id>/<method>` syntax (run from the
+activated workspace environment, `source .venv/bin/activate`):
 
 ```bash
-uv run scripts/train.py task=cartpole/skrl.ppo
-uv run scripts/train.py task=cartpole/rslrl.ppo
-uv run scripts/train.py task=g1-walk-rough/motrix.fastsac
+python scripts/train.py task=cartpole/skrl.ppo
+python scripts/train.py task=cartpole/rslrl.ppo
+python scripts/train.py task=g1-walk-rough/motrix.fastsac
 ```
 
 Install the extra required by the selected provider before training:
 
 ```bash
-uv sync --all-packages --extra skrl-jax
-uv sync --all-packages --extra skrl-torch
-uv sync --all-packages --extra rslrl
+sh install.sh --skrl-jax   # JAX (Linux only)
+sh install.sh --skrl-torch # PyTorch (default)
+sh install.sh --rslrl      # RSLRL (PyTorch only)
 ```

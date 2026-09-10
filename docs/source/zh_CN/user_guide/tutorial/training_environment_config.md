@@ -65,19 +65,19 @@ Task 只需填写与算法基础配置不同的值，不需要复制所有算法
 启动训练前，可以先输出 Hydra 组合后的完整配置：
 
 ```bash
-uv run scripts/train.py --cfg job --resolve task=my-robot/skrl.ppo
+python scripts/train.py --cfg job --resolve task=my-robot/skrl.ppo
 ```
 
 该命令不会开始训练。确认 `task.env`、`num_envs` 和 `algo.trainer.timesteps` 符合预期后，再启动训练：
 
 ```bash
-uv run scripts/train.py task=my-robot/skrl.ppo
+python scripts/train.py task=my-robot/skrl.ppo
 ```
 
 运行以下命令可以查看仓库中所有可选 Task：
 
 ```bash
-uv run scripts/train.py --help
+python scripts/train.py --help
 ```
 
 ## 调整 Task 的运行参数
@@ -191,7 +191,7 @@ MotrixLab CLI 使用 Hydra 的 `key=value` 参数语法。CLI 覆盖只影响本
 ### 覆盖运行参数
 
 ```bash
-uv run scripts/train.py \
+python scripts/train.py \
   task=my-robot/skrl.ppo \
   num_envs=64 \
   seed=7 \
@@ -202,7 +202,7 @@ uv run scripts/train.py \
 开启训练渲染，并在训练完成后播放：
 
 ```bash
-uv run scripts/train.py task=my-robot/skrl.ppo render=true play=true
+python scripts/train.py task=my-robot/skrl.ppo render=true play=true
 ```
 
 ### 覆盖算法参数
@@ -210,7 +210,7 @@ uv run scripts/train.py task=my-robot/skrl.ppo render=true play=true
 SKRL PPO：
 
 ```bash
-uv run scripts/train.py \
+python scripts/train.py \
   task=my-robot/skrl.ppo \
   algo.agent.learning_rate=5e-4 \
   algo.agent.learning_epochs=8 \
@@ -220,7 +220,7 @@ uv run scripts/train.py \
 RSLRL PPO：
 
 ```bash
-uv run scripts/train.py \
+python scripts/train.py \
   task=cartpole/rslrl.ppo \
   algo.algorithm.learning_rate=5e-4 \
   algo.algorithm.entropy_coef=0.005 \
@@ -230,7 +230,7 @@ uv run scripts/train.py \
 FastSAC：
 
 ```bash
-uv run scripts/train.py \
+python scripts/train.py \
   task=g1-walk-flat/motrix.fastsac \
   algo.asynchronous=true \
   algo.agent.actor_learning_rate=1e-4 \
@@ -244,20 +244,20 @@ uv run scripts/train.py \
 布尔值使用小写 `true` 或 `false`：
 
 ```bash
-uv run scripts/train.py task=my-robot/skrl.ppo render=true
+python scripts/train.py task=my-robot/skrl.ppo render=true
 ```
 
 使用 `null` 清空可空字段：
 
 ```bash
-uv run scripts/train.py task=my-robot/skrl.ppo seed=null
-uv run scripts/train.py task=my-robot/skrl.ppo algo.agent.learning_rate_scheduler=null
+python scripts/train.py task=my-robot/skrl.ppo seed=null
+python scripts/train.py task=my-robot/skrl.ppo algo.agent.learning_rate_scheduler=null
 ```
 
 列表建议使用引号，避免 shell 解释方括号：
 
 ```bash
-uv run scripts/train.py \
+python scripts/train.py \
   task=my-robot/skrl.ppo \
   'algo.models.policy.hiddens=[128,64]' \
   'algo.models.value.hiddens=[128,64]'
@@ -274,7 +274,7 @@ uv run scripts/train.py \
 将 CLI 覆盖和 `--cfg job --resolve` 组合，可以查看本次运行最终会使用的值：
 
 ```bash
-uv run scripts/train.py \
+python scripts/train.py \
   --cfg job \
   --resolve \
   task=my-robot/skrl.ppo \
@@ -316,13 +316,13 @@ algo:
 使用 JAX 差异配置训练：
 
 ```bash
-uv run scripts/train.py task=go2-walk-flat/skrl.ppo.jax
+python scripts/train.py task=go2-walk-flat/skrl.ppo.jax
 ```
 
 直接覆盖后端也可以选择 JAX 训练器：
 
 ```bash
-uv run scripts/train.py task=go2-walk-flat/skrl.ppo task.train_backend=jax
+python scripts/train.py task=go2-walk-flat/skrl.ppo task.train_backend=jax
 ```
 
 这种写法不会加载 `skrl.ppo.jax.yaml` 中的后端专用参数。当后端差异文件存在时，应直接选择带 `.jax` 或 `.torch` 后缀的 Task。
@@ -413,15 +413,15 @@ Hydra 会根据 provider 注册的结构化 schema 检查字段名和类型。�
 `scripts/play.py` 和 `scripts/view.py` 同样使用 `key=value` 语法：
 
 ```bash
-uv run scripts/view.py env=cartpole num_envs=4
-uv run scripts/play.py env=cartpole num_envs=1
-uv run scripts/play.py policy=/path/to/checkpoint.pt num_envs=1
+python scripts/view.py env=cartpole num_envs=4
+python scripts/play.py env=cartpole num_envs=1
+python scripts/play.py policy=/path/to/checkpoint.pt num_envs=1
 ```
 
 Play 默认读取训练 run 中保存的 `task_config.yaml`。如需临时覆盖其中的算法参数，使用 `rl` 作为算法配置根节点。因为 `rl` 初始为空，需要用 `+` 添加路径：
 
 ```bash
-uv run scripts/play.py \
+python scripts/play.py \
   env=cartpole \
   '+rl.agent.learning_rate=1e-4'
 ```

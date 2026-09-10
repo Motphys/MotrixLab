@@ -69,7 +69,7 @@ rejected. Every actuator must target a joint and expose a valid control range.
 After registering the robot config, preview it independently:
 
 ```bash
-uv run scripts/view.py robot=<robot-config-id>
+python scripts/view.py robot=<robot-config-id>
 ```
 
 ## 2. Provide task sensors
@@ -197,10 +197,10 @@ inherit the same robot's flat-ground recipe and override only `task.env`.
 Use this progression:
 
 ```bash
-uv run scripts/view.py robot=<robot-config-id>
-uv run scripts/view.py env=<robot>-walk-flat
-uv run scripts/view.py env=<robot>-walk-rough
-uv run scripts/train.py task=<robot>-walk-flat/rslrl.ppo
+python scripts/view.py robot=<robot-config-id>
+python scripts/view.py env=<robot>-walk-flat
+python scripts/view.py env=<robot>-walk-rough
+python scripts/train.py task=<robot>-walk-flat/rslrl.ppo
 ```
 
 During preview, inspect the default pose, action direction, all four foot contacts, foot-position reference frames, and

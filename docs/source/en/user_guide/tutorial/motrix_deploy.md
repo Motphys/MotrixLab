@@ -8,7 +8,7 @@ it on a real robot. If you already have a training run, start at “Export the a
 Run this command from the repository root:
 
 ```bash
-uv sync --all-packages --all-groups --all-extras
+sh install.sh --all
 ```
 
 This installs the training, MuJoCo, ONNX Runtime, and Unitree SDK2 dependencies.
@@ -18,7 +18,7 @@ This installs the training, MuJoCo, ONNX Runtime, and Unitree SDK2 dependencies.
 If you do not have a run yet, train the flat-terrain Go2 policy:
 
 ```bash
-uv run scripts/train.py task=go2-walk-flat/rslrl.ppo
+python scripts/train.py task=go2-walk-flat/rslrl.ppo
 ```
 
 Training results are saved under `runs/go2-walk-flat/`.
@@ -28,7 +28,7 @@ Training results are saved under `runs/go2-walk-flat/`.
 Export the latest run:
 
 ```bash
-uv run scripts/export_deploy.py env=go2-walk-flat
+python scripts/export_deploy.py env=go2-walk-flat
 ```
 
 The output is written to `artifacts/go2-walk-flat.deploy/`. This artifact is the only policy bundle needed for deployment;
@@ -37,7 +37,7 @@ it contains the model and its runtime configuration.
 ## 4. Inspect the artifact
 
 ```bash
-uv run motrix-deploy inspect \
+motrix-deploy inspect \
   artifact=artifacts/go2-walk-flat.deploy
 ```
 
@@ -46,7 +46,7 @@ Make sure the output reports `valid: true`.
 ## 5. Run Sim2Sim first
 
 ```bash
-uv run motrix-deploy sim2sim \
+motrix-deploy sim2sim \
   --config-name go2_walk_flat_sim2sim \
   artifact=artifacts/go2-walk-flat.deploy
 ```
@@ -60,10 +60,10 @@ Put the robot in low-level/debug mode, connect Ethernet, and keep an emergency s
 actual network interface:
 
 ```bash
-uv run motrix-deploy inspect \
+motrix-deploy inspect \
   artifact=artifacts/go2-walk-flat.deploy
 
-uv run motrix-deploy sim2real \
+motrix-deploy sim2real \
   --config-name go2_walk_flat_sim2real \
   artifact=artifacts/go2-walk-flat.deploy \
   backend.network_interface=enp5s0 \
@@ -76,7 +76,7 @@ to send motion commands. Press B to enter the lie-down sequence; Select triggers
 You can also inspect the robot state before sending policy commands:
 
 ```bash
-uv run python -m motrix_deploy_unitree.read_lowstate enp5s0
+python -m motrix_deploy_unitree.read_lowstate enp5s0
 ```
 
 ## Advanced usage
@@ -88,7 +88,7 @@ The physical-runtime base configuration, `configs/deploy/sim2real/base.yaml`, cu
 gains, or pass 12 non-negative values on the command line:
 
 ```bash
-uv run motrix-deploy sim2real \
+motrix-deploy sim2real \
   artifact=artifacts/go2-walk-flat.deploy \
   backend.network_interface=enp5s0 \
   'backend.kp=[20,25,30,20,25,30,22,27,32,22,27,32]' \
@@ -101,7 +101,7 @@ uv run motrix-deploy sim2real \
 Run the read-only diagnostic before sending any motion command:
 
 ```bash
-uv run python -m motrix_deploy_unitree.read_lowstate enp5s0
+python -m motrix_deploy_unitree.read_lowstate enp5s0
 ```
 
 ### Send a single-joint motion command
@@ -111,7 +111,7 @@ To bypass the policy and debug a single joint-position motion, use the bounded h
 does not require a training run, checkpoint, policy, or deployment artifact:
 
 ```bash
-uv run python -m motrix_deploy_unitree.go2_joint_control \
+python -m motrix_deploy_unitree.go2_joint_control \
   enp5s0 \
   FL_thigh_joint \
   0.9 \

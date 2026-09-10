@@ -115,25 +115,25 @@ rwd = distance_reward + target_bonus + continuous_reward + path_reward - center_
 ### 1. Environment Preview
 
 ```bash
-uv run scripts/view.py env=point_mass
+python scripts/view.py env=point_mass
 ```
 
 ### 2. Start Training
 
 ```bash
-uv run scripts/train.py task=point_mass/skrl.ppo
+python scripts/train.py task=point_mass/skrl.ppo
 ```
 
 ### 3. View Training Progress
 
 ```bash
-uv run tensorboard --logdir runs/point_mass
+tensorboard --logdir runs/point_mass
 ```
 
 ### 4. Test Training Results
 
 ```bash
-uv run scripts/play.py env=point_mass
+python scripts/play.py env=point_mass
 ```
 
 ---

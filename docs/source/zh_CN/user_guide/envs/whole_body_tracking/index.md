@@ -122,7 +122,7 @@ Motion 文件由 Git LFS 管理。克隆后若 `.npz` 仍是 pointer 文本，�
 先用目标机器人的 `RobotCfg` 检查参考动作：
 
 ```bash
-uv run scripts/motion/replay.py \
+python scripts/motion/replay.py \
   --robot g1-29dof \
   --motion motrix_envs/src/motrix_envs/locomotion/wbt/assets/motion/g1/dance1_subject2.npz
 ```
@@ -136,20 +136,20 @@ uv run scripts/motion/replay.py \
 从“内置任务”表格中选择 Env ID 和对应的训练配置，并替换下列命令中的 `ENV_ID` 与 `TRAINING_CONFIG`：
 
 ```bash
-uv run scripts/train.py task=ENV_ID/TRAINING_CONFIG
+python scripts/train.py task=ENV_ID/TRAINING_CONFIG
 ```
 
 例如，使用 FastSAC 异步训练 G1 舞蹈跟踪任务：
 
 ```bash
-uv run scripts/train.py task=g1-wbt-dance/motrix.fastsac algo.asynchronous=true
+python scripts/train.py task=g1-wbt-dance/motrix.fastsac algo.asynchronous=true
 ```
 
 内置配置默认使用 2048 个并行环境，并按任务设置学习迭代次数。只验证 registry、shape 和训练入口时，可以使用不会
 生成可用策略的小规模 smoke test：
 
 ```bash
-uv run scripts/train.py task=g1-wbt-dance/motrix.fastsac \
+python scripts/train.py task=g1-wbt-dance/motrix.fastsac \
   algo.asynchronous=true num_envs=64 algo.trainer.num_learning_iterations=100
 ```
 
@@ -160,7 +160,7 @@ uv run scripts/train.py task=g1-wbt-dance/motrix.fastsac \
 ### 回放策略
 
 ```bash
-uv run scripts/play.py env=ENV_ID num_envs=16
+python scripts/play.py env=ENV_ID num_envs=16
 ```
 
 `play.py` 自动选择该环境最新一次 metadata-backed run 的最佳策略。WBT 的 play 配置从 motion 第 0 帧开始，关闭

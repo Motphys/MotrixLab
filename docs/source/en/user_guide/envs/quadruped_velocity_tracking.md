@@ -114,15 +114,15 @@ sustained rough-terrain locomotion. Under the current training configs and hardw
 Choose an environment ID and one of its training configs from the table, then replace `ENV_ID` and `TRAINING_CONFIG`:
 
 ```bash
-uv run scripts/view.py env=ENV_ID num_envs=1
-uv run scripts/train.py task=ENV_ID/TRAINING_CONFIG
-uv run scripts/play.py env=ENV_ID num_envs=16
+python scripts/view.py env=ENV_ID num_envs=1
+python scripts/train.py task=ENV_ID/TRAINING_CONFIG
+python scripts/play.py env=ENV_ID num_envs=16
 ```
 
 For example, train the Go2 rough-terrain task with RSL-RL PPO:
 
 ```bash
-uv run scripts/train.py task=go2-walk-rough/rslrl.ppo
+python scripts/train.py task=go2-walk-rough/rslrl.ppo
 ```
 
 `view.py` applies random actions and is intended for scene and model inspection. Use `play.py` with a trained policy to

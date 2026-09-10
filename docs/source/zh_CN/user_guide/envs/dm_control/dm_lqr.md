@@ -157,29 +157,29 @@ reward -= out_of_bounds_penalty
 ### 1. 环境预览
 
 ```bash
-uv run scripts/view.py env=dm-lqr-2-1
-uv run scripts/view.py env=dm-lqr-6-2
+python scripts/view.py env=dm-lqr-2-1
+python scripts/view.py env=dm-lqr-6-2
 ```
 
 ### 2. 开始训练
 
 ```bash
-uv run scripts/train.py task=dm-lqr-2-1/skrl.ppo
-uv run scripts/train.py task=dm-lqr-6-2/skrl.ppo
+python scripts/train.py task=dm-lqr-2-1/skrl.ppo
+python scripts/train.py task=dm-lqr-6-2/skrl.ppo
 ```
 
 ### 3. 查看训练曲线
 
 ```bash
-uv run tensorboard --logdir runs/dm-lqr-2-1
-uv run tensorboard --logdir runs/dm-lqr-6-2
+tensorboard --logdir runs/dm-lqr-2-1
+tensorboard --logdir runs/dm-lqr-6-2
 ```
 
 ### 4. 测试训练结果
 
 ```bash
-uv run scripts/play.py env=dm-lqr-2-1
-uv run scripts/play.py env=dm-lqr-6-2
+python scripts/play.py env=dm-lqr-2-1
+python scripts/play.py env=dm-lqr-6-2
 ```
 
 ---

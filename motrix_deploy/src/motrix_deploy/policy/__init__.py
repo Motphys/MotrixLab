@@ -48,7 +48,9 @@ class OnnxPolicyRuntime(PolicyRuntime):
         try:
             import onnxruntime as ort
         except ImportError as error:
-            raise RuntimeError("ONNX policy support requires the 'motrix-deploy[onnx]' extra") from error
+            raise RuntimeError(
+                "onnxruntime is missing; it is a core dependency of motrix-deploy, so reinstall the environment"
+            ) from error
         self._input_spec = input_spec
         self._output_spec = output_spec
         self._session = ort.InferenceSession(

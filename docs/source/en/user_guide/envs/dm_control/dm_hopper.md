@@ -108,28 +108,28 @@ The Hopper reward consists of the following terms:
 ### 1. Environment Preview
 
 ```bash
-uv run scripts/view.py env=dm-hopper-stand
-uv run scripts/view.py env=dm-hopper-hop
+python scripts/view.py env=dm-hopper-stand
+python scripts/view.py env=dm-hopper-hop
 ```
 
 ### 2. Start Training
 
 ```bash
-uv run scripts/train.py task=dm-hopper-stand/skrl.ppo
-uv run scripts/train.py task=dm-hopper-hop/skrl.ppo
+python scripts/train.py task=dm-hopper-stand/skrl.ppo
+python scripts/train.py task=dm-hopper-hop/skrl.ppo
 ```
 
 ### 3. View Training Progress
 
 ```bash
-uv run tensorboard --logdir runs/dm-hopper-stand
+tensorboard --logdir runs/dm-hopper-stand
 ```
 
 ### 4. Test Training Results
 
 ```bash
-uv run scripts/play.py env=dm-hopper-stand
-uv run scripts/play.py env=dm-hopper-hop
+python scripts/play.py env=dm-hopper-stand
+python scripts/play.py env=dm-hopper-hop
 ```
 
 ---

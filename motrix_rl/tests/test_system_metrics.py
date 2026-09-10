@@ -65,6 +65,9 @@ def _fake_nvml(monkeypatch, handles, utilization, memory, error=None) -> None:
         nvmlDeviceGetMemoryInfo=memory_info,
         NVMLError=RuntimeError,
     )
+    # The samplers prefer AMD SMI; pin it off so these tests exercise the
+    # NVML backend on AMD hosts too, where a real session would win.
+    monkeypatch.setattr(system_metrics, "_amd_smi_state", ())
     monkeypatch.setattr(system_metrics, "_nvml_state", (fake_pynvml, handles))
 
 
@@ -95,11 +98,118 @@ def test_gpu_samplers_return_none_on_nvml_error(monkeypatch) -> None:
     assert GpuMemoryUsageSampler().sample() is None
 
 
+def _fake_amdsmi(monkeypatch, handles, utilization, memory) -> None:
+    """Install a fake ``(amdsmi, handles)`` session with per-handle metric tables."""
+
+    def gpu_activity(handle):
+        return {"gfx_activity": utilization[handle]}
+
+    def gpu_memory_usage(handle, memory_type):
+        return memory[handle][0]
+
+    def gpu_memory_total(handle, memory_type):
+        return memory[handle][1]
+
+    fake_amdsmi = types.SimpleNamespace(
+        amdsmi_get_gpu_activity=gpu_activity,
+        amdsmi_get_gpu_memory_usage=gpu_memory_usage,
+        amdsmi_get_gpu_memory_total=gpu_memory_total,
+        AmdSmiMemoryType=types.SimpleNamespace(VRAM="vram"),
+    )
+    # Pin NVML off so the AMD SMI backend is exercised on every host.
+    monkeypatch.setattr(system_metrics, "_nvml_state", ())
+    monkeypatch.setattr(system_metrics, "_amd_activity_supported", None)
+    monkeypatch.setattr(system_metrics, "_amd_smi_state", (fake_amdsmi, handles))
+
+
+def test_gpu_samplers_aggregate_via_amdsmi_backend(monkeypatch) -> None:
+    handles = ["gpu0", "gpu1"]
+    _fake_amdsmi(
+        monkeypatch,
+        handles,
+        utilization={"gpu0": 10, "gpu1": 30},
+        memory={"gpu0": (100 * 1024**2, 200 * 1024**2), "gpu1": (300 * 1024**2, 400 * 1024**2)},
+    )
+
+    assert GpuUtilizationSampler().sample() == 20.0
+    assert GpuMemoryUsageSampler().sample() == MemoryUsage(used_bytes=400 * 1024**2, total_bytes=600 * 1024**2)
+
+
 def test_gpu_samplers_return_none_without_nvml(monkeypatch) -> None:
+    monkeypatch.setattr(system_metrics, "_amd_smi_state", ())
     monkeypatch.setattr(system_metrics, "_nvml_state", ())
 
     assert GpuUtilizationSampler().sample() is None
     assert GpuMemoryUsageSampler().sample() is None
+
+
+def _patch_sysfs_gpu_busy(monkeypatch, entries) -> None:
+    """Serve ``entries`` (text or Exception) as DRM ``gpu_busy_percent`` files."""
+
+    class _SysfsFile:
+        def __init__(self, payload) -> None:
+            self._payload = payload
+
+        def read_text(self) -> str:
+            if isinstance(self._payload, Exception):
+                raise self._payload
+            return self._payload
+
+    monkeypatch.setattr(system_metrics.Path, "glob", lambda self, pattern: iter(_SysfsFile(entry) for entry in entries))
+
+
+def test_sysfs_gpu_busy_percent_reads_valid_counters(monkeypatch) -> None:
+    _patch_sysfs_gpu_busy(monkeypatch, ["12\n", "34\n"])
+
+    assert system_metrics._sysfs_gpu_busy_percent() == [12.0, 34.0]
+
+
+def test_sysfs_gpu_busy_percent_skips_invalid_and_unreadable_counters(monkeypatch) -> None:
+    _patch_sysfs_gpu_busy(monkeypatch, ["120\n", "-5\n", "n/a\n", OSError("denied"), "55\n"])
+
+    assert system_metrics._sysfs_gpu_busy_percent() == [55.0]
+
+
+def test_sysfs_gpu_busy_percent_returns_nothing_on_windows(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    glob_called = False
+
+    def fail_glob(pattern):
+        nonlocal glob_called
+        glob_called = True
+        return iter(())
+
+    monkeypatch.setattr(system_metrics.Path, "glob", fail_glob)
+
+    assert system_metrics._sysfs_gpu_busy_percent() == []
+    assert not glob_called
+
+
+def test_gpu_utilization_sampler_falls_back_to_sysfs_when_amdsmi_activity_unsupported(monkeypatch) -> None:
+    handles = ["gpu0", "gpu1"]
+
+    def gpu_activity(handle):
+        raise RuntimeError("AMDSMI_STATUS_UNEXPECTED_DATA")
+
+    memory = {"gpu0": (1, 2), "gpu1": (3, 4)}
+    fake_amdsmi = types.SimpleNamespace(
+        amdsmi_get_gpu_activity=gpu_activity,
+        amdsmi_get_gpu_memory_usage=lambda handle, memory_type: memory[handle][0],
+        amdsmi_get_gpu_memory_total=lambda handle, memory_type: memory[handle][1],
+        AmdSmiMemoryType=types.SimpleNamespace(VRAM="vram"),
+    )
+    monkeypatch.setattr(system_metrics, "_nvml_state", ())
+    monkeypatch.setattr(system_metrics, "_amd_activity_supported", None)
+    monkeypatch.setattr(system_metrics, "_amd_smi_state", (fake_amdsmi, handles))
+    _patch_sysfs_gpu_busy(monkeypatch, ["20\n", "60\n"])
+
+    assert GpuUtilizationSampler().sample() == 40.0
+
+    # The failure is latched, so later samples keep reading sysfs instead of
+    # retrying the unsupported AMD SMI activity API on every call.
+    monkeypatch.setattr(system_metrics.Path, "glob", lambda self, pattern: iter([]))
+
+    assert GpuUtilizationSampler().sample() is None
 
 
 def test_memory_usage_sampler_reads_proc_meminfo(tmp_path) -> None:

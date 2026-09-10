@@ -21,13 +21,16 @@ dependencies = [
     "numpy>=1.26",
     "omegaconf>=2.3,<2.4",
     "nvidia-ml-py>=13.610.43",
-    # Default training backend; also required by scripts/view.py. Resolved
-    # from the pytorch-cu128 index via the workspace root tool.uv.sources.
-    "torch==2.7.0",
+    # ONNX export of trained policies; onnxruntime (for the parity check and
+    # deployment inference) comes in via motrix-deploy.
+    "onnx==1.20.1",
+    # Default training backend; also required by scripts/view.py. The exact
+    # version and wheel index are chosen by the workspace root `cuda`/`rocm`
+    # extras (see the root pyproject.toml tool.uv.sources).
+    "torch>=2.7,<3",
 ]
 
 [project.optional-dependencies]
-onnx = ["onnx==1.20.1", "onnxruntime==1.23.2"]
 skrl-jax = [
     "skrl>=2.1,<2.2; sys_platform == 'linux'",
     "jax[cuda12]==0.4.34; sys_platform == 'linux'",
@@ -36,15 +39,9 @@ skrl-jax = [
 ]
 skrl-torch = [
     "skrl>=2.1,<2.2",
-    "torch==2.7.0",
-    "torchvision==0.22.0",
-    "torchaudio==2.7.0",
+    "torch>=2.7,<3",
 ]
 rslrl = [
-    "motrix-deploy[onnx]",
-    "onnx==1.20.1",
     "rsl-rl-lib>=4.0,<5.0",
-    "torch==2.7.0",
-    "torchvision==0.22.0",
-    "torchaudio==2.7.0",
+    "torch>=2.7,<3",
 ]

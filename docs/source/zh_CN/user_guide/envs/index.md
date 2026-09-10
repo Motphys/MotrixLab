@@ -5,7 +5,7 @@ MotrixLab Environment 定义可通过 Env Registry 创建的仿真任务，包�
 使用以下命令可以在不启动训练的情况下预览一个环境：
 
 ```bash
-uv run scripts/view.py env=<env-id>
+python scripts/view.py env=<env-id>
 ```
 
 ## 环境主题

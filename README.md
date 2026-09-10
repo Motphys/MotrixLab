@@ -37,7 +37,7 @@ _Microduck locomotion policies trained with MotrixLab, rendered in MotrixRender 
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/source/_static/images/architecture-dark.svg">
-    <img src="docs/source/_static/images/architecture-light.svg" alt="MotrixLab architecture: define an environment once, train it with SKRL, RSL-RL or FastSAC on thousands of parallel MotrixSim environments, then deploy the same policy artifact to MuJoCo or Unitree hardware" width="720">
+    <img src="docs/source/_static/images/architecture-light.svg" alt="MotrixLab architecture: define an environment once, train it with SKRL, RSL-RL or FastSAC on thousands of parallel MotrixSim environments running on NVIDIA CUDA or AMD ROCm GPUs, then deploy the same policy artifact to MuJoCo or Unitree hardware" width="100%">
   </picture>
 </div>
 
@@ -60,6 +60,7 @@ _Microduck locomotion policies trained with MotrixLab, rendered in MotrixRender 
 | [uv](https://docs.astral.sh/uv/) | Python project and dependency manager — [installation guide](https://docs.astral.sh/uv/getting-started/installation/) |
 | [Git LFS](https://git-lfs.com) | Robot meshes, motion data, and videos are tracked by LFS |
 | OS | Linux x86_64 or Windows x86_64; the JAX training backend is Linux-only |
+| GPU | NVIDIA (CUDA) or AMD (ROCm) — the matching wheels are selected automatically by `sh install.sh` |
 
 ### 1. Clone the repository
 
@@ -71,16 +72,29 @@ git lfs pull
 
 ### 2. Install dependencies
 
+Linux:
+
 ```bash
-uv sync --all-packages
+sh install.sh
 ```
 
-This installs all workspace packages together with **PyTorch**, the default training backend used by the built-in FastSAC. Third-party frameworks such as SKRL and RSLRL are optional extras.
+Windows (PowerShell):
+
+```powershell
+.\install.ps1
+# if blocked by the execution policy:
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+This auto-detects your GPU vendor (NVIDIA → CUDA, AMD → ROCm) and installs all workspace packages with the matching PyTorch wheels. Use `--gpu cuda|rocm` to override detection and `--skrl-jax` / `--rslrl` to add training backends — see `sh install.sh --help`.
 
 ### 3. Train your first policy
 
+Activate the installed environment (Windows PowerShell: `.venv\Scripts\Activate.ps1`):
+
 ```bash
-uv run scripts/train.py task=microduck-walk-flat/motrix.fastsac play=true
+source .venv/bin/activate
+python scripts/train.py task=microduck-walk-flat/motrix.fastsac play=true
 ```
 
 While training, the built-in dashboard shows live run progress, episode statistics, throughput, rewards, and system health:
@@ -92,7 +106,7 @@ While training, the built-in dashboard shows live run progress, episode statisti
 Training runs thousands of parallel environment instances; when it finishes, the trained policy is loaded and played in the viewer automatically. Checkpoints and TensorBoard logs are saved under `runs/microduck-walk-flat/`; watch the curves with:
 
 ```bash
-uv run tensorboard --logdir runs/microduck-walk-flat
+tensorboard --logdir runs/microduck-walk-flat
 ```
 
 Training finishes in minutes: mean return and episode length typically converge after about 4,000 iterations:
@@ -106,7 +120,7 @@ Training finishes in minutes: mean return and episode length typically converge 
 Replay the latest trained policy without retraining (for example, after stopping training early with Ctrl+C):
 
 ```bash
-uv run scripts/play.py env=microduck-walk-flat
+python scripts/play.py env=microduck-walk-flat
 ```
 
 A trained microduck policy replayed in the viewer:
@@ -124,7 +138,7 @@ MotrixLab ships 50+ built-in simulation environments spanning basic control, qua
 | <img src="docs/source/_static/images/poster/g1-wbt-dance.jpg" alt="g1-wbt-dance" width="240"> | Whole-body tracking (WBT) | `g1-wbt-dance` · `k1-wbt-freekick` · `g1-29dof-wbt-largebox` |
 
 ```bash
-uv run scripts/view.py env=go2-walk-rough
+python scripts/view.py env=go2-walk-rough
 ```
 
 See the [full environment gallery](https://motrixlab.readthedocs.io/en/latest/user_guide/envs/index.html) for all registered environments and their supported training algorithms.
@@ -144,7 +158,7 @@ Seven reusable robot models are registered out of the box and can be combined in
 | <img src="docs/source/_static/images/robots/microduck.png" alt="microduck" width="180"> | `microduck` | Humanoid | 14 |
 
 ```bash
-uv run scripts/view.py robot=go2
+python scripts/view.py robot=go2
 ```
 
 See [Supported Robots](https://motrixlab.readthedocs.io/en/latest/user_guide/robots.html) for configuration details and how to add your own model.

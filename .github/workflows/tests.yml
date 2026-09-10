@@ -33,7 +33,7 @@ jobs:
         run: uv python install 3.10
 
       - name: Install workspace and test dependencies
-        run: uv sync --all-packages --all-groups --all-extras
+        run: sh install.sh --all
 
       - name: Run tests
-        run: uv run pytest -q --disable-warnings --maxfail=1
+        run: .venv/bin/python -m pytest -q --disable-warnings --maxfail=1

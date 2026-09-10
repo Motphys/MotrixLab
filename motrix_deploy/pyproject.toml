@@ -10,7 +10,11 @@ authors = [{ name = "Motphys", email = "developers@motphys.com" }]
 requires-python = "==3.10.*"
 readme = "README.md"
 license = "Apache-2.0"
-dependencies = ["hydra-core>=1.3,<1.4", "motrix-env-core", "numpy>=1.26"]
-
-[project.optional-dependencies]
-onnx = ["onnxruntime==1.23.2"]
+# onnxruntime is a core dependency: deployed policies are ONNX artifacts, so
+# every deployment runtime needs it for inference.
+dependencies = [
+    "hydra-core>=1.3,<1.4",
+    "motrix-env-core",
+    "numpy>=1.26",
+    "onnxruntime==1.23.2",
+]

@@ -21,7 +21,7 @@
 
 ## Validation
 
-- [ ] `uv run pytest -q`
+- [ ] `python -m pytest -q`
 - [ ] `prek run --all-files`
 - [ ] CI checks pass on the target branch
 - [ ] Documentation updated (if applicable)

@@ -26,7 +26,7 @@ horizontal linear-speed sum exceeds $10^8$. The default `20 s` limit produces tr
 physical parameters.
 
 ```bash
-uv run scripts/view.py env=go1-stairs-terrain-walk
-uv run scripts/train.py task=go1-stairs-terrain-walk/skrl.ppo
-uv run scripts/play.py env=go1-stairs-terrain-walk
+python scripts/view.py env=go1-stairs-terrain-walk
+python scripts/train.py task=go1-stairs-terrain-walk/skrl.ppo
+python scripts/play.py env=go1-stairs-terrain-walk
 ```

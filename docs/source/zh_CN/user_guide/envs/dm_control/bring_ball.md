@@ -137,7 +137,7 @@ penalty_side + penalty_hover
 ### 1. 环境预览（随机动作）
 
 ```bash
-uv run scripts/view.py env=dm-manipulator-bring-ball
+python scripts/view.py env=dm-manipulator-bring-ball
 ```
 
 ### 2. 开始训练
@@ -145,19 +145,19 @@ uv run scripts/view.py env=dm-manipulator-bring-ball
 建议显式指定训练后端（JAX / PyTorch 二选一）：
 
 ```bash
-uv run scripts/train.py task=dm-manipulator-bring-ball/skrl.ppo.torch
+python scripts/train.py task=dm-manipulator-bring-ball/skrl.ppo.torch
 ```
 
 ### 3. 查看训练进度
 
 ```bash
-uv run tensorboard --logdir runs/dm-manipulator-bring-ball
+tensorboard --logdir runs/dm-manipulator-bring-ball
 ```
 
 ### 4. 测试训练结果
 
 ```bash
-uv run scripts/play.py env=dm-manipulator-bring-ball
+python scripts/play.py env=dm-manipulator-bring-ball
 ```
 
 ---

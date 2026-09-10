@@ -411,25 +411,25 @@ Target height for each environment is randomly sampled in [0.4, 0.6] m range to 
 ### 1. Environment Preview
 
 ```bash
-uv run scripts/view.py env=bounce_ball
+python scripts/view.py env=bounce_ball
 ```
 
 ### 2. Start Training
 
 ```bash
-uv run scripts/train.py task=bounce_ball/skrl.ppo
+python scripts/train.py task=bounce_ball/skrl.ppo
 ```
 
 ### 3. View Training Progress
 
 ```bash
-uv run tensorboard --logdir runs/bounce_ball
+tensorboard --logdir runs/bounce_ball
 ```
 
 ### 4. Test Training Results
 
 ```bash
-uv run scripts/play.py env=bounce_ball
+python scripts/play.py env=bounce_ball
 ```
 
 ---

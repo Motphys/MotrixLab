@@ -106,16 +106,16 @@ The actual checkpoint files live under the `checkpoints/` subdirectory, and `man
 
     ```bash
     # Auto-discover and play the best policy of the latest run
-    uv run scripts/play.py env=g1-walk-flat
+    python scripts/play.py env=g1-walk-flat
 
     # Specify a checkpoint (must be able to locate metadata.json above it)
-    uv run scripts/play.py env=g1-walk-flat policy=/path/to/run/checkpoints/latest.pt
+    python scripts/play.py env=g1-walk-flat policy=/path/to/run/checkpoints/latest.pt
     ```
 
 -   **Resume**: set `resume=` to a run directory or checkpoint path, and the framework resolves `latest_training_state` from it to continue training.
 
     ```bash
-    uv run scripts/train.py task=g1-walk-flat/motrix.fastsac \
+    python scripts/train.py task=g1-walk-flat/motrix.fastsac \
       resume=/path/to/run
     ```
 
@@ -124,5 +124,5 @@ The actual checkpoint files live under the `checkpoints/` subdirectory, and `man
 TensorBoard logs (`events.out.tfevents.*`) are written directly under the run root and can be viewed per environment:
 
 ```bash
-uv run tensorboard --logdir runs/g1-walk-flat
+tensorboard --logdir runs/g1-walk-flat
 ```

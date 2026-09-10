@@ -106,16 +106,16 @@ runs/g1-walk-flat/motrix/torch/fastsac/26-07-06_11-37-50-376526/
 
     ```bash
     # 自动发现最新 run 的最佳策略
-    uv run scripts/play.py env=g1-walk-flat
+    python scripts/play.py env=g1-walk-flat
 
     # 指定某个 checkpoint（需能向上找到 metadata.json）
-    uv run scripts/play.py env=g1-walk-flat policy=/path/to/run/checkpoints/latest.pt
+    python scripts/play.py env=g1-walk-flat policy=/path/to/run/checkpoints/latest.pt
     ```
 
 -   **续训（resume）**：将 `resume=` 设置为 run 目录或 checkpoint 路径，框架据此解析出 `latest_training_state` 继续训练。
 
     ```bash
-    uv run scripts/train.py task=g1-walk-flat/motrix.fastsac \
+    python scripts/train.py task=g1-walk-flat/motrix.fastsac \
       resume=/path/to/run
     ```
 
@@ -124,5 +124,5 @@ runs/g1-walk-flat/motrix/torch/fastsac/26-07-06_11-37-50-376526/
 TensorBoard 日志（`events.out.tfevents.*`）直接写在 run 根目录下，可按环境查看：
 
 ```bash
-uv run tensorboard --logdir runs/g1-walk-flat
+tensorboard --logdir runs/g1-walk-flat
 ```

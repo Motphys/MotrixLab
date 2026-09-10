@@ -41,7 +41,7 @@ motrix_envs/src/motrix_envs/locomotion/wbt/assets/motion/g1/dance1_subject1.npz
 内置 WBT 的 `ctrl_dt` 为 0.02 s，因此该 motion 应转换为 50 FPS。注册训练入口前先进行运动学 replay：
 
 ```bash
-uv run scripts/motion/replay.py \
+python scripts/motion/replay.py \
   --robot g1-29dof \
   --motion motrix_envs/src/motrix_envs/locomotion/wbt/assets/motion/g1/dance1_subject1.npz
 ```
@@ -131,7 +131,7 @@ algo:
 先用小规模 smoke test 验证 Hydra composition、registry、tensor shape 和一步训练流程：
 
 ```bash
-uv run scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac \
+python scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac \
   algo.asynchronous=true num_envs=64 algo.trainer.num_learning_iterations=100
 ```
 
@@ -139,13 +139,13 @@ uv run scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac \
 `info["Reward"]` 与 `info["metrics"]` 能进入日志。随后使用默认规模训练：
 
 ```bash
-uv run scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac algo.asynchronous=true
+python scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac algo.asynchronous=true
 ```
 
 生成 metadata-backed run 后回放策略：
 
 ```bash
-uv run scripts/play.py env=g1-wbt-dance1-subject1 num_envs=16
+python scripts/play.py env=g1-wbt-dance1-subject1 num_envs=16
 ```
 
 Play 模式自动从第 0 帧开始，关闭 reset noise 和 adaptive sampler，并在 clip 结束后从头重播，无需单独注册 play 环境。

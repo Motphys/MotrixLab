@@ -43,7 +43,7 @@ Built-in WBT uses `ctrl_dt=0.02` s, so convert this motion to 50 FPS. Run kinema
 entry point:
 
 ```bash
-uv run scripts/motion/replay.py \
+python scripts/motion/replay.py \
   --robot g1-29dof \
   --motion motrix_envs/src/motrix_envs/locomotion/wbt/assets/motion/g1/dance1_subject1.npz
 ```
@@ -134,7 +134,7 @@ Task for the same robot first, and tune algorithm hyperparameters only after the
 Use a small smoke test for Hydra composition, registry creation, tensor shapes, and the training path:
 
 ```bash
-uv run scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac \
+python scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac \
   algo.asynchronous=true num_envs=64 algo.trainer.num_learning_iterations=100
 ```
 
@@ -142,13 +142,13 @@ Check for missing motion, joint, or body names; systematic NaNs, joint-limit vio
 reset; and verify that `info["Reward"]` and `info["metrics"]` reach the logs. Then start the default training run:
 
 ```bash
-uv run scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac algo.asynchronous=true
+python scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac algo.asynchronous=true
 ```
 
 After training creates a metadata-backed run, play the policy:
 
 ```bash
-uv run scripts/play.py env=g1-wbt-dance1-subject1 num_envs=16
+python scripts/play.py env=g1-wbt-dance1-subject1 num_envs=16
 ```
 
 Play mode starts at frame 0, disables reset noise and adaptive sampling, and restarts from the beginning at the clip end. A

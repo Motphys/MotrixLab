@@ -308,25 +308,25 @@ The environment uses a consecutive success counter:
 ### Training
 
 ```bash
-uv run scripts/train.py task=shadow-hand-repose/skrl.ppo
+python scripts/train.py task=shadow-hand-repose/skrl.ppo
 ```
 
 ### Policy Evaluation
 
 ```bash
-uv run scripts/play.py env=shadow-hand-repose
+python scripts/play.py env=shadow-hand-repose
 ```
 
 ### Environment Visualization
 
 ```bash
-uv run scripts/view.py env=shadow-hand-repose
+python scripts/view.py env=shadow-hand-repose
 ```
 
 ### TensorBoard
 
 ```bash
-uv run tensorboard --logdir runs/shadow-hand-repose
+tensorboard --logdir runs/shadow-hand-repose
 ```
 
 ---

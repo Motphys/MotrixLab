@@ -297,25 +297,25 @@ actuator_ctrls = targets
 ### 训练
 
 ```bash
-uv run scripts/train.py task=shadow-hand-repose/skrl.ppo
+python scripts/train.py task=shadow-hand-repose/skrl.ppo
 ```
 
 ### 策略评估
 
 ```bash
-uv run scripts/play.py env=shadow-hand-repose
+python scripts/play.py env=shadow-hand-repose
 ```
 
 ### 环境可视化
 
 ```bash
-uv run scripts/view.py env=shadow-hand-repose
+python scripts/view.py env=shadow-hand-repose
 ```
 
 ### TensorBoard
 
 ```bash
-uv run tensorboard --logdir runs/shadow-hand-repose
+tensorboard --logdir runs/shadow-hand-repose
 ```
 
 ---

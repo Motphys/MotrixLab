@@ -2,12 +2,14 @@
 
 This tutorial demonstrates the MotrixLab workflow through a simple example - loading and training a cartpole environment:
 
+Complete [installation](installation.md) first, then activate the environment with `source .venv/bin/activate` (Windows PowerShell: `.venv\Scripts\Activate.ps1`).
+
 ## Environment Preview
 
 We provide a simple script to visualize an environment without executing any training. This helps you verify that system dependencies are correctly configured:
 
 ```bash
-uv run scripts/view.py env=cartpole
+python scripts/view.py env=cartpole
 ```
 
 This will open a visualization window showing the cartpole physics simulation environment with random actions for demonstration.
@@ -17,7 +19,7 @@ This will open a visualization window showing the cartpole physics simulation en
 Start training the cartpole balancing task:
 
 ```bash
-uv run scripts/train.py task=cartpole/skrl.ppo
+python scripts/train.py task=cartpole/skrl.ppo
 ```
 
 The training process will automatically:
@@ -36,7 +38,7 @@ Training results will be saved in the `runs/cartpole/` directory, including:
 If you want to observe the model's learning process during training, you can enable visualization rendering:
 
 ```bash
-uv run scripts/train.py task=cartpole/skrl.ppo render=true
+python scripts/train.py task=cartpole/skrl.ppo render=true
 ```
 
 ### 🎮 Interactive Rendering Control
@@ -56,7 +58,7 @@ This interactive control allows you to observe training effects when needed and 
 Use TensorBoard to view training progress:
 
 ```bash
-uv run tensorboard --logdir runs/cartpole
+tensorboard --logdir runs/cartpole
 ```
 
 ## Test Trained Model
@@ -65,10 +67,10 @@ After training is complete, test the trained policy:
 
 ```bash
 # Automatically find best policy for testing (recommended)
-uv run scripts/play.py env=cartpole
+python scripts/play.py env=cartpole
 
 # Manually specify a checkpoint from a metadata-backed run
-uv run scripts/play.py env=cartpole policy=/path/to/run/checkpoints/policy-file
+python scripts/play.py env=cartpole policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **Tip**: The system automatically finds the latest run and its best policy under `runs/cartpole/`. A manually selected checkpoint must belong to a run containing `metadata.json` and `task_config.yaml`.

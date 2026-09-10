@@ -239,17 +239,17 @@ p = 1 / (1 + exp(-action))
 ### 训练
 
 ```bash
-uv run scripts/train.py task=franka-lift-cube/skrl.ppo
+python scripts/train.py task=franka-lift-cube/skrl.ppo
 ```
 
 ### 策略评估
 
 ```bash
-uv run scripts/play.py env=franka-lift-cube
+python scripts/play.py env=franka-lift-cube
 ```
 
 ### TensorBoard
 
 ```bash
-uv run tensorboard --logdir runs/franka-lift-cube
+tensorboard --logdir runs/franka-lift-cube
 ```

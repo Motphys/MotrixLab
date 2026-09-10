@@ -41,70 +41,80 @@ git clone https://github.com/Motphys/MotrixLab.git
 cd MotrixLab
 ```
 
-### 配置依赖环境
+### 安装运行环境
+
+在仓库根目录执行以下命令安装运行环境（Windows 上请在 PowerShell 中执行 `install.ps1`；若执行策略受限，改用 `powershell -ExecutionPolicy Bypass -File install.ps1`）：
+
+```bash
+sh install.sh
+```
+
+该命令会自动探测 GPU 厂商（NVIDIA → CUDA，AMD → ROCm），安装全部 workspace package、对应的
+PyTorch wheel、SKRL 训练框架以及内置的 FastSAC 算法。
 
 :::{dropdown} 配置国内镜像源（可选）
 :animate: fade-in
 :color: warning
 :icon: desktop-download
-如果您身处中国大陆，建议配置国内镜像源以加速依赖下载：
+如果您身处中国大陆，建议配置国内镜像源以加速依赖下载。修改项目根目录的 `uv.toml` 文件：
 
-1. 修改项目根目录的 `uv.toml` 文件
-
-    ```toml
-    [[index]]
-    name = "mirror"
-    # 请填写您选择的国内镜像源，例如：
-    # 清华源: "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
-    url = ""
+```toml
+[[index]]
+name = "mirror"
+# 请填写您选择的国内镜像源，例如：
+# 清华源: "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
+url = ""
 
 
-    [[index]]
-    name = "pytorch"
-    url = "https://download.pytorch.org/whl/cu128"
-    default = true
-    ```
+[[index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu128"
+default = true
+```
 
-2. 在执行 `uv sync` 命令时添加 `--index-strategy unsafe-best-match` 参数：
-
-    ```
-    uv sync --all-packages --all-groups --all-extras --index-strategy unsafe-best-match
-    ```
+然后重新执行 `sh install.sh` 即可生效。
 
 :::
 
-执行以下命令安装完整依赖：
+### 激活环境
+
+安装完成后，先激活环境再运行命令（Windows PowerShell：`.venv\Scripts\Activate.ps1`）：
 
 ```bash
-# 安装所有依赖
-uv sync --all-packages --all-groups --all-extras
+source .venv/bin/activate
 ```
 
-如果仅需特定训练框架，可选择性安装以减少依赖体积：
+```{note}
+避免裸 `uv sync` / `uv run`：CUDA 与 ROCm wheel 由互斥的 extras 选择，裸命令会解析到默认的 PyPI
+分支并重装环境。请从激活后的环境运行命令，或对单条命令使用 `uv run --no-sync`。
+```
+
+## 开发环境安装
+
+上述运行环境只包含训练与部署所需的依赖。如果你要参与开发（运行测试、修改代码、构建文档），
+执行以下命令安装完整开发环境：
 
 ```bash
-
-# 安装 SKRL JAX （仅支持 Linux 平台）
-uv sync --all-packages --extra skrl-jax
-
-# 安装 SKRL PyTorch
-uv sync --all-packages --extra skrl-torch
-
-# 安装 RSLRL（仅支持 PyTorch）
-uv sync --all-packages --extra rslrl
+sh install.sh --all
 ```
 
-## Package 边界
+`--all` 会把所有依赖一次性全部启用：开发工具链、测试依赖、全部训练后端
+（`--skrl-jax` / `--rslrl`）与文档工具。也可以在运行环境基础上按需追加，
+例如 `sh install.sh --docs` 只补文档工具链。
 
--   `motrix-env-core` 提供环境 framework，不包含内置任务和资产。
--   `motrix-envs` 依赖 core package，包含所有内置环境、机器人模型和任务数据。
--   `motrix-rl` 仅依赖 core package，不强制安装内置环境。
+## 安装参数参考
 
-外部项目实现自定义环境时可以只安装 `motrix-env-core`；使用内置任务时安装 `motrix-envs`。导入
-`motrix_envs` 时会完成内置环境注册。
+所有模式都会安装全部 workspace package；运行环境在此基础上启用「1 个 GPU extra ＋ 训练后端 extra」，
+各参数只负责选择或追加：
 
-```python
-from motrix_envs import registry
-from motrix_env_core.direct.env import DirectEnv
-from motrix_envs.core import EnvCfg, SceneCfg, configclass
-```
+| 参数 | 可选值 | 说明 |
+| ---- | ------ | ---- |
+| `--all` | — | 完整开发环境：把下述所有依赖一次性全部启用（开发工具链、测试依赖、全部训练后端与文档工具） |
+| （无参数） | — | 运行环境；自动探测 GPU 厂商（NVIDIA → CUDA，AMD → ROCm，无法探测时回退 CUDA） |
+| `--gpu` | `cuda`<br>`rocm` | 指定 torch wheel 来源，覆盖自动探测 |
+| `--skrl-jax` | — | SKRL（JAX）训练后端，仅 Linux |
+| `--rslrl` | — | RSL-RL（PyTorch）训练后端 |
+| `--docs` | — | 追加本地构建文档所需的工具链（Sphinx） |
+| `-h`、`--help` | — | 显示帮助 |
+
+完整参数说明见 `sh install.sh --help`。

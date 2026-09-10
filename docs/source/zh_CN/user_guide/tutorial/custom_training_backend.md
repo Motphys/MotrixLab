@@ -193,7 +193,7 @@ seed: 42
 如果后端已经在启动路径中完成注册，可以直接用 CLI：
 
 ```bash
-uv run scripts/train.py task=cartpole/myrl.ppo
+python scripts/train.py task=cartpole/myrl.ppo
 ```
 
 如果是外部实验包，使用自己的 Hydra config root，并在进入训练入口前导入 backend 注册模块。无需额外的 Python task registry。

@@ -10,12 +10,12 @@
 
 ```bash
 # 训练默认的 Cartpole SKRL PPO Task
-uv run scripts/train.py task=cartpole/skrl.ppo
+python scripts/train.py task=cartpole/skrl.ppo
 
 # 选择其他框架或算法
-uv run scripts/train.py task=cartpole/rslrl.ppo
-uv run scripts/train.py task=g1-walk-flat/motrix.fastsac
-uv run scripts/train.py task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
+python scripts/train.py task=cartpole/rslrl.ppo
+python scripts/train.py task=g1-walk-flat/motrix.fastsac
+python scripts/train.py task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
 ```
 
 当前内置的 RL method 与训练后端：
@@ -26,28 +26,28 @@ uv run scripts/train.py task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
 | `rslrl.ppo`      | `torch`         | RSLRL PPO                                       |
 | `motrix.fastsac` | `torch`         | FastSAC；`algo.asynchronous` 选择同步或异步拓扑 |
 
-运行 `uv run scripts/train.py --help` 可以查看当前代码中全部可选 Task。Task 文件结构和覆盖规则见 [Task 配置与命令行参数覆盖](training_environment_config.md)。
+运行 `python scripts/train.py --help` 可以查看当前代码中全部可选 Task。Task 文件结构和覆盖规则见 [Task 配置与命令行参数覆盖](training_environment_config.md)。
 
 ### 选择训练后端与仿真后端
 
 ```bash
 # 覆盖训练后端（task.train_backend 为 null 时自动选择）
-uv run scripts/train.py task=cartpole/skrl.ppo task.train_backend=jax
-uv run scripts/train.py task=cartpole/skrl.ppo task.train_backend=torch
+python scripts/train.py task=cartpole/skrl.ppo task.train_backend=jax
+python scripts/train.py task=cartpole/skrl.ppo task.train_backend=torch
 
 # 指定 manager 环境注入的仿真器
-uv run scripts/train.py task=g1-wbt-dance sim=motrixsim
+python scripts/train.py task=g1-wbt-dance sim=motrixsim
 ```
 
 ### 训练规模与随机种子
 
 ```bash
 # 并行环境数量
-uv run scripts/train.py task=cartpole/skrl.ppo num_envs=1024
+python scripts/train.py task=cartpole/skrl.ppo num_envs=1024
 
 # 固定随机种子（复现）/ 运行时选择随机种子
-uv run scripts/train.py task=cartpole/skrl.ppo seed=42
-uv run scripts/train.py task=cartpole/skrl.ppo seed=null
+python scripts/train.py task=cartpole/skrl.ppo seed=42
+python scripts/train.py task=cartpole/skrl.ppo seed=null
 ```
 
 ```{note}
@@ -58,14 +58,14 @@ Hydra 可以直接覆盖已经声明的算法字段，例如 `algo.agent.learnin
 
 ```bash
 # 训练成功结束后，用本次 run 的最佳策略自动回放
-uv run scripts/train.py task=g1-walk-flat/motrix.fastsac play=true
+python scripts/train.py task=g1-walk-flat/motrix.fastsac play=true
 
 # 从某个 run 目录或 checkpoint 续训
-uv run scripts/train.py task=g1-walk-flat/motrix.fastsac \
+python scripts/train.py task=g1-walk-flat/motrix.fastsac \
   resume=/path/to/run
 
 # 启用渲染监控训练过程
-uv run scripts/train.py task=cartpole/skrl.ppo render=true
+python scripts/train.py task=cartpole/skrl.ppo render=true
 ```
 
 ### 常用 Hydra 覆盖项
@@ -92,7 +92,7 @@ uv run scripts/train.py task=cartpole/skrl.ppo render=true
 TensorBoard 日志写在 run 目录下，可按环境查看：
 
 ```bash
-uv run tensorboard --logdir runs/cartpole
+tensorboard --logdir runs/cartpole
 ```
 
 除标准的回报、损失曲线外，若环境通过 `info["Reward"]` 暴露了各 reward 分项，训练时也会将其记录到 TensorBoard。
@@ -103,14 +103,14 @@ uv run tensorboard --logdir runs/cartpole
 
 ```bash
 # 自动发现最新 run 的最佳策略并回放（推荐）
-uv run scripts/play.py env=cartpole
+python scripts/play.py env=cartpole
 
 # 指定某个 checkpoint（需能向上找到 metadata.json）
-uv run scripts/play.py env=g1-walk-flat \
+python scripts/play.py env=g1-walk-flat \
   policy=/path/to/run/checkpoints/latest.pt
 
 # 指定回放环境数量
-uv run scripts/play.py env=cartpole num_envs=100
+python scripts/play.py env=cartpole num_envs=100
 ```
 
 ```{note}

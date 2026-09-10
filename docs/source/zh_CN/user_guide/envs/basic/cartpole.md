@@ -88,25 +88,25 @@ reward = 1.0  # 每步固定奖励
 ### 1. 环境预览
 
 ```bash
-uv run scripts/view.py env=cartpole
+python scripts/view.py env=cartpole
 ```
 
 ### 2. 开始训练
 
 ```bash
-uv run scripts/train.py task=cartpole/skrl.ppo
+python scripts/train.py task=cartpole/skrl.ppo
 ```
 
 ### 3. 查看训练进度
 
 ```bash
-uv run tensorboard --logdir runs/cartpole
+tensorboard --logdir runs/cartpole
 ```
 
 ### 4. 测试训练结果
 
 ```bash
-uv run scripts/play.py env=cartpole
+python scripts/play.py env=cartpole
 ```
 
 ---
