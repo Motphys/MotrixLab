@@ -53,7 +53,7 @@ rocm = [
 dev = [
     "dprint-py>=0.57.0.0",
     "mypy>=1.15,<2",
-    "pytest>=8.3.3,<8.4.0",
+    "pytest>=8.3.3,<9.2.0",
     "pytest-cov",
 ]
 test = [
