@@ -63,36 +63,36 @@ Order: `upper_arm_horizontal, lower_arm_horizontal, upper_arm_vertical, lower_ar
 ### 1. Environment Preview
 
 ```bash
-uv run scripts/view.py env=acrobot
+python scripts/view.py env=acrobot
 ```
 
 ### 2. Start Training
 
 ```bash
 # Train with default parameters
-uv run scripts/train.py task=acrobot/skrl.ppo
+python scripts/train.py task=acrobot/skrl.ppo
 
 # Customize parallel environments
-uv run scripts/train.py task=acrobot/skrl.ppo num_envs=1024
+python scripts/train.py task=acrobot/skrl.ppo num_envs=1024
 
 # Enable rendering during training
-uv run scripts/train.py task=acrobot/skrl.ppo render=true
+python scripts/train.py task=acrobot/skrl.ppo render=true
 ```
 
 ### 3. View Training Progress
 
 ```bash
-uv run tensorboard --logdir runs/acrobot
+tensorboard --logdir runs/acrobot
 ```
 
 ### 4. Test Training Results
 
 ```bash
 # Auto-discover best policy (recommended)
-uv run scripts/play.py env=acrobot
+python scripts/play.py env=acrobot
 
 # Manually specify a checkpoint from a metadata-backed run
-uv run scripts/play.py env=acrobot policy=/path/to/run/checkpoints/policy-file
+python scripts/play.py env=acrobot policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **Tip**: Policies are auto-selected from `runs/acrobot/`. Use `policy=...` to select a checkpoint whose parent run contains `metadata.json`.

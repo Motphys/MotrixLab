@@ -192,7 +192,7 @@ The Task's `rllib`, `algo`, and `train_backend` values must match the framework 
 If the backend is registered on the startup path, use the shared CLI:
 
 ```bash
-uv run scripts/train.py task=cartpole/myrl.ppo
+python scripts/train.py task=cartpole/myrl.ppo
 ```
 
 For an external experiment package, use its Hydra config root and import the backend registration module before entering the training function. No separate Python Task registry is required.

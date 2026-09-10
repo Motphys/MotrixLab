@@ -234,17 +234,17 @@ Cabinet is fixed on ground with drawer in closed state (joint position at 0).
 ### Training
 
 ```bash
-uv run scripts/train.py task=franka-open-cabinet/skrl.ppo
+python scripts/train.py task=franka-open-cabinet/skrl.ppo
 ```
 
 ### Policy Evaluation
 
 ```bash
-uv run scripts/play.py env=franka-open-cabinet
+python scripts/play.py env=franka-open-cabinet
 ```
 
 ### TensorBoard
 
 ```bash
-uv run tensorboard --logdir runs/franka-open-cabinet
+tensorboard --logdir runs/franka-open-cabinet
 ```

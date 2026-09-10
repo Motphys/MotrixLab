@@ -156,15 +156,15 @@ reward = fall_penalty if fallen else reward
 ### 1. 环境预览
 
 ```bash
-uv run scripts/view.py env=stewart-static
-uv run scripts/view.py env=stewart-disturb-xy
+python scripts/view.py env=stewart-static
+python scripts/view.py env=stewart-disturb-xy
 ```
 
 ### 2. 开始训练
 
 ```bash
-uv run scripts/train.py task=stewart-static/skrl.ppo
-uv run scripts/train.py task=stewart-disturb-xy/skrl.ppo
+python scripts/train.py task=stewart-static/skrl.ppo
+python scripts/train.py task=stewart-disturb-xy/skrl.ppo
 ```
 
 ### 训练说明
@@ -176,15 +176,15 @@ uv run scripts/train.py task=stewart-disturb-xy/skrl.ppo
 ### 3. 查看训练进度
 
 ```bash
-uv run tensorboard --logdir runs/stewart-static
-uv run tensorboard --logdir runs/stewart-disturb-xy
+tensorboard --logdir runs/stewart-static
+tensorboard --logdir runs/stewart-disturb-xy
 ```
 
 ### 4. 测试训练结果
 
 ```bash
-uv run scripts/play.py env=stewart-static
-uv run scripts/play.py env=stewart-disturb-xy
+python scripts/play.py env=stewart-static
+python scripts/play.py env=stewart-disturb-xy
 ```
 
 ---

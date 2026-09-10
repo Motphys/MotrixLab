@@ -143,15 +143,15 @@ Turn 的核心是 tip 触达并对准目标点：目标点位于 spinner 周围�
 ### 1. 环境预览（随机动作）
 
 ```bash
-uv run scripts/view.py env=dm-finger-spin
+python scripts/view.py env=dm-finger-spin
 ```
 
 ```bash
-uv run scripts/view.py env=dm-finger-turn-easy
+python scripts/view.py env=dm-finger-turn-easy
 ```
 
 ```bash
-uv run scripts/view.py env=dm-finger-turn-hard
+python scripts/view.py env=dm-finger-turn-hard
 ```
 
 ### 2. 开始训练
@@ -159,21 +159,21 @@ uv run scripts/view.py env=dm-finger-turn-hard
 建议显式指定训练后端（JAX / PyTorch 二选一）：
 
 ```bash
-uv run scripts/train.py task=dm-finger-spin/skrl.ppo task.train_backend=torch
+python scripts/train.py task=dm-finger-spin/skrl.ppo task.train_backend=torch
 ```
 
 ```bash
-uv run scripts/train.py task=dm-finger-turn-easy/skrl.ppo task.train_backend=torch
+python scripts/train.py task=dm-finger-turn-easy/skrl.ppo task.train_backend=torch
 ```
 
 ```bash
-uv run scripts/train.py task=dm-finger-turn-hard/skrl.ppo task.train_backend=torch
+python scripts/train.py task=dm-finger-turn-hard/skrl.ppo task.train_backend=torch
 ```
 
 ### 3. 查看训练进度
 
 ```bash
-uv run tensorboard --logdir runs/dm-finger-spin
+tensorboard --logdir runs/dm-finger-spin
 ```
 
 ### 4. 测试训练结果
@@ -181,7 +181,7 @@ uv run tensorboard --logdir runs/dm-finger-spin
 `scripts/play.py` 默认会在 `runs/{env-name}/` 下查找最新的 metadata-backed run，并加载其 `best_policy` artifact；也可以用 `policy=...` 显式指定 checkpoint：
 
 ```bash
-uv run scripts/play.py env=dm-finger-turn-hard
+python scripts/play.py env=dm-finger-turn-hard
 ```
 
 ---

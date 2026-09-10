@@ -88,7 +88,7 @@ The trainer owns framework-specific model construction, optimization, checkpoint
 For example:
 
 ```bash
-uv run scripts/train.py task=cartpole/skrl.ppo num_envs=1024
+python scripts/train.py task=cartpole/skrl.ppo num_envs=1024
 ```
 
 This command performs the following steps:
@@ -104,8 +104,8 @@ This command performs the following steps:
 The same environment can have multiple Task recipes without changing its implementation:
 
 ```bash
-uv run scripts/train.py task=cartpole/skrl.ppo
-uv run scripts/train.py task=cartpole/rslrl.ppo
+python scripts/train.py task=cartpole/skrl.ppo
+python scripts/train.py task=cartpole/rslrl.ppo
 ```
 
 SKRL supports JAX and Torch providers, RSLRL uses Torch, and `motrix.fastsac` selects its synchronous or asynchronous Torch trainer through `algo.asynchronous`. The selected Task and provider determine the algorithm configuration and output metadata.

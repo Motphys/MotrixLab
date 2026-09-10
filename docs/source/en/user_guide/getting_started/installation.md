@@ -41,40 +41,58 @@ git clone https://github.com/Motphys/MotrixLab.git
 cd MotrixLab
 ```
 
-### Configure Dependencies
+### Install the Runtime Environment
 
-Execute the following command to install complete dependencies:
-
-```bash
-# Install all dependencies
-uv sync --all-packages --all-groups --all-extras
-```
-
-If you only need specific training frameworks, you can selectively install to reduce dependency size:
+Install the runtime environment from the repository root (on Windows, run `install.ps1` in PowerShell; if the execution policy blocks it, use `powershell -ExecutionPolicy Bypass -File install.ps1`):
 
 ```bash
-
-# Install SKRL JAX (Linux only)
-uv sync --all-packages --extra skrl-jax
-
-# Install SKRL PyTorch
-uv sync --all-packages --extra skrl-torch
-
-# Install RSLRL (PyTorch only)
-uv sync --all-packages --extra rslrl
+sh install.sh
 ```
 
-## Package Boundaries
+This auto-detects your GPU vendor (NVIDIA → CUDA, AMD → ROCm) and installs all workspace packages,
+the matching PyTorch wheels, the SKRL training framework, and the built-in FastSAC algorithm.
 
--   `motrix-env-core` provides the environment framework without built-in tasks or assets.
--   `motrix-envs` depends on the core package and contains all built-in environments, robot models, and task data.
--   `motrix-rl` depends on the core package and does not require the built-in environments.
+### Activate the Environment
 
-In an external project, install only `motrix-env-core` when implementing custom environments. Install
-`motrix-envs` when using the built-in tasks. Importing `motrix_envs` performs built-in environment registration.
+After installing, activate the environment before running commands (Windows PowerShell:
+`.venv\Scripts\Activate.ps1`):
 
-```python
-from motrix_envs import registry
-from motrix_env_core.direct.env import DirectEnv
-from motrix_envs.core import EnvCfg, SceneCfg, configclass
+```bash
+source .venv/bin/activate
 ```
+
+```{note}
+Avoid bare `uv sync` / `uv run`: the CUDA and ROCm wheels are selected by mutually exclusive
+extras, so a bare command resolves the default PyPI fork and reinstalls the environment. Run
+commands from the activated environment, or pass `--no-sync` to one-off `uv run` calls.
+```
+
+## Development Environment
+
+The runtime environment only contains what training and deployment need. To contribute to the
+project (run tests, modify code, build the docs), install the full development environment:
+
+```bash
+sh install.sh --all
+```
+
+`--all` enables everything in one go: the dev toolchain, test dependencies, all training backends
+(`--skrl-jax` / `--rslrl`), and the docs tooling. You can also extend the runtime environment
+incrementally, e.g. `sh install.sh --docs` adds only the docs toolchain.
+
+## Option Reference
+
+Every mode installs all workspace packages; the runtime environment enables one GPU extra plus the
+training backend extra on top of them, and each option only selects or appends to that combination:
+
+| Option | Values | Description |
+| ------ | ------ | ----------- |
+| `--all` | — | Full development environment: everything below is enabled in one go (dev toolchain, test dependencies, all training backends, and docs tooling) |
+| *(none)* | — | Runtime environment; the GPU vendor is auto-detected (NVIDIA → CUDA, AMD → ROCm; CUDA as fallback when detection is impossible) |
+| `--gpu` | `cuda`<br>`rocm` | Select the torch wheel flavor explicitly, overriding auto-detection |
+| `--skrl-jax` | — | SKRL on JAX backend, Linux only |
+| `--rslrl` | — | RSL-RL on PyTorch backend |
+| `--docs` | — | Add the toolchain (sphinx) needed to build the documentation locally |
+| `-h`, `--help` | — | Show the help message |
+
+Run `sh install.sh --help` for the full option reference.

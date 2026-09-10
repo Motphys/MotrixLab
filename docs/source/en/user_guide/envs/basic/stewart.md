@@ -156,15 +156,15 @@ An episode terminates when any of the following is true:
 ### 1. Environment Preview
 
 ```bash
-uv run scripts/view.py env=stewart-static
-uv run scripts/view.py env=stewart-disturb-xy
+python scripts/view.py env=stewart-static
+python scripts/view.py env=stewart-disturb-xy
 ```
 
 ### 2. Start Training
 
 ```bash
-uv run scripts/train.py task=stewart-static/skrl.ppo
-uv run scripts/train.py task=stewart-disturb-xy/skrl.ppo
+python scripts/train.py task=stewart-static/skrl.ppo
+python scripts/train.py task=stewart-disturb-xy/skrl.ppo
 ```
 
 ### Training Notes
@@ -176,15 +176,15 @@ uv run scripts/train.py task=stewart-disturb-xy/skrl.ppo
 ### 3. View Training Progress
 
 ```bash
-uv run tensorboard --logdir runs/stewart-static
-uv run tensorboard --logdir runs/stewart-disturb-xy
+tensorboard --logdir runs/stewart-static
+tensorboard --logdir runs/stewart-disturb-xy
 ```
 
 ### 4. Test Training Results
 
 ```bash
-uv run scripts/play.py env=stewart-static
-uv run scripts/play.py env=stewart-disturb-xy
+python scripts/play.py env=stewart-static
+python scripts/play.py env=stewart-disturb-xy
 ```
 
 ---

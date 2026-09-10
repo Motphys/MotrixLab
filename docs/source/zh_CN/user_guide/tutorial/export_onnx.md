@@ -18,17 +18,8 @@ SKRL/JAX checkpoint 暂不支持导出。导出命令接收完整的 run 目录�
 
 ## 安装依赖
 
-在仓库根目录安装 ONNX 依赖以及训练所用的后端：
-
-```bash
-# SKRL/Torch 或 Motrix FastSAC
-uv sync --all-packages --extra onnx --extra skrl-torch
-
-# RSL-RL
-uv sync --all-packages --extra onnx --extra rslrl
-```
-
-如果使用 `uv sync --all-packages --all-groups --all-extras` 完成安装，则不需要额外操作。
+无需额外步骤：ONNX 导出与推理所需的依赖（`onnx`、`onnxruntime`）已包含在 `sh install.sh`
+安装的默认运行环境中（参见[安装环境](../getting_started/installation.md)）。
 
 ## 导出模型
 
@@ -41,7 +32,7 @@ runs/cartpole/skrl/torch/ppo/<timestamp>/
 指定输出文件进行导出：
 
 ```bash
-uv run scripts/export_onnx.py \
+python scripts/export_onnx.py \
   run_dir=runs/cartpole/skrl/torch/ppo/<timestamp> \
   output=artifacts/cartpole.onnx
 ```
@@ -51,7 +42,7 @@ uv run scripts/export_onnx.py \
 如果省略 `output`，模型会写入最佳 checkpoint 所在目录，文件名为 `policy.onnx`：
 
 ```bash
-uv run scripts/export_onnx.py \
+python scripts/export_onnx.py \
   run_dir=runs/cartpole/skrl/torch/ppo/<timestamp>
 ```
 
@@ -113,7 +104,7 @@ print(actions)
 例如，导出为 opset 17，并增加检查样本数：
 
 ```bash
-uv run scripts/export_onnx.py \
+python scripts/export_onnx.py \
   run_dir=<run-dir> \
   output=policy.onnx \
   opset=17 \

@@ -134,8 +134,8 @@ registry.robotcfg("my-robot")(MyRobot)
 先通过 registry 构造配置并预览机器人：
 
 ```bash
-uv run scripts/view.py robot=my-robot
-uv run pytest motrix_envs/tests/test_robot_cfg.py -q
+python scripts/view.py robot=my-robot
+python -m pytest motrix_envs/tests/test_robot_cfg.py -q
 ```
 
 至少应验证模型能够构建、`base_link_name` 存在、关节与 actuator 对应、默认 key pose 完整，以及任务需要的碰撞体和 site
@@ -146,8 +146,8 @@ uv run pytest motrix_envs/tests/test_robot_cfg.py -q
 `_ROBOT_METADATA` 中补充类型和截图参数，然后生成截图与表格：
 
 ```bash
-uv run docs/scripts/generate_robot_docs.py --screenshots my-robot
-uv run docs/scripts/generate_robot_docs.py --check
+python docs/scripts/generate_robot_docs.py --screenshots my-robot
+python docs/scripts/generate_robot_docs.py --check
 ```
 
 ## 独立预览
@@ -155,7 +155,7 @@ uv run docs/scripts/generate_robot_docs.py --check
 使用 `view.py` 可以在默认姿态下查看已注册 robot，无需创建 RL environment：
 
 ```bash
-uv run scripts/view.py robot=go2
+python scripts/view.py robot=go2
 ```
 
 robot 模式会构建一个静态标准场景，不采样 action，也不执行 physics rollout。

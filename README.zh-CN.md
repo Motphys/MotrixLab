@@ -37,7 +37,7 @@ _使用 MotrixLab 训练的 microduck 行走策略，由 MotrixRender 实时渲�
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/source/_static/images/architecture-dark.svg">
-    <img src="docs/source/_static/images/architecture-light.svg" alt="MotrixLab 架构：环境只需定义一次，即可用 SKRL、RSL-RL 或 FastSAC 在数千个并行 MotrixSim 环境上训练，同一策略产物可部署到 MuJoCo 或 Unitree 硬件" width="720">
+    <img src="docs/source/_static/images/architecture-light.svg" alt="MotrixLab 架构：环境只需定义一次，即可用 SKRL、RSL-RL 或 FastSAC 在数千个并行 MotrixSim 环境上训练（支持 NVIDIA CUDA 与 AMD ROCm GPU），同一策略产物可部署到 MuJoCo 或 Unitree 硬件" width="100%">
   </picture>
 </div>
 
@@ -60,6 +60,7 @@ _使用 MotrixLab 训练的 microduck 行走策略，由 MotrixRender 实时渲�
 | [uv](https://docs.astral.sh/uv/) | Python 项目与依赖管理工具 — [安装指南](https://docs.astral.sh/uv/getting-started/installation/) |
 | [Git LFS](https://git-lfs.com) | 机器人网格、运动数据与视频由 LFS 管理 |
 | 操作系统 | Linux x86_64 或 Windows x86_64；JAX 训练后端仅支持 Linux |
+| GPU | NVIDIA（CUDA）或 AMD（ROCm）——`sh install.sh` 自动选择对应 wheel |
 
 ### 1. 克隆仓库
 
@@ -71,16 +72,29 @@ git lfs pull
 
 ### 2. 安装依赖
 
+Linux：
+
 ```bash
-uv sync --all-packages
+sh install.sh
 ```
 
-该命令会安装全部 workspace package，以及内置 FastSAC 所需的默认训练后端 **PyTorch**。SKRL、RSLRL 等第三方训练框架为可选 extras。
+Windows（PowerShell）：
+
+```powershell
+.\install.ps1
+# 若提示执行策略受限：
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+脚本会自动探测 GPU 厂商（NVIDIA → CUDA，AMD → ROCm），安装全部 workspace package 及对应的 PyTorch wheel。可用 `--gpu cuda|rocm` 显式指定 GPU，`--skrl-jax` / `--rslrl` 追加训练后端——详见 `sh install.sh --help`。
 
 ### 3. 训练第一个策略
 
+先激活安装好的环境（Windows PowerShell：`.venv\Scripts\Activate.ps1`）：
+
 ```bash
-uv run scripts/train.py task=microduck-walk-flat/motrix.fastsac play=true
+source .venv/bin/activate
+python scripts/train.py task=microduck-walk-flat/motrix.fastsac play=true
 ```
 
 训练过程中，内置面板会实时显示运行进度、回合统计、吞吐、奖励与系统健康状态：
@@ -92,7 +106,7 @@ uv run scripts/train.py task=microduck-walk-flat/motrix.fastsac play=true
 训练会启动数千个并行环境实例；训练结束后会自动加载策略并在查看器中回放。checkpoint 与 TensorBoard 日志保存在 `runs/microduck-walk-flat/` 目录下，通过以下命令查看训练曲线：
 
 ```bash
-uv run tensorboard --logdir runs/microduck-walk-flat
+tensorboard --logdir runs/microduck-walk-flat
 ```
 
 microduck 的训练数分钟内即可完成：平均回报与回合长度通常在约 4,000 次迭代后收敛：
@@ -106,7 +120,7 @@ microduck 的训练数分钟内即可完成：平均回报与回合长度通常�
 无需重新训练即可回放最近一次训练得到的策略（例如提前 Ctrl+C 中断训练之后）：
 
 ```bash
-uv run scripts/play.py env=microduck-walk-flat
+python scripts/play.py env=microduck-walk-flat
 ```
 
 训练好的 microduck 策略在查看器中的回放效果：
@@ -124,7 +138,7 @@ MotrixLab 内置 50+ 个仿真环境，覆盖基础控制、四足、人形、�
 | <img src="docs/source/_static/images/poster/g1-wbt-dance.jpg" alt="g1-wbt-dance" width="240"> | 全身动作跟踪（WBT） | `g1-wbt-dance` · `k1-wbt-freekick` · `g1-29dof-wbt-largebox` |
 
 ```bash
-uv run scripts/view.py env=go2-walk-rough
+python scripts/view.py env=go2-walk-rough
 ```
 
 完整环境列表与各环境支持的训练算法见[环境总览](https://motrixlab.readthedocs.io/zh-cn/latest/user_guide/envs/index.html)。
@@ -144,7 +158,7 @@ uv run scripts/view.py env=go2-walk-rough
 | <img src="docs/source/_static/images/robots/microduck.png" alt="microduck" width="180"> | `microduck` | 人形机器人 | 14 |
 
 ```bash
-uv run scripts/view.py robot=go2
+python scripts/view.py robot=go2
 ```
 
 机器人配置细节与自定义新模型的方法见[支持的机器人](https://motrixlab.readthedocs.io/zh-cn/latest/user_guide/robots.html)。

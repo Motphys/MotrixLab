@@ -17,7 +17,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-onnx = ["motrix-deploy[onnx]"]
 mujoco = ["motrix-deploy-mujoco"]
 unitree = ["motrix-deploy-unitree"]
 

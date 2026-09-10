@@ -8,7 +8,7 @@
 在仓库根目录执行：
 
 ```bash
-uv sync --all-packages --all-groups --all-extras
+sh install.sh --all
 ```
 
 这个命令会安装训练、MuJoCo、ONNX Runtime 和 Unitree SDK2 依赖。
@@ -18,7 +18,7 @@ uv sync --all-packages --all-groups --all-extras
 没有现成 run 时，训练 flat-terrain Go2 策略：
 
 ```bash
-uv run scripts/train.py task=go2-walk-flat/rslrl.ppo
+python scripts/train.py task=go2-walk-flat/rslrl.ppo
 ```
 
 训练结果保存在 `runs/go2-walk-flat/`。
@@ -28,7 +28,7 @@ uv run scripts/train.py task=go2-walk-flat/rslrl.ppo
 导出最近一次 run：
 
 ```bash
-uv run scripts/export_deploy.py env=go2-walk-flat
+python scripts/export_deploy.py env=go2-walk-flat
 ```
 
 输出目录为 `artifacts/go2-walk-flat.deploy/`。artifact 是部署时唯一需要带走的策略文件，包含模型和运行所需的配置。
@@ -36,7 +36,7 @@ uv run scripts/export_deploy.py env=go2-walk-flat
 ## 4. 检查 artifact
 
 ```bash
-uv run motrix-deploy inspect \
+motrix-deploy inspect \
   artifact=artifacts/go2-walk-flat.deploy
 ```
 
@@ -45,7 +45,7 @@ uv run motrix-deploy inspect \
 ## 5. 先跑 Sim2Sim
 
 ```bash
-uv run motrix-deploy sim2sim \
+motrix-deploy sim2sim \
   --config-name go2_walk_flat_sim2sim \
   artifact=artifacts/go2-walk-flat.deploy
 ```
@@ -58,10 +58,10 @@ uv run motrix-deploy sim2sim \
 将 `enp5s0` 换成实际网卡名称：
 
 ```bash
-uv run motrix-deploy inspect \
+motrix-deploy inspect \
   artifact=artifacts/go2-walk-flat.deploy
 
-uv run motrix-deploy sim2real \
+motrix-deploy sim2real \
   --config-name go2_walk_flat_sim2real \
   artifact=artifacts/go2-walk-flat.deploy \
   backend.network_interface=enp5s0 \
@@ -73,7 +73,7 @@ uv run motrix-deploy sim2real \
 发送策略前，也可以先查看机器人状态：
 
 ```bash
-uv run python -m motrix_deploy_unitree.read_lowstate enp5s0
+python -m motrix_deploy_unitree.read_lowstate enp5s0
 ```
 
 ## 进阶说明
@@ -85,7 +85,7 @@ uv run python -m motrix_deploy_unitree.read_lowstate enp5s0
 覆盖 12 个关节：
 
 ```bash
-uv run motrix-deploy sim2real \
+motrix-deploy sim2real \
   artifact=artifacts/go2-walk-flat.deploy \
   backend.network_interface=enp5s0 \
   'backend.kp=[20,25,30,20,25,30,22,27,32,22,27,32]' \
@@ -98,7 +98,7 @@ uv run motrix-deploy sim2real \
 发送任何运动指令前，可先运行只读诊断：
 
 ```bash
-uv run python -m motrix_deploy_unitree.read_lowstate enp5s0
+python -m motrix_deploy_unitree.read_lowstate enp5s0
 ```
 
 ### 发送单关节运动指令
@@ -107,7 +107,7 @@ uv run python -m motrix_deploy_unitree.read_lowstate enp5s0
 `go2-walk-flat` deployment profile 构建控制契约，不需要训练 run、checkpoint、策略或 deployment artifact：
 
 ```bash
-uv run python -m motrix_deploy_unitree.go2_joint_control \
+python -m motrix_deploy_unitree.go2_joint_control \
   enp5s0 \
   FL_thigh_joint \
   0.9 \

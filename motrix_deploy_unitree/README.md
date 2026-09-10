@@ -7,7 +7,7 @@ physical backend is opened.
 The SDK is installed from the pinned Motphys-maintained fork as part of the normal workspace sync:
 
 ```bash
-uv sync --all-packages --all-groups --all-extras
+sh install.sh --all
 ```
 
 The Motphys fork includes the CRC shared libraries in built distributions. The SDK metadata declares
@@ -72,7 +72,7 @@ with no publisher, use `motrix-deploy-unitree read-lowstate <network-interface>`
 Use the read-only diagnostic before enabling any command path:
 
 ```bash
-uv run motrix-deploy-unitree read-lowstate enp5s0
+motrix-deploy-unitree read-lowstate enp5s0
 ```
 
 It subscribes to `rt/lowstate` for 10 seconds by default and prints at most one sample every 0.5 seconds. It does not need
@@ -96,7 +96,7 @@ transport troubleshooting. The command returns `0` after receiving a valid frame
 The packaged helper requires a frozen deployment artifact as its robot, gain, timing, and limit contract:
 
 ```bash
-uv run motrix-deploy-unitree joint-control \
+motrix-deploy-unitree joint-control \
   enp5s0 \
   FL_thigh_joint \
   0.9 \
@@ -112,7 +112,7 @@ state timeout and the remote Select emergency stop remain active.
 
 Use `--move-duration`, `--hold-duration`, and `--return-duration` to change the default `2.0`, `1.0`, and `2.0` second
 phases. Setting `--return-duration 0` skips the return trajectory, but closing still changes all joints to damping mode.
-Run `uv run motrix-deploy-unitree joint-control --help` for the complete command reference. Although the
+Run `motrix-deploy-unitree joint-control --help` for the complete command reference. Although the
 helper changes one target, each Unitree `LowCmd` necessarily contains commands for all 12 joints.
 
 ## Policy gain overrides
@@ -125,7 +125,7 @@ default-pose transition and policy commands; damping stop still uses `kp=0` and 
 From the repository root:
 
 ```bash
-uv run motrix-deploy sim2real \
+motrix-deploy sim2real \
   artifact=artifacts/go2-walk-rough.deploy \
   backend.network_interface=enp5s0 \
   hardware.confirm=true

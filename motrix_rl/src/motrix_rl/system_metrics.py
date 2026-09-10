@@ -5,8 +5,8 @@
 
 CPU samplers read Linux ``/proc`` interfaces and return ``None`` where they
 are unavailable, so panels degrade to ``n/a`` fields; memory sampling also
-supports Windows via ``GlobalMemoryStatusEx``. The GPU samplers use NVML,
-which works on any platform with an NVIDIA driver.
+supports Windows via ``GlobalMemoryStatusEx``. GPU samplers use NVML on
+NVIDIA hosts and AMD SMI on ROCm hosts.
 """
 
 from __future__ import annotations
@@ -192,6 +192,22 @@ class MemoryUsageSampler:
 # NVML reads the same counters nvidia-smi reports, but in-process at
 # microsecond cost instead of a subprocess spawn per query.
 _nvml_state: tuple[Any, list[Any]] | tuple[()] | None = None  # None: untried; (): unavailable
+_amd_smi_state: tuple[Any, list[Any]] | tuple[()] | None = None
+_amd_activity_supported: bool | None = None
+
+
+def _amd_smi() -> tuple[Any, list[Any]] | None:
+    """Lazily initialize AMD SMI, returning ``(module, processor_handles)``."""
+    global _amd_smi_state
+    if _amd_smi_state is None:
+        try:
+            import amdsmi
+
+            amdsmi.amdsmi_init()
+            _amd_smi_state = (amdsmi, amdsmi.amdsmi_get_processor_handles())
+        except Exception:
+            _amd_smi_state = ()
+    return _amd_smi_state or None
 
 
 def _nvml() -> tuple[Any, list[Any]] | None:
@@ -210,9 +226,20 @@ def _nvml() -> tuple[Any, list[Any]] | None:
 
 
 class GpuMemoryUsageSampler:
-    """Read aggregate NVIDIA memory usage across all visible GPUs via NVML."""
+    """Read aggregate accelerator memory via AMD SMI or NVML."""
 
     def sample(self) -> MemoryUsage | None:
+        session = _amd_smi()
+        if session is not None:
+            amdsmi, devices = session
+            used = total = 0
+            try:
+                for device in devices:
+                    used += int(amdsmi.amdsmi_get_gpu_memory_usage(device, amdsmi.AmdSmiMemoryType.VRAM))
+                    total += int(amdsmi.amdsmi_get_gpu_memory_total(device, amdsmi.AmdSmiMemoryType.VRAM))
+            except Exception:
+                return None
+            return MemoryUsage(used_bytes=used, total_bytes=total) if total > 0 else None
         session = _nvml()
         if session is None:
             return None
@@ -229,9 +256,31 @@ class GpuMemoryUsageSampler:
 
 
 class GpuUtilizationSampler:
-    """Read aggregate NVIDIA GPU utilization across all visible GPUs via NVML."""
+    """Read aggregate accelerator utilization via AMD SMI or NVML."""
 
     def sample(self) -> float | None:
+        global _amd_activity_supported
+        session = _amd_smi()
+        if session is not None:
+            amdsmi, devices = session
+            values: list[float] = []
+            if _amd_activity_supported is not False:
+                try:
+                    for device in devices:
+                        activity = amdsmi.amdsmi_get_gpu_activity(device)
+                        value = activity.get("gfx_activity", activity.get("gpu_busy_percent"))
+                        if value is not None:
+                            values.append(float(value))
+                except Exception:
+                    _amd_activity_supported = False
+            if _amd_activity_supported is False:
+                # Some integrated AMD GPUs (including Radeon 890M) expose
+                # VRAM through AMD SMI but return AMDSMI_STATUS_UNEXPECTED_DATA
+                # for ``amdsmi_get_gpu_activity``.  The kernel's DRM sysfs
+                # counter is available on those devices and reports the same
+                # busy percentage used by rocm-smi.
+                values = _sysfs_gpu_busy_percent()
+            return sum(values) / len(values) if values else None
         session = _nvml()
         if session is None:
             return None
@@ -243,3 +292,18 @@ class GpuUtilizationSampler:
         except pynvml.NVMLError:
             return None
         return sum(values) / len(values) if values else None
+
+
+def _sysfs_gpu_busy_percent() -> list[float]:
+    """Read AMD DRM GPU busy counters as a fallback for unsupported SMI APIs."""
+    if sys.platform == "win32":
+        return []
+    values: list[float] = []
+    for path in Path("/sys/class/drm").glob("card*/device/gpu_busy_percent"):
+        try:
+            value = float(path.read_text().strip())
+        except (OSError, ValueError):
+            continue
+        if 0.0 <= value <= 100.0:
+            values.append(value)
+    return values

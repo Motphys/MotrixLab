@@ -104,19 +104,21 @@ Python 方法，由 manager 运行时契约定义（`wiki/design/manager/runtime
 
 项目使用 UV 管理依赖，Python 版本要求 3.10.\*。可用的依赖组与 extras 见 `pyproject.toml`。
 
-完整安装（含全部 package、依赖组与 extras）：
+完整开发环境（全部 package、依赖组与 extras；`--gpu rocm` 切换 AMD wheel）：
 
 ```bash
-uv sync --all-packages --all-groups --all-extras
+sh install.sh --all
 ```
 
-按框架安装：
+运行环境（无开发工具链；GPU 厂商自动探测，`--rslrl` 换后端）：
 
 ```bash
-uv sync --all-packages --extra skrl-jax   # SKRL JAX backend
-uv sync --all-packages --extra skrl-torch # SKRL PyTorch backend
-uv sync --all-packages --extra rslrl      # RSLRL（PyTorch）
+sh install.sh
 ```
+
+避免裸 `uv run` / `uv sync`：`cuda`/`rocm` extras 声明为互斥，裸命令会解析到默认 fork（PyPI torch）
+并重装环境。运行命令先 `source .venv/bin/activate`，之后直接 `python` / `pytest`（下文示例即此写法），
+或对单条命令使用 `uv run --no-sync`。依赖变更（`pyproject.toml` / `uv.lock`）后重新执行对应 install 命令。
 
 ## 常用命令
 
@@ -128,20 +130,20 @@ train/play/view CLI 由 [Hydra](https://hydra.cc/) 驱动，参数使用 `key=va
 SKRL（默认）：
 
 ```bash
-uv run scripts/train.py task=cartpole/skrl.ppo
+python scripts/train.py task=cartpole/skrl.ppo
 ```
 
 RSLRL：
 
 ```bash
-uv run scripts/train.py task=cartpole/rslrl.ppo
+python scripts/train.py task=cartpole/rslrl.ppo
 ```
 
 直接覆写框架运行时设置和类型化 RL 参数：
 
 ```bash
-uv run scripts/train.py task=cartpole/skrl.ppo num_envs=64 algo.agent.learning_rate=1e-3
-uv run scripts/train.py task=cartpole/skrl.ppo logging.interval=20 checkpoint.interval=100
+python scripts/train.py task=cartpole/skrl.ppo num_envs=64 algo.agent.learning_rate=1e-3
+python scripts/train.py task=cartpole/skrl.ppo logging.interval=20 checkpoint.interval=100
 ```
 
 ### 环境可视化
@@ -149,31 +151,31 @@ uv run scripts/train.py task=cartpole/skrl.ppo logging.interval=20 checkpoint.in
 不训练只查看环境：
 
 ```bash
-uv run scripts/view.py env=cartpole
+python scripts/view.py env=cartpole
 ```
 
 查看内置机器人（不创建 RL 环境）：
 
 ```bash
-uv run scripts/view.py robot=g1-29dof
+python scripts/view.py robot=g1-29dof
 ```
 
 ### 评估
 
 ```bash
-uv run scripts/play.py env=cartpole
+python scripts/play.py env=cartpole
 ```
 
 指定 policy 文件：
 
 ```bash
-uv run scripts/play.py env=cartpole policy=<path/to/best.[pickle/pt]>
+python scripts/play.py env=cartpole policy=<path/to/best.[pickle/pt]>
 ```
 
 ### ONNX 导出
 
 ```bash
-uv run scripts/export_onnx.py run_dir=<run-dir> output=/tmp/policy.onnx
+python scripts/export_onnx.py run_dir=<run-dir> output=/tmp/policy.onnx
 ```
 
 ### 渲染
@@ -181,19 +183,19 @@ uv run scripts/export_onnx.py run_dir=<run-dir> output=/tmp/policy.onnx
 训练时开启可视化：
 
 ```bash
-uv run scripts/train.py task=cartpole/skrl.ppo render=true
+python scripts/train.py task=cartpole/skrl.ppo render=true
 ```
 
 ### TensorBoard
 
 ```bash
-uv run tensorboard --logdir runs/{env-name}
+tensorboard --logdir runs/{env-name}
 ```
 
 ### 测试
 
 ```bash
-uv run pytest
+python -m pytest
 ```
 
 ## 架构要点

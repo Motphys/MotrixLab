@@ -269,17 +269,17 @@ RM65 机器人在该环境中包含以下主要部分：
 ### 训练
 
 ```bash
-uv run scripts/train.py task=rm65_insert_peg/motrix.fastsac
+python scripts/train.py task=rm65_insert_peg/motrix.fastsac
 ```
 
 ### 策略评估
 
 ```bash
-uv run scripts/play.py env=rm65_insert_peg num_envs=16
+python scripts/play.py env=rm65_insert_peg num_envs=16
 ```
 
 ### TensorBoard
 
 ```bash
-uv run tensorboard --logdir runs/rm65_insert_peg/fastsac
+tensorboard --logdir runs/rm65_insert_peg/fastsac
 ```

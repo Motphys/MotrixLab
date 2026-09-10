@@ -26,17 +26,16 @@ git lfs pull
 Create the complete development environment from the repository root:
 
 ```bash
-uv sync --all-packages --all-groups --all-extras
+sh install.sh --all       # --gpu rocm switches to the AMD wheels
 ```
 
-Optional training backends can be installed separately when a full environment
-is unnecessary:
-
-```bash
-uv sync --all-packages --extra skrl-torch
-uv sync --all-packages --extra skrl-jax   # Linux only
-uv sync --all-packages --extra rslrl
-```
+A runtime-only environment without the dev toolchain is available via `sh install.sh`: it
+auto-detects the GPU vendor (NVIDIA/AMD) for the torch wheels and `--rslrl`
+selects the RSLRL backend. On Windows, run `install.ps1` in PowerShell. Avoid bare
+`uv sync` / `uv run`: the `cuda`/`rocm` extras are declared conflicting, so a bare
+command resolves the default fork (PyPI torch) and reinstalls the environment. Run
+commands from the activated environment (`source .venv/bin/activate`); the examples
+below assume it is active, or pass `--no-sync` to one-off `uv run` calls.
 
 The workspace contains nine packages. Package-local changes should use the
 smallest required extra; changes involving the simulator, built-in assets, or
@@ -168,15 +167,15 @@ branch unless the change specifically requires them.
 Run the full test suite before opening a pull request:
 
 ```bash
-uv run pytest -q
+python -m pytest -q
 ```
 
 For an iteration on one package, run its tests directly, then run the full
 suite before requesting review:
 
 ```bash
-uv run pytest motrix_env_core/tests -q
-uv run pytest motrix_deploy/tests motrix_deploy_mujoco/tests -q
+python -m pytest motrix_env_core/tests -q
+python -m pytest motrix_deploy/tests motrix_deploy_mujoco/tests -q
 ```
 
 Run the repository's formatting, license-header, and lint hooks:
@@ -190,17 +189,16 @@ prek run --all-files
 The hooks run Copywrite, Ruff, and dprint. For individual checks, use:
 
 ```bash
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
+ruff check .
+ruff format --check .
+mypy
 ```
 
-When changing documentation, install the `docs` extra and build with warnings
-treated as errors:
+When changing documentation, build with warnings treated as errors (`sh install.sh --all`
+or a runtime install with `--docs` provides the required docs toolchain):
 
 ```bash
-uv sync --all-packages --extra docs
-uv run sphinx-build -W -b html docs/source docs/build/html
+sphinx-build -W -b html docs/source docs/build/html
 ```
 
 The public CI runs the complete workspace test command on Linux for both

@@ -10,12 +10,12 @@ The training entry point uses Hydra's `task=<environment>/<framework>.<algorithm
 
 ```bash
 # Train the default Cartpole SKRL PPO Task
-uv run scripts/train.py task=cartpole/skrl.ppo
+python scripts/train.py task=cartpole/skrl.ppo
 
 # Select another framework or algorithm
-uv run scripts/train.py task=cartpole/rslrl.ppo
-uv run scripts/train.py task=g1-walk-flat/motrix.fastsac
-uv run scripts/train.py task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
+python scripts/train.py task=cartpole/rslrl.ppo
+python scripts/train.py task=g1-walk-flat/motrix.fastsac
+python scripts/train.py task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
 ```
 
 Built-in RL methods and their training backends:
@@ -26,28 +26,28 @@ Built-in RL methods and their training backends:
 | `rslrl.ppo`      | `torch`          | RSLRL PPO                                                   |
 | `motrix.fastsac` | `torch`          | FastSAC; `algo.asynchronous` selects the execution topology |
 
-Run `uv run scripts/train.py --help` to list the Tasks available in the current checkout. See [Task Configuration and CLI Overrides](training_environment_config.md) for the Task file layout and override rules.
+Run `python scripts/train.py --help` to list the Tasks available in the current checkout. See [Task Configuration and CLI Overrides](training_environment_config.md) for the Task file layout and override rules.
 
 ### Selecting Training and Simulation Backends
 
 ```bash
 # Override the training backend (auto-selected when task.train_backend is null)
-uv run scripts/train.py task=cartpole/skrl.ppo task.train_backend=jax
-uv run scripts/train.py task=cartpole/skrl.ppo task.train_backend=torch
+python scripts/train.py task=cartpole/skrl.ppo task.train_backend=jax
+python scripts/train.py task=cartpole/skrl.ppo task.train_backend=torch
 
 # Specify the simulator injected into manager-based environments
-uv run scripts/train.py task=g1-wbt-dance sim=motrixsim
+python scripts/train.py task=g1-wbt-dance sim=motrixsim
 ```
 
 ### Training Scale and Random Seed
 
 ```bash
 # Number of parallel environments
-uv run scripts/train.py task=cartpole/skrl.ppo num_envs=1024
+python scripts/train.py task=cartpole/skrl.ppo num_envs=1024
 
 # Fixed random seed (reproducible) / choose a random seed at runtime
-uv run scripts/train.py task=cartpole/skrl.ppo seed=42
-uv run scripts/train.py task=cartpole/skrl.ppo seed=null
+python scripts/train.py task=cartpole/skrl.ppo seed=42
+python scripts/train.py task=cartpole/skrl.ppo seed=null
 ```
 
 ```{note}
@@ -58,14 +58,14 @@ Hydra can override typed algorithm fields directly. For example: `algo.agent.lea
 
 ```bash
 # After training finishes successfully, play the best policy of this run
-uv run scripts/train.py task=g1-walk-flat/motrix.fastsac play=true
+python scripts/train.py task=g1-walk-flat/motrix.fastsac play=true
 
 # Resume from a run directory or a checkpoint
-uv run scripts/train.py task=g1-walk-flat/motrix.fastsac \
+python scripts/train.py task=g1-walk-flat/motrix.fastsac \
   resume=/path/to/run
 
 # Enable rendering to monitor the training process
-uv run scripts/train.py task=cartpole/skrl.ppo render=true
+python scripts/train.py task=cartpole/skrl.ppo render=true
 ```
 
 ### Common Hydra Overrides
@@ -92,7 +92,7 @@ uv run scripts/train.py task=cartpole/skrl.ppo render=true
 TensorBoard logs are written under the run directory and can be viewed per environment:
 
 ```bash
-uv run tensorboard --logdir runs/cartpole
+tensorboard --logdir runs/cartpole
 ```
 
 Besides the standard return and loss curves, if an environment exposes per-term rewards via `info["Reward"]`, they are also logged to TensorBoard during training.
@@ -103,14 +103,14 @@ Playback (play) does not require re-specifying the RL method — the correct `rl
 
 ```bash
 # Auto-discover and play the best policy of the latest run (recommended)
-uv run scripts/play.py env=cartpole
+python scripts/play.py env=cartpole
 
 # Specify a checkpoint (must be able to locate metadata.json above it)
-uv run scripts/play.py env=g1-walk-flat \
+python scripts/play.py env=g1-walk-flat \
   policy=/path/to/run/checkpoints/latest.pt
 
 # Specify the number of playback environments
-uv run scripts/play.py env=cartpole num_envs=100
+python scripts/play.py env=cartpole num_envs=100
 ```
 
 ```{note}

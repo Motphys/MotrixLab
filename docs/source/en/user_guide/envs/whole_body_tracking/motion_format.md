@@ -76,7 +76,7 @@ print(motion.body_names)
 target robot to check the floating-root layout, model joint set, and actual kinematics:
 
 ```bash
-uv run scripts/motion/replay.py --robot g1-29dof --motion /path/to/motion.npz
+python scripts/motion/replay.py --robot g1-29dof --motion /path/to/motion.npz
 ```
 
 Supported replay `--robot` values are `g1-29dof`, `dex-evt`, and `k1`.
@@ -86,13 +86,13 @@ Supported replay `--robot` values are `g1-29dof`, `dex-evt`, and `k1`.
 List available G1 clips:
 
 ```bash
-uv run scripts/motion/download_lafan.py --list
+python scripts/motion/download_lafan.py --list
 ```
 
 Download and convert one clip to 50 FPS:
 
 ```bash
-uv run scripts/motion/download_lafan.py \
+python scripts/motion/download_lafan.py \
   --motion dance1_subject1 \
   --output motrix_envs/src/motrix_envs/locomotion/wbt/assets/motion/g1/dance1_subject1.npz \
   --output-fps 50
@@ -101,7 +101,7 @@ uv run scripts/motion/download_lafan.py \
 You can also convert an existing G1 CSV:
 
 ```bash
-uv run scripts/motion/convert.py \
+python scripts/motion/convert.py \
   --from lafan \
   --input /path/to/dance1_subject1.csv \
   --output /path/to/dance1_subject1.npz \

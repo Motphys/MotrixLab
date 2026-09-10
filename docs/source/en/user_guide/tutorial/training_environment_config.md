@@ -65,19 +65,19 @@ A Task only needs to contain values that differ from the algorithm base. It does
 Print the fully composed Hydra configuration before starting training:
 
 ```bash
-uv run scripts/train.py --cfg job --resolve task=my-robot/skrl.ppo
+python scripts/train.py --cfg job --resolve task=my-robot/skrl.ppo
 ```
 
 This command does not start training. After verifying `task.env`, `num_envs`, and `algo.trainer.timesteps`, start the run:
 
 ```bash
-uv run scripts/train.py task=my-robot/skrl.ppo
+python scripts/train.py task=my-robot/skrl.ppo
 ```
 
 List all Tasks available in the repository with:
 
 ```bash
-uv run scripts/train.py --help
+python scripts/train.py --help
 ```
 
 ## Adjust Task runtime settings
@@ -191,7 +191,7 @@ The MotrixLab CLI uses Hydra's `key=value` syntax. CLI values apply only to the 
 ### Override runtime settings
 
 ```bash
-uv run scripts/train.py \
+python scripts/train.py \
   task=my-robot/skrl.ppo \
   num_envs=64 \
   seed=7 \
@@ -202,7 +202,7 @@ uv run scripts/train.py \
 Enable training rendering and play the policy afterward:
 
 ```bash
-uv run scripts/train.py task=my-robot/skrl.ppo render=true play=true
+python scripts/train.py task=my-robot/skrl.ppo render=true play=true
 ```
 
 ### Override algorithm settings
@@ -210,7 +210,7 @@ uv run scripts/train.py task=my-robot/skrl.ppo render=true play=true
 SKRL PPO:
 
 ```bash
-uv run scripts/train.py \
+python scripts/train.py \
   task=my-robot/skrl.ppo \
   algo.agent.learning_rate=5e-4 \
   algo.agent.learning_epochs=8 \
@@ -220,7 +220,7 @@ uv run scripts/train.py \
 RSLRL PPO:
 
 ```bash
-uv run scripts/train.py \
+python scripts/train.py \
   task=cartpole/rslrl.ppo \
   algo.algorithm.learning_rate=5e-4 \
   algo.algorithm.entropy_coef=0.005 \
@@ -230,7 +230,7 @@ uv run scripts/train.py \
 FastSAC:
 
 ```bash
-uv run scripts/train.py \
+python scripts/train.py \
   task=g1-walk-flat/motrix.fastsac \
   algo.asynchronous=true \
   algo.agent.actor_learning_rate=1e-4 \
@@ -244,20 +244,20 @@ uv run scripts/train.py \
 Use lowercase `true` and `false` for booleans:
 
 ```bash
-uv run scripts/train.py task=my-robot/skrl.ppo render=true
+python scripts/train.py task=my-robot/skrl.ppo render=true
 ```
 
 Use `null` to clear nullable fields:
 
 ```bash
-uv run scripts/train.py task=my-robot/skrl.ppo seed=null
-uv run scripts/train.py task=my-robot/skrl.ppo algo.agent.learning_rate_scheduler=null
+python scripts/train.py task=my-robot/skrl.ppo seed=null
+python scripts/train.py task=my-robot/skrl.ppo algo.agent.learning_rate_scheduler=null
 ```
 
 Quote lists so the shell does not interpret brackets:
 
 ```bash
-uv run scripts/train.py \
+python scripts/train.py \
   task=my-robot/skrl.ppo \
   'algo.models.policy.hiddens=[128,64]' \
   'algo.models.value.hiddens=[128,64]'
@@ -274,7 +274,7 @@ Training uses structured schemas. Existing fields do not need a `+` prefix. Add 
 Combine CLI overrides with `--cfg job --resolve` to inspect the exact values that would be used:
 
 ```bash
-uv run scripts/train.py \
+python scripts/train.py \
   --cfg job \
   --resolve \
   task=my-robot/skrl.ppo \
@@ -316,13 +316,13 @@ algo:
 Train with the JAX delta:
 
 ```bash
-uv run scripts/train.py task=go2-walk-flat/skrl.ppo.jax
+python scripts/train.py task=go2-walk-flat/skrl.ppo.jax
 ```
 
 Overriding the backend directly also selects the JAX trainer:
 
 ```bash
-uv run scripts/train.py task=go2-walk-flat/skrl.ppo task.train_backend=jax
+python scripts/train.py task=go2-walk-flat/skrl.ppo task.train_backend=jax
 ```
 
 This form does not load backend-specific values from `skrl.ppo.jax.yaml`. Select the `.jax` or `.torch` Task directly when a backend delta exists.
@@ -413,15 +413,15 @@ Hydra validates field names and types against the structured schema registered b
 `scripts/play.py` and `scripts/view.py` use the same `key=value` syntax:
 
 ```bash
-uv run scripts/view.py env=cartpole num_envs=4
-uv run scripts/play.py env=cartpole num_envs=1
-uv run scripts/play.py policy=/path/to/checkpoint.pt num_envs=1
+python scripts/view.py env=cartpole num_envs=4
+python scripts/play.py env=cartpole num_envs=1
+python scripts/play.py policy=/path/to/checkpoint.pt num_envs=1
 ```
 
 Play loads the `task_config.yaml` stored with a training run. To temporarily override algorithm settings, use `rl` as the algorithm root. Since `rl` starts as an empty mapping, add the path with `+`:
 
 ```bash
-uv run scripts/play.py \
+python scripts/play.py \
   env=cartpole \
   '+rl.agent.learning_rate=1e-4'
 ```

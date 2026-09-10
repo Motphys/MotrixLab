@@ -63,36 +63,36 @@ Acrobot 是一个双连杆摆动和平衡任务。目标是使用一个电机扭
 ### 1. 环境预览
 
 ```bash
-uv run scripts/view.py env=acrobot
+python scripts/view.py env=acrobot
 ```
 
 ### 2. 开始训练
 
 ```bash
 # 使用默认参数训练
-uv run scripts/train.py task=acrobot/skrl.ppo
+python scripts/train.py task=acrobot/skrl.ppo
 
 # 自定义并行环境数
-uv run scripts/train.py task=acrobot/skrl.ppo num_envs=1024
+python scripts/train.py task=acrobot/skrl.ppo num_envs=1024
 
 # 开启训练时渲染
-uv run scripts/train.py task=acrobot/skrl.ppo render=true
+python scripts/train.py task=acrobot/skrl.ppo render=true
 ```
 
 ### 3. 查看训练进度
 
 ```bash
-uv run tensorboard --logdir runs/acrobot
+tensorboard --logdir runs/acrobot
 ```
 
 ### 4. 测试训练结果
 
 ```bash
 # 自动发现最佳策略（推荐）
-uv run scripts/play.py env=acrobot
+python scripts/play.py env=acrobot
 
 # 手动指定带 metadata 的 run 中的 checkpoint
-uv run scripts/play.py env=acrobot policy=/path/to/run/checkpoints/policy-file
+python scripts/play.py env=acrobot policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **提示**：策略会从 `runs/acrobot/` 中自动选择。使用 `policy=...` 时，checkpoint 所属 run 必须包含 `metadata.json`。

@@ -13,30 +13,30 @@ on a physical Go2.
 From the repository root, install the required development extras:
 
 ```bash
-uv sync --all-packages --all-groups --all-extras
+sh install.sh --all
 ```
 
 Export a new artifact directory, validate it without opening a backend, and run an interactive deployment:
 
 ```bash
-uv run scripts/export_deploy.py env=go2-walk-rough
+python scripts/export_deploy.py env=go2-walk-rough
 
-uv run motrix-deploy inspect \
+motrix-deploy inspect \
   artifact=artifacts/go2-walk-rough.deploy
 
-uv run motrix-deploy sim2sim \
+motrix-deploy sim2sim \
   artifact=artifacts/go2-walk-rough.deploy
 ```
 
 For the flat-terrain environment, export its own artifact and select the matching runtime recipe:
 
 ```bash
-uv run scripts/export_deploy.py env=go2-walk-flat
+python scripts/export_deploy.py env=go2-walk-flat
 
-uv run motrix-deploy inspect \
+motrix-deploy inspect \
   artifact=artifacts/go2-walk-flat.deploy
 
-uv run motrix-deploy sim2sim \
+motrix-deploy sim2sim \
   --config-name go2_walk_flat_sim2sim \
   artifact=artifacts/go2-walk-flat.deploy
 ```
@@ -56,16 +56,17 @@ actuator range, servo gain, tensor shape, checksum, and command-range mismatches
 Headless and physical runs may set either `rollout.steps` or `rollout.duration_s`; viewer runs may leave both unset.
 `realtime` defaults to the viewer mode when omitted.
 
-Optional dependencies remain isolated behind extras for smaller runtime environments:
+Optional dependencies remain isolated behind extras for smaller runtime environments (ONNX
+inference is a core dependency; `mujoco` and `unitree` select the deployment backends):
 
 ```bash
-uv sync --package motrix-deploy-tasks --extra onnx --extra mujoco --extra unitree
+uv sync --package motrix-deploy-tasks --extra mujoco --extra unitree
 ```
 
 Interactive deployment reads keyboard events directly from the focused GLFW viewer window:
 
 ```bash
-uv run motrix-deploy sim2sim \
+motrix-deploy sim2sim \
   artifact=artifacts/go2-walk-rough.deploy
 ```
 
@@ -84,17 +85,17 @@ The hardware plugin imports the Unitree SDK2 Python package only when a physical
 workspace sync installs the pinned Motphys-maintained fork into the same environment:
 
 ```bash
-uv sync --all-packages --all-groups --all-extras
+sh install.sh --all
 ```
 
 Inspect the artifact first. With the robot suspended, low-level/debug mode enabled, Ethernet connected, and an emergency
 stop operator ready, explicitly select the interface and confirm the hardware checklist:
 
 ```bash
-uv run motrix-deploy inspect \
+motrix-deploy inspect \
   artifact=artifacts/go2-walk-rough.deploy
 
-uv run motrix-deploy sim2real \
+motrix-deploy sim2real \
   artifact=artifacts/go2-walk-rough.deploy \
   backend.network_interface=enp3s0 \
   hardware.confirm=true

@@ -18,17 +18,9 @@ SKRL/JAX checkpoints cannot be exported yet. The command accepts a complete run 
 
 ## Install Dependencies
 
-Install the ONNX dependencies and the backend used for training from the repository root:
-
-```bash
-# SKRL/Torch or Motrix FastSAC
-uv sync --all-packages --extra onnx --extra skrl-torch
-
-# RSL-RL
-uv sync --all-packages --extra onnx --extra rslrl
-```
-
-No additional step is needed if the environment was installed with `uv sync --all-packages --all-groups --all-extras`.
+No extra step is needed: the ONNX export and inference dependencies (`onnx`, `onnxruntime`) are part
+of the default runtime environment installed by `sh install.sh` (see
+[Installation](../getting_started/installation.md)).
 
 ## Export the Model
 
@@ -41,7 +33,7 @@ runs/cartpole/skrl/torch/ppo/<timestamp>/
 Export it to an explicit output path:
 
 ```bash
-uv run scripts/export_onnx.py \
+python scripts/export_onnx.py \
   run_dir=runs/cartpole/skrl/torch/ppo/<timestamp> \
   output=artifacts/cartpole.onnx
 ```
@@ -51,7 +43,7 @@ If a path contains spaces, quote the complete Hydra argument, for example `"run_
 When `output` is omitted, the model is written next to the best checkpoint as `policy.onnx`:
 
 ```bash
-uv run scripts/export_onnx.py \
+python scripts/export_onnx.py \
   run_dir=runs/cartpole/skrl/torch/ppo/<timestamp>
 ```
 
@@ -113,7 +105,7 @@ In most cases, only `run_dir` and `output` are needed. Override these Hydra para
 For example, export with opset 17 and more validation samples:
 
 ```bash
-uv run scripts/export_onnx.py \
+python scripts/export_onnx.py \
   run_dir=<run-dir> \
   output=policy.onnx \
   opset=17 \

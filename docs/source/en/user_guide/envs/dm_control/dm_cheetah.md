@@ -102,25 +102,25 @@ The cheetah's reward function consists of the following parts:
 ### 1. Environment Preview
 
 ```bash
-uv run scripts/view.py env=dm-cheetah
+python scripts/view.py env=dm-cheetah
 ```
 
 ### 2. Start Training
 
 ```bash
-uv run scripts/train.py task=dm-cheetah/skrl.ppo
+python scripts/train.py task=dm-cheetah/skrl.ppo
 ```
 
 ### 3. View Training Progress
 
 ```bash
-uv run tensorboard --logdir runs/dm-cheetah
+tensorboard --logdir runs/dm-cheetah
 ```
 
 ### 4. Test Training Results
 
 ```bash
-uv run scripts/play.py env=dm-cheetah
+python scripts/play.py env=dm-cheetah
 ```
 
 ---

@@ -241,17 +241,17 @@ In addition, the maximum episode length is `30s`.
 ### Training
 
 ```bash
-uv run scripts/train.py task=rm65-open-cabinet/skrl.ppo task.train_backend=torch
+python scripts/train.py task=rm65-open-cabinet/skrl.ppo task.train_backend=torch
 ```
 
 ### Policy Evaluation
 
 ```bash
-uv run scripts/play.py env=rm65-open-cabinet
+python scripts/play.py env=rm65-open-cabinet
 ```
 
 ### TensorBoard
 
 ```bash
-uv run tensorboard --logdir runs/rm65_open_cabinet
+tensorboard --logdir runs/rm65_open_cabinet
 ```

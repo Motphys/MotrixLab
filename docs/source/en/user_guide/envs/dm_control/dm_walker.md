@@ -26,19 +26,19 @@ Walker2D is a 2D planar bipedal robot with multiple joints and actuators:
 1. **dm-stander**: Static standing task (move_speed = 0.0)
 
 ```bash
-uv run scripts/train.py task=dm-stander/skrl.ppo
+python scripts/train.py task=dm-stander/skrl.ppo
 ```
 
 2. **dm-walker**: Walking task (move_speed = 1.0)
 
 ```bash
-uv run scripts/train.py task=dm-walker/skrl.ppo
+python scripts/train.py task=dm-walker/skrl.ppo
 ```
 
 3. **dm-runner**: Running task (move_speed = 5.0)
 
 ```bash
-uv run scripts/train.py task=dm-runner/skrl.ppo
+python scripts/train.py task=dm-runner/skrl.ppo
 ```
 
 ## Quick Start
@@ -46,31 +46,31 @@ uv run scripts/train.py task=dm-runner/skrl.ppo
 ### 1. Environment Preview
 
 ```bash
-uv run scripts/view.py env=dm-stander
-uv run scripts/view.py env=dm-walker
-uv run scripts/view.py env=dm-runner
+python scripts/view.py env=dm-stander
+python scripts/view.py env=dm-walker
+python scripts/view.py env=dm-runner
 ```
 
 ### 2. Start Training
 
 ```bash
-uv run scripts/train.py task=dm-stander/skrl.ppo
-uv run scripts/train.py task=dm-walker/skrl.ppo
-uv run scripts/train.py task=dm-runner/skrl.ppo
+python scripts/train.py task=dm-stander/skrl.ppo
+python scripts/train.py task=dm-walker/skrl.ppo
+python scripts/train.py task=dm-runner/skrl.ppo
 ```
 
 ### 3. View Training Progress
 
 ```bash
-uv run tensorboard --logdir runs/dm-walker
+tensorboard --logdir runs/dm-walker
 ```
 
 ### 4. Test Training Results
 
 ```bash
-uv run scripts/play.py env=dm-stander
-uv run scripts/play.py env=dm-walker
-uv run scripts/play.py env=dm-runner
+python scripts/play.py env=dm-stander
+python scripts/play.py env=dm-walker
+python scripts/play.py env=dm-runner
 ```
 
 ## Reward Function Design

@@ -137,8 +137,8 @@ zero-argument factory.
 Construct the config through the registry and preview it before using it in a task:
 
 ```bash
-uv run scripts/view.py robot=my-robot
-uv run pytest motrix_envs/tests/test_robot_cfg.py -q
+python scripts/view.py robot=my-robot
+python -m pytest motrix_envs/tests/test_robot_cfg.py -q
 ```
 
 At minimum, verify that the model builds, `base_link_name` exists, joints and actuators correspond, the default key
@@ -150,8 +150,8 @@ To include the robot in the generated table above, add its type and screenshot p
 `docs/scripts/generate_robot_docs.py`, then generate the screenshot and table:
 
 ```bash
-uv run docs/scripts/generate_robot_docs.py --screenshots my-robot
-uv run docs/scripts/generate_robot_docs.py --check
+python docs/scripts/generate_robot_docs.py --screenshots my-robot
+python docs/scripts/generate_robot_docs.py --check
 ```
 
 ## Preview a robot
@@ -159,7 +159,7 @@ uv run docs/scripts/generate_robot_docs.py --check
 Use `view.py` to inspect a registered robot in its default pose without creating an RL environment:
 
 ```bash
-uv run scripts/view.py robot=go2
+python scripts/view.py robot=go2
 ```
 
 Robot view mode builds a static standard scene. It does not sample actions or run a physics rollout.

@@ -102,25 +102,25 @@ cheetah 的奖励函数由以下几个部分组成：
 ### 1. 环境预览
 
 ```bash
-uv run scripts/view.py env=dm-cheetah
+python scripts/view.py env=dm-cheetah
 ```
 
 ### 2. 开始训练
 
 ```bash
-uv run scripts/train.py task=dm-cheetah/skrl.ppo
+python scripts/train.py task=dm-cheetah/skrl.ppo
 ```
 
 ### 3. 查看训练进度
 
 ```bash
-uv run tensorboard --logdir runs/dm-cheetah
+tensorboard --logdir runs/dm-cheetah
 ```
 
 ### 4. 测试训练结果
 
 ```bash
-uv run scripts/play.py env=dm-cheetah
+python scripts/play.py env=dm-cheetah
 ```
 
 ---

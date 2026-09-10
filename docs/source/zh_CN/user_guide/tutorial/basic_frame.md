@@ -88,7 +88,7 @@ Trainer 负责框架特有的模型创建、优化、checkpoint 序列化和推�
 例如：
 
 ```bash
-uv run scripts/train.py task=cartpole/skrl.ppo num_envs=1024
+python scripts/train.py task=cartpole/skrl.ppo num_envs=1024
 ```
 
 该命令会依次执行：
@@ -104,8 +104,8 @@ uv run scripts/train.py task=cartpole/skrl.ppo num_envs=1024
 同一个环境可以拥有多份 Task 配方，不需要修改环境实现：
 
 ```bash
-uv run scripts/train.py task=cartpole/skrl.ppo
-uv run scripts/train.py task=cartpole/rslrl.ppo
+python scripts/train.py task=cartpole/skrl.ppo
+python scripts/train.py task=cartpole/rslrl.ppo
 ```
 
 SKRL 提供 JAX 与 Torch provider，RSLRL 使用 Torch；`motrix.fastsac` 通过 `algo.asynchronous` 选择同步或异步 Torch trainer。所选 Task 与 provider 共同决定算法配置和输出 metadata。

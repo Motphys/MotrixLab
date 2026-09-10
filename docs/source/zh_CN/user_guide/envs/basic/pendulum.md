@@ -64,36 +64,36 @@
 ### 1. 环境预览
 
 ```bash
-uv run scripts/view.py env=pendulum
+python scripts/view.py env=pendulum
 ```
 
 ### 2. 开始训练
 
 ```bash
 # 默认参数训练
-uv run scripts/train.py task=pendulum/skrl.ppo
+python scripts/train.py task=pendulum/skrl.ppo
 
 # 自定义并行环境数
-uv run scripts/train.py task=pendulum/skrl.ppo num_envs=1024
+python scripts/train.py task=pendulum/skrl.ppo num_envs=1024
 
 # 开启训练时渲染
-uv run scripts/train.py task=pendulum/skrl.ppo render=true
+python scripts/train.py task=pendulum/skrl.ppo render=true
 ```
 
 ### 3. 查看训练进度
 
 ```bash
-uv run tensorboard --logdir runs/pendulum
+tensorboard --logdir runs/pendulum
 ```
 
 ### 4. 测试训练结果
 
 ```bash
 # 自动寻找最新/最优策略（推荐）
-uv run scripts/play.py env=pendulum
+python scripts/play.py env=pendulum
 
 # 手动指定带 metadata 的 run 中的 checkpoint
-uv run scripts/play.py env=pendulum policy=/path/to/run/checkpoints/policy-file
+python scripts/play.py env=pendulum policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **提示**：策略默认在 `runs/pendulum/` 下自动发现。使用 `policy=...` 时，checkpoint 所属 run 必须包含 `metadata.json`。

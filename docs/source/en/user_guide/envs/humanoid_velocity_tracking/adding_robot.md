@@ -118,7 +118,7 @@ environment construction.
 Preview the robot and verify joint ordering, the default pose, PD parameters, sole sites, and collision-geom names:
 
 ```bash
-uv run scripts/view.py robot=<robot-config-id>
+python scripts/view.py robot=<robot-config-id>
 ```
 
 ## 4. Register the environment implementation
@@ -164,13 +164,13 @@ dynamics and training behavior.
 Use this progression:
 
 ```bash
-uv run scripts/view.py robot=<robot-config-id>
-uv run scripts/view.py env=<robot>-walk-flat
-uv run scripts/view.py env=<robot>-walk-terrain
-uv run scripts/train.py task=<robot>-walk-flat/motrix.fastsac
-uv run scripts/train.py task=<robot>-walk-flat/motrix.fastsac algo.asynchronous=false
-uv run pytest motrix_envs/tests/test_humanoid_walk.py -q
-uv run pytest motrix_rl/tests/test_task_configs.py -q
+python scripts/view.py robot=<robot-config-id>
+python scripts/view.py env=<robot>-walk-flat
+python scripts/view.py env=<robot>-walk-terrain
+python scripts/train.py task=<robot>-walk-flat/motrix.fastsac
+python scripts/train.py task=<robot>-walk-flat/motrix.fastsac algo.asynchronous=false
+python -m pytest motrix_envs/tests/test_humanoid_walk.py -q
+python -m pytest motrix_rl/tests/test_task_configs.py -q
 ```
 
 During preview, inspect the default pose, sole height, ground contacts, action direction, and terrain spawn position. For

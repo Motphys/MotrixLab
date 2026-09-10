@@ -114,7 +114,7 @@ asset = AssetCfg(
 建议先运行机器人预览命令检查关节顺序、默认姿态、PD 参数、脚底 site 和碰撞体名称：
 
 ```bash
-uv run scripts/view.py robot=<robot-config-id>
+python scripts/view.py robot=<robot-config-id>
 ```
 
 ## 4. 注册环境实现
@@ -156,13 +156,13 @@ algo:
 建议按以下顺序验证：
 
 ```bash
-uv run scripts/view.py robot=<robot-config-id>
-uv run scripts/view.py env=<robot>-walk-flat
-uv run scripts/view.py env=<robot>-walk-terrain
-uv run scripts/train.py task=<robot>-walk-flat/motrix.fastsac
-uv run scripts/train.py task=<robot>-walk-flat/motrix.fastsac algo.asynchronous=false
-uv run pytest motrix_envs/tests/test_humanoid_walk.py -q
-uv run pytest motrix_rl/tests/test_task_configs.py -q
+python scripts/view.py robot=<robot-config-id>
+python scripts/view.py env=<robot>-walk-flat
+python scripts/view.py env=<robot>-walk-terrain
+python scripts/train.py task=<robot>-walk-flat/motrix.fastsac
+python scripts/train.py task=<robot>-walk-flat/motrix.fastsac algo.asynchronous=false
+python -m pytest motrix_envs/tests/test_humanoid_walk.py -q
+python -m pytest motrix_rl/tests/test_task_configs.py -q
 ```
 
 预览阶段重点检查默认姿态、脚底高度、地面碰撞、动作方向和起伏地形出生位置。新增内置环境配置时，还应在共享人形环境

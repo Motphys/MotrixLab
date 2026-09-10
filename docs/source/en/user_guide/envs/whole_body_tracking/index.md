@@ -126,7 +126,7 @@ Motion files are managed by Git LFS. If an `.npz` is still pointer text after cl
 Check a reference motion with the target robot's `RobotCfg`:
 
 ```bash
-uv run scripts/motion/replay.py \
+python scripts/motion/replay.py \
   --robot g1-29dof \
   --motion motrix_envs/src/motrix_envs/locomotion/wbt/assets/motion/g1/dance1_subject2.npz
 ```
@@ -142,20 +142,20 @@ Choose an environment ID and one of its training configs from the built-in task 
 `TRAINING_CONFIG`:
 
 ```bash
-uv run scripts/train.py task=ENV_ID/TRAINING_CONFIG
+python scripts/train.py task=ENV_ID/TRAINING_CONFIG
 ```
 
 For example, train the G1 dance-tracking task with asynchronous FastSAC:
 
 ```bash
-uv run scripts/train.py task=g1-wbt-dance/motrix.fastsac algo.asynchronous=true
+python scripts/train.py task=g1-wbt-dance/motrix.fastsac algo.asynchronous=true
 ```
 
 The built-in configs use 2048 parallel environments and task-specific learning-iteration budgets. Use a small smoke test
 only to validate registry creation, tensor shapes, and the training entry point; it is not expected to produce a useful policy:
 
 ```bash
-uv run scripts/train.py task=g1-wbt-dance/motrix.fastsac \
+python scripts/train.py task=g1-wbt-dance/motrix.fastsac \
   algo.asynchronous=true num_envs=64 algo.trainer.num_learning_iterations=100
 ```
 
@@ -166,7 +166,7 @@ adaptive-sampling statistics are written to `info["metrics"]`. See [Task Environ
 ### Play the policy
 
 ```bash
-uv run scripts/play.py env=ENV_ID num_envs=16
+python scripts/play.py env=ENV_ID num_envs=16
 ```
 
 `play.py` selects the best policy from the latest metadata-backed run for the environment. The WBT play config starts at

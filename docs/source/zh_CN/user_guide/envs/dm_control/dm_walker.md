@@ -94,31 +94,31 @@ walker 的奖励函数由以下几个部分组成：
 ### 1. 环境预览
 
 ```bash
-uv run scripts/view.py env=dm-stander
-uv run scripts/view.py env=dm-walker
-uv run scripts/view.py env=dm-runner
+python scripts/view.py env=dm-stander
+python scripts/view.py env=dm-walker
+python scripts/view.py env=dm-runner
 ```
 
 ### 2. 开始训练
 
 ```bash
-uv run scripts/train.py task=dm-stander/skrl.ppo
-uv run scripts/train.py task=dm-walker/skrl.ppo
-uv run scripts/train.py task=dm-runner/skrl.ppo
+python scripts/train.py task=dm-stander/skrl.ppo
+python scripts/train.py task=dm-walker/skrl.ppo
+python scripts/train.py task=dm-runner/skrl.ppo
 ```
 
 ### 3. 查看训练进度
 
 ```bash
-uv run tensorboard --logdir runs/dm-walker
+tensorboard --logdir runs/dm-walker
 ```
 
 ### 4. 测试训练结果
 
 ```bash
-uv run scripts/play.py env=dm-stander
-uv run scripts/play.py env=dm-walker
-uv run scripts/play.py env=dm-runner
+python scripts/play.py env=dm-stander
+python scripts/play.py env=dm-walker
+python scripts/play.py env=dm-runner
 ```
 
 ---

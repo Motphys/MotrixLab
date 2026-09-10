@@ -62,36 +62,36 @@ Order: `cos(theta), sin(theta), angular velocity`.
 ### 1. Environment Preview
 
 ```bash
-uv run scripts/view.py env=pendulum
+python scripts/view.py env=pendulum
 ```
 
 ### 2. Start Training
 
 ```bash
 # Train with default parameters
-uv run scripts/train.py task=pendulum/skrl.ppo
+python scripts/train.py task=pendulum/skrl.ppo
 
 # Customize parallel environments
-uv run scripts/train.py task=pendulum/skrl.ppo num_envs=1024
+python scripts/train.py task=pendulum/skrl.ppo num_envs=1024
 
 # Enable rendering during training
-uv run scripts/train.py task=pendulum/skrl.ppo render=true
+python scripts/train.py task=pendulum/skrl.ppo render=true
 ```
 
 ### 3. View Training Progress
 
 ```bash
-uv run tensorboard --logdir runs/pendulum
+tensorboard --logdir runs/pendulum
 ```
 
 ### 4. Test Training Results
 
 ```bash
 # Auto-discover best policy (recommended)
-uv run scripts/play.py env=pendulum
+python scripts/play.py env=pendulum
 
 # Manually specify a checkpoint from a metadata-backed run
-uv run scripts/play.py env=pendulum policy=/path/to/run/checkpoints/policy-file
+python scripts/play.py env=pendulum policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **Tip**: Policies are auto-selected from `runs/pendulum/`. Use `policy=...` to select a checkpoint whose parent run contains `metadata.json`.

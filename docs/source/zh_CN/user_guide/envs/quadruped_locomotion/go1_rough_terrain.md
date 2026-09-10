@@ -24,7 +24,7 @@ $v_y$ 和 `yaw_rate` 固定为 0。
 该任务不随机化物理参数。
 
 ```bash
-uv run scripts/view.py env=go1-stairs-terrain-walk
-uv run scripts/train.py task=go1-stairs-terrain-walk/skrl.ppo
-uv run scripts/play.py env=go1-stairs-terrain-walk
+python scripts/view.py env=go1-stairs-terrain-walk
+python scripts/train.py task=go1-stairs-terrain-walk/skrl.ppo
+python scripts/play.py env=go1-stairs-terrain-walk
 ```

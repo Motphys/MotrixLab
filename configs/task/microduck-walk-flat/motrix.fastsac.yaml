@@ -16,4 +16,8 @@ algo:
   agent:
     alpha_init: 0.01
     target_entropy_ratio: -0.1
+    batch_size: 2048
     num_updates: 4
+  trainer:
+    async_options:
+      utd_mode: strict

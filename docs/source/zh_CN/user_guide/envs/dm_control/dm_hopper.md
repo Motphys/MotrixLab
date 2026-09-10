@@ -109,28 +109,28 @@ hopper 的奖励函数由以下几个部分组成：
 ### 1. 环境预览
 
 ```bash
-uv run scripts/view.py env=dm-hopper-stand
-uv run scripts/view.py env=dm-hopper-hop
+python scripts/view.py env=dm-hopper-stand
+python scripts/view.py env=dm-hopper-hop
 ```
 
 ### 2. 开始训练
 
 ```bash
-uv run scripts/train.py task=dm-hopper-stand/skrl.ppo
-uv run scripts/train.py task=dm-hopper-hop/skrl.ppo
+python scripts/train.py task=dm-hopper-stand/skrl.ppo
+python scripts/train.py task=dm-hopper-hop/skrl.ppo
 ```
 
 ### 3. 查看训练进度
 
 ```bash
-uv run tensorboard --logdir runs/dm-hopper-hop
+tensorboard --logdir runs/dm-hopper-hop
 ```
 
 ### 4. 测试训练结果
 
 ```bash
-uv run scripts/play.py env=dm-hopper-stand
-uv run scripts/play.py env=dm-hopper-hop
+python scripts/play.py env=dm-hopper-stand
+python scripts/play.py env=dm-hopper-hop
 ```
 
 ---

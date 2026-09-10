@@ -228,37 +228,37 @@ total_reward = stage_terms + ready_terms + push_terms - penalty_terms
 ### 1. 环境预览
 
 ```bash
-uv run scripts/view.py env=dm-quadruped-walk
-uv run scripts/view.py env=dm-quadruped-run
-uv run scripts/view.py env=dm-quadruped-escape
-uv run scripts/view.py env=dm-quadruped-fetch
+python scripts/view.py env=dm-quadruped-walk
+python scripts/view.py env=dm-quadruped-run
+python scripts/view.py env=dm-quadruped-escape
+python scripts/view.py env=dm-quadruped-fetch
 ```
 
 ### 2. 开始训练
 
 ```bash
-uv run scripts/train.py task=dm-quadruped-walk/skrl.ppo
-uv run scripts/train.py task=dm-quadruped-run/skrl.ppo
-uv run scripts/train.py task=dm-quadruped-escape/skrl.ppo
-uv run scripts/train.py task=dm-quadruped-fetch/skrl.ppo
+python scripts/train.py task=dm-quadruped-walk/skrl.ppo
+python scripts/train.py task=dm-quadruped-run/skrl.ppo
+python scripts/train.py task=dm-quadruped-escape/skrl.ppo
+python scripts/train.py task=dm-quadruped-fetch/skrl.ppo
 ```
 
 ### 3. 查看训练进度
 
 ```bash
-uv run tensorboard --logdir runs/dm-quadruped-walk
-uv run tensorboard --logdir runs/dm-quadruped-run
-uv run tensorboard --logdir runs/dm-quadruped-escape
-uv run tensorboard --logdir runs/dm-quadruped-fetch
+tensorboard --logdir runs/dm-quadruped-walk
+tensorboard --logdir runs/dm-quadruped-run
+tensorboard --logdir runs/dm-quadruped-escape
+tensorboard --logdir runs/dm-quadruped-fetch
 ```
 
 ### 4. 测试训练结果
 
 ```bash
-uv run scripts/play.py env=dm-quadruped-walk
-uv run scripts/play.py env=dm-quadruped-run
-uv run scripts/play.py env=dm-quadruped-escape
-uv run scripts/play.py env=dm-quadruped-fetch
+python scripts/play.py env=dm-quadruped-walk
+python scripts/play.py env=dm-quadruped-run
+python scripts/play.py env=dm-quadruped-escape
+python scripts/play.py env=dm-quadruped-fetch
 ```
 
 ---

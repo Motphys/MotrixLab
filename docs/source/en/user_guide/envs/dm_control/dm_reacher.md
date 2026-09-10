@@ -102,25 +102,25 @@ terminated = True
 ### 1. Environment Preview
 
 ```bash
-uv run scripts/view.py env=dm-reacher
+python scripts/view.py env=dm-reacher
 ```
 
 ### 2. Start Training
 
 ```bash
-uv run scripts/train.py task=dm-reacher/skrl.ppo
+python scripts/train.py task=dm-reacher/skrl.ppo
 ```
 
 ### 3. View Training Progress
 
 ```bash
-uv run tensorboard --logdir runs/dm-reacher
+tensorboard --logdir runs/dm-reacher
 ```
 
 ### 4. Test Training Results
 
 ```bash
-uv run scripts/play.py env=dm-reacher
+python scripts/play.py env=dm-reacher
 ```
 
 ## Expected Training Results
