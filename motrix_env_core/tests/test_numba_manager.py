@@ -57,12 +57,18 @@ from motrix_env_core.sim.write import CtrlTargetsWrite
 class _TestAction(ActionTerm):
     reset_flags: np.ndarray
     source: np.ndarray
+    prepared: np.ndarray
 
     def action_space(self, env: ManagerEnv, actuator_indices: np.ndarray | None) -> gym.spaces.Box:
         del env, actuator_indices
         return gym.spaces.Box(-1.0, 1.0, (1,), dtype=np.float32)
 
+    def prepare(self, sim_data) -> None:
+        del sim_data
+        self.prepared.fill(True)
+
     def process(self, actions: np.ndarray) -> None:
+        assert self.prepared.all()
         self.source[...] = actions
 
     def reset(self, env_ids: np.ndarray) -> None:
@@ -204,6 +210,7 @@ class _TestActionCfg(ActionCfg):
         return _TestAction(
             np.zeros((env.num_envs, 1), dtype=bool),
             np.zeros((env.num_envs, 1), dtype=np.float32),
+            np.zeros((env.num_envs, 1), dtype=bool),
         )
 
 
@@ -569,6 +576,7 @@ def test_multiple_action_terms_concatenate_spaces_and_receive_ordered_slices() -
     np.testing.assert_array_equal(env.action_space.low, [-1.0, -2.0, -3.0])
     np.testing.assert_array_equal(env.action_space.high, [1.0, 2.0, 3.0])
     np.testing.assert_array_equal(env.action_terms["test"].source, actions[:, :1])
+    np.testing.assert_array_equal(env.action_terms["test"].prepared, True)
     np.testing.assert_array_equal(env.action_terms["second"].source, actions[:, 1:])
     env._refresh_sim_reads()
     env._execute_observe_kernel(env._kernel_inputs)
@@ -662,8 +670,8 @@ def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> 
     assert isinstance(action, _TestAction)
     command = _counter_command(env)
     context_sources = [slot for slot in env.manager_layout.inputs if "manager_context" in slot.source]
-    assert len(context_sources) == 10
-    assert [slot.scope.value for slot in context_sources] == ["per_env"] * 8 + ["shared", "per_env"]
+    assert len(context_sources) == 11
+    assert [slot.scope.value for slot in context_sources] == ["per_env"] * 9 + ["shared", "per_env"]
     assert [term.output_slice for term in env.manager_layout.observations["policy"].terms] == [
         slice(0, 2),
         slice(2, 3),

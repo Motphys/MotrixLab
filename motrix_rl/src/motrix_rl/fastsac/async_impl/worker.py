@@ -91,23 +91,36 @@ def actor_param_numel(cfg: FastSacCfg, dims, action_scale, action_bias) -> int:
     Builds a throwaway CPU actor mirroring the learner's — device-independent, so
     the parent can size shared memory without touching CUDA.
     """
-    from motrix_rl.fastsac.networks import Actor
+    from motrix_rl.fastsac.factory import make_actor
 
     obs_dim, _critic_obs_dim, act_dim = dims
-    a = cfg.agent
-    actor = Actor(
-        n_obs=obs_dim,
-        n_act=act_dim,
-        hidden_dim=a.actor_hidden_dim,
-        log_std_max=a.log_std_max,
-        log_std_min=a.log_std_min,
-        use_tanh=a.use_tanh,
-        use_layer_norm=a.use_layer_norm,
+    actor = make_actor(
+        cfg.agent,
+        getattr(cfg, "sonic", None),
+        obs_dim=obs_dim,
+        act_dim=act_dim,
         action_scale=action_scale,
         action_bias=action_bias,
         device="cpu",
     )
     return sum(p.numel() for p in actor.parameters())
+
+
+def actor_buffer_numel(cfg: FastSacCfg, dims, action_scale, action_bias) -> int:
+    """Total persistent actor-buffer count for shared snapshot sizing."""
+    from motrix_rl.fastsac.factory import make_actor
+
+    obs_dim, _critic_obs_dim, act_dim = dims
+    actor = make_actor(
+        cfg.agent,
+        getattr(cfg, "sonic", None),
+        obs_dim=obs_dim,
+        act_dim=act_dim,
+        action_scale=action_scale,
+        action_bias=action_bias,
+        device="cpu",
+    )
+    return sum(buffer.numel() for buffer in actor.buffers() if buffer.numel())
 
 
 def build_agent(cfg: FastSacCfg, dims, num_envs, device, action_scale, action_bias, writer=None) -> FastSacAgent:
@@ -118,6 +131,7 @@ def build_agent(cfg: FastSacCfg, dims, num_envs, device, action_scale, action_bi
         act_dim=act_dim,
         num_envs=num_envs,
         cfg=cfg.agent,
+        sonic_cfg=getattr(cfg, "sonic", None),
         device=device,
         action_scale=action_scale,
         action_bias=action_bias,

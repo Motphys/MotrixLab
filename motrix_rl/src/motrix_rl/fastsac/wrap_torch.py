@@ -23,12 +23,20 @@ from motrix_rl.utils import env_infos
 class FastSacTorchEnvWrap(FastSacEnvWrap):
     """Wrap a Motrix ``TorchEnv`` as a torch-tensor vectorized env for FastSAC."""
 
-    def __init__(self, env: TorchEnv, device: torch.device, render: RenderConfig | None = None):
+    def __init__(
+        self,
+        env: TorchEnv,
+        device: torch.device,
+        render: RenderConfig | None = None,
+        *,
+        clip_actions: bool = True,
+    ):
         super().__init__(env, device)
         self._env: TorchEnv = env
         self._low = torch.as_tensor(self._low, dtype=torch.float32, device=env.device)
         self._high = torch.as_tensor(self._high, dtype=torch.float32, device=env.device)
         self._renderer = create_renderer(env, render)
+        self._clip_actions = clip_actions
 
     def _to_torch(self, tensor: torch.Tensor, dtype=torch.float32) -> torch.Tensor:
         return tensor.to(device=self.device, dtype=dtype)
@@ -40,7 +48,8 @@ class FastSacTorchEnvWrap(FastSacEnvWrap):
 
     def step(self, actions: torch.Tensor):
         env_actions = actions.detach().to(device=self._env.device, dtype=torch.float32)
-        env_actions = torch.clamp(env_actions, self._low, self._high)
+        if self._clip_actions:
+            env_actions = torch.clamp(env_actions, self._low, self._high)
         state = self._env.step(env_actions)
         self.last_info = env_infos(state)
         return (

@@ -1,0 +1,40 @@
+# @package _global_
+# MotrixSim manager-based SONIC G1 tracking with the SONIC FastSAC actor.
+# Hyperparameters mirror the UniLab G1SonicManager FlashSAC release run
+# (2026-09-15 run_config.json) for cross-platform comparison.
+defaults:
+  - /algo_base@algo: motrix.fastsac
+  - /sonic_model@algo.sonic.model: release
+  - _self_
+task:
+  env: g1-sonic
+  rllib: motrix
+  algo: fastsac
+num_envs: 4096
+play_num_envs: 16
+seed: 1
+checkpoint:
+  interval: 50000
+algo:
+  sonic:
+    enabled: true
+    profile: release
+  agent:
+    actor_learning_rate: 1.0e-4
+    weight_decay: 0.0
+    log_std_min: -10.0
+    num_atoms: 101
+    v_min: -5.0
+    v_max: 5.0
+    gamma: 0.99
+    tau: 0.01
+    alpha_init: 0.01
+    batch_size: 2048
+    learning_starts: 24
+    policy_frequency: 2
+    num_updates: 8
+    obs_normalization: false
+  trainer:
+    num_learning_iterations: 500000
+    async_options:
+      utd_mode: strict

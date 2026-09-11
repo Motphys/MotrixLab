@@ -155,6 +155,26 @@ def test_fastsac_clips_actions_for_sim_backend(sim_backend: str) -> None:
         torch.testing.assert_close(actual, expected.to(env.device))
 
 
+@pytest.mark.parametrize("sim_backend", _SIM_BACKENDS)
+def test_fastsac_can_preserve_unbounded_release_actions(sim_backend: str) -> None:
+    env = _make_env(sim_backend)
+    module = importlib.import_module(f"motrix_rl.fastsac.wrap_{sim_backend}")
+    wrapped = getattr(module, _FASTSAC_WRAPPERS[sim_backend])(
+        env,
+        torch.device("cpu"),
+        clip_actions=False,
+    )
+    actions = torch.tensor([[3.0, -2.0], [0.5, 4.0]])
+
+    wrapped.step(actions)
+
+    actual = env.step.call_args.args[0]
+    if sim_backend == "np":
+        np.testing.assert_allclose(actual, actions.numpy())
+    else:
+        torch.testing.assert_close(actual, actions.to(env.device))
+
+
 class _AsyncEnv:
     def __init__(self, cfg: EnvCfg, num_envs: int = 1, backend=None) -> None:
         self._cfg = cfg

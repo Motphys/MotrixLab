@@ -56,6 +56,9 @@ python scripts/view.py env=<env-id>
 | <img src="../../_static/images/poster/franka-lift-cube.jpg" alt="franka-lift-cube" width="240"> | `franka-lift-cube` | 控制 Franka 机械臂抓取并抬升立方体。 | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/franka-open-cabinet.jpg" alt="franka-open-cabinet" width="240"> | `franka-open-cabinet` | 控制 Franka 机械臂抓住把手并打开抽屉。 | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/g1-29dof-wbt-largebox.jpg" alt="g1-29dof-wbt-largebox" width="240"> | `g1-29dof-wbt-largebox` | 让 Unitree G1 跟踪搬运大箱子的参考动作。 | `motrix.fastsac` |
+| <img src="../../_static/images/poster/g1-sonic.jpg" alt="g1-sonic" width="240"> | `g1-sonic` | 使用发布容量的时序配置在 G1 上跟踪 SONIC 动作。 | `motrix.fastsac` |
+| <img src="../../_static/images/poster/g1-sonic-lafan.jpg" alt="g1-sonic-lafan" width="240"> | `g1-sonic-lafan` | 使用中等规模 SONIC 配置在 G1 上跟踪打包后的 LAFAN 动作集。 | `motrix.fastsac` |
+| <img src="../../_static/images/poster/g1-sonic-smoke.jpg" alt="g1-sonic-smoke" width="240"> | `g1-sonic-smoke` | 使用仓库内置的小型动作片段验证 SONIC 环境契约。 | `motrix.fastsac` |
 | <img src="../../_static/images/poster/g1-walk-flat.jpg" alt="g1-walk-flat" width="240"> | `g1-walk-flat` | 控制 Unitree G1 在平地上跟踪行走指令。 | `motrix.fastsac` |
 | <img src="../../_static/images/poster/g1-walk-rough.jpg" alt="g1-walk-rough" width="240"> | `g1-walk-rough` | 控制 Unitree G1 在起伏地形上跟踪行走指令。 | `motrix.fastsac` |
 | <img src="../../_static/images/poster/g1-wbt-dance.jpg" alt="g1-wbt-dance" width="240"> | `g1-wbt-dance` | 让 Unitree G1 跟踪内置舞蹈参考动作。 | `motrix.fastsac` |

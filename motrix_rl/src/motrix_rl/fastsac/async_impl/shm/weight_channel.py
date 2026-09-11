@@ -50,7 +50,14 @@ import torch
 import torch.multiprocessing  # noqa: F401  registers CUDA-IPC reducers in every importing process
 from torch import nn
 
-from motrix_rl.fastsac.async_impl.shm.common import _NORM_KEYS, _shared, flatten_params, load_flat_params
+from motrix_rl.fastsac.async_impl.shm.common import (
+    _NORM_KEYS,
+    _shared,
+    flatten_buffers,
+    flatten_params,
+    load_flat_buffers,
+    load_flat_params,
+)
 
 # obs-normalizer stat buffers that the collector needs (read-only) to reproduce
 # the sync ``act()`` path (normalize with update=False, see agent.act).
@@ -59,7 +66,12 @@ from motrix_rl.fastsac.async_impl.shm.common import _NORM_KEYS, _shared, flatten
 class WeightChannelShared:
     """Parent-created protocol state shared by both channel endpoints."""
 
-    def __init__(self, obs_dim: int):
+    def __init__(self, obs_dim: int, buffer_numel: int = 0):
+        # Persistent actor buffers (e.g. SONIC's recurrent/targeting state that
+        # the learner updates) ride alongside the params — always through host
+        # shared memory; they are small relative to the parameters.
+        self.buffer_numel = buffer_numel
+        self.buffers = [_shared((buffer_numel,), torch.float32) for _ in range(2)]
         # Two slots for normalizer stats (double buffer) + the seqlock counter.
         self.mean = [_shared((1, obs_dim), torch.float32) for _ in range(2)]
         self.std = [_shared((1, obs_dim), torch.float32) for _ in range(2)]
@@ -104,6 +116,9 @@ class WeightSender(ABC):
         """Write current actor params + normalizer stats to the inactive slot
         and flip the active pointer via the seqlock."""
         device_flat = flatten_params(actor)
+        # Materialize the learner's CUDA buffer state on CPU before making the
+        # seqlock odd (flatten_buffers ends in a blocking .cpu()).
+        buffers = flatten_buffers(actor) if self.shared.buffer_numel else None
         has_stats = all(hasattr(obs_normalizer, k) for k in _NORM_KEYS)
         if has_stats:
             mean = obs_normalizer._mean.detach().cpu()
@@ -124,6 +139,8 @@ class WeightSender(ABC):
         # Start the slot write; on GPU transports this only enqueues, letting
         # the copy run under the normalizer-stat CPU writes below.
         self._write_slot(slot, device_flat)
+        if buffers is not None:
+            self.shared.buffers[slot].copy_(buffers)
         if has_stats:
             self.shared.mean[slot].copy_(mean)
             self.shared.std[slot].copy_(std)
@@ -222,6 +239,7 @@ class WeightReceiver(ABC):
         # through host shared memory); pinned when the actor lives on CUDA so
         # the stat copies into it can be non-blocking. Allocated lazily.
         self._norm_staging: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None
+        self._buffer_staging: torch.Tensor | None = None
 
     @property
     def version(self) -> int:
@@ -247,6 +265,14 @@ class WeightReceiver(ABC):
                 torch.empty((1, obs_dim), dtype=torch.float32, pin_memory=pinned) for _ in range(3)
             )
         return self._norm_staging
+
+    def _ensure_buffer_staging(self, actor: nn.Module) -> torch.Tensor:
+        if self._buffer_staging is None:
+            pinned = next(actor.parameters()).is_cuda
+            self._buffer_staging = torch.empty(
+                self.shared.buffer_numel, dtype=torch.float32, pin_memory=pinned
+            )
+        return self._buffer_staging
 
     @abstractmethod
     def _snapshot(self, slot: int, flat_params: torch.Tensor | None, actor: nn.Module) -> None:
@@ -325,6 +351,9 @@ class WeightReceiver(ABC):
             # path — each implementation owns its ordering constraints).
             snapshot_start = time.perf_counter()
             self._snapshot(slot, flat_params, actor)
+            if self.shared.buffer_numel:
+                buffers = self._ensure_buffer_staging(actor)
+                buffers.copy_(self.shared.buffers[slot])
             if has_stats:
                 mean, std, var = self._ensure_norm_staging(actor)
                 mean.copy_(self.shared.mean[slot])
@@ -343,6 +372,8 @@ class WeightReceiver(ABC):
             # Phase 2 — load: update the actor from the stable snapshot.
             actor_load_start = time.perf_counter()
             self._load(slot, flat_params, actor)
+            if self.shared.buffer_numel:
+                load_flat_buffers(actor, self._buffer_staging)
             if has_stats:
                 obs_normalizer._mean.copy_(mean, non_blocking=True)
                 obs_normalizer._std.copy_(std, non_blocking=True)

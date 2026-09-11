@@ -107,6 +107,23 @@ def load_flat_params(module: nn.Module, flat: torch.Tensor) -> None:
         offset += n
 
 
+def flatten_buffers(module: nn.Module) -> torch.Tensor:
+    """Flatten persistent non-empty module buffers."""
+    values = [buffer.detach().reshape(-1).float().cpu() for buffer in module.buffers() if buffer.numel()]
+    return torch.cat(values) if values else torch.empty(0)
+
+
+def load_flat_buffers(module: nn.Module, flat: torch.Tensor) -> None:
+    """Copy a flat snapshot into persistent non-empty module buffers."""
+    offset = 0
+    for buffer in module.buffers():
+        if not buffer.numel():
+            continue
+        size = buffer.numel()
+        buffer.data.copy_(flat[offset : offset + size].view_as(buffer).to(buffer.device))
+        offset += size
+
+
 def bind_flat_params(module: nn.Module) -> torch.Tensor:
     """Bind all module parameters to views of one device-contiguous flat tensor.
 

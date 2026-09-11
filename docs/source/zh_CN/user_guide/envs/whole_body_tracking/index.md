@@ -68,6 +68,7 @@
 
 env_design
 motion_format
+sonic
 adding_wbt_task
 
 ```

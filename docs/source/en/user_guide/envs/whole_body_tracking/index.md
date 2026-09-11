@@ -69,6 +69,7 @@ The following videos show Dex-EVT and Unitree G1 tracking dance motions, and Boo
 
 env_design
 motion_format
+sonic
 adding_wbt_task
 
 ```
