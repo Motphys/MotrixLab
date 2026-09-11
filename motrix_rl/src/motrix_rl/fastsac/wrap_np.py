@@ -24,10 +24,18 @@ from motrix_rl.utils import env_infos
 class FastSacNpEnvWrap(FastSacEnvWrap):
     """Wrap a Motrix ``DirectEnv`` as a torch-tensor vectorized env for FastSAC."""
 
-    def __init__(self, env: DirectEnv, device: torch.device, render: RenderConfig | None = None):
+    def __init__(
+        self,
+        env: DirectEnv,
+        device: torch.device,
+        render: RenderConfig | None = None,
+        *,
+        clip_actions: bool = True,
+    ):
         super().__init__(env, device)
         self._env: DirectEnv = env
         self._renderer = create_renderer(env, render)
+        self._clip_actions = clip_actions
 
     def _to_torch(self, arr: np.ndarray, dtype=torch.float32) -> torch.Tensor:
         return torch.as_tensor(np.asarray(arr), dtype=dtype, device=self.device)
@@ -39,7 +47,8 @@ class FastSacNpEnvWrap(FastSacEnvWrap):
 
     def step(self, actions: torch.Tensor):
         np_actions = actions.detach().cpu().numpy().astype(np.float32)
-        np_actions = np.clip(np_actions, self._low, self._high)
+        if self._clip_actions:
+            np_actions = np.clip(np_actions, self._low, self._high)
         state = self._env.step(np_actions)
         self.last_info = env_infos(state)
         return (

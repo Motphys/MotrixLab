@@ -196,6 +196,12 @@ def flatten_params(module: nn.Module) -> torch.Tensor:
     return torch.cat([p.detach().reshape(-1).float() for p in module.parameters()]).cpu()
 
 
+def flatten_buffers(module: nn.Module) -> torch.Tensor:
+    """Flatten persistent non-empty module buffers."""
+    values = [buffer.detach().reshape(-1).float().cpu() for buffer in module.buffers() if buffer.numel()]
+    return torch.cat(values) if values else torch.empty(0)
+
+
 def load_flat_params(module: nn.Module, flat: torch.Tensor) -> None:
     """Inverse of :func:`flatten_params`; copies a flat vector into the params."""
     offset = 0
@@ -203,6 +209,17 @@ def load_flat_params(module: nn.Module, flat: torch.Tensor) -> None:
         n = p.numel()
         p.data.copy_(flat[offset : offset + n].view_as(p).to(p.device))
         offset += n
+
+
+def load_flat_buffers(module: nn.Module, flat: torch.Tensor) -> None:
+    """Copy a flat snapshot into persistent non-empty module buffers."""
+    offset = 0
+    for buffer in module.buffers():
+        if not buffer.numel():
+            continue
+        size = buffer.numel()
+        buffer.data.copy_(flat[offset : offset + size].view_as(buffer).to(buffer.device))
+        offset += size
 
 
 def bind_flat_params(module: nn.Module) -> torch.Tensor:
@@ -263,10 +280,12 @@ class WeightSnapshot:
     release/acquire around the seq bumps and reads.
     """
 
-    def __init__(self, param_numel: int, obs_dim: int):
+    def __init__(self, param_numel: int, obs_dim: int, buffer_numel: int = 0):
         self.param_numel = param_numel
+        self.buffer_numel = buffer_numel
         # Two slots for params + normalizer stats (double buffer).
         self._params = [_shared((param_numel,), torch.float32) for _ in range(2)]
+        self._buffers = [_shared((buffer_numel,), torch.float32) for _ in range(2)]
         self._mean = [_shared((1, obs_dim), torch.float32) for _ in range(2)]
         self._std = [_shared((1, obs_dim), torch.float32) for _ in range(2)]
         self._var = [_shared((1, obs_dim), torch.float32) for _ in range(2)]
@@ -292,6 +311,7 @@ class WeightSnapshot:
         # odd. Collector readers may keep using the previous complete version
         # while these device-to-host copies finish.
         params = flatten_params(actor)
+        buffers = flatten_buffers(actor)
         has_stats = all(hasattr(obs_normalizer, k) for k in _NORM_KEYS)
         if has_stats:
             mean = obs_normalizer._mean.detach().cpu()
@@ -310,6 +330,8 @@ class WeightSnapshot:
         #    of two publishes during one read.
         slot = ((prev // 2) + 1) % 2
         self._params[slot].copy_(params)
+        if self.buffer_numel:
+            self._buffers[slot].copy_(buffers)
         if has_stats:
             self._mean[slot].copy_(mean)
             self._std[slot].copy_(std)
@@ -328,6 +350,7 @@ class WeightSnapshot:
         *,
         param_staging: torch.Tensor,
         normalizer_staging: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        buffer_staging: torch.Tensor | None = None,
         flat_params: torch.Tensor | None = None,
     ) -> tuple[int, float, float, float]:
         """Load the latest snapshot into ``actor``/``obs_normalizer`` if newer.
@@ -364,6 +387,10 @@ class WeightSnapshot:
             # seq state; we want one consistent view of the whole slot.
             snapshot_start = time.perf_counter()
             param_staging.copy_(self._params[slot])
+            if self.buffer_numel:
+                if buffer_staging is None:
+                    raise ValueError("buffer_staging is required for actor buffers")
+                buffer_staging.copy_(self._buffers[slot])
             has_stats = all(hasattr(obs_normalizer, k) for k in _NORM_KEYS)
             if has_stats:
                 mean, std, var = normalizer_staging
@@ -385,6 +412,8 @@ class WeightSnapshot:
                 load_flat_params(actor, param_staging)
             else:
                 flat_params.copy_(param_staging, non_blocking=True)
+            if self.buffer_numel:
+                load_flat_buffers(actor, buffer_staging)
             if has_stats:
                 obs_normalizer._mean.copy_(mean, non_blocking=True)
                 obs_normalizer._std.copy_(std, non_blocking=True)

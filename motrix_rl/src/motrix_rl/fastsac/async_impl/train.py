@@ -30,6 +30,7 @@ from motrix_rl.fastsac.agent import FastSacAgent
 from motrix_rl.fastsac.async_impl.collector import resolve_collector_inference_device
 from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing, WeightSnapshot
 from motrix_rl.fastsac.async_impl.worker import (
+    actor_buffer_numel,
     actor_param_numel,
     build_env,
     run_collector_process,
@@ -94,6 +95,7 @@ class Trainer(TrainerBase):
             act_dim=act_dim,
             num_envs=env.num_envs,
             cfg=self._rlcfg.agent,
+            sonic_cfg=self._rlcfg.sonic,
             device=self._device(),
             action_scale=action_scale,
             action_bias=action_bias,
@@ -130,11 +132,12 @@ class Trainer(TrainerBase):
         learner_device = self._device()
         collector_device = resolve_collector_inference_device(async_options.collector_inference_device)
         param_numel = actor_param_numel(cfg, dims, action_scale, action_bias)
+        buffer_numel = actor_buffer_numel(cfg, dims, action_scale, action_bias)
 
         # shared-memory primitives allocated in the parent, inherited by children.
         num_envs = self._context.num_envs
         ring = SharedTransitionRing(async_options.ring_capacity, num_envs, obs_dim, critic_obs_dim, act_dim)
-        weights = WeightSnapshot(param_numel=param_numel, obs_dim=obs_dim)
+        weights = WeightSnapshot(param_numel=param_numel, obs_dim=obs_dim, buffer_numel=buffer_numel)
         control = Control()
 
         resume_step = 0

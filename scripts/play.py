@@ -23,8 +23,9 @@ PLAY_RECORDING_FPS = 60
 
 @dataclass(frozen=True)
 class PlayTarget:
-    run: runs.RunContext
+    run: runs.RunContext | None
     policy_path: Path
+    external_sonic_release: bool = False
 
 
 def _latest_play_target(env_name: str, rllib: str | None = None) -> PlayTarget:
@@ -53,9 +54,15 @@ def _policy_play_target(
     logger.info(f"Using specified policy: {policy_path}")
     metadata_result = find_metadata_for_policy(policy_path)
     if metadata_result is None:
-        raise FileNotFoundError(
-            f"No metadata.json found for policy {policy_path}. Pass a policy from a metadata-backed run."
-        )
+        if not policy_path.is_file():
+            raise FileNotFoundError(f"Policy does not exist: {policy_path}")
+        if requested_env_name != "g1-sonic":
+            raise FileNotFoundError(
+                f"No metadata.json found for policy {policy_path}. External SONIC release checkpoints require "
+                "env=g1-sonic; other policies must come from a metadata-backed run."
+            )
+        logger.info("No run metadata found; using the external SONIC release checkpoint path")
+        return PlayTarget(run=None, policy_path=policy_path, external_sonic_release=True)
 
     run_dir, metadata = metadata_result
     if requested_env_name is not None and requested_env_name != metadata.env_name:
@@ -77,6 +84,8 @@ def _resolve_play_target(cfg: PlayConfig) -> PlayTarget:
 
     target = _latest_play_target(cfg.env or DEFAULT_ENV_NAME, rllib=rllib)
     logger.info(f"Auto-discovered best policy: {target.policy_path}")
+    if target.run is None:
+        raise RuntimeError("Metadata-backed play target unexpectedly has no run context")
     if cfg.sim is not None:
         metadata = replace(target.run.metadata, sim=cfg.sim)
         target = replace(target, run=runs.open_run_context(target.run.run_dir, metadata))
@@ -92,7 +101,7 @@ def _play_render_config(target: PlayTarget, cfg: PlayConfig) -> RenderConfig:
         raise ValueError(f"record_width must be positive, got {cfg.record_width}")
     if cfg.record_height <= 0:
         raise ValueError(f"record_height must be positive, got {cfg.record_height}")
-    path = target.run.run_dir / "play_video.mp4"
+    path = target.policy_path.parent / "play_video.mp4" if target.run is None else target.run.run_dir / "play_video.mp4"
     num_frames = max(1, int(round(cfg.record_seconds * PLAY_RECORDING_FPS)))
     return RenderConfig(
         headless=True,
@@ -108,6 +117,20 @@ def run(cfg: PlayConfig) -> None:
     try:
         target = _resolve_play_target(cfg)
         render = _play_render_config(target, cfg)
+        if target.external_sonic_release:
+            from motrix_rl.fastsac.sonic_release import play_sonic_release
+
+            play_sonic_release(
+                target.policy_path,
+                env_name=cfg.env or "",
+                sim=cfg.sim,
+                num_envs=cfg.num_envs if cfg.num_envs is not None else 16,
+                seed=None if cfg.rand_seed else cfg.seed,
+                render=render,
+            )
+            return
+        if target.run is None:
+            raise RuntimeError("metadata-backed playback target has no run context")
         trainer = runner.create_run_handle(
             target.run,
             cfg_override=cfg.rl,

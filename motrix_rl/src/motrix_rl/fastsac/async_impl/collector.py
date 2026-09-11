@@ -23,7 +23,7 @@ from torch import nn
 from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing, WeightSnapshot, bind_flat_params
 from motrix_rl.fastsac.buffer import EmpiricalNormalization
 from motrix_rl.fastsac.config import FastSacAgentCfg, FastSacCfg
-from motrix_rl.fastsac.networks import Actor
+from motrix_rl.fastsac.factory import make_actor
 from motrix_rl.fastsac.wrap import FastSacEnvWrap
 
 
@@ -48,7 +48,7 @@ def resolve_collector_inference_device(device_spec: str) -> torch.device:
 class _CollectorPolicy(nn.Module):
     """Read-only normalizer + stochastic actor callable compiled as one graph."""
 
-    def __init__(self, actor: Actor, obs_normalizer: nn.Module):
+    def __init__(self, actor: nn.Module, obs_normalizer: nn.Module):
         super().__init__()
         self.actor = actor
         self.obs_normalizer = obs_normalizer
@@ -97,21 +97,22 @@ class Collector:
         self._learning_starts = acfg.learning_starts
         self._local_version = 0
 
-        self.actor = Actor(
-            n_obs=obs_dim,
-            n_act=act_dim,
-            hidden_dim=acfg.actor_hidden_dim,
-            log_std_max=acfg.log_std_max,
-            log_std_min=acfg.log_std_min,
-            use_tanh=acfg.use_tanh,
-            use_layer_norm=acfg.use_layer_norm,
+        self.actor = make_actor(
+            acfg,
+            getattr(cfg, "sonic", None),
+            obs_dim=obs_dim,
+            act_dim=act_dim,
             action_scale=action_scale,
             action_bias=action_bias,
             device=self.device,
         )
         self.actor.eval()
         if acfg.obs_normalization:
-            self.obs_normalizer = EmpiricalNormalization(shape=obs_dim, device=self.device)
+            sonic_cfg = getattr(cfg, "sonic", None)
+            selector_dims = 2 if sonic_cfg is not None and sonic_cfg.enabled else 0
+            self.obs_normalizer = EmpiricalNormalization(
+                shape=obs_dim, device=self.device, passthrough_dims=selector_dims
+            )
         else:
             self.obs_normalizer = torch.nn.Identity()
         self.obs_normalizer.eval()  # read-only: never updates stats on the collector
@@ -136,6 +137,11 @@ class Collector:
             dtype=torch.float32,
             pin_memory=pin_weight_staging,
         )
+        self._weight_buffer_staging = torch.empty(
+            self.weights.buffer_numel,
+            dtype=torch.float32,
+            pin_memory=pin_weight_staging,
+        )
         self._weight_normalizer_staging = tuple(
             torch.empty(
                 (1, obs_dim),
@@ -157,8 +163,8 @@ class Collector:
                 inductor_config.compile_threads = 1
                 self._policy_runtime = torch.compile(self._policy, mode="reduce-overhead")
 
-        self._action_scale_cpu = action_scale.detach().cpu()
-        self._action_bias_cpu = action_bias.detach().cpu()
+        self._action_scale_cpu = self.actor.action_scale.detach().cpu()
+        self._action_bias_cpu = self.actor.action_bias.detach().cpu()
 
         # rollout state
         self.obs = None
@@ -231,6 +237,7 @@ class Collector:
             self._local_version,
             param_staging=self._weight_param_staging,
             normalizer_staging=self._weight_normalizer_staging,
+            buffer_staging=self._weight_buffer_staging,
             flat_params=self._flat_params,
         )
         self._local_version = version
@@ -266,6 +273,8 @@ class Collector:
         warming = self.control.collector_steps < self._learning_starts
         t_sample_actions = time.perf_counter()
         actions = self._sample_actions(warming)
+        if not torch.isfinite(actions).all():
+            raise RuntimeError("collector policy produced non-finite actions")
         t_env = time.perf_counter()
         next_obs, next_critic_obs, rewards, terminated, truncated = self.env.step(actions)
         t_push = time.perf_counter()

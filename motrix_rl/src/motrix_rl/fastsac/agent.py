@@ -20,8 +20,19 @@ import torch.nn.functional as F
 from torch import nn, optim
 
 from motrix_rl.fastsac.buffer import EmpiricalNormalization, SimpleReplayBuffer
-from motrix_rl.fastsac.config import FastSacAgentCfg
-from motrix_rl.fastsac.networks import Actor, Critic
+from motrix_rl.fastsac.config import FastSacAgentCfg, SonicSacCfg
+from motrix_rl.fastsac.factory import make_actor
+from motrix_rl.fastsac.networks import Critic
+
+
+def _own_value(value):
+    if torch.is_tensor(value):
+        return value.clone()
+    if isinstance(value, tuple):
+        return tuple(_own_value(item) for item in value)
+    if isinstance(value, dict):
+        return {key: _own_value(item) for key, item in value.items()}
+    return value
 
 
 def _own(outputs: tuple) -> tuple:
@@ -34,13 +45,15 @@ def _own(outputs: tuple) -> tuple:
     record, and the actor pair is carried across policy-frequency gating. So they
     are copied out here, while they are still valid.
 
-    Cloning a handful of 0-dim tensors costs nothing and does not synchronize;
-    what the caller must keep avoiding is ``.item()`` / ``float()``, which does.
+    Nested tuples and metric mappings are copied recursively so every compiled
+    output has the same ownership rule. Cloning a handful of 0-dim tensors costs
+    nothing and does not synchronize or move data between devices; what the
+    caller must keep avoiding is ``.item()`` / ``float()``, which does.
     See https://docs.pytorch.org/docs/2.7/torch.compiler_cudagraph_trees.html
     -- "clone tensors of a prior iteration (outside of torch.compile) before you
     begin the next run".
     """
-    return tuple(t.clone() if torch.is_tensor(t) else t for t in outputs)
+    return tuple(_own_value(value) for value in outputs)
 
 
 class FastSacAgent:
@@ -52,6 +65,7 @@ class FastSacAgent:
         num_envs: int,
         cfg: FastSacAgentCfg,
         device: torch.device,
+        sonic_cfg: SonicSacCfg | None = None,
         action_scale: torch.Tensor | None = None,
         action_bias: torch.Tensor | None = None,
         writer=None,
@@ -80,16 +94,14 @@ class FastSacAgent:
         self.update_idx = 0
         self._last_update_timing_ms: dict[str, float] = {}
 
-        self.actor = Actor(
-            n_obs=obs_dim,
-            n_act=act_dim,
-            hidden_dim=cfg.actor_hidden_dim,
-            log_std_max=cfg.log_std_max,
-            log_std_min=cfg.log_std_min,
-            use_tanh=cfg.use_tanh,
-            use_layer_norm=cfg.use_layer_norm,
-            action_scale=action_scale,
-            action_bias=action_bias,
+        self.sonic_cfg = sonic_cfg
+        self.actor = make_actor(
+            cfg,
+            sonic_cfg,
+            obs_dim=obs_dim,
+            act_dim=act_dim,
+            action_scale=action_scale if action_scale is not None else torch.ones(act_dim, device=device),
+            action_bias=action_bias if action_bias is not None else torch.zeros(act_dim, device=device),
             device=device,
         )
         critic_kwargs = dict(
@@ -128,7 +140,10 @@ class FastSacAgent:
         self.alpha_optimizer = optim.AdamW([self.log_alpha], lr=cfg.alpha_learning_rate, betas=(0.9, 0.95), fused=fused)
 
         if cfg.obs_normalization:
-            self.obs_normalizer: nn.Module = EmpiricalNormalization(shape=obs_dim, device=device)
+            selector_dims = 2 if sonic_cfg is not None and sonic_cfg.enabled else 0
+            self.obs_normalizer: nn.Module = EmpiricalNormalization(
+                shape=obs_dim, device=device, passthrough_dims=selector_dims
+            )
             self.critic_obs_normalizer: nn.Module = EmpiricalNormalization(shape=critic_obs_dim, device=device)
         else:
             self.obs_normalizer = nn.Identity()
@@ -242,18 +257,29 @@ class FastSacAgent:
 
     def _update_pol(self, b: dict):
         with self._autocast():
-            actions, log_probs = self._actor_runtime.get_actions_and_log_probs(b["obs"])
+            auxiliary = {}
+            auxiliary_forward = getattr(self._actor_runtime, "get_actions_and_log_probs_with_aux", None)
+            if auxiliary_forward is None:
+                actions, log_probs = self._actor_runtime.get_actions_and_log_probs(b["obs"])
+            else:
+                actions, log_probs, auxiliary = auxiliary_forward(b["obs"])
             q_outputs = self._qnet_runtime(b["critic_obs"], actions)
             q_values = self._qnet_runtime.get_value(F.softmax(q_outputs, dim=-1))
             qf_value = q_values.mean(dim=0)
-            actor_loss = (self.log_alpha.exp().detach() * log_probs - qf_value).mean()
+            policy_loss = (self.log_alpha.exp().detach() * log_probs - qf_value).mean()
+            auxiliary_loss = auxiliary.get("total", policy_loss.new_zeros(()))
+            actor_loss = policy_loss + auxiliary_loss
 
         self.actor_optimizer.zero_grad(set_to_none=True)
         actor_loss.backward()
         if self.cfg.max_grad_norm > 0:
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.cfg.max_grad_norm)
         self.actor_optimizer.step()
-        return actor_loss.detach().float(), (-log_probs.mean()).detach().float()
+        auxiliary_metrics = {
+            f"sonic_{name}": value.detach().float() for name, value in auxiliary.items() if value.numel() == 1
+        }
+        auxiliary_metrics["sonic_auxiliary_loss"] = auxiliary_loss.detach().float()
+        return actor_loss.detach().float(), (-log_probs.mean()).detach().float(), auxiliary_metrics
 
     @torch.no_grad()
     def _soft_update(self):
@@ -288,6 +314,7 @@ class FastSacAgent:
             return None
         batch_per_env = max(cfg.batch_size // self.num_envs, 1)
         last = (torch.zeros((), device=self.device),) * 5
+        self._last_auxiliary = {}
         timing_s = {key: 0.0 for key in ("sample_normalize", "critic_alpha", "actor", "soft_update")}
         update_started = time.perf_counter()
         # Batched data preparation (Holosoma-style): sample once and normalize
@@ -328,7 +355,8 @@ class FastSacAgent:
             actor_loss, entropy = last[3], last[4]
             if (self.update_idx + i) % cfg.policy_frequency == 0:
                 stage_started = time.perf_counter()
-                actor_loss, entropy = _own(self._update_pol_runtime(b))
+                actor_loss, entropy, auxiliary_metrics = _own(self._update_pol_runtime(b))
+                self._last_auxiliary = auxiliary_metrics
                 timing_s["actor"] += time.perf_counter() - stage_started
 
             stage_started = time.perf_counter()
@@ -345,6 +373,7 @@ class FastSacAgent:
             "actor_loss": last[3],
             "policy_entropy": last[4],
             "alpha": self.log_alpha.exp(),
+            **self._last_auxiliary,
         }
 
     # --------------------------------------------------------------- rollout
@@ -396,6 +425,10 @@ class FastSacAgent:
             "alpha_optimizer": self.alpha_optimizer.state_dict(),
             "global_step": self.global_step,
             "update_idx": self.update_idx,
+            "sonic": {
+                "enabled": bool(self.sonic_cfg is not None and self.sonic_cfg.enabled),
+                "profile": self.sonic_cfg.profile if self.sonic_cfg is not None else None,
+            },
         }
 
     def load_state_dict(self, ckpt: dict, load_optimizers: bool = True) -> None:

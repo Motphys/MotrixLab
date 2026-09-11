@@ -112,6 +112,20 @@ runs/g1-walk-flat/motrix/torch/fastsac/26-07-06_11-37-50-376526/
     python scripts/play.py env=g1-walk-flat policy=/path/to/run/checkpoints/latest.pt
     ```
 
+    官方 SONIC release checkpoint 是例外：它不是 MotrixLab run 产物，因此没有
+    `metadata.json`。指定 `env=g1-sonic` 并提供 packed motion store 后可以直接播放：
+
+    ```bash
+    SONIC_PACKED_STORE=$PWD/data/sonic/lafan1-packed \
+      python scripts/play.py env=g1-sonic \
+      policy=/path/to/sonic/release/last.pt num_envs=1
+    ```
+
+    该例外严格限制在 `g1-sonic`；其他外部 policy 路径仍必须带有 run metadata。
+    release 路径使用 10 帧 observation contract 和 `0.25 × effort/kp` 动作缩放。
+    版本化 packed store 的构建方法见
+    [SONIC G1 动作跟踪](../envs/whole_body_tracking/sonic.md)。
+
 -   **续训（resume）**：将 `resume=` 设置为 run 目录或 checkpoint 路径，框架据此解析出 `latest_training_state` 继续训练。
 
     ```bash

@@ -660,6 +660,8 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         expected_shape = (self.num_envs, self.action_space.shape[0])
         if actions.shape != expected_shape:
             raise ValueError(f"Expected action shape {expected_shape}, got {actions.shape}.")
+        for term in self._action_terms.values():
+            term.prepare(self.sim_data)
         for name, term in self._action_terms.items():
             controls = term.process(actions[:, self._action_slices[name]])
             actuators = self._action_actuators[name]

@@ -112,6 +112,22 @@ The actual checkpoint files live under the `checkpoints/` subdirectory, and `man
     python scripts/play.py env=g1-walk-flat policy=/path/to/run/checkpoints/latest.pt
     ```
 
+    Official SONIC release checkpoints are the exception: they are not
+    MotrixLab run artifacts and therefore have no `metadata.json`. Select
+    `env=g1-sonic` and provide a packed motion store to play one directly:
+
+    ```bash
+    SONIC_PACKED_STORE=$PWD/data/sonic/lafan1-packed \
+      python scripts/play.py env=g1-sonic \
+      policy=/path/to/sonic/release/last.pt num_envs=1
+    ```
+
+    This exception is deliberately limited to `g1-sonic`; all other external
+    policy paths still require run metadata. The release path uses the 10-frame
+    observation contract and the `0.25 × effort/kp` action scale. See
+    [SONIC G1 Tracking](../envs/whole_body_tracking/sonic.md) to build the
+    versioned packed store.
+
 -   **Resume**: set `resume=` to a run directory or checkpoint path, and the framework resolves `latest_training_state` from it to continue training.
 
     ```bash

@@ -78,6 +78,7 @@ class Trainer(TrainerBase):
             act_dim=act_dim,
             num_envs=env.num_envs,
             cfg=self._rlcfg.agent,
+            sonic_cfg=self._rlcfg.sonic,
             device=device,
             action_scale=action_scale,
             action_bias=action_bias,

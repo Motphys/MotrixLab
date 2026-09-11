@@ -67,7 +67,36 @@ def test_own_copies_compiled_outputs_out_of_the_graph_pool() -> None:
     assert all(torch.isfinite(torch.as_tensor(float(v))) for v in owned)
 
 
+def test_own_copies_nested_compiled_metrics_out_of_the_graph_pool() -> None:
+    """Regression for SONIC auxiliary metrics returned by the policy update."""
+    import pytest
+    import torch
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA graphs require a GPU")
+
+    from motrix_rl.fastsac.agent import _own
+
+    @torch.compile(mode="reduce-overhead")
+    def step(x):
+        y = x.tanh() @ x
+        return y.mean(), {"sonic_reconstruction": y.square().mean(), "sonic_total": y.abs().mean()}
+
+    x = torch.randn(64, 64, device="cuda")
+
+    torch.compiler.cudagraph_mark_step_begin()
+    loss, metrics = _own(step(x))
+    for _ in range(2):
+        torch.compiler.cudagraph_mark_step_begin()
+        step(x)
+
+    assert loss.device == x.device
+    assert all(value.device == x.device for value in metrics.values())
+    assert torch.isfinite(torch.as_tensor(float(loss)))
+    assert all(torch.isfinite(torch.as_tensor(float(value))) for value in metrics.values())
+
+
 def test_own_leaves_non_tensors_alone() -> None:
     from motrix_rl.fastsac.agent import _own
 
-    assert _own((1, "a", None)) == (1, "a", None)
+    assert _own((1, "a", None, {"nested": (2,)})) == (1, "a", None, {"nested": (2,)})
