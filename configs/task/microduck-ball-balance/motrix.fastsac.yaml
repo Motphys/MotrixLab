@@ -1,0 +1,25 @@
+# @package _global_
+# Task microduck-ball-balance: manager-based Microduck basketball balance with Motrix FastSAC.
+defaults:
+  - /algo_base@algo: motrix.fastsac
+  - _self_
+task:
+  env: microduck-ball-balance
+  rllib: motrix
+  algo: fastsac
+num_envs: 2048
+play_num_envs: 16
+seed: 1
+checkpoint:
+  interval: 1000
+algo:
+  agent:
+    alpha_init: 0.01
+    target_entropy_ratio: -0.1
+    batch_size: 2048
+    num_updates: 4
+    gamma: 0.99
+  trainer:
+    num_learning_iterations: 20000
+    async_options:
+      utd_mode: strict

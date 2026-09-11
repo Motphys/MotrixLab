@@ -163,7 +163,7 @@
                 <inertial pos="-0.00615742 -0.0137483 -0.0156585" mass="0.0300246" fullinertia="5.91525e-06 1.11534e-05 7.74016e-06 -2.05354e-07 8.218e-08 5.6722e-08"/>
                 <!-- Part sole_left -->
                 <geom type="mesh" class="visual" pos="-0.022 0.00622291 -0.0647" quat="0.5 -0.5 -0.5 -0.5" mesh="sole_left" material="sole_left_material"/>
-                <geom type="mesh" name="left_foot_collision" class="collision" pos="-0.022 0.00622291 -0.0647" quat="0.5 -0.5 -0.5 -0.5" mesh="sole_left" material="sole_left_material"/>
+                <geom type="mesh" name="left_foot_collision" class="collision" pos="-0.022 0.00622291 -0.0647" quat="0.5 -0.5 -0.5 -0.5" mesh="sole_left_collision" material="sole_left_material"/>
                 <!-- Part foot_left -->
                 <geom type="mesh" class="visual" pos="-0.022 0.00622291 -0.0647" quat="0.5 -0.5 -0.5 -0.5" mesh="foot_left" material="foot_left_material"/>
                 <!-- Part seeed_bearing__configuration_default -->
@@ -318,7 +318,7 @@
                 <geom type="mesh" class="visual" pos="0.022 0.00622291 -0.0647" quat="0.5 -0.5 0.5 0.5" mesh="ankle_right" material="ankle_right_material"/>
                 <!-- Part sole_right -->
                 <geom type="mesh" class="visual" pos="0.022 0.00622291 -0.0647" quat="0.5 -0.5 0.5 0.5" mesh="sole_right" material="sole_right_material"/>
-                <geom type="mesh" name="right_foot_collision" class="collision" pos="0.022 0.00622291 -0.0647" quat="0.5 -0.5 0.5 0.5" mesh="sole_right" material="sole_right_material"/>
+                <geom type="mesh" name="right_foot_collision" class="collision" pos="0.022 0.00622291 -0.0647" quat="0.5 -0.5 0.5 0.5" mesh="sole_right_collision" material="sole_right_material"/>
                 <!-- Part seeed_bearing__configuration_default_3 -->
                 <geom type="mesh" class="visual" pos="0 -0 -0.0292" quat="0 -1 -0 -0" mesh="seeed_bearing__configuration_default" material="seeed_bearing__configuration_default_material"/>
                 <!-- Part foot_right -->
@@ -363,6 +363,10 @@
     <mesh file="yaw_roll_motion.stl"/>
     <mesh file="lens.stl"/>
     <mesh file="sole_left.stl"/>
+    <!-- Decimated convex proxies of the soles, used only by the foot collision
+         geoms; the visual soles stay high-poly. -->
+    <mesh file="sole_left_collision.stl"/>
+    <mesh file="sole_right_collision.stl"/>
     <mesh file="upper_leg_left.stl"/>
     <mesh file="trunk_base.stl"/>
     <mesh file="left_shell.stl"/>

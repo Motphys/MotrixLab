@@ -264,8 +264,15 @@ class KeyPoseCfg:
 
 
 @configclass(kw_only=True)
-class RobotCfg(SceneObjCfg):
-    """Base config for a robot instance in a generated scene."""
+class BodyCfg(SceneObjCfg):
+    """A rigid-body model file attached to the scene as a free body.
+
+    Holds the backend-neutral contract for attaching an external MJCF/URDF
+    model (a free-floating body tree): which file, which link is the attach
+    root, and optional placement/name decoration. Robots extend this with
+    key-pose and actuation semantics; prop objects (balls, boxes, ...) use
+    it directly.
+    """
 
     model: ModelFileCfg
     base_link_name: str
@@ -273,20 +280,16 @@ class RobotCfg(SceneObjCfg):
     rotation: Vec4 | None = None
     prefix: str | None = None
     suffix: str | None = None
-    key_pose: KeyPoseCfg = KeyPoseCfg()
 
     def validate(self, name: str) -> None:
         super().validate(name)
         if not isinstance(self.model, ModelFileCfg):
-            raise TypeError(f"RobotCfg.model must contain ModelFileCfg, got {type(self.model).__name__}")
+            raise TypeError(f"BodyCfg.model must contain ModelFileCfg, got {type(self.model).__name__}")
         self.model.validate()
         if not self.base_link_name:
-            raise ValueError("RobotCfg.base_link_name must not be empty")
-        if not isinstance(self.key_pose, KeyPoseCfg):
-            raise TypeError(f"RobotCfg.key_pose must contain KeyPoseCfg, got {type(self.key_pose).__name__}")
-        self.key_pose.validate()
-        optional_vec("RobotCfg.translation", self.translation, 3)
-        optional_vec("RobotCfg.rotation", self.rotation, 4)
+            raise ValueError("BodyCfg.base_link_name must not be empty")
+        optional_vec("BodyCfg.translation", self.translation, 3)
+        optional_vec("BodyCfg.rotation", self.rotation, 4)
 
     def resolve_name(self, name: str) -> str:
         return f"{self.prefix or ''}{name}{self.suffix or ''}"
@@ -294,3 +297,16 @@ class RobotCfg(SceneObjCfg):
     @property
     def resolved_base_link_name(self) -> str:
         return self.resolve_name(self.base_link_name)
+
+
+@configclass(kw_only=True)
+class RobotCfg(BodyCfg):
+    """Base config for a robot instance in a generated scene."""
+
+    key_pose: KeyPoseCfg = KeyPoseCfg()
+
+    def validate(self, name: str) -> None:
+        super().validate(name)
+        if not isinstance(self.key_pose, KeyPoseCfg):
+            raise TypeError(f"RobotCfg.key_pose must contain KeyPoseCfg, got {type(self.key_pose).__name__}")
+        self.key_pose.validate()

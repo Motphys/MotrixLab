@@ -20,8 +20,8 @@ from motrix_env_core.config.scene.asset import (
     TextureCfg,
 )
 from motrix_env_core.config.scene.base import (
+    BodyCfg,
     ModelFileCfg,
-    RobotCfg,
     SceneAssetCfg,
     SceneCfg,
     SceneObjCfg,
@@ -259,17 +259,17 @@ class MuJoCoSceneCompiler(SceneCompiler[mj.MjModel]):
                 castshadow=cfg.cast_shadows,
             )
             return
-        if isinstance(cfg, RobotCfg):
+        if isinstance(cfg, BodyCfg):
             robot_spec = self._load_model_spec(cfg.model)
             base_link = robot_spec.body(cfg.base_link_name)
             if base_link is None:
-                raise ValueError(f"Robot base link {cfg.base_link_name!r} does not exist in model")
+                raise ValueError(f"Attached body base link {cfg.base_link_name!r} does not exist in model")
             if base_link.parent is not robot_spec.worldbody:
-                raise ValueError(f"MuJoCo requires RobotCfg.base_link_name {cfg.base_link_name!r} to be a root body")
+                raise ValueError(f"MuJoCo requires BodyCfg.base_link_name {cfg.base_link_name!r} to be a root body")
             first_root = robot_spec.worldbody.first_body()
             if first_root is None or first_root.name != cfg.base_link_name:
                 raise ValueError(
-                    f"MuJoCo requires RobotCfg.base_link_name {cfg.base_link_name!r} to be the first root body"
+                    f"MuJoCo requires BodyCfg.base_link_name {cfg.base_link_name!r} to be the first root body"
                 )
             placement = spec.worldbody.add_frame(
                 pos=cfg.translation,

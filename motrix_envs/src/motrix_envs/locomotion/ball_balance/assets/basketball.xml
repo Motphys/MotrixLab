@@ -1,0 +1,30 @@
+<?xml version="1.0" ?>
+<!-- Basketball prop for the microduck ball-balance task: a free sphere the
+     robot stands and balances on. Radius/mass match a size-6 basketball
+     scaled to the ~25 cm tall Microduck robot's world. Physics uses the
+     analytic sphere; the stripes are a UV-sphere visual mesh with a file
+     texture, because analytic sphere geoms have degenerate UVs and sample
+     procedural textures to a single texel. -->
+<mujoco model="basketball">
+  <compiler angle="radian" autolimits="true" meshdir="assets"/>
+  <asset>
+    <mesh name="basketball_visual" file="basketball_visual.obj"/>
+    <texture name="basketball_stripes" type="2d" file="basketball_stripes.png"/>
+    <material name="basketball_material" texture="basketball_stripes"/>
+  </asset>
+  <default>
+    <default class="basketball_visual">
+      <geom group="2" contype="0" conaffinity="0" mass="0"/>
+    </default>
+    <default class="basketball_collision">
+      <geom group="3" type="sphere" size="0.14" mass="0.45" friction="1.0 0.005 0.0001"/>
+    </default>
+  </default>
+  <worldbody>
+    <body name="basketball" pos="0 0 0.14">
+      <freejoint name="basketball_freejoint"/>
+      <geom name="basketball_visual" class="basketball_visual" type="mesh" mesh="basketball_visual" material="basketball_material"/>
+      <geom name="basketball_collision" class="basketball_collision"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -12,6 +12,7 @@ from motrix_env_core.config.scene.asset import (
     TextureCfg,
 )
 from motrix_env_core.config.scene.base import (
+    BodyCfg,
     KeyPoseCfg,
     ModelFileCfg,
     RobotCfg,
@@ -50,6 +51,7 @@ from motrix_env_core.config.scene.validation import validate_scene_cfg
 
 __all__ = [
     "ActuatorCfg",
+    "BodyCfg",
     "ContactReportField",
     "ContactSensorCfg",
     "ContactSensorReduce",
