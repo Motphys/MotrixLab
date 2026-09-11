@@ -20,6 +20,7 @@ dependencies = [
     "motrix-deploy",
     "numpy>=1.26",
     "omegaconf>=2.3,<2.4",
+    "vector-quantize-pytorch===1.31.4",
     "nvidia-ml-py>=13.610.43",
     # ONNX export of trained policies; onnxruntime (for the parity check and
     # deployment inference) comes in via motrix-deploy.

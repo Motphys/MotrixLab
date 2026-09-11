@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from omegaconf import MISSING
 
@@ -79,6 +80,24 @@ class FastSacTrainerCfg:
 
 
 @dataclass
+class SonicAuxiliaryConfig:
+    reconstruction: float = 0.01
+    latent_alignment: float = 1.0
+    cycle_consistency: float = 1.0
+
+
+@dataclass
+class SonicSacCfg:
+    """SONIC-specific actor configuration layered on FastSAC."""
+
+    enabled: bool = False
+    profile: str = "release"
+    actor_num_blocks: int = 2
+    model: dict[str, Any] = field(default_factory=dict)
+    auxiliary: SonicAuxiliaryConfig = field(default_factory=SonicAuxiliaryConfig)
+
+
+@dataclass
 class FastSacCfg:
     """Provider-specific FastSAC configuration."""
 
@@ -86,6 +105,7 @@ class FastSacCfg:
     device: str | None = MISSING
     agent: FastSacAgentCfg = field(default_factory=FastSacAgentCfg)
     trainer: FastSacTrainerCfg = field(default_factory=FastSacTrainerCfg)
+    sonic: SonicSacCfg = field(default_factory=SonicSacCfg)
 
     # Execution topology. False runs the synchronous trainer; True runs the
     # heterogeneous collector/learner trainer.

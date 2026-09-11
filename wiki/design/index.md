@@ -21,6 +21,8 @@
   在 RL 集成层引入 `rllib/train_backend/algo` 正交维度的架构：配置注册表、`RlFramework`/`AgentProvider`、`TrainerContext` 与通用 runner、算法配置与模型/memory 工厂、run metadata、checkpoint manifest 与 play 自动发现，以及内置 framework 矩阵（skrl / rslrl / motrix）。
 - [FastSAC 异构（Collector/Learner 分进程）训练器设计](./fastsac-async-heterogeneous-trainer.md)
   把仿真采样与网络训练拆到两进程、经共享内存交换数据的异构 FastSAC 训练器：统一注册为 `motrix.fastsac`，由 `algo.asynchronous` 选择执行拓扑，并包含 SPSC 有界背压 replay 环、update-to-data 比例治理、seqlock 双缓冲权重/normalizer 快照，以及进程生命周期与 checkpoint 兼容。
+- [SONIC G1 任务迁移设计](./sonic-g1-task.md)
+  SONIC Manager 环境、packed motion store、专用 FastSAC actor、官方 checkpoint 回放边界、MotrixSim 兼容依据与数据发布门禁。
 - [Framework / Task 配置分离设计](./framework-task-split.md)
   训练入口通过 Hydra task group 直接组合环境、算法与运行配置；外部应用使用自己的 Hydra config root，不维护 Python task registry 或额外 config-root 状态。
 - [ConfigClass 配置装饰器设计](./configclass.md)

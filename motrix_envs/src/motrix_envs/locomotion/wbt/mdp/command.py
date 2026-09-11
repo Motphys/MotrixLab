@@ -49,6 +49,35 @@ def _sample_motion_step(rand, sampling_cdf, num_frames: np.int64, start_at_times
     return step
 
 
+def _adaptive_sampling_probabilities(
+    failed_count: np.ndarray,
+    uniform_ratio: np.float32,
+    kernel_size: np.int64,
+    kernel_lambda: np.float32,
+) -> np.ndarray:
+    """Build normalized frame-bin probabilities with edge-extended smoothing.
+
+    Command host resets run once per training step whenever any lane is done,
+    so the smoothing must stay a single vectorized pass: one Python-level
+    numpy call per bin is measurably expensive for packed stores with
+    thousands of one-second bins.
+    """
+    num_bins = failed_count.size
+    probability = failed_count + uniform_ratio / num_bins
+    kernel_size = max(kernel_size, 1)
+    if kernel_size > 1:
+        kernel = np.asarray([kernel_lambda**i for i in range(kernel_size)], dtype=np.float32)
+        kernel /= np.sum(kernel)
+        padded = np.pad(probability, (0, kernel_size - 1), mode="edge")
+        # ``sliding_window_view`` rows equal ``padded[i : i + kernel_size]``,
+        # so the matvec reproduces the per-bin windowed dot exactly.
+        probability = np.lib.stride_tricks.sliding_window_view(padded, kernel_size) @ kernel
+    total = np.sum(probability)
+    if total <= 0.0:
+        return np.full((num_bins,), 1.0 / num_bins, dtype=np.float32)
+    return (probability / total).astype(np.float32)
+
+
 @kernel_data
 class WbtMotionCommand(CommandTerm):
     """Drive each environment through a shared whole-body reference-motion clip.
@@ -236,21 +265,12 @@ class WbtMotionCommand(CommandTerm):
 
     def _sampling_probabilities(self) -> np.ndarray:
         """Build normalized frame-bin probabilities from failure history."""
-        num_bins = self.adaptive_bin_failed_count.size
-        probability = self.adaptive_bin_failed_count + self.uniform_ratio / num_bins
-        kernel_size = max(self.kernel_size, 1)
-        if kernel_size > 1:
-            kernel = np.asarray([self.kernel_lambda**i for i in range(kernel_size)], dtype=np.float32)
-            kernel /= np.sum(kernel)
-            padded = np.pad(probability, (0, kernel_size - 1), mode="edge")
-            probability = np.asarray(
-                [np.sum(padded[index : index + kernel_size] * kernel) for index in range(num_bins)],
-                dtype=np.float32,
-            )
-        total = np.sum(probability)
-        if total <= 0.0:
-            return np.full((num_bins,), 1.0 / num_bins, dtype=np.float32)
-        return (probability / total).astype(np.float32)
+        return _adaptive_sampling_probabilities(
+            self.adaptive_bin_failed_count,
+            self.uniform_ratio,
+            self.kernel_size,
+            self.kernel_lambda,
+        )
 
 
 @configclass(kw_only=True)

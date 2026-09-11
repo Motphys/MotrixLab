@@ -23,6 +23,7 @@ separately downloaded optional asset.
 | Dex-EVT assets | `motrix_envs/src/motrix_envs/robot/assets/dex_evt/` | Record the exact upstream source and model terms | No public provenance or redistribution permission is documented in this checkout; release approval and attribution are required |
 | LAFAN1 input data and converter | `motrix_envs/src/motrix_envs/motion/converters/`; downloaded inputs are not part of the repository | [LAFAN1 Retargeting Dataset](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset) | CC BY-NC-ND 4.0 is documented by the user guide; retain attribution and state the non-commercial/no-derivatives limits before redistributing any converted output |
 | Bundled whole-body-tracking motion clips | `motrix_envs/src/motrix_envs/locomotion/wbt/assets/motion/` | Record the source, revision, author, and terms for each `*.npz` clip | Provenance and redistribution permission are not yet documented for every clip; do not publish until cleared |
+| SONIC packed smoke motion data | `data/sonic/lafan1-pack-smoke/` | Supplied with the SONIC task migration; exact upstream revision and authorization reference pending | Public redistribution was confirmed by the supplying user on 2026-09-10, but the copyright holder, license text, and auditable written grant have not been recorded; do not include in a public release until those details are attached |
 | Documentation videos, posters and benchmark figures | `docs/source/_static/` | Record whether each item is original, generated, or derived from a third-party asset | Verify the rights for the source material and the resulting media independently; retain attribution where required |
 
 ## Runtime dependencies
@@ -30,7 +31,8 @@ separately downloaded optional asset.
 The following are installed from external distributions and remain under their
 own licenses: MotrixSim, MuJoCo, Gymnasium, NumPy, Numba, nvidia-ml-py (NVML
 bindings used for training-panel GPU metrics), Hydra/OmegaConf,
-SKRL, RSL-RL, PyTorch/JAX, ONNX Runtime, TensorBoard, and the Unitree SDK2
+SKRL, RSL-RL, PyTorch/JAX, ONNX Runtime, TensorBoard, vector-quantize-pytorch,
+and the Unitree SDK2
 Python package. Their licenses are not replaced by the MotrixLab license.
 The release process should generate a dependency license report from the final
 lock file (for example with `pip-licenses`) and attach it to each release.
@@ -60,7 +62,7 @@ does not replace legal approval for an asset or dependency.
 
 - [ ] Fill in an upstream URL, exact revision, copyright holder, license, and
       redistribution permission for every asset row, including each bundled
-      whole-body-tracking motion clip.
+      whole-body-tracking motion clip and the SONIC packed smoke data.
 - [ ] Obtain written clearance for Unitree, ANYmal-C, Booster K1, Dex-EVT, RM65,
       and other branded models where the upstream terms do not clearly permit
       redistribution. Separate trademark attribution from copyright licensing.

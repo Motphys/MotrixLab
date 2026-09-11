@@ -1,0 +1,13 @@
+# @package algo.sonic.model
+# Release-capacity SONIC temporal profile.
+num_future_frames: 10
+num_tokens: 2
+token_dim: 32
+fsq_levels: 32
+action_dim: 29
+actor_hidden_dim: 512
+critic_hidden_dim: 512
+g1_encoder_hidden_dims: [2048, 1024, 512, 512]
+smpl_encoder_hidden_dims: [2048, 1024, 512, 512]
+g1_motion_decoder_hidden_dims: [2048, 1024, 512, 512]
+g1_control_decoder_hidden_dims: [2048, 2048, 1024, 1024, 512, 512]

@@ -361,6 +361,7 @@ class _CtrlOp:
 
     def __init__(self, indices: np.ndarray) -> None:
         self.indices = indices
+        self._native_order = np.argsort(indices)
 
     def alloc(self, num_envs: int) -> np.ndarray:
         return np.zeros((num_envs, self.indices.size), dtype=np.float32)
@@ -370,7 +371,7 @@ class _CtrlOp:
         if not values.shape[1]:
             return
         if self.indices.size == rows.actuator_ctrls.shape[1]:
-            rows.actuator_ctrls = values
+            rows.actuator_ctrls = np.ascontiguousarray(values[:, self._native_order])
         else:
             rows.actuator_ctrls[:, self.indices] = values
 

@@ -25,7 +25,8 @@ class FastSacOnnxExporter(OnnxPolicyExporter):
             raise RuntimeError("FastSAC ONNX export requires the 'motrix-rl[onnx]' extra") from error
 
         from motrix_rl.fastsac.buffer import EmpiricalNormalization
-        from motrix_rl.fastsac.networks import Actor
+        from motrix_rl.fastsac.factory import make_actor
+        from motrix_rl.fastsac.sonic import SonicModelConfig
 
         algo_cfg = request.task_config.algo
         if not isinstance(algo_cfg, FastSacCfg):
@@ -35,24 +36,36 @@ class FastSacOnnxExporter(OnnxPolicyExporter):
         if not isinstance(checkpoint, Mapping):
             raise ValueError(f"FastSAC checkpoint must be a mapping: {request.checkpoint}")
         actor_state = _module_state(checkpoint, "actor", request.checkpoint)
-        observation_size, action_size = _actor_sizes(actor_state)
-
         actor_cfg = algo_cfg.agent
-        actor = Actor(
-            n_obs=observation_size,
-            n_act=action_size,
-            hidden_dim=actor_cfg.actor_hidden_dim,
-            log_std_max=actor_cfg.log_std_max,
-            log_std_min=actor_cfg.log_std_min,
-            use_tanh=actor_cfg.use_tanh,
-            use_layer_norm=actor_cfg.use_layer_norm,
+        sonic_meta = checkpoint.get("sonic", {})
+        sonic_enabled = isinstance(sonic_meta, Mapping) and bool(sonic_meta.get("enabled", False))
+        if sonic_enabled:
+            profile = str(sonic_meta.get("profile") or algo_cfg.sonic.profile)
+            model_values = dict(algo_cfg.sonic.model) if algo_cfg.sonic.model else {}
+            model = (
+                SonicModelConfig.from_mapping(model_values) if model_values else SonicModelConfig.from_profile(profile)
+            )
+            observation_size, action_size = model.packed_obs_dim, model.action_dim
+        else:
+            observation_size, action_size = _actor_sizes(actor_state)
+        actor = make_actor(
+            actor_cfg,
+            algo_cfg.sonic if sonic_enabled else None,
+            obs_dim=observation_size,
+            act_dim=action_size,
+            action_scale=torch.ones(action_size),
+            action_bias=torch.zeros(action_size),
             device="cpu",
         )
         actor.load_state_dict(actor_state, strict=True)
         actor.eval()
 
         if actor_cfg.obs_normalization:
-            normalizer = EmpiricalNormalization(shape=observation_size, device="cpu")
+            normalizer = EmpiricalNormalization(
+                shape=observation_size,
+                device="cpu",
+                passthrough_dims=2 if sonic_enabled else 0,
+            )
             normalizer.load_state_dict(_module_state(checkpoint, "obs_normalizer", request.checkpoint), strict=True)
             normalizer.eval()
         else:

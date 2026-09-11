@@ -4,8 +4,37 @@
 """Execution-level behavior of compiled MotrixSim write programs."""
 
 import numpy as np
+import pytest
 
-from motrix_env_motrixsim.write_compiler import _CompiledWrite, _MotrixSimWriteProgram
+from motrix_env_motrixsim.write_compiler import _CompiledWrite, _CtrlOp, _MotrixSimWriteProgram
+
+
+@pytest.mark.parametrize("targets", [("first", "second"), ("second", "first")])
+def test_native_batched_ctrl_write_preserves_environment_and_actuator_axes(tmp_path, targets) -> None:
+    from motrix_env_core.base import SimCfg
+    from motrix_env_core.config.scene import SceneCfg
+    from motrix_env_core.sim.write import CtrlTargetsWrite
+    from motrix_env_motrixsim.runtime import MotrixSimBackend
+
+    model = tmp_path / "controls.xml"
+    model.write_text(
+        "<mujoco><worldbody>"
+        '<body><joint name="j0"/><geom type="sphere" size="0.1" mass="1"/></body>'
+        '<body pos="1 0 0"><joint name="j1"/><geom type="sphere" size="0.1" mass="1"/></body>'
+        "</worldbody><actuator>"
+        '<position name="first" joint="j0" kp="10"/>'
+        '<position name="second" joint="j1" kp="10"/>'
+        "</actuator></mujoco>",
+        encoding="utf-8",
+    )
+    backend = MotrixSimBackend(SceneCfg(file=model), SimCfg(dt=0.005), num_envs=3)
+    program = backend.write_compiler.compile({"ctrl": CtrlTargetsWrite(targets)})
+    values = np.asarray([[1, 2], [3, 4], [5, 6]], np.float32)
+    program.buffer("ctrl")[:] = values
+    program.execute()
+
+    expected = values if targets[0] == "first" else values[:, ::-1]
+    np.testing.assert_array_equal(np.asarray(backend._data.actuator_ctrls), expected)
 
 
 class _Model:
@@ -24,6 +53,21 @@ class _Model:
 
 class _Data:
     shape = (3,)
+
+
+@pytest.mark.parametrize("indices", [[0, 1, 2], [2, 0, 1], [2, 0]])
+def test_ctrl_targets_preserve_declared_order_for_full_and_partial_writes(indices) -> None:
+    rows = _Data()
+    rows.actuator_ctrls = np.full((2, 3), -1.0, np.float32)
+    op = _CtrlOp(np.asarray(indices, np.int64))
+    values = np.arange(3 * len(indices), dtype=np.float32).reshape(3, len(indices))
+    selected = np.asarray([2, 0], np.int64)
+    expected = rows.actuator_ctrls.copy()
+    expected[:, indices] = values[selected]
+
+    op(values, selected, rows)
+
+    np.testing.assert_array_equal(rows.actuator_ctrls, expected)
 
 
 class _ResetData(_Data):

@@ -63,3 +63,22 @@ def test_default_play_target_uses_cartpole(monkeypatch, tmp_path):
 
     assert play._resolve_play_target(PlayConfig()) == expected
     assert requested == [("cartpole", None)]
+
+
+def test_external_sonic_release_policy_does_not_require_run_metadata(tmp_path):
+    policy_path = tmp_path / "last.pt"
+    policy_path.write_bytes(b"checkpoint")
+
+    target = play._policy_play_target(policy_path, "g1-sonic", sim="motrixsim")
+
+    assert target.run is None
+    assert target.policy_path == policy_path
+    assert target.external_sonic_release is True
+
+
+def test_external_policy_without_sonic_env_still_requires_run_metadata(tmp_path):
+    policy_path = tmp_path / "last.pt"
+    policy_path.write_bytes(b"checkpoint")
+
+    with pytest.raises(FileNotFoundError, match="env=g1-sonic"):
+        play._policy_play_target(policy_path, "cartpole")

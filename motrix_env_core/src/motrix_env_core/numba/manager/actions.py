@@ -15,6 +15,7 @@ from motrix_env_core.config import configclass
 if TYPE_CHECKING:
     from motrix_env_core.numba.manager.env import ManagerEnv
     from motrix_env_core.sim.model import ActuatorSpec
+    from motrix_env_core.sim.read import PhysicsReadProgram
 
 
 class ActionTerm(abc.ABC):
@@ -31,6 +32,10 @@ class ActionTerm(abc.ABC):
     @abc.abstractmethod
     def reset(self, env_ids: np.ndarray) -> None:
         """Reset persistent action state for selected environments."""
+
+    def prepare(self, sim_data: PhysicsReadProgram) -> None:
+        """Snapshot simulator reads immediately before processing an action."""
+        del sim_data
 
 
 @configclass(kw_only=True)

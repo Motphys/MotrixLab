@@ -1,0 +1,20 @@
+# @package _global_
+defaults:
+  - /algo_base@algo: motrix.fastsac
+  - /sonic_model@algo.sonic.model: smoke
+  - _self_
+task:
+  env: g1-sonic-smoke
+  rllib: motrix
+  algo: fastsac
+num_envs: 32
+play_num_envs: 4
+seed: 1
+checkpoint:
+  interval: 100
+algo:
+  sonic:
+    enabled: true
+    profile: smoke
+  trainer:
+    num_learning_iterations: 1000

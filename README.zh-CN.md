@@ -135,7 +135,7 @@ MotrixLab 内置 50+ 个仿真环境，覆盖基础控制、四足、人形、�
 | --- | --- | --- |
 | <img src="docs/source/_static/images/poster/go2-walk-rough.jpg" alt="go2-walk-rough" width="240"> | 四足速度跟踪 | `go2-walk-flat` · `go2-walk-rough` · `go1-walk-rough` · `anymalc-walk-flat` |
 | <img src="docs/source/_static/images/poster/g1-walk-flat.jpg" alt="g1-walk-flat" width="240"> | 人形速度跟踪 | `g1-walk-flat` · `k1-walk-rough` · `dex-evt-walk-flat` · `microduck-walk-flat` |
-| <img src="docs/source/_static/images/poster/g1-wbt-dance.jpg" alt="g1-wbt-dance" width="240"> | 全身动作跟踪（WBT） | `g1-wbt-dance` · `k1-wbt-freekick` · `g1-29dof-wbt-largebox` |
+| <img src="docs/source/_static/images/poster/g1-wbt-dance.jpg" alt="g1-wbt-dance" width="240"> | 全身动作跟踪（WBT/SONIC） | `g1-wbt-dance` · `g1-sonic` · `k1-wbt-freekick` · `g1-29dof-wbt-largebox` |
 
 ```bash
 python scripts/view.py env=go2-walk-rough
