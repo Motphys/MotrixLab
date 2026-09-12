@@ -283,11 +283,33 @@ def _compile_manager(env: ManagerEnv):
     return NumbaKernelCompiler(env).build()
 
 
-@pytest.fixture(autouse=True)
+# Share a single on-disk cache directory across the whole test module (hermetic,
+# never touches the user cache), but do not clear the in-process kernel caches:
+# each distinct plan is compiled once instead of per-test full recompilation
+# caused by cache-clearing autouse fixtures (issue #32).
+@pytest.fixture(autouse=True, scope="module")
+def _shared_numba_cache_dir(tmp_path_factory):
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path_factory.mktemp("numba-cache")))
+    yield
+    monkeypatch.undo()
+
+
+# Referenced explicitly only by tests that verify cache isolation behavior:
+# clear in-process caches and use a separate empty disk cache, restoring the
+# shared caches afterwards so later tests are not order-dependent.
+@pytest.fixture
 def _isolated_numba_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path / "numba-cache"))
+    saved_kernel_cache = dict(compiler_module._KERNEL_CACHE)
+    saved_term_cache = dict(compiler_module._TERM_CACHE)
     compiler_module._KERNEL_CACHE.clear()
     compiler_module._TERM_CACHE.clear()
+    yield
+    compiler_module._KERNEL_CACHE.clear()
+    compiler_module._KERNEL_CACHE.update(saved_kernel_cache)
+    compiler_module._TERM_CACHE.clear()
+    compiler_module._TERM_CACHE.update(saved_term_cache)
 
 
 _GROUPS = _manager_groups()
@@ -432,7 +454,7 @@ def test_episode_reset_reuses_transition_kernel_inputs(monkeypatch: pytest.Monke
     assert read_count == 1
 
 
-def test_reset_descriptor_is_part_of_numba_kernel_cache_key() -> None:
+def test_reset_descriptor_is_part_of_numba_kernel_cache_key(_isolated_numba_cache) -> None:
     first = ManagerEnv(
         _ManagerEnvCfg(sim_reset=_DescriptorManagerResetCfg(term=_DescriptorResetTermCfg(tag="first"))),
         num_envs=1,
@@ -738,7 +760,9 @@ def test_post_reset_observation_does_not_run_command_evaluation() -> None:
     np.testing.assert_allclose(state.obs.policy[:, 2], [0.5, 1.0, 1.5])
 
 
-def test_materialize_source_is_safe_for_concurrent_same_plan_writers(tmp_path, monkeypatch) -> None:
+def test_materialize_source_is_safe_for_concurrent_same_plan_writers(
+    _isolated_numba_cache, tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path))
     source = "generated = True\\n"
 
@@ -753,7 +777,7 @@ def test_materialize_source_is_safe_for_concurrent_same_plan_writers(tmp_path, m
     assert not list((tmp_path / "generated").glob("*.tmp"))
 
 
-def test_build_rematerializes_source_after_cache_invalidation(monkeypatch, tmp_path) -> None:
+def test_build_rematerializes_source_after_cache_invalidation(_isolated_numba_cache, monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path))
     compiler_module._KERNEL_CACHE.clear()
     env = _ManagerEnv(num_envs=1)
@@ -774,7 +798,9 @@ def test_build_rematerializes_source_after_cache_invalidation(monkeypatch, tmp_p
     compiler_module._KERNEL_CACHE.pop(compiled.layout.plan_key, None)
 
 
-def test_specialization_cache_failure_rebuilds_callable_dispatchers_before_retry(monkeypatch) -> None:
+def test_specialization_cache_failure_rebuilds_callable_dispatchers_before_retry(
+    _isolated_numba_cache, monkeypatch
+) -> None:
     env = _ManagerEnv(num_envs=1)
     invalidated = []
     compile_attempts = []

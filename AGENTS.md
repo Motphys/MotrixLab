@@ -198,6 +198,16 @@ tensorboard --logdir runs/{env-name}
 python -m pytest
 ```
 
+### 提交前检查
+
+push / 提交 PR 前，先在本地跑一次 pre-commit 钩子（ruff check、ruff format 等），确保 CI 不因 lint 失败空转：
+
+```bash
+prek run --all-files
+```
+
+若 hook 自动修改了文件，将修改并入提交后再 push。
+
 ## 架构要点
 
 - **Backend 无关 core**：`motrix_env_core` 不 import 任何 simulator；前端只通过 `motrix_env_core.sim.registry` 解析 backend。
