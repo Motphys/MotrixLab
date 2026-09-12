@@ -117,7 +117,16 @@ def build_agent(cfg: FastSacCfg, dims, num_envs, device, action_scale, action_bi
 
 # ------------------------------------------------------------------ collector process
 def _configure_process_logging() -> None:
-    """Surface INFO logs (e.g. manager env startup) from spawned worker processes."""
+    """Surface INFO logs (e.g. manager env startup) from spawned worker processes.
+
+    ``basicConfig`` only applies when the root logger has no handlers yet; when
+    a handler is already configured, raising the root level is enough for the
+    startup INFO records to be emitted through the existing setup.
+    """
+    root = logging.getLogger()
+    if root.handlers:
+        root.setLevel(logging.INFO)
+        return
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 

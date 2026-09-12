@@ -21,6 +21,7 @@ from motrix_env_core.mdp.observations import (  # noqa: E402
     UniformNoiseCfg,
 )
 from motrix_env_core.mdp.state import RandValue  # noqa: E402
+from motrix_env_core.numba.manager.compiler.compiler import TermScalarBuffer  # noqa: E402
 from motrix_env_core.sim import BatchLinkPositionQuery  # noqa: E402
 from motrix_envs.locomotion.wbt.cfg import (  # noqa: E402
     ActionsCfg,
@@ -172,7 +173,12 @@ def test_numba_wbt_read_plan_reuses_preallocated_arrays() -> None:
     assert len(first) == len(env.manager_layout.inputs)
     sources = env._compiled_manager_program.read_plan.sources
     # One source per kernel-data term plus one runtime scalar buffer per float
-    # term argument; the manager context source must be present either way.
+    # term argument. Scalar args must stay runtime-buffered (not baked into the
+    # plan/source): the deterministic config has float term args, so require at
+    # least one scalar-buffer source, and the manager context source either way.
+    scalar_buffer_sources = [source for source in sources if source.value_type is TermScalarBuffer]
+    assert scalar_buffer_sources
+    assert any(source.value_type is ManagerContext for source in sources)
     context_source = next(source for source in sources if source.value_type is ManagerContext)
     arrays = tuple(value for value in context_source.values if isinstance(value, np.ndarray))
     assert any(not array.flags.writeable for array in arrays)
