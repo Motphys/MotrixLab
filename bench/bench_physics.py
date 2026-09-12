@@ -38,6 +38,7 @@ from pathlib import Path
 
 import motrixsim as mtx
 import numpy as np
+from report import render_table
 
 import motrix_envs  # noqa: F401  registers robots and scene assets
 from motrix_env_core import registry
@@ -158,17 +159,32 @@ def measure(
     }
 
 
-def _print_result(label: str, r: dict, context: dict) -> None:
-    print(f"--- {label} ---")
-    print(f"robot: {r['robot']}  num_envs: {r['num_envs']}  actuators: {r['actuators']}  links: {r['links']}")
-    print(f"sim: dt={r['dt']}s  solver_iterations={r['solver_iterations']}  nstep={r['nstep']}  iters={r['iters']}")
-    print(f"step_n time (ms): median={r['median_ms']:.3f}  p10={r['p10_ms']:.3f}  p90={r['p90_ms']:.3f}")
-    print(f"batch steps/s:     {r['batch_steps_per_s']:.1f}  |  total env steps/s: {r['total_env_steps_per_s']:.0f}")
-    print(f"context: cpus={context['num_cpus']} numa_nodes={context['num_numa_nodes']} binding=[{context['binding']}]")
+_RESULT_HEADERS = [
+    "mode",
+    "robot",
+    "num_envs",
+    "median ms",
+    "p10 ms",
+    "p90 ms",
+    "batch steps/s",
+    "total env steps/s",
+]
 
 
-def run_single(args) -> None:
-    context = _device_context()
+def _result_row(label: str, r: dict) -> list[str]:
+    return [
+        label,
+        str(r["robot"]),
+        str(r["num_envs"]),
+        f"{r['median_ms']:.3f}",
+        f"{r['p10_ms']:.3f}",
+        f"{r['p90_ms']:.3f}",
+        f"{r['batch_steps_per_s']:.1f}",
+        f"{r['total_env_steps_per_s']:,.0f}",
+    ]
+
+
+def run_single(args) -> tuple[list[list[str]], list[str]]:
     r = measure(
         robot=args.robot,
         num_envs=args.num_envs,
@@ -178,7 +194,7 @@ def run_single(args) -> None:
         warmup=args.warmup,
         iters=args.iters,
     )
-    _print_result(f"single-process ({args.numa})", r, context)
+    return ([_result_row(f"single-process ({args.numa})", r)], [])
 
 
 def _worker_entry(args) -> None:
@@ -236,22 +252,22 @@ def _measure_via_subprocess(args, node: int, num_envs: int, out_json: str) -> di
     return json.loads(Path(out_json).read_text())
 
 
-def run_node(args) -> None:
+def run_node(args) -> tuple[list[list[str]], list[str]]:
     """Re-exec the measurement pinned to NUMA node 0."""
+    notes: list[str] = []
     num_nodes = _detect_num_nodes()
     if num_nodes < 2:
-        print(f"only {num_nodes} NUMA node(s) detected; --numa node is a no-op here")
+        notes.append(f"only {num_nodes} NUMA node(s) detected; --numa node is a no-op here")
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
         out_json = f.name
     try:
         r = _measure_via_subprocess(args, node=0, num_envs=args.num_envs, out_json=out_json)
-        context = _device_context()
-        _print_result("node-pinned (numactl --cpunodebind=0 --membind=0)", r, context)
+        return ([_result_row("node-pinned (cpunodebind=0, membind=0)", r)], notes)
     finally:
         Path(out_json).unlink(missing_ok=True)
 
 
-def run_shard(args) -> None:
+def run_shard(args) -> tuple[list[list[str]], list[str]]:
     """Spawn one pinned worker per NUMA node, each running num_envs/num_nodes envs."""
     num_nodes = _detect_num_nodes()
     if num_nodes < 2:
@@ -259,9 +275,6 @@ def run_shard(args) -> None:
     if args.num_envs % num_nodes != 0:
         raise ValueError(f"--num-envs ({args.num_envs}) must be divisible by num_nodes ({num_nodes})")
     per_node = args.num_envs // num_nodes
-    print(f"sharding {args.num_envs} envs across {num_nodes} NUMA nodes -> {per_node} envs/worker")
-    print(f"context: cpus={os.cpu_count()} numa_nodes={num_nodes} (driver binding=[{_current_binding()}])")
-
     tmp_paths = []
     procs = []
     for node in range(num_nodes):
@@ -289,7 +302,7 @@ def run_shard(args) -> None:
             "--warmup",
             str(args.warmup),
             "--iters",
-            str(args.iters),
+            args.iters if isinstance(args.iters, str) else str(args.iters),
             "--out-json",
             tmp_path,
         ]
@@ -306,17 +319,16 @@ def run_shard(args) -> None:
 
     aggregate_env_steps = sum(r["total_env_steps_per_s"] for r in results)
     slowest_median = max(r["median_ms"] for r in results)
-    print()
-    for r in results:
-        _print_result(f"shard node {r['node']}", r, _device_context())
-        print()
-    print(f"=== aggregate ({len(results)} workers x {per_node} envs = {args.num_envs} total) ===")
-    print(f"sum total env steps/s: {aggregate_env_steps:.0f}")
-    print(
-        f"(slowest worker median {slowest_median:.3f} ms -> "
-        f"{args.num_envs / slowest_median * 1000:.0f} env steps/s at wall-clock)"
-    )
-    print("compare: single-process total env steps/s is the number to beat; see wiki/design/numba-server-perf.md 6.3")
+    notes = [
+        f"sharded {args.num_envs} envs across {num_nodes} NUMA nodes -> {per_node} envs/worker",
+        f"aggregate ({len(results)} workers x {per_node} envs = {args.num_envs} total): "
+        f"sum total env steps/s {aggregate_env_steps:,.0f}",
+        f"slowest worker median {slowest_median:.3f} ms -> "
+        f"{args.num_envs / slowest_median * 1000:,.0f} env steps/s at wall-clock",
+        "compare: single-process total env steps/s is the number to beat; see wiki/design/numba-server-perf.md 6.3",
+    ]
+    rows = [_result_row(f"shard node {r['node']}", r) for r in results]
+    return rows, notes
 
 
 def main() -> None:
@@ -356,16 +368,30 @@ def main() -> None:
         return
 
     num_envs_values = args.num_envs
-    for index, num_envs in enumerate(num_envs_values):
-        if index:
-            print()
+    rows: list[list[str]] = []
+    notes: list[str] = []
+    for num_envs in num_envs_values:
         args.num_envs = num_envs
         if args.numa == "single":
-            run_single(args)
+            batch_rows, batch_notes = run_single(args)
         elif args.numa == "node":
-            run_node(args)
-        elif args.numa == "shard":
-            run_shard(args)
+            batch_rows, batch_notes = run_node(args)
+        else:
+            batch_rows, batch_notes = run_shard(args)
+        rows.extend(batch_rows)
+        for note in batch_notes:
+            if note not in notes:
+                notes.append(note)
+
+    context = _device_context()
+    print(render_table(_RESULT_HEADERS, rows))
+    print(
+        f"sim: robot={args.robot} dt={args.dt}s solver_iterations={args.solver_iterations} "
+        f"nstep={args.nstep} warmup={args.warmup} iters={args.iters}"
+    )
+    print(f"context: cpus={context['num_cpus']} numa_nodes={context['num_numa_nodes']} binding=[{context['binding']}]")
+    for note in notes:
+        print(note)
 
 
 if __name__ == "__main__":

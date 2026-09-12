@@ -21,6 +21,7 @@ os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
 os.environ.setdefault("GOMP_SPINCOUNT", "0")
 
 import numpy as np
+from report import render_table
 
 import motrix_envs  # noqa: F401  registers built-in environments
 from motrix_env_core import registry
@@ -167,15 +168,30 @@ def _measure_env(
     return result, actions, action_spec, profile
 
 
-def _print_result(result: dict[str, object], speedup: float | None) -> None:
+_RESULT_HEADERS = [
+    "environment",
+    "num_envs",
+    "p10 ms",
+    "median ms",
+    "p90 ms",
+    "env steps/s",
+    "CPU %",
+    "speedup",
+]
+
+
+def _result_row(result: dict[str, object], speedup: float | None) -> list[str]:
     speedup_cell = "—" if speedup is None else f"{speedup:.2f}x"
-    print(
-        f"{str(result['env']):<28} | {int(result['num_envs']):>9} | "
-        f"{float(result['p10_ms']):>10.3f} | {float(result['median_ms']):>10.3f} | "
-        f"{float(result['p90_ms']):>10.3f} | {float(result['env_steps_per_s']):>14,.0f} | "
-        f"{float(result['cpu_util_percent']):>9.1f}% | "
-        f"{speedup_cell:>9}"
-    )
+    return [
+        str(result["env"]),
+        str(int(result["num_envs"])),
+        f"{float(result['p10_ms']):.3f}",
+        f"{float(result['median_ms']):.3f}",
+        f"{float(result['p90_ms']):.3f}",
+        f"{float(result['env_steps_per_s']):,.0f}",
+        f"{float(result['cpu_util_percent']):.1f}%",
+        speedup_cell,
+    ]
 
 
 def main() -> None:
@@ -183,7 +199,7 @@ def main() -> None:
     parser.add_argument("--env", default="cartpole", help="Reference registered environment name.")
     parser.add_argument("--compare-env", help="Optional registered environment to compare with --env.")
     parser.add_argument("--mode", default="train", help="Environment mode (train/play).")
-    parser.add_argument("--num-envs", type=int, nargs="+", default=[1], help="Batch sizes to benchmark.")
+    parser.add_argument("--num-envs", type=int, nargs="+", default=[2048], help="Batch sizes to benchmark.")
     parser.add_argument("--steps", type=int, default=1000, help="Timed env.step() calls per measurement.")
     parser.add_argument("--warmup", type=int, default=10, help="Untimed env.step() calls per measurement.")
     parser.add_argument("--seed", type=int, default=20260808)
@@ -203,12 +219,8 @@ def main() -> None:
     if args.json and args.breakdown:
         parser.error("--json and --breakdown cannot be used together")
 
-    if not args.json:
-        print(
-            f"{'environment':<28} | {'num_envs':>9} | {'p10 ms':>10} | {'median ms':>10} | "
-            f"{'p90 ms':>10} | {'env steps/s':>14} | {'CPU %':>10} | {'speedup':>9}"
-        )
-
+    rows: list[list[str]] = []
+    perf_sections: list[tuple[str, int, _ProfileResult]] = []
     for num_envs in args.num_envs:
         reference, actions, action_spec, reference_profile = _measure_env(
             args.env,
@@ -238,12 +250,17 @@ def main() -> None:
             if args.json:
                 print(json.dumps(result, sort_keys=True))
             else:
-                _print_result(result, speedup)
+                rows.append(_result_row(result, speedup))
 
         for name, profile in profiles:
-            if profile is None:
-                continue
-            print(f"\n{name}, num_envs={num_envs} step breakdown ({profile.elapsed_seconds:.3f}s wall time)")
+            if profile is not None:
+                perf_sections.append((name, num_envs, profile))
+
+    if not args.json:
+        print(render_table(_RESULT_HEADERS, rows))
+        for name, num_envs, profile in perf_sections:
+            print()
+            print(f"{name}, num_envs={num_envs} step breakdown ({profile.elapsed_seconds:.3f}s wall time)")
             _print_perf_tree(profile.root)
 
 
