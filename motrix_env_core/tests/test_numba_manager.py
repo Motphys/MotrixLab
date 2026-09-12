@@ -283,22 +283,33 @@ def _compile_manager(env: ManagerEnv):
     return NumbaKernelCompiler(env).build()
 
 
-# Share a single on-disk cache directory across the whole test file (hermetic,
+# Share a single on-disk cache directory across the whole test module (hermetic,
 # never touches the user cache), but do not clear the in-process kernel caches:
 # each distinct plan is compiled once instead of per-test full recompilation
 # caused by cache-clearing autouse fixtures (issue #32).
-@pytest.fixture(autouse=True)
-def _shared_numba_cache_dir(tmp_path_factory, monkeypatch):
+@pytest.fixture(autouse=True, scope="module")
+def _shared_numba_cache_dir(tmp_path_factory):
+    monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path_factory.mktemp("numba-cache")))
+    yield
+    monkeypatch.undo()
 
 
 # Referenced explicitly only by tests that verify cache isolation behavior:
-# additionally clear in-process caches and use a separate empty disk cache.
+# clear in-process caches and use a separate empty disk cache, restoring the
+# shared caches afterwards so later tests are not order-dependent.
 @pytest.fixture
 def _isolated_numba_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path / "numba-cache"))
+    saved_kernel_cache = dict(compiler_module._KERNEL_CACHE)
+    saved_term_cache = dict(compiler_module._TERM_CACHE)
     compiler_module._KERNEL_CACHE.clear()
     compiler_module._TERM_CACHE.clear()
+    yield
+    compiler_module._KERNEL_CACHE.clear()
+    compiler_module._KERNEL_CACHE.update(saved_kernel_cache)
+    compiler_module._TERM_CACHE.clear()
+    compiler_module._TERM_CACHE.update(saved_term_cache)
 
 
 _GROUPS = _manager_groups()
