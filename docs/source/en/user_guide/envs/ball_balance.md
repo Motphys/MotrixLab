@@ -96,9 +96,9 @@ Reaching 20 s (1000 control steps) ends the episode with `truncated` (time limit
 
 Each episode starts from the following deterministic state plus sampled noise. Reset samples are uniform over [0, scale):
 
-- Robot base pose: position (0, 0, 0.40) with noise of 0.02 m per XY axis and 0.005 m in Z; upright orientation with 0.05 rad Euler noise per axis;
-- Robot joints: set to the default stance pose with 0.05 rad noise per joint (clipped to limits), zero joint velocity;
-- Base linear velocity: zero plus uniform noise (0.1 m/s XY, 0.05 m/s Z); angular velocity: zero plus 0.2 rad/s noise;
-- Basketball: ball center at (0, 0, 0.14) (resting on the ground) with 0.01 m XY noise, linear velocity noise of 0.05 m/s per XY axis, zero angular velocity.
+- Robot base pose: position (0, 0, 0.40) with noise of [0, 0.02) m per XY axis and [0, 0.005) m in Z; upright orientation with [0, 0.05) rad Euler noise per axis;
+- Robot joints: set to the default stance pose with [0, 0.05) rad noise per joint (clipped to limits), zero joint velocity;
+- Base linear velocity: zero plus uniform noise ([0, 0.1) m/s XY, [0, 0.05) m/s Z); angular velocity: zero plus [0, 0.2) rad/s noise;
+- Basketball: ball center at (0, 0, 0.14) (resting on the ground) with [0, 0.01) m XY noise, linear velocity noise of [0, 0.05) m/s per XY axis, zero angular velocity.
 
 Physical domain randomization: the environment does **not** randomize physical parameters such as mass, inertia, friction, or actuator gains. Randomization above covers the initial state only, and observation noise applies to actor observations only.

@@ -6,7 +6,7 @@
      texture, because analytic sphere geoms have degenerate UVs and sample
      procedural textures to a single texel. -->
 <mujoco model="basketball">
-  <compiler angle="radian" autolimits="true" meshdir="assets"/>
+  <compiler angle="radian" autolimits="true"/>
   <asset>
     <mesh name="basketball_visual" file="basketball_visual.obj"/>
     <texture name="basketball_stripes" type="2d" file="basketball_stripes.png"/>
