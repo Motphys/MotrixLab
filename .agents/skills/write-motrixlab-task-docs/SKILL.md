@@ -73,31 +73,14 @@ the neighboring pages.
 
 ## Handle media and performance evidence
 
-- Reuse repository assets and Sphinx-relative paths.
-- Generate videos and posters with the dedicated scripts under `docs/scripts/`; do not hand-assemble placeholder images or
-  record through ad-hoc `play.py` invocations:
-  - `python docs/scripts/generate_video.py <env-id> --force` records the doc video to
-    `docs/source/_static/videos/<env-id>.mp4` (16 envs rendered as a 4x4 grid, 30 fps, 10 s by default).
-  - `python docs/scripts/generate_env_snapshot.py --env <env-id> --force` renders the poster to
-    `docs/source/_static/images/poster/<env-id>.jpg`. It supports both DirectEnv and ManagerEnv environments.
-- Both scripts render headless with the environment's configured system camera. Verify the camera framing before embedding:
-  the poster and video must show the full scene clearly — for the default multi-env grid, the whole grid must be inside the
-  frame with every environment identifiable. If the view crops the grid or shows only one environment, fix the
-  `SystemCameraCfg` (usually `lookat` at the grid center and a `distance` around 4.5–6.0 for a 4x4 grid) in the environment
-  config, regenerate, and inspect the rendered image again before continuing. Re-record both media whenever the camera
-  changes.
-- Extract and inspect a frame from the recorded video (for example with `imageio`) to confirm framing; do not embed media
-  you have not looked at.
-- Use the sphinxcontrib-video `{video}` directive with a `:poster:` for preview videos, matching nearby environment pages.
-- Use the MyST `figure` directive; place its caption in the directive body, not in a `:caption:` option.
-- Add `:alt:`, width, and alignment consistent with nearby pages.
-- Describe convergence time, return changes, or curriculum effects only when plots or logs support the claim.
-- When a penalty curriculum changes return scale, explain that increasing penalty weight can lower return without implying
-  policy degradation.
+Generate videos and posters with the dedicated `docs/scripts/` tools, never placeholder images or ad-hoc `play.py`
+recordings; verify camera framing by actually looking at the output before embedding. The exact commands, camera-framing
+acceptance rules, and directive syntax are specified in [writing-standard.md](references/writing-standard.md) section 8.
+Performance prose must match plot/log evidence.
 
-## Validate
+## Validate and proofread
 
-Run checks proportional to the change, at minimum:
+Run the build checks in [writing-standard.md](references/writing-standard.md) section 10, at minimum:
 
 ```bash
 git diff --check -- <changed-docs>
@@ -106,27 +89,12 @@ git diff --check -- <changed-docs>
 ```
 
 Use `uv run --extra docs sphinx-build` if the repository virtual environment is unavailable. If registration or generated
-environment overview content changed, also run:
+environment overview content changed, also run `docs/scripts/generate_env_docs.py --check`.
 
-```bash
-.venv/bin/python docs/scripts/generate_env_docs.py --check
-```
-
-## Proofread the finished page against the code
-
-After drafting and before declaring the work done, re-read the finished page and re-derive every quantitative claim from
-the current implementation — do not trust what you wrote from memory during drafting:
-
-- Recompute observation dimensions by summing the configured observation terms per group (actor and critic separately);
-  compare against the stated totals.
-- Check the interval semantics of every noise and randomization claim by reading the implementing kernel/config, not by
-  assuming a convention: uniform samples and observation noise are one-sided `[0, scale)` in this codebase — never write
-  `±` unless the code actually generates a centered, two-sided sample.
-- Re-check every weight, threshold, scale, sigma, target, and duration against the config factory values.
-- Confirm the Chinese and English pages state identical numbers and structure; fix any drift on both sides in one commit.
-
-Report any mismatch you find as a fixed defect; a proofread that changes nothing must still have actually re-derived the
-numbers.
+Then perform the content proofread required by section 10: re-read the finished page and re-derive every quantitative
+claim (observation dimensions per group, noise/randomization interval semantics, weights, thresholds, scales, durations)
+from the current implementation, and confirm the Chinese and English pages state identical numbers. Do not trust what was
+written from memory during drafting.
 
 Inspect the final HTML for the changed page, especially wide tables, formulas, captions, navigation titles, and internal
 links. Report warnings or unrelated failures precisely; do not claim an unobserved build succeeded.
