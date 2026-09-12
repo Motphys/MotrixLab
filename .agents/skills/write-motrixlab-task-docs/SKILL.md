@@ -74,6 +74,21 @@ the neighboring pages.
 ## Handle media and performance evidence
 
 - Reuse repository assets and Sphinx-relative paths.
+- Generate videos and posters with the dedicated scripts under `docs/scripts/`; do not hand-assemble placeholder images or
+  record through ad-hoc `play.py` invocations:
+  - `python docs/scripts/generate_video.py <env-id> --force` records the doc video to
+    `docs/source/_static/videos/<env-id>.mp4` (16 envs rendered as a 4x4 grid, 30 fps, 10 s by default).
+  - `python docs/scripts/generate_env_snapshot.py --env <env-id> --force` renders the poster to
+    `docs/source/_static/images/poster/<env-id>.jpg`. It supports both DirectEnv and ManagerEnv environments.
+- Both scripts render headless with the environment's configured system camera. Verify the camera framing before embedding:
+  the poster and video must show the full scene clearly — for the default multi-env grid, the whole grid must be inside the
+  frame with every environment identifiable. If the view crops the grid or shows only one environment, fix the
+  `SystemCameraCfg` (usually `lookat` at the grid center and a `distance` around 4.5–6.0 for a 4x4 grid) in the environment
+  config, regenerate, and inspect the rendered image again before continuing. Re-record both media whenever the camera
+  changes.
+- Extract and inspect a frame from the recorded video (for example with `imageio`) to confirm framing; do not embed media
+  you have not looked at.
+- Use the sphinxcontrib-video `{video}` directive with a `:poster:` for preview videos, matching nearby environment pages.
 - Use the MyST `figure` directive; place its caption in the directive body, not in a `:caption:` option.
 - Add `:alt:`, width, and alignment consistent with nearby pages.
 - Describe convergence time, return changes, or curriculum effects only when plots or logs support the claim.

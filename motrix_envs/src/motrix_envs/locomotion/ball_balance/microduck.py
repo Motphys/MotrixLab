@@ -202,9 +202,9 @@ class MicroduckBallBalanceEnvCfg(ManagerBasedEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
     scene: StandardSceneCfg = StandardSceneCfg(
         system_camera=SystemCameraCfg(
-            lookat=(0.0, 0.0, 0.2),
-            distance=0.6,
-            elevation=-15.0,
+            lookat=(1.5, 0.9, 0.2),
+            distance=5.0,
+            elevation=-35.0,
             azimuth=180.0,
         ),
         objs=BallBalanceSceneObjsCfg(robot=Microduck(), ball=Basketball()),

@@ -11,6 +11,7 @@ python scripts/view.py env=<env-id>
 ## Environment topics
 
 -   [Basic Environments](basic/index.md)
+-   [Ball Balance Environment](ball_balance.md)
 -   [DM Control Environments](dm_control/index.md)
 -   [Whole-Body Tracking](whole_body_tracking/index.md)
 -   [Generic Humanoid Velocity-Tracking Environment](humanoid_velocity_tracking.md)
@@ -66,6 +67,7 @@ python scripts/view.py env=<env-id>
 | <img src="../../_static/images/poster/k1-walk-flat.jpg" alt="k1-walk-flat" width="240"> | `k1-walk-flat` | Track walking commands with Booster K1 on flat ground. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/k1-walk-rough.jpg" alt="k1-walk-rough" width="240"> | `k1-walk-rough` | Track walking commands with Booster K1 over uneven terrain. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/k1-wbt-freekick.jpg" alt="k1-wbt-freekick" width="240"> | `k1-wbt-freekick` | Track a free-kick reference motion with Booster K1. | `motrix.fastsac` |
+| <img src="../../_static/images/poster/microduck-ball-balance.jpg" alt="microduck-ball-balance" width="240"> | `microduck-ball-balance` | Balance on top of a basketball with Microduck. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/microduck-walk-flat.jpg" alt="microduck-walk-flat" width="240"> | `microduck-walk-flat` | Track walking commands with Microduck on flat ground. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/microduck-walk-rough.jpg" alt="microduck-walk-rough" width="240"> | `microduck-walk-rough` | Track walking commands with Microduck over uneven terrain. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/peg-insert.jpg" alt="peg-insert" width="240"> | `peg-insert` | Control RM65 to grasp, align, and insert a peg into a socket. | `motrix.fastsac`, `skrl.ppo` |

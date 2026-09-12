@@ -13,7 +13,7 @@ import imageio.v2 as imageio
 
 import motrix_envs  # noqa: F401 registers built-in environments
 from motrix_env_core import registry
-from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.array.env import ArrayEnv
 from motrix_env_core.sim.backend import RenderConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -36,7 +36,7 @@ def _validate_options(num_envs: int, width: int, height: int, warmup_seconds: fl
 
 
 def _save_snapshot(
-    env: DirectEnv,
+    env: ArrayEnv,
     path: Path,
     *,
     width: int,
@@ -92,8 +92,8 @@ def generate_snapshot(
         return output
 
     env = registry.make(env_name, num_envs=num_envs)
-    if not isinstance(env, DirectEnv):
-        raise TypeError(f"Snapshot rendering only supports DirectEnv, got {type(env).__name__}")
+    if not isinstance(env, ArrayEnv):
+        raise TypeError(f"Snapshot rendering only supports ArrayEnv environments, got {type(env).__name__}")
     env.init_state()
 
     return _save_snapshot(

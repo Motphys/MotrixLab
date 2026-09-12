@@ -240,8 +240,26 @@ Reuse existing assets and scripts. Keep source-versus-generated ownership explic
 - performance figures: `docs/source/_static/images/performance/`;
 - videos: `docs/source/_static/videos/`.
 
-Use meaningful alt text and captions. Never link a nonexistent placeholder asset; use a MyST note/admonition when media is
-planned but absent. Verify final Sphinx-relative paths after language files are copied into the build source.
+Generate videos and posters with the dedicated `docs/scripts/` tools instead of ad-hoc recording:
+
+```bash
+# Doc video -> docs/source/_static/videos/<env-id>.mp4 (4x4 grid of 16 envs, 30 fps, 10 s)
+python docs/scripts/generate_video.py <env-id> --force
+
+# Poster -> docs/source/_static/images/poster/<env-id>.jpg (headless snapshot, DirectEnv and ManagerEnv)
+python docs/scripts/generate_env_snapshot.py --env <env-id> --force
+```
+
+Both tools render headless with the environment's configured system camera. Before embedding, verify the camera framing by
+inspecting the generated image or an extracted video frame: the full scene must be clearly visible, and for the multi-env
+grid every environment must fit inside the frame. A close-up `SystemCameraCfg` that shows a single environment is wrong for
+grid media — set `lookat` to the grid center and pick a `distance` of roughly 4.5–6.0 for a 4x4 grid in the environment
+config, then regenerate the poster and the video together. Never embed media you have not visually inspected, and never
+link a nonexistent placeholder asset; use a MyST note/admonition when media is planned but absent. Verify final
+Sphinx-relative paths after language files are copied into the build source.
+
+Preview videos use the sphinxcontrib-video `{video}` directive with a `:poster:`, matching nearby environment pages;
+static images use the `figure` directive with the caption in the directive body.
 
 Performance prose must match plot/log evidence. Record elapsed wall time only if the artifact encodes it. When a curriculum
 raises penalty weight, explain why episode return can decrease after behavioral convergence.
