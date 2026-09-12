@@ -14,6 +14,7 @@ from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import (
+    BodyCfg,
     ContactReportField,
     ContactSensorCfg,
     ContactSensorReduce,
@@ -796,7 +797,8 @@ def test_scene_objects_share_base_contract():
     assert LightCfg.__bases__ == (SceneObjCfg,)
     assert issubclass(FlatTerrainCfg, GeomCfg)
     assert issubclass(HFieldTerrainCfg, GeomCfg)
-    assert RobotCfg.__bases__ == (SceneObjCfg,)
+    assert RobotCfg.__bases__ == (BodyCfg,)
+    assert BodyCfg.__bases__ == (SceneObjCfg,)
     assert MjcfFileCfg.__bases__ == (ModelFileCfg,)
     assert "size" not in {cfg_field.name for cfg_field in fields(FlatTerrainCfg)}
     assert "texture_file" not in {cfg_field.name for cfg_field in fields(FlatTerrainCfg)}

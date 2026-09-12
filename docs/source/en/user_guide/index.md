@@ -41,6 +41,7 @@ tutorial/custom_training_backend
 
 Environment Overview <envs/index>
 envs/basic/index
+envs/ball_balance
 envs/dm_control/index
 envs/whole_body_tracking/index
 envs/humanoid_velocity_tracking

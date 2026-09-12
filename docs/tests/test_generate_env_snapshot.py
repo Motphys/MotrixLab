@@ -90,12 +90,12 @@ def test_validate_options_rejects_invalid_values(args, message):
 
 
 def test_generate_snapshot_initializes_registered_np_env(monkeypatch, tmp_path):
-    class FakeDirectEnv:
+    class FakeArrayEnv:
         pass
 
-    env = FakeDirectEnv()
+    env = FakeArrayEnv()
     env.init_state = lambda: setattr(env, "initialized", True)
-    monkeypatch.setattr(generate_env_snapshot, "DirectEnv", FakeDirectEnv)
+    monkeypatch.setattr(generate_env_snapshot, "ArrayEnv", FakeArrayEnv)
     monkeypatch.setattr(generate_env_snapshot.registry, "make", lambda *args, **kwargs: env)
     monkeypatch.setattr(generate_env_snapshot, "_save_snapshot", lambda candidate, path, **kwargs: path)
 
@@ -118,12 +118,12 @@ def test_generate_snapshot_requires_force_to_overwrite_existing_image(monkeypatc
     assert generate_env_snapshot.generate_snapshot("cartpole", output_dir=tmp_path) == path
     assert make_calls == []
 
-    class FakeDirectEnv:
+    class FakeArrayEnv:
         def init_state(self):
             pass
 
-    env = FakeDirectEnv()
-    monkeypatch.setattr(generate_env_snapshot, "DirectEnv", FakeDirectEnv)
+    env = FakeArrayEnv()
+    monkeypatch.setattr(generate_env_snapshot, "ArrayEnv", FakeArrayEnv)
     monkeypatch.setattr(generate_env_snapshot.registry, "make", lambda *args, **kwargs: env)
     monkeypatch.setattr(generate_env_snapshot, "_save_snapshot", lambda candidate, output, **kwargs: output)
 

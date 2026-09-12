@@ -73,16 +73,14 @@ the neighboring pages.
 
 ## Handle media and performance evidence
 
-- Reuse repository assets and Sphinx-relative paths.
-- Use the MyST `figure` directive; place its caption in the directive body, not in a `:caption:` option.
-- Add `:alt:`, width, and alignment consistent with nearby pages.
-- Describe convergence time, return changes, or curriculum effects only when plots or logs support the claim.
-- When a penalty curriculum changes return scale, explain that increasing penalty weight can lower return without implying
-  policy degradation.
+Generate videos and posters with the dedicated `docs/scripts/` tools, never placeholder images or ad-hoc `play.py`
+recordings; verify camera framing by actually looking at the output before embedding. The exact commands, camera-framing
+acceptance rules, and directive syntax are specified in [writing-standard.md](references/writing-standard.md) section 8.
+Performance prose must match plot/log evidence.
 
-## Validate
+## Validate and proofread
 
-Run checks proportional to the change, at minimum:
+Run the build checks in [writing-standard.md](references/writing-standard.md) section 10, at minimum:
 
 ```bash
 git diff --check -- <changed-docs>
@@ -91,11 +89,12 @@ git diff --check -- <changed-docs>
 ```
 
 Use `uv run --extra docs sphinx-build` if the repository virtual environment is unavailable. If registration or generated
-environment overview content changed, also run:
+environment overview content changed, also run `docs/scripts/generate_env_docs.py --check`.
 
-```bash
-.venv/bin/python docs/scripts/generate_env_docs.py --check
-```
+Then perform the content proofread required by section 10: re-read the finished page and re-derive every quantitative
+claim (observation dimensions per group, noise/randomization interval semantics, weights, thresholds, scales, durations)
+from the current implementation, and confirm the Chinese and English pages state identical numbers. Do not trust what was
+written from memory during drafting.
 
 Inspect the final HTML for the changed page, especially wide tables, formulas, captions, navigation titles, and internal
 links. Report warnings or unrelated failures precisely; do not claim an unobserved build succeeded.

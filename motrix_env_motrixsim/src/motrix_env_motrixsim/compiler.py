@@ -13,8 +13,8 @@ from motrix_env_core.config.scene.asset import (
     TextureCfg,
 )
 from motrix_env_core.config.scene.base import (
+    BodyCfg,
     ModelFileCfg,
-    RobotCfg,
     SceneAssetCfg,
     SceneCfg,
     SceneObjCfg,
@@ -233,7 +233,7 @@ class MotrixSimSceneCompiler(SceneCompiler[mtx.SceneModel]):
             light.cast_shadows = cfg.cast_shadows
             world.hierarchy.lights.append(light)
             return
-        if isinstance(cfg, RobotCfg):
+        if isinstance(cfg, BodyCfg):
             world.attach(
                 self._load_model_world(cfg.model),
                 other_link_name=cfg.base_link_name,
