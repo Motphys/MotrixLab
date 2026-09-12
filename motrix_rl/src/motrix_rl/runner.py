@@ -1,6 +1,8 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,6 +11,8 @@ from motrix_rl import backend_runtime, checkpoints, frameworks, runs, utils
 from motrix_rl.config import TaskConfig, TrainConfig
 from motrix_rl.method import RlMethod
 from motrix_rl.result import TrainResult
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -27,9 +31,12 @@ def train(request: TrainRequest) -> TrainResult:
 
 def create_training_handle(request: TrainRequest) -> frameworks.TrainerHandle:
     """Create a trainer handle for a new training run."""
+    startup_started = time.perf_counter()
     config = request.config
     task = config.task
     method = RlMethod(rllib=task.rllib, algo=task.algo)
+    logger.info("Training startup: resolving train backend for %s/%s", method.rllib, method.algo)
+    step_started = time.perf_counter()
     device_supports = utils.get_device_supports()
     train_backend = backend_runtime.resolve_train_backend(
         task.env,
@@ -37,6 +44,14 @@ def create_training_handle(request: TrainRequest) -> frameworks.TrainerHandle:
         task.train_backend,
         device_supports,
     )
+    logger.info(
+        "Training startup: resolved train backend '%s' in %.3fs (env=%s, num_envs=%d)",
+        train_backend,
+        time.perf_counter() - step_started,
+        task.env,
+        config.num_envs,
+    )
+    step_started = time.perf_counter()
     provider = frameworks.get_agent_provider(method.rllib, method.algo, train_backend)
     if provider is None:
         raise ValueError(
@@ -56,16 +71,26 @@ def create_training_handle(request: TrainRequest) -> frameworks.TrainerHandle:
         runs_root=request.runs_root,
     )
     runs.write_task_config(run.run_dir, config)
+    logger.info(
+        "Training startup: created run context in %.3fs (run_dir=%s)",
+        time.perf_counter() - step_started,
+        run.run_dir,
+    )
     resume_from = None
     if config.resume is not None:
         resume_from = str(checkpoints.resolve_resume_checkpoint_path(config.resume))
-    return _create_handle(
+    handle = _create_handle(
         run,
         provider,
         config,
         render=request.render,
         resume_from=resume_from,
     )
+    logger.info(
+        "Training startup: trainer handle ready in %.3fs",
+        time.perf_counter() - startup_started,
+    )
+    return handle
 
 
 def create_run_handle(

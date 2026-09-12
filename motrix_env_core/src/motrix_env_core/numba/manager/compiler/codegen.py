@@ -140,7 +140,7 @@ class KernelSourceGenerator:
                 [
                     f"reward_value_{index} = {cls._term_call(term, index, 'ctx')}",
                     f"reward_terms[env_id, {index}] = reward_value_{index}",
-                    f"weighted_reward_{index} = reward_value_{index} * reward_weights[{index}]",
+                    f"weighted_reward_{index} = reward_value_{index} * reward_weights[{index}] * ctx.dt",
                     f"weighted_reward_terms[env_id, {index}] = weighted_reward_{index}",
                     f"total_reward += weighted_reward_{index}",
                 ]

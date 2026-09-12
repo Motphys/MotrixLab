@@ -865,7 +865,7 @@ def test_numeric_values_reuse_compiled_plan_and_remain_environment_local() -> No
 
     assert compiled.layout.plan_key == env.manager_layout.plan_key
     assert compiled.task.evaluate_kernel is env._compiled_manager_program.task.evaluate_kernel
-    np.testing.assert_allclose(compiled.task.reward_weights, [2.0 * env.cfg.ctrl_dt])
+    np.testing.assert_allclose(compiled.task.reward_weights, [2.0])
     action = env.action_terms["test"]
     assert isinstance(action, _TestAction)
     action.source[:] = 0.25
@@ -877,6 +877,47 @@ def test_numeric_values_reuse_compiled_plan_and_remain_environment_local() -> No
     second = _ManagerEnv(num_envs=1)
     second.init_state()
     assert env._reward_terms["source"] is not second._reward_terms["source"]
+
+
+def _variant_groups_cfg(scale: float, threshold: float) -> _ManagerEnvCfg:
+    groups = _manager_groups(scale=scale, threshold=threshold)
+    return _ManagerEnvCfg(
+        observations=groups.observations,
+        rewards=groups.rewards,
+        terminations=groups.terminations,
+    )
+
+
+def test_scalar_term_args_and_ctrl_dt_share_one_compiled_plan() -> None:
+    """Numeric tuning values stay runtime buffers: variants reuse one plan."""
+    first = ManagerEnv(_variant_groups_cfg(scale=3.0, threshold=0.5), num_envs=1)
+    second = ManagerEnv(_variant_groups_cfg(scale=5.0, threshold=0.1), num_envs=1)
+    first.init_state()
+    second.init_state()
+
+    assert first.manager_layout.plan_key == second.manager_layout.plan_key
+
+    for env, scale, threshold in ((first, 3.0, 0.5), (second, 5.0, 0.1)):
+        action = env.action_terms["test"]
+        assert isinstance(action, _TestAction)
+        action.source[:] = 0.25
+        state = env._state
+        assert state is not None
+        env.compute_observation(state)
+        np.testing.assert_allclose(state.obs.policy[:, 0], 0.25 * scale + 1.0)
+        env.compute_transition(state)
+        assert state.terminated[0] == (0.25 >= threshold)
+
+    third_cfg = _variant_groups_cfg(scale=3.0, threshold=0.5)
+    third_cfg.ctrl_dt = 0.02
+    third = ManagerEnv(third_cfg, num_envs=1)
+    third.init_state()
+    assert third.manager_layout.plan_key == first.manager_layout.plan_key
+    action = third.action_terms["test"]
+    assert isinstance(action, _TestAction)
+    action.source[:] = 0.5
+    third.compute_transition(third._state)
+    np.testing.assert_allclose(third._state.reward, 2.0 * 0.5 * 0.02)
 
 
 def test_duplicate_termination_config_type_is_rejected() -> None:

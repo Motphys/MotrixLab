@@ -15,6 +15,7 @@ Build helpers (``build_env`` / ``build_agent``) are shared with the single-proce
 
 from __future__ import annotations
 
+import logging
 import random
 import time
 import traceback
@@ -115,6 +116,11 @@ def build_agent(cfg: FastSacCfg, dims, num_envs, device, action_scale, action_bi
 
 
 # ------------------------------------------------------------------ collector process
+def _configure_process_logging() -> None:
+    """Surface INFO logs (e.g. manager env startup) from spawned worker processes."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+
 def run_collector_process(
     env_spec: EnvBuildSpec,
     cfg: FastSacCfg,
@@ -133,6 +139,7 @@ def run_collector_process(
     seed,
 ) -> None:
     try:
+        _configure_process_logging()
         set_seed(seed)
         async_options = cfg.trainer.async_options
         obs_dim, critic_obs_dim, act_dim = dims
@@ -196,6 +203,7 @@ def run_learner_process(
     resume_from: str | None,
     seed,
 ) -> None:
+    _configure_process_logging()
     console, live = open_training_live()
     try:
         set_seed(seed)
