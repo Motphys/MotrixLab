@@ -505,18 +505,14 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         self.sim.step(self._cfg.sim_substeps)
 
     def init_state(self) -> ArrayEnvState:
+        startup_started = perf_counter()
+        env_name = type(self).__name__
         if self._task_program is None:
-            build_started = perf_counter()
+            logger.info("Manager env %r startup begin: num_envs=%d", env_name, self.num_envs)
             self._task_program = self._build_task_program()
             # Initialize the simulator arena before the base lifecycle resets
             # rows through the reset kernel.
             self._refresh_sim_reads()
-            logger.info(
-                "Manager compiler build completed: env=%s seconds=%.3f plan_key=%s",
-                type(self).__name__,
-                perf_counter() - build_started,
-                self.manager_layout.plan_key,
-            )
         state = super().init_state()
         self._kernel_buffers = self._make_kernel_buffers(state)
         state.metrics = self._make_metrics_view()
@@ -533,23 +529,15 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         self._refresh_sim_reads()
         inputs = self._kernel_inputs
         self._validate_kernel_context(inputs)
-        compile_started = perf_counter()
         self._compile_manager_specializations(inputs)
-        compile_seconds = perf_counter() - compile_started
-        logger.info(
-            "Manager compile completed: env=%s seconds=%.3f plan_key=%s",
-            type(self).__name__,
-            compile_seconds,
-            self.manager_layout.plan_key,
-        )
         warmup_started = perf_counter()
         self._execute_observe_kernel(inputs)
-        warmup_seconds = perf_counter() - warmup_started
         logger.info(
-            "Manager warmup completed: env=%s seconds=%.3f",
-            type(self).__name__,
-            warmup_seconds,
+            "Manager startup %s: warmup execution finished in %.3fs",
+            env_name,
+            perf_counter() - warmup_started,
         )
+        logger.info("Manager env %r startup complete in %.3fs", env_name, perf_counter() - startup_started)
         return state
 
     def _prev_physics_step(self) -> None:
