@@ -48,19 +48,19 @@ The action scale `action_scale=0.5` is uniform across joints; action-space bound
 
 ## Observation space
 
-Policy observations total 54 dims (3+3+3+3+14+14+14); value (critic) observations total 63 dims (21+42) and add privileged, noise-free terms.
+Policy observations total 54 dims; value (critic) observations total 63 dims and add privileged, noise-free terms.
 
 | Observation | Actor | Critic | Meaning |
 | ----------- | ----: | -----: | ------- |
-| Projected gravity | 3 | 3 | Gravity direction in the robot base frame; uniform noise ±0.05 (actor only) |
-| Base angular velocity | 3 | 3 | Base angular velocity; uniform noise ±0.1 (actor only) |
+| Projected gravity | 3 | 3 | Gravity direction in the robot base frame; uniform noise [0, 0.05) (actor only) |
+| Base angular velocity | 3 | 3 | Base angular velocity; uniform noise [0, 0.1) (actor only) |
 | Base linear velocity | — | 3 | Base linear velocity; privileged, noise-free |
-| Ball relative position | 3 | 3 | Ball center position relative to the base (base frame); uniform noise ±0.02 (actor only) |
-| Ball relative velocity | 3 | 3 | Ball linear velocity (base frame); uniform noise ±0.1 (actor only) |
+| Ball relative position | 3 | 3 | Ball center position relative to the base (base frame); uniform noise [0, 0.02) (actor only) |
+| Ball relative velocity | 3 | 3 | Ball linear velocity (base frame); uniform noise [0, 0.1) (actor only) |
 | Ball world position | — | 3 | Ball center in world coordinates; privileged |
 | Ball world velocity | — | 3 | Ball linear velocity in world coordinates; privileged |
-| Joint positions | 14 | 14 | Joint angles relative to the default pose; uniform noise ±0.01 (actor only) |
-| Joint velocities | 14 | 14 | Joint velocities; uniform noise ±0.25 (actor only) |
+| Joint positions | 14 | 14 | Joint angles relative to the default pose; uniform noise [0, 0.01) (actor only) |
+| Joint velocities | 14 | 14 | Joint velocities; uniform noise [0, 0.25) (actor only) |
 | Last action | 14 | 14 | The currently applied action, noise-free |
 
 ## Reward design
