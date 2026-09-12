@@ -48,7 +48,7 @@ The action scale `action_scale=0.5` is uniform across joints; action-space bound
 
 ## Observation space
 
-Policy observations total 54 dims (3+3+3+3+14+14+14); value (critic) observations total 60 dims and add privileged, noise-free terms.
+Policy observations total 54 dims (3+3+3+3+14+14+14); value (critic) observations total 63 dims (21+42) and add privileged, noise-free terms.
 
 | Observation | Actor | Critic | Meaning |
 | ----------- | ----: | -----: | ------- |
