@@ -291,12 +291,28 @@ When environment registration or generated overview content changes, run:
 .venv/bin/python docs/scripts/generate_env_docs.py --check
 ```
 
+### Content proofread against the implementation
+
+Build checks alone do not catch wrong numbers. After drafting, re-read the finished page and re-derive every quantitative
+claim from the current implementation instead of trusting what was written from memory:
+
+- recompute observation dimensions by summing the configured terms per group (actor and critic separately) against the
+  stated totals;
+- check noise and randomization interval semantics in the implementing kernel/config — in this codebase uniform samples
+  and observation noise are one-sided `[0, scale)`; never write `±` unless the code generates a centered two-sided sample;
+- re-check every weight, threshold, scale, sigma, target, and duration against the config factory;
+- confirm the Chinese and English pages state identical numbers; fix any drift on both sides.
+
+A proofread that changes nothing must still have actually re-derived the numbers; record any mismatch found as a fixed
+defect.
+
 Inspect the rendered target page. Acceptance requires:
 
-- Chinese and English structures match;
+- Chinese and English structures match, and every stated number is identical across languages;
 - navigation title and heading hierarchy are correct;
 - tables render with the intended number of columns;
 - equations and figure captions render correctly;
 - internal links and static assets resolve;
 - all behavioral claims are source-backed;
+- the content proofread above has been performed on the finished page;
 - strict builds finish successfully, or unrelated failures are reported without being attributed to the doc change.

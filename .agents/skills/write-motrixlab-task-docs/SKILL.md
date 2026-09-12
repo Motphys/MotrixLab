@@ -112,5 +112,21 @@ environment overview content changed, also run:
 .venv/bin/python docs/scripts/generate_env_docs.py --check
 ```
 
+## Proofread the finished page against the code
+
+After drafting and before declaring the work done, re-read the finished page and re-derive every quantitative claim from
+the current implementation — do not trust what you wrote from memory during drafting:
+
+- Recompute observation dimensions by summing the configured observation terms per group (actor and critic separately);
+  compare against the stated totals.
+- Check the interval semantics of every noise and randomization claim by reading the implementing kernel/config, not by
+  assuming a convention: uniform samples and observation noise are one-sided `[0, scale)` in this codebase — never write
+  `±` unless the code actually generates a centered, two-sided sample.
+- Re-check every weight, threshold, scale, sigma, target, and duration against the config factory values.
+- Confirm the Chinese and English pages state identical numbers and structure; fix any drift on both sides in one commit.
+
+Report any mismatch you find as a fixed defect; a proofread that changes nothing must still have actually re-derived the
+numbers.
+
 Inspect the final HTML for the changed page, especially wide tables, formulas, captions, navigation titles, and internal
 links. Report warnings or unrelated failures precisely; do not claim an unobserved build succeeded.
