@@ -41,7 +41,11 @@ class MotrixSimRenderer(SimRenderer):
         if config.headless:
             model.cameras.set_system_render_target("image", int(config.width), int(config.height))
         offsets = _render_layout(num_envs, render_spacing)
-        self._render = RenderApp(headless=config.headless)
+        # Headless default: ``fps=None`` selects the render service's on-demand
+        # runner — frames are rendered only when a sync arrives and GPU
+        # readbacks are drained in-frame, so nothing renders while idle and
+        # recording runs at full render speed (issue #37).
+        self._render = RenderApp(headless=config.headless, fps=None)
         self._render.launch(
             model,
             batch=num_envs,
@@ -78,6 +82,10 @@ class MotrixSimRenderer(SimRenderer):
             raise NotImplementedError(
                 "Windowed renderers set no system render target; pass headless=True to capture frames."
             )
+        # The capture request rides this frame's sync to the renderer; its map
+        # callback only fires on a *later* submit's maintenance (issue #37), so
+        # a blocking sync drains the service and guarantees the pixels exist
+        # before readback.
         task = self._render.system_camera.capture()
         self._render.sync(data=self._data_source(), wait=True)
         image = task.take_image()

@@ -25,7 +25,7 @@ def _system_camera() -> SystemCameraCfg:
 
 def test_interactive_renderer_launches_with_system_camera(monkeypatch):
     render_app = MagicMock()
-    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False: render_app)
+    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False, fps=None: render_app)
     model = object()
     data = object()
 
@@ -58,7 +58,7 @@ def test_interactive_renderer_launches_with_system_camera(monkeypatch):
 def test_interactive_renderer_space_key_toggles_data_sync(monkeypatch):
     render_app = MagicMock()
     render_app.input.is_key_just_pressed.return_value = True
-    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False: render_app)
+    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False, fps=None: render_app)
     data = object()
 
     renderer = motrixsim_renderer.MotrixSimRenderer(
@@ -78,7 +78,7 @@ def test_interactive_renderer_space_key_toggles_data_sync(monkeypatch):
 
 def test_interactive_renderer_rejects_capture(monkeypatch):
     render_app = MagicMock()
-    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False: render_app)
+    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False, fps=None: render_app)
 
     renderer = motrixsim_renderer.MotrixSimRenderer(
         object(),
@@ -122,15 +122,17 @@ def test_headless_renderer_configures_camera_resolution_and_captures(monkeypatch
     assert isinstance(renderer, SimRenderer)
     model.cameras.set_system_render_target.assert_called_once_with("image", 128, 64)
     assert render_app.launch.call_args.kwargs["batch"] == 2
+    # Headless default is the render service's on-demand runner (no loop cap).
+    assert motrixsim_renderer.RenderApp.call_args.kwargs == {"headless": True, "fps": None}
 
     frame = renderer.capture()
-
     assert frame.shape == (4, 6, 3)
     assert frame.dtype == np.uint8
+    # The capture request rides the sync frame to the renderer and its map
+    # callback only fires on a later submit's maintenance, so every capture
+    # must block on the readback within the same call (issue #37).
     render_app.sync.assert_called_once_with(data=data, wait=True)
 
-    # Headless render() performs the same offscreen sync without viewer input;
-    # only capture() blocks on pending capture tasks (wait=True).
+    render_app.sync.reset_mock()
     renderer.render()
-    assert render_app.sync.call_count == 2
     assert render_app.sync.call_args.kwargs == {"data": data}
