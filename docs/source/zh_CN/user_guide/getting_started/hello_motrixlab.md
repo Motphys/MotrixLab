@@ -82,5 +82,5 @@ python scripts/play.py env=cartpole policy=/path/to/run/checkpoints/policy-file
 ## 下一步
 
 -   了解 [基础框架](../tutorial/basic_frame.md)
--   学习 [物理环境配置](../tutorial/physics_environment.md)
+-   学习 [物理环境配置](../tutorial/building_envs/scene.md)
 -   浏览更多 [环境](../envs/index.md)

@@ -24,7 +24,7 @@ from motrix_env_core.config import SimCfg
 from motrix_env_core.config.scene import SceneCfg, SystemCameraCfg
 from motrix_env_core.sim.model import ModelQuery, SimModelQueryCompiler
 from motrix_env_core.sim.read import PhysicsReadProgram
-from motrix_env_core.sim.write import SimWriteCompiler
+from motrix_env_core.sim.write import SimWrite, SimWriteCompiler, WriteProgram
 
 
 class ActuatorType(str, Enum):
@@ -229,6 +229,22 @@ class SimBackend(abc.ABC):
     def compile_model(self, queries: Mapping[str, ModelQuery]) -> SimModel:
         """Lower static model-query declarations into one backend-neutral model."""
         return self.model_query_compiler.compile(queries)
+
+    def compile_writes(
+        self,
+        writes: Mapping[str, SimWrite],
+        *,
+        reset: bool = False,
+        forward_kinematics: bool = True,
+    ) -> WriteProgram:
+        """Lower named write declarations into one executable write program.
+
+        Convenience twin of :meth:`compile_reads` and :meth:`compile_model`
+        for the write path: it forwards to :attr:`write_compiler`, so
+        backends without live write support report the gap when the property
+        is accessed.
+        """
+        return self.write_compiler.compile(writes, reset=reset, forward_kinematics=forward_kinematics)
 
     @property
     def write_compiler(self) -> SimWriteCompiler:

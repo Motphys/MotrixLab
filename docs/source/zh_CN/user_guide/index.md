@@ -13,26 +13,13 @@ robots
 
 ```{toctree}
 :caption: 使用教程
-:maxdepth: 1
+:maxdepth: 2
 
+tutorial/index
 tutorial/basic_frame
-tutorial/physics_environment
-tutorial/training_environment_config
-tutorial/rewards
-tutorial/training_and_result
-tutorial/runs_and_checkpoints
-
-```
-
-```{toctree}
-:caption: 进阶主题
-:maxdepth: 1
-
-tutorial/export_onnx
-tutorial/motrix_deploy
-tutorial/input_devices_and_bindings
-tutorial/custom_training_backend
-
+tutorial/building_envs/index
+tutorial/training/index
+tutorial/advanced/index
 ```
 
 ```{toctree}

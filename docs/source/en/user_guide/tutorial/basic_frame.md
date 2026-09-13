@@ -1,119 +1,79 @@
 # Basic Framework
 
-MotrixLab separates environment implementation, training methods, configuration, and command-line orchestration. This section explains how those pieces fit together before you build a custom environment or training backend.
+MotrixLab separates environment implementation, simulation backends, training methods, configuration, and
+command-line orchestration into independent layers. This page unfolds top-down: first the typical
+simulation-RL loop, then which part of that loop each MotrixLab package covers, and finally the
+capabilities of each part.
 
-## Repository Layers
+## The typical simulation RL loop
 
-```text
-MotrixLab/
-├── motrix_envs/                 # Environment configs, implementations, and registry
-│   └── src/motrix_envs/
-├── motrix_rl/                   # RL frameworks, providers, trainers, and run artifacts
-│   └── src/motrix_rl/
-├── configs/
-│   ├── algo_base/               # Complete typed defaults for each RL provider
-│   └── task/<env>/              # Per-environment training recipes
-└── scripts/
-    ├── train.py                 # Hydra training entry point
-    ├── play.py                  # Metadata-backed policy playback
-    └── view.py                  # Random-action environment preview
+Simulation reinforcement learning is driven by the interaction loop between a **policy** and an
+**environment**, with a **trainer** updating the policy on top of that loop:
+
+```{image} /_static/images/tutorial/rl-loop-light.svg
+:alt: The simulation RL loop: the policy outputs actions to the environment, the environment returns observations, rewards, and termination flags, and the trainer collects transitions and updates the policy parameters
+:class: only-light
 ```
 
-The main runtime flow is:
-
-```text
-task=<env>/<framework>.<algorithm>
-                 │
-                 ▼
-Hydra composes root config + algorithm base + Task + CLI overrides
-                 │
-                 ▼
-runner resolves an AgentProvider and creates a Trainer
-                 │
-                 ▼
-Trainer creates the registered environment and executes train/play
-                 │
-                 ▼
-runs/... stores metadata, resolved Task config, and checkpoints
+```{image} /_static/images/tutorial/rl-loop-dark.svg
+:alt: The simulation RL loop: the policy outputs actions to the environment, the environment returns observations, rewards, and termination flags, and the trainer collects transitions and updates the policy parameters
+:class: only-dark
 ```
 
-## Core Components
+- The policy takes the environment observation oₜ as input and outputs an action aₜ.
+- The environment runs N simulated instances in parallel, applies the action, advances the physics, and
+  produces the reward rₜ, terminated (failure) / truncated (time limit), and the next observation oₜ₊₁.
+- The next observation oₜ₊₁ returns to the policy as the input for the next action; the reward and the
+  termination flags **never enter the policy network** — together with (oₜ, aₜ) they form the transitions
+  handed to the trainer, which updates the policy parameters with the selected RL algorithm, repeating
+  until convergence.
 
-### Environment Layer
+One timing detail: the observation the environment produces in response to aₜ becomes the policy's
+input at step t+1; both interaction edges in the figure are labeled with the current cycle's oₜ, aₜ, rₜ.
+With this loop in mind, every MotrixLab package has a place in the figure.
 
-An environment normally consists of:
+## Which part of the loop each package covers
 
--   An `EnvCfg` dataclass registered with `@registry.envcfg("name")`.
--   An environment implementation registered with `@registry.env("name")`.
--   Task logic for observations, rewards, termination, reset, and action application.
+MotrixLab is a UV workspace made of nine packages, grouped by the loop above:
 
-The environment registry owns environment names and simulation-backend implementations. `scripts/view.py`, trainers, and playback all create environments through this same registry.
+| Package                 | Loop stage                     | Responsibility                                                       |
+| ----------------------- | ------------------------------ | -------------------------------------------------------------------- |
+| `motrix_env_core`       | Policy–environment interaction | Backend-agnostic environment framework: `EnvCfg`, registry, frontends, lifecycle |
+| `motrix_envs`           | Policy–environment interaction | Built-in environments, robot models, and task assets                 |
+| `motrix_rl`             | Policy training and updates    | RL framework integrations (providers, trainers) and training tools   |
+| `configs/`, `scripts/`  | Configuration and orchestration | Hydra algorithm base configs and Task recipes; train / play / view / export entry points |
+| `motrix_deploy*`        | Policy deployment              | Framework-agnostic artifacts and runtime contracts, MuJoCo replay and Unitree hardware backends |
 
-### RL Framework and Provider Layer
+A simulation backend (such as `motrix_env_motrixsim`) is isolated behind the `SimBackend` interface —
+when using an environment you normally do not need to care which one it is. To select or integrate a
+backend, see the SimBackend section of
+[Writing DirectEnv Environments](building_envs/direct_env.md).
 
-`RlFramework` defines an RL framework namespace such as `skrl`, `rslrl`, or `motrix`. Each framework contains one or more `AgentProvider` implementations. A provider declares:
-
--   Its algorithm name, such as `ppo` or `fastsac`.
--   Its training backend, such as `jax` or `torch`.
--   The typed algorithm configuration schema it accepts.
--   Its checkpoint format and how to create a trainer.
-
-Frameworks and providers are registered in Python because they represent executable capabilities. See [Adding a Custom Training Backend](custom_training_backend.md) for the extension interface.
-
-### Hydra Configuration Layer
-
-Training values live in YAML rather than Python Task subclasses:
-
--   `configs/algo_base/<framework>.<algorithm>.yaml` supplies the complete provider-owned algorithm defaults.
--   `configs/task/<env>/<framework>.<algorithm>.yaml` selects an environment and stores task-specific tuning.
--   An optional `.<backend>.yaml` Task contains only backend-specific differences.
--   CLI `key=value` arguments apply temporary overrides after composition.
-
-The provider's dataclass schema validates field names and types, while YAML remains the source of truth for values. Task files are discovered by scanning `configs/task/`; there is no RL configuration decorator or Python Task registry.
-
-### Runner and Trainer Layer
-
-The shared runner handles framework-neutral orchestration:
-
-1. Read `task.env`, `task.rllib`, `task.algo`, and `task.train_backend` from the composed config.
-2. Resolve a compatible provider and training backend.
-3. Create a run directory and write `metadata.json` plus `task_config.yaml`.
-4. Build a `TrainerContext` and ask the provider to create its trainer.
-5. Execute training or playback and register checkpoint artifacts.
-
-The trainer owns framework-specific model construction, optimization, checkpoint serialization, and inference. It should use the environment registry instead of coupling itself to a concrete environment class.
-
-## Training Workflow
-
-For example:
+## One full training run
 
 ```bash
 python scripts/train.py task=cartpole/skrl.ppo num_envs=1024
 ```
 
-This command performs the following steps:
+1. Hydra composes `configs/train.yaml`, `configs/algo_base/skrl.ppo.yaml`, and
+   `configs/task/cartpole/skrl.ppo.yaml`; `num_envs=1024` only overrides this run.
+2. The runner resolves the SKRL PPO provider and automatically picks an available JAX/Torch backend.
+3. The trainer creates the registered `cartpole` environment through the registry and starts optimizing.
+4. Run metadata, the final Task snapshot, logs, and the checkpoint manifest land in `runs/cartpole/`.
 
-1. Hydra composes `configs/train.yaml`, `configs/algo_base/skrl.ppo.yaml`, and `configs/task/cartpole/skrl.ppo.yaml`.
-2. `num_envs=1024` overrides the composed Task value for this run only.
-3. The runner resolves the SKRL PPO provider and an available JAX or Torch backend.
-4. The trainer creates the registered `cartpole` environment and starts optimization.
-5. Run metadata, the resolved Task snapshot, logs, and checkpoint manifests are written under `runs/cartpole/`.
-
-## Multi-Framework Support
-
-The same environment can have multiple Task recipes without changing its implementation:
+The same environment can have several Task recipes without touching the environment implementation:
 
 ```bash
 python scripts/train.py task=cartpole/skrl.ppo
 python scripts/train.py task=cartpole/rslrl.ppo
 ```
 
-SKRL supports JAX and Torch providers, RSLRL uses Torch, and `motrix.fastsac` selects its synchronous or asynchronous Torch trainer through `algo.asynchronous`. The selected Task and provider determine the algorithm configuration and output metadata.
-
-## Why This Separation Matters
+## What the layering buys you
 
 1. **Environment reuse**: one registered environment can be trained by multiple RL frameworks.
-2. **Typed configuration**: provider schemas reject misspelled or incompatible YAML/CLI values before training.
-3. **Reproducibility**: each run stores the resolved Task configuration and provider identity.
-4. **Extensibility**: new environments add registry entries and Task YAML; new RL integrations add providers and trainers.
-5. **Consistent artifacts**: playback and resume use metadata and checkpoint manifests instead of guessing file names.
+2. **Typed configuration**: provider schemas reject misspelled or mistyped YAML/CLI values before training.
+3. **Reproducible experiments**: every run stores its final Task config and provider identity.
+4. **Multiple backends**: the backend is a config-level choice; environment implementations never see the
+   concrete simulator.
+5. **Easy extension**: a new environment needs a registration plus a Task YAML; a new RL integration needs
+   a provider and trainer; a new simulator needs a registered SimBackend.

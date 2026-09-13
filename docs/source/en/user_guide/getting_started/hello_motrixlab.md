@@ -82,5 +82,5 @@ Next, you can try modifying parameters to observe physical effects under differe
 ## Next Steps
 
 -   Learn about the [Basic Framework](../tutorial/basic_frame.md)
--   Study [Physics Environment Configuration](../tutorial/physics_environment.md)
+-   Study [Physics Environment Configuration](../tutorial/building_envs/scene.md)
 -   Browse more [Environments](../envs/index.md)

@@ -165,4 +165,4 @@ python scripts/play.py env=ENV_ID num_envs=16
 
 `play.py` 自动选择该环境最新一次 metadata-backed run 的最佳策略。WBT 的 play 配置从 motion 第 0 帧开始，关闭
 reset noise 和自适应采样，并移除 10 秒训练时限；播放到 clip 末尾后从第 0 帧重新开始。训练产物和 checkpoint 选择规则见
-[训练产物：runs 目录与 checkpoint 结构](../../tutorial/runs_and_checkpoints.md)。
+[训练产物：runs 目录与 checkpoint 结构](../../tutorial/training/runs_and_checkpoints.md)。

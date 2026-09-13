@@ -1,6 +1,6 @@
-# Physics Environment Configuration
+# SceneCfg: Setting Up the Physics Scene
 
-Physics environment configuration defines simulation parameters and scene settings in reinforcement learning training.
+The physics scene defines simulation parameters and scene settings for reinforcement learning training.
 MotrixLab uses [MotrixSim](https://motrixsim.readthedocs.io/en/latest/user_guide/index.html) as the physics simulation backend.
 
 ## Supported File Formats

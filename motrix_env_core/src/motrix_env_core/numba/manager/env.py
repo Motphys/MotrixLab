@@ -425,7 +425,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         if not self._action_cfgs:
             raise ValueError("Manager environment config requires at least one action config.")
         self._action_actuators = self._resolve_action_actuators()
-        self._action_writes = self.sim.write_compiler.compile(
+        self._action_writes = self.sim.compile_writes(
             {
                 name: CtrlTargetsWrite(None if action_cfg.actuator_names == () else action_cfg.actuator_names)
                 for name, action_cfg in self._action_cfgs.items()

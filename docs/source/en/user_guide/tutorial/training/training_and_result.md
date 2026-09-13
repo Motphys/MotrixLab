@@ -26,7 +26,7 @@ Built-in RL methods and their training backends:
 | `rslrl.ppo`      | `torch`          | RSLRL PPO                                                   |
 | `motrix.fastsac` | `torch`          | FastSAC; `algo.asynchronous` selects the execution topology |
 
-Run `python scripts/train.py --help` to list the Tasks available in the current checkout. See [Task Configuration and CLI Overrides](training_environment_config.md) for the Task file layout and override rules.
+Run `python scripts/train.py --help` to list the Tasks available in the current checkout. See [Task Configuration and CLI Overrides](task_config.md) for the Task file layout and override rules.
 
 ### Selecting Training and Simulation Backends
 

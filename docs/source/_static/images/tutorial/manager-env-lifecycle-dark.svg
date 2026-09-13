@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="505" viewBox="0 0 780 505" font-family="Arial,sans-serif">
+<defs><style>.stage{font-size:13px;font-weight:600}.chip{font-size:10px;font-weight:600}.sub{font-size:9.5px}.label{font-size:10px;font-weight:600}.legend{font-size:10.5px}</style></defs>
+<text x="390" y="22" text-anchor="middle" font-size="15" font-weight="600" fill="#ffffff">One control step of ManagerEnv</text>
+
+<!-- Main row -->
+<g stroke-width="1.3">
+<rect x="20" y="42" width="220" height="36" rx="8" fill="#1d2a40" stroke="#5b93e0"/><text x="130" y="65" text-anchor="middle" class="stage" fill="#ffffff">apply_action</text>
+<rect x="20" y="86" width="220" height="22" rx="6" fill="#251d38" stroke="#9775fa"/><text x="30" y="101" class="chip" fill="#c5b3ff">action terms &#183; process()</text>
+<rect x="20" y="114" width="220" height="22" rx="6" fill="#1d2a40" stroke="#5b93e0"/><text x="30" y="129" class="chip" fill="#8ab8f0">write ctrl targets</text>
+
+<rect x="280" y="42" width="220" height="36" rx="8" fill="#1d2a40" stroke="#5b93e0"/><text x="390" y="65" text-anchor="middle" class="stage" fill="#ffffff">physics_step</text>
+<rect x="280" y="86" width="220" height="22" rx="6" fill="#1d2a40" stroke="#5b93e0"/><text x="290" y="101" class="chip" fill="#8ab8f0">sim.step &#215; substeps</text>
+
+<rect x="540" y="42" width="220" height="36" rx="8" fill="#1d2a40" stroke="#5b93e0"/><text x="650" y="65" text-anchor="middle" class="stage" fill="#ffffff">compute_transition</text>
+<rect x="540" y="86" width="220" height="36" rx="6" fill="#1a2e21" stroke="#3fb950"/><text x="550" y="101" class="chip" fill="#63d47e">evaluate kernel</text>
+<text x="550" y="115" class="sub" fill="#63d47e">update &#183; rewards &#183; terminations &#183; advance</text>
+<rect x="540" y="128" width="220" height="22" rx="6" fill="#251d38" stroke="#9775fa"/><text x="550" y="143" class="chip" fill="#c5b3ff">command &#183; on_transition()</text>
+</g>
+<g stroke="#8a939e" stroke-width="1.4" fill="#8a939e">
+<path d="M240 60h40l-7-4 7 4-7 4z"/><path d="M500 60h40l-7-4 7 4-7 4z"/>
+<path d="M126 80h8l-4 6zM126 108h8l-4 6zM386 80h8l-4 6z"/>
+<path d="M646 80h8l-4 6zM646 122h8l-4 6z"/>
+</g>
+
+<!-- Centered truncation check and the done? branch -->
+<path d="M650 150V184H507" fill="none" stroke="#8a939e" stroke-width="1.4"/><path d="M507 180l-7 4 7 4z" fill="#8a939e"/>
+<rect x="280" y="164" width="220" height="38" rx="8" fill="#1d2a40" stroke="#5b93e0" stroke-width="1.3"/>
+<text x="390" y="182" text-anchor="middle" class="stage" fill="#ffffff">truncation check</text>
+<text x="390" y="197" text-anchor="middle" class="sub" fill="#8ab8f0">done = terminated | time_outs</text>
+<path d="M390 202v10" stroke="#8a939e" stroke-width="1.3"/><path d="M386 212l4 8 4-8z" fill="#8a939e"/>
+<path d="M360 240l30-20 30 20-30 20z" fill="#1a1b1e" stroke="#8a939e" stroke-width="1.3"/><text x="390" y="244" text-anchor="middle" class="label" fill="#a8b0ba">done?</text>
+<path d="M360 240H130v52" fill="none" stroke="#8a939e" stroke-width="1.4"/><path d="M126 292l4 8 4-8z" fill="#8a939e"/>
+<text x="245" y="232" text-anchor="middle" class="label" fill="#a8b0ba">done rows</text>
+<path d="M420 240H650v52" fill="none" stroke="#8a939e" stroke-width="1.4"/><path d="M646 292l4 8 4-8z" fill="#8a939e"/>
+<text x="535" y="232" text-anchor="middle" class="label" fill="#a8b0ba">alive rows</text>
+
+<!-- Bottom row: both branches converge on compute_observation -->
+<rect x="20" y="300" width="220" height="36" rx="8" fill="#1d2a40" stroke="#5b93e0" stroke-width="1.3"/><text x="130" y="323" text-anchor="middle" class="stage" fill="#ffffff">auto-reset</text>
+<rect x="20" y="344" width="220" height="36" rx="6" fill="#251d38" stroke="#9775fa"/><text x="30" y="359" class="chip" fill="#c5b3ff">host-side resets</text>
+<text x="30" y="373" class="sub" fill="#c5b3ff">command reset(ctx) &#183; action reset(env_ids)</text>
+<rect x="20" y="386" width="220" height="36" rx="6" fill="#1a2e21" stroke="#3fb950"/><text x="30" y="401" class="chip" fill="#63d47e">reset kernel</text>
+<text x="30" y="415" class="sub" fill="#63d47e">reset_env hooks &#8594; sim_reset terms</text>
+<rect x="20" y="428" width="220" height="22" rx="6" fill="#1a1b1e" stroke="#3fb950" stroke-dasharray="4 3"/><text x="30" y="443" class="chip" fill="#63d47e">sim_reset_requested rows join this run</text>
+<g stroke="#8a939e" stroke-width="1.2" fill="#8a939e"><path d="M126 338h8l-4 6zM126 380h8l-4 6z"/></g>
+
+<path d="M240 318h293l-7-4 7 4-7 4z" fill="#8a939e" stroke="#8a939e" stroke-width="1.4"/>
+<rect x="540" y="300" width="220" height="36" rx="8" fill="#1d2a40" stroke="#5b93e0" stroke-width="1.3"/><text x="650" y="323" text-anchor="middle" class="stage" fill="#ffffff">compute_observation</text>
+<rect x="540" y="344" width="220" height="36" rx="6" fill="#1a2e21" stroke="#3fb950"/><text x="550" y="359" class="chip" fill="#63d47e">observe kernel</text>
+<text x="550" y="373" class="sub" fill="#63d47e">observation terms &#8594; policy / value</text>
+<path d="M646 338h8l-4 6z" fill="#8a939e" stroke="#8a939e" stroke-width="1.2"/>
+<path d="M650 380v10" stroke="#8a939e" stroke-width="1.3"/><path d="M646 390l4 8 4-8z" fill="#8a939e"/>
+<text x="650" y="414" text-anchor="middle" class="label" fill="#a8b0ba">&#8594; next control step</text>
+
+<!-- Legend -->
+<rect x="24" y="478" width="13" height="13" rx="3" fill="#1d2a40" stroke="#5b93e0"/><text x="44" y="489" class="legend" fill="#a8b0ba">ArrayEnv framework stage</text>
+<rect x="210" y="478" width="13" height="13" rx="3" fill="#1a2e21" stroke="#3fb950"/><text x="230" y="489" class="legend" fill="#a8b0ba">Manager kernel (@dispatch)</text>
+<rect x="420" y="478" width="13" height="13" rx="3" fill="#251d38" stroke="#9775fa"/><text x="440" y="489" class="legend" fill="#a8b0ba">Manager host-side callback</text>
+</svg>

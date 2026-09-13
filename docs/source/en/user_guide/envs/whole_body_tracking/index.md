@@ -171,5 +171,5 @@ python scripts/play.py env=ENV_ID num_envs=16
 
 `play.py` selects the best policy from the latest metadata-backed run for the environment. The WBT play config starts at
 motion frame 0, disables reset noise and adaptive sampling, and removes the 10-second training time limit. At the clip end it
-restarts from frame 0. See [Training Artifacts: the runs Directory and Checkpoint Structure](../../tutorial/runs_and_checkpoints.md)
+restarts from frame 0. See [Training Artifacts: the runs Directory and Checkpoint Structure](../../tutorial/training/runs_and_checkpoints.md)
 for run and checkpoint selection.

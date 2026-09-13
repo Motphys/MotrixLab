@@ -14,13 +14,13 @@ The following training configurations are currently supported:
 | RSL-RL       | Torch            | PPO       | Supports an `MLPModel` actor with a single `policy` observation group; state-dependent standard deviation is not supported yet |
 | Motrix       | Torch            | FastSAC   | Exports the actor's deterministic inference path                                                                               |
 
-SKRL/JAX checkpoints cannot be exported yet. The command accepts a complete run directory, not a checkpoint file detached from its `metadata.json` and `checkpoints/manifest.json`. See [Training Artifacts: runs Directories and Checkpoints](runs_and_checkpoints.md) for details about run directories and best-policy selection.
+SKRL/JAX checkpoints cannot be exported yet. The command accepts a complete run directory, not a checkpoint file detached from its `metadata.json` and `checkpoints/manifest.json`. See [Training Artifacts: runs Directories and Checkpoints](../training/runs_and_checkpoints.md) for details about run directories and best-policy selection.
 
 ## Install Dependencies
 
 No extra step is needed: the ONNX export and inference dependencies (`onnx`, `onnxruntime`) are part
 of the default runtime environment installed by `sh install.sh` (see
-[Installation](../getting_started/installation.md)).
+[Installation](../../getting_started/installation.md)).
 
 ## Export the Model
 

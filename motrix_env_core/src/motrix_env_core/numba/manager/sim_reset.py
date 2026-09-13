@@ -113,7 +113,7 @@ class SimResetRuntime:
             for term_name, term_writes in writes.items()
             for output_name, write in term_writes.items()
         }
-        program = sim.write_compiler.compile(flat_writes, reset=True)
+        program = sim.compile_writes(flat_writes, reset=True)
         buffers = tuple(
             program.buffer(f"{term_name}.{output_name}")
             for term_name, term_writes in writes.items()

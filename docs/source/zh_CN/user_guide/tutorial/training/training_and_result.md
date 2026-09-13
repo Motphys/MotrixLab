@@ -26,7 +26,7 @@ python scripts/train.py task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
 | `rslrl.ppo`      | `torch`         | RSLRL PPO                                       |
 | `motrix.fastsac` | `torch`         | FastSAC；`algo.asynchronous` 选择同步或异步拓扑 |
 
-运行 `python scripts/train.py --help` 可以查看当前代码中全部可选 Task。Task 文件结构和覆盖规则见 [Task 配置与命令行参数覆盖](training_environment_config.md)。
+运行 `python scripts/train.py --help` 可以查看当前代码中全部可选 Task。Task 文件结构和覆盖规则见 [Task 配置与命令行参数覆盖](task_config.md)。
 
 ### 选择训练后端与仿真后端
 

@@ -191,8 +191,8 @@ class _FakeDirectEnv(DirectEnv[_FakeDirectCfg]):
                 "actuator_ctrls": ActuatorCtrlQuery(),
             }
         )
-        self._ctrl_writes = self.sim.write_compiler.compile({"ctrl": CtrlTargetsWrite()})
-        self._reset_program = self.sim.write_compiler.compile(
+        self._ctrl_writes = self.sim.compile_writes({"ctrl": CtrlTargetsWrite()})
+        self._reset_program = self.sim.compile_writes(
             {"state_position": DofPositionWrite(), "state_velocity": DofVelocityWrite()}, reset=True
         )
         self._action_space = gym.spaces.Box(-1.0, 1.0, (2,), dtype=np.float32)

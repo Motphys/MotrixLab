@@ -14,12 +14,12 @@ MotrixLab 可以把一次训练的最佳策略导出为独立的 ONNX 模型。�
 | RSL-RL  | Torch    | PPO     | 支持单 `policy` observation group 的 `MLPModel` actor；暂不支持 state-dependent standard deviation |
 | Motrix  | Torch    | FastSAC | 导出 actor 的确定性推理路径                                                                        |
 
-SKRL/JAX checkpoint 暂不支持导出。导出命令接收完整的 run 目录，不接收脱离 `metadata.json` 和 `checkpoints/manifest.json` 的单个 checkpoint 文件。有关 run 目录和最佳策略的说明，参见[训练产物：runs 目录与 checkpoint 结构](runs_and_checkpoints.md)。
+SKRL/JAX checkpoint 暂不支持导出。导出命令接收完整的 run 目录，不接收脱离 `metadata.json` 和 `checkpoints/manifest.json` 的单个 checkpoint 文件。有关 run 目录和最佳策略的说明，参见[训练产物：runs 目录与 checkpoint 结构](../training/runs_and_checkpoints.md)。
 
 ## 安装依赖
 
 无需额外步骤：ONNX 导出与推理所需的依赖（`onnx`、`onnxruntime`）已包含在 `sh install.sh`
-安装的默认运行环境中（参见[安装环境](../getting_started/installation.md)）。
+安装的默认运行环境中（参见[安装环境](../../getting_started/installation.md)）。
 
 ## 导出模型
 

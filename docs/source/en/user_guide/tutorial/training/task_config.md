@@ -146,7 +146,7 @@ algo:
         timesteps: 20000
 ```
 
-See [`configs/algo_base/skrl.ppo.yaml`](../../../../configs/algo_base/skrl.ppo.yaml) for the complete field set and per-field comments.
+See [`configs/algo_base/skrl.ppo.yaml`](../../../../../configs/algo_base/skrl.ppo.yaml) for the complete field set and per-field comments.
 
 ### RSLRL PPO
 
@@ -167,7 +167,7 @@ algo:
         entropy_coef: 0.005
 ```
 
-See [`configs/algo_base/rslrl.ppo.yaml`](../../../../configs/algo_base/rslrl.ppo.yaml) for the complete field set and per-field comments.
+See [`configs/algo_base/rslrl.ppo.yaml`](../../../../../configs/algo_base/rslrl.ppo.yaml) for the complete field set and per-field comments.
 
 ### Motrix FastSAC
 
@@ -182,7 +182,7 @@ FastSAC uses one algorithm identity for both execution topologies. Its main fiel
     -   `weight_publish_interval` and `weight_poll_interval`: policy synchronization cadence.
     -   `max_ingest_per_iter` and `idle_sleep_s`: learner ingestion and idle backoff.
 
-See [`configs/algo_base/motrix.fastsac.yaml`](../../../../configs/algo_base/motrix.fastsac.yaml) for the complete field set and per-field comments.
+See [`configs/algo_base/motrix.fastsac.yaml`](../../../../../configs/algo_base/motrix.fastsac.yaml) for the complete field set and per-field comments.
 
 ## Override parameters from the CLI
 

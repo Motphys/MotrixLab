@@ -146,7 +146,7 @@ algo:
         timesteps: 20000
 ```
 
-完整字段和逐字段注释见 [`configs/algo_base/skrl.ppo.yaml`](../../../../configs/algo_base/skrl.ppo.yaml)。
+完整字段和逐字段注释见 [`configs/algo_base/skrl.ppo.yaml`](../../../../../configs/algo_base/skrl.ppo.yaml)。
 
 ### RSLRL PPO
 
@@ -167,7 +167,7 @@ algo:
         entropy_coef: 0.005
 ```
 
-完整字段和逐字段注释见 [`configs/algo_base/rslrl.ppo.yaml`](../../../../configs/algo_base/rslrl.ppo.yaml)。
+完整字段和逐字段注释见 [`configs/algo_base/rslrl.ppo.yaml`](../../../../../configs/algo_base/rslrl.ppo.yaml)。
 
 ### Motrix FastSAC
 
@@ -182,7 +182,7 @@ FastSAC 使用同一个算法身份支持两种执行拓扑，主要字段和配
     -   `weight_publish_interval`、`weight_poll_interval`：策略权重同步频率。
     -   `max_ingest_per_iter`、`idle_sleep_s`：Learner 数据摄取和空闲退避参数。
 
-完整字段和逐字段注释见 [`configs/algo_base/motrix.fastsac.yaml`](../../../../configs/algo_base/motrix.fastsac.yaml)。
+完整字段和逐字段注释见 [`configs/algo_base/motrix.fastsac.yaml`](../../../../../configs/algo_base/motrix.fastsac.yaml)。
 
 ## 使用 CLI 临时覆盖参数
 

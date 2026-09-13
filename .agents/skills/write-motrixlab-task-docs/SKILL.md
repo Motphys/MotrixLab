@@ -1,17 +1,26 @@
 ---
 name: write-motrixlab-task-docs
-description: Write, restructure, or review bilingual Sphinx/MyST user documentation for MotrixLab task environments, from simple single-page tasks to reusable task families. Use when documenting a registered environment, its runtime contract, configuration, presets, training evidence, or an implemented extension workflow under docs/source/{zh_CN,en}/user_guide/envs/.
+description: Write, restructure, or review bilingual Sphinx/MyST user documentation for MotrixLab — task environments (from simple single-page tasks to reusable task families) and framework-level tutorial pages (concepts, building environments, training, advanced topics) under docs/source/{zh_CN,en}/user_guide/. Use when documenting a registered environment, its runtime contract, configuration, presets, training evidence, or an implemented extension workflow, or when authoring or restructuring tutorial pages and tutorial navigation.
 ---
 
 # Write MotrixLab Task Docs
 
-Create user-facing task-environment documentation from current repository evidence. Keep Chinese and English pages aligned,
-state exact runtime semantics, and validate the rendered Sphinx output.
+Create user-facing MotrixLab documentation from current repository evidence. Keep Chinese and English pages aligned,
+state exact runtime semantics, and validate the rendered Sphinx output. Two surfaces are covered:
+
+- **Task-environment pages** (`user_guide/envs/`): follow [references/writing-standard.md](references/writing-standard.md).
+- **Framework tutorial pages** (`user_guide/tutorial/`): follow
+  [references/tutorial-standard.md](references/tutorial-standard.md) — layered information architecture, macro-before-detail
+  ordering, SVG pipeline diagram rules (compact snake layout, chip sub-items, light/dark pairs), and toctree hygiene.
+
+The evidence, bilingual, and validation rules below apply to both surfaces.
 
 ## Read the standard
 
-Read [references/writing-standard.md](references/writing-standard.md) completely before drafting or restructuring a task
-environment page. Apply only sections supported by the target environment; do not add empty boilerplate.
+Read the standard for the target surface completely before drafting or restructuring:
+[references/writing-standard.md](references/writing-standard.md) for task-environment pages,
+[references/tutorial-standard.md](references/tutorial-standard.md) for framework tutorial pages. Apply only sections
+supported by the target; do not add empty boilerplate.
 
 ## Establish evidence
 
@@ -69,7 +78,8 @@ lifecycle, or configuration-schema chapter by default.
 
 Edit `docs/source/zh_CN/` and `docs/source/en/` together unless the user explicitly scopes the work to one language. Preserve
 technical identifiers across languages and translate meaning rather than sentence structure. Use established terminology from
-the neighboring pages.
+the neighboring pages. Keep section order, figures, tables, and toctree/link changes mirrored on both sides — restructure one
+language only together with the other.
 
 ## Handle media and performance evidence
 

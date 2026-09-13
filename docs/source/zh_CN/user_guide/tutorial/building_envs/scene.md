@@ -1,6 +1,6 @@
-# 物理环境配置
+# SceneCfg：搭建物理场景
 
-物理环境配置定义了强化学习训练中的仿真参数和场景设置。
+物理场景搭建定义了强化学习训练中的仿真参数和场景设置。
 MotrixLab 使用了[MotrixSim](https://motrixsim.readthedocs.io/zh-cn/latest/user_guide/index.html)作为物理仿真后端。
 
 ## 支持的文件格式

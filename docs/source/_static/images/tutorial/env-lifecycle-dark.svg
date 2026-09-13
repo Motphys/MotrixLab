@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="772" height="194" viewBox="0 0 772 194" font-family="-apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+  <text x="386.0" y="24" text-anchor="middle" font-size="15" font-weight="600" fill="#ffffff">One control step of ArrayEnv</text>
+  <rect x="22" y="44" width="216" height="38" rx="8" fill="#1d2a40" stroke="#5b93e0" stroke-width="1.4"/>
+  <text x="130.0" y="67.5" text-anchor="middle" font-size="12.5" font-weight="600" fill="#ffffff">apply_action</text>
+  <line x1="241" y1="63.0" x2="271" y2="63.0" stroke="#8a939e" stroke-width="1.6"/>
+  <path d="M 271 59.0 L 278 63.0 L 271 67.0 z" fill="#8a939e"/>
+  <rect x="278" y="44" width="216" height="38" rx="8" fill="#1d2a40" stroke="#5b93e0" stroke-width="1.4"/>
+  <text x="386.0" y="67.5" text-anchor="middle" font-size="12.5" font-weight="600" fill="#ffffff">physics_step</text>
+  <line x1="497" y1="63.0" x2="527" y2="63.0" stroke="#8a939e" stroke-width="1.6"/>
+  <path d="M 527 59.0 L 534 63.0 L 527 67.0 z" fill="#8a939e"/>
+  <rect x="534" y="44" width="216" height="38" rx="8" fill="#1d2a40" stroke="#5b93e0" stroke-width="1.4"/>
+  <text x="642.0" y="67.5" text-anchor="middle" font-size="12.5" font-weight="600" fill="#ffffff">compute_transition</text>
+  <line x1="642.0" y1="85" x2="642.0" y2="108" stroke="#8a939e" stroke-width="1.6"/>
+  <path d="M 638.0 108 L 646.0 108 L 642.0 115 z" fill="#8a939e"/>
+  <rect x="22" y="116" width="216" height="38" rx="8" fill="#1d2a40" stroke="#5b93e0" stroke-width="1.4"/>
+  <text x="130.0" y="139.5" text-anchor="middle" font-size="12.5" font-weight="600" fill="#ffffff">compute_observation</text>
+  <rect x="278" y="116" width="216" height="38" rx="8" fill="#1d2a40" stroke="#5b93e0" stroke-width="1.4"/>
+  <text x="386.0" y="139.5" text-anchor="middle" font-size="12.5" font-weight="600" fill="#ffffff">auto-reset</text>
+  <rect x="534" y="116" width="216" height="38" rx="8" fill="#1d2a40" stroke="#5b93e0" stroke-width="1.4"/>
+  <text x="642.0" y="139.5" text-anchor="middle" font-size="12.5" font-weight="600" fill="#ffffff">truncation check</text>
+  <line x1="531" y1="135.0" x2="501" y2="135.0" stroke="#8a939e" stroke-width="1.6"/>
+  <path d="M 501 131.0 L 494 135.0 L 501 139.0 z" fill="#8a939e"/>
+  <line x1="275" y1="135.0" x2="245" y2="135.0" stroke="#8a939e" stroke-width="1.6"/>
+  <path d="M 245 131.0 L 238 135.0 L 245 139.0 z" fill="#8a939e"/>
+</svg>
