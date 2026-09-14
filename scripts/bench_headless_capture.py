@@ -113,10 +113,12 @@ def bench(
             if pending is not None:
                 t = time.perf_counter()
                 render.sync(data=data, wait=True)  # drains frame N-1, not N
-                frame = _grab(pending)
                 totals["wait"] += time.perf_counter() - t
+
                 t = time.perf_counter()
+                frame = _grab(pending)
                 totals["take"] += time.perf_counter() - t
+
                 if writer is not None:
                     t = time.perf_counter()
                     writer.append_data(frame)
@@ -124,10 +126,19 @@ def bench(
             pending = task
 
         if pending is not None:
+            # Flush the last pending frame and account it in the same phases.
+            t = time.perf_counter()
             render.sync(data=None, wait=True)
+            totals["wait"] += time.perf_counter() - t
+
+            t = time.perf_counter()
             frame = _grab(pending)
+            totals["take"] += time.perf_counter() - t
+
             if writer is not None:
+                t = time.perf_counter()
                 writer.append_data(frame)
+                totals["encode"] += time.perf_counter() - t
     else:
         # Current MotrixSimRenderer.capture() shape: blocking readback in the
         # same iteration as the submission.

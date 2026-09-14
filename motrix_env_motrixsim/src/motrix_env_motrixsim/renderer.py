@@ -41,11 +41,13 @@ class MotrixSimRenderer(SimRenderer):
         if config.headless:
             model.cameras.set_system_render_target("image", int(config.width), int(config.height))
         offsets = _render_layout(num_envs, render_spacing)
-        # Headless default: ``fps=None`` selects the render service's on-demand
-        # runner — frames are rendered only when a sync arrives and GPU
-        # readbacks are drained in-frame, so nothing renders while idle and
-        # recording runs at full render speed (issue #37).
-        self._render = RenderApp(headless=config.headless, fps=None)
+        # ``fps`` only affects headless RenderApp: ``None`` selects the render
+        # service's on-demand runner — frames are rendered only when a sync
+        # arrives and GPU readbacks are drained in-frame, so nothing renders
+        # while idle and recording runs at full render speed (issue #37).
+        # Windowed mode omits the knob and keeps the library default.
+        render_kwargs = {"fps": None} if config.headless else {}
+        self._render = RenderApp(headless=config.headless, **render_kwargs)
         self._render.launch(
             model,
             batch=num_envs,
