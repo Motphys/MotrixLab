@@ -13,63 +13,16 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
 from motrix_env_core.config import SimCfg
 from motrix_env_core.config.scene import SceneCfg, SystemCameraCfg
-from motrix_env_core.sim.model import ModelQuery, SimModelQueryCompiler
+from motrix_env_core.sim.model import ModelQuery, SimModel, SimModelCompiler
 from motrix_env_core.sim.read import PhysicsReadProgram
 from motrix_env_core.sim.write import SimWrite, SimWriteCompiler, WriteProgram
-
-
-class ActuatorType(str, Enum):
-    """Supported actuator control semantics."""
-
-    POSITION = "position"
-    VELOCITY = "velocity"
-    MOTOR = "motor"
-    GENERAL = "general"
-    ADHESION = "adhesion"
-
-
-@dataclass(frozen=True)
-class ActuatorSpec:
-    """Static per-actuator metadata resolved from the simulator model."""
-
-    name: str
-    actuator_type: ActuatorType
-    target_name: str
-    ctrl_range: tuple[float, float] | None
-    force_range: tuple[float, float] | None
-
-
-@dataclass(frozen=True)
-class GeomSpec:
-    """Static per-geom metadata resolved from the simulator model."""
-
-    size: tuple[float, ...] | None
-    local_pose: tuple[float, ...] | None
-
-
-@dataclass(frozen=True)
-class SimModel:
-    """Typed model surface every environment consumes as ``env.model``.
-
-    The typed fields are the required core metadata: backends must fill them,
-    while simulator layout remains encapsulated behind declared queries and programs.
-    ``others`` carries the resolved results of the environment's declared
-    :class:`~motrix_env_core.sim.model.ModelQuery` set — present keys
-    are exactly what the environment declared.
-    """
-
-    actuators: tuple[ActuatorSpec, ...]
-    init_dof_pos: np.ndarray
-    others: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -147,7 +100,7 @@ class SimBackend(abc.ABC):
     neutral ``SceneCfg`` into the simulator's own model and batched data —
     scene compilation is the backend's internal affair and no compiled
     artifact crosses this boundary. Afterwards the backend serves both
-    faces: static translation (:attr:`model_query_compiler`,
+    faces: static translation (:attr:`model_compiler`,
     :meth:`compile_reads`, :attr:`write_compiler`) and live
     behavior (:meth:`step`, :meth:`reset`, shape properties).
     """
@@ -160,9 +113,11 @@ class SimBackend(abc.ABC):
         Concrete backends own this contract: they must finish all scene
         translation here so every member below is usable immediately after
         construction. ``num_envs`` fixes the batch width for the backend's
-        lifetime.
+        lifetime. The base retains ``scene`` so :meth:`compile_model` can
+        feed the model compiler both of its inputs.
         """
-        del scene, sim, num_envs
+        self._scene = scene
+        del sim, num_envs
 
     @property
     @abc.abstractmethod
@@ -222,13 +177,13 @@ class SimBackend(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def model_query_compiler(self) -> SimModelQueryCompiler:
+    def model_compiler(self) -> SimModelCompiler:
         """Return the compiler bound to this backend's static model."""
-        raise NotImplementedError(f"{type(self).__name__} does not provide model query compilation")
+        raise NotImplementedError(f"{type(self).__name__} does not provide model compilation")
 
     def compile_model(self, queries: Mapping[str, ModelQuery]) -> SimModel:
-        """Lower static model-query declarations into one backend-neutral model."""
-        return self.model_query_compiler.compile(queries)
+        """Lower the scene surface and model-query declarations into one model."""
+        return self.model_compiler.compile(self._scene, queries)
 
     def compile_writes(
         self,
@@ -257,11 +212,7 @@ class SimBackend(abc.ABC):
 
 
 __all__ = [
-    "ActuatorSpec",
-    "ActuatorType",
-    "GeomSpec",
     "RenderConfig",
     "SimBackend",
-    "SimModel",
     "SimRenderer",
 ]

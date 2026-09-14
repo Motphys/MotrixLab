@@ -7,7 +7,7 @@ import pytest
 import motrix_envs  # noqa: F401 registers built-in environments
 from motrix_env_core import registry
 from motrix_env_core.config.scene import HFieldTerrainCfg, ProceduralHFieldAssetCfg
-from motrix_env_core.sim.backend import ActuatorType
+from motrix_env_core.sim.model import ActuatorType
 from motrix_envs.locomotion.quadruped.cfg import RewardScales
 from motrix_envs.locomotion.quadruped.velocity_command import RandomPlanarVelocityBinding
 from motrix_envs.locomotion.quadruped.walk_np import QuadrupedWalkTask

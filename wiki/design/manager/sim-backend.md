@@ -16,7 +16,7 @@ DirectEnv / ManagerEnv
     │ 仅依赖
     ▼
 SimBackend(scene, sim, num_envs)
-    ├── model_query_compiler
+    ├── model_compiler
     ├── compile_reads -> PhysicsReadProgram
     ├── write_compiler -> WriteProgram (普通写入 / reset=True)
     ├── step(substeps)
@@ -43,7 +43,7 @@ class SimBackend(abc.ABC):
     def num_actuators(self) -> int: ...
 
     @property
-    def model_query_compiler(self) -> ModelQueryCompiler: ...
+    def model_compiler(self) -> SimModelCompiler: ...
 
     def compile_reads(self, queries) -> PhysicsReadProgram: ...
 
@@ -57,7 +57,7 @@ class SimBackend(abc.ABC):
     def sample_terrain_height(self, geom_name, env_ids, xy) -> np.ndarray: ...
 ```
 
-模型 query 通过 `model_query_compiler.compile(...)` 解析为 typed `SimModel`。`SimModel` 只提供通用静态模型表面：
+模型表面通过 `model_compiler.compile(scene, queries)` 组装为 typed `SimModel`（`bodies` 由 SceneCfg 无条件驱动，`others` 由声明的 query 驱动）。`SimModel` 只提供通用静态模型表面：
 
 - `actuators`：按 canonical actuator order 排列的 `ActuatorSpec`；
 - `init_dof_pos`：默认 DOF position；

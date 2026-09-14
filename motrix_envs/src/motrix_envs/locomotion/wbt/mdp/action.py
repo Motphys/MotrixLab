@@ -9,7 +9,7 @@ import numpy as np
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import RobotCfg
 from motrix_env_core.manager import ActionCfg, ActionTerm, ManagerEnv, SharedArray, kernel_data
-from motrix_env_core.sim.backend import ActuatorSpec, ActuatorType
+from motrix_env_core.sim.model import ActuatorSpec, ActuatorType
 from motrix_envs.locomotion.action_space import joint_position_action_space_from_ctrl_ranges
 
 

@@ -6,7 +6,7 @@
 import gymnasium as gym
 import numpy as np
 
-from motrix_env_core.sim.backend import ActuatorType
+from motrix_env_core.sim.model import ActuatorType
 
 
 def symmetric_residual_action_space(

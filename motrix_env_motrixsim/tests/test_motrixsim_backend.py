@@ -33,7 +33,7 @@ from motrix_env_core.sim import (
     LinkPositionQuery,
     LinkQuaternionQuery,
 )
-from motrix_env_core.sim.backend import SimModel
+from motrix_env_core.sim.model import SimModel
 from motrix_env_core.sim.registry import create_sim_backend, list_sim_backends
 from motrix_env_core.sim.write import BodyJointVelocityWrite, DofVelocityWrite, JointVelocityWrite
 from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler
@@ -46,7 +46,7 @@ def _make_backend(scene: SceneCfg, sim: SimCfg, *, num_envs: int) -> MotrixSimBa
 
 
 def _resolve_core(scene: SceneCfg, sim: SimCfg) -> SimModel:
-    return MotrixSimBackend(scene, sim, 1).model_query_compiler.compile({})
+    return MotrixSimBackend(scene, sim, 1).model_compiler.compile(scene, {})
 
 
 def test_scene_compiler_is_an_abstract_backend_boundary():
@@ -112,7 +112,7 @@ def test_body_joint_position_limits_follow_body_joint_dof_order():
     cfg = registry.make_env_config("g1-wbt-dance", mode="play")
     backend = MotrixSimBackend(cfg.scene, cfg.sim, 1)
     body_name = cfg.scene.objs.robot.resolved_base_link_name
-    model = backend.model_query_compiler.compile({"limits": BodyJointPositionLimitsQuery(body=body_name)})
+    model = backend.model_compiler.compile(cfg.scene, {"limits": BodyJointPositionLimitsQuery(body=body_name)})
     lower, upper = model.others["limits"]
     body = backend._model.get_body(body_name)
 
@@ -125,13 +125,51 @@ def test_body_joint_position_limits_follow_body_joint_dof_order():
     assert lower.shape == (body.num_joint_dof_pos,)
 
 
+def test_bodies_bake_init_snapshot():
+    import motrix_envs  # noqa: F401
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("g1-wbt-dance", mode="play")
+    robot = cfg.scene.objs.robot
+    backend = MotrixSimBackend(cfg.scene, cfg.sim, 1)
+    model = backend.model_compiler.compile(cfg.scene, {})
+
+    body = model.bodies["robot"]
+    engine_body = backend._model.get_body(robot.resolved_base_link_name)
+    assert body.base_link_name == robot.resolved_base_link_name
+    assert body.joint_names == tuple(joint.name for joint in engine_body.joints)
+    assert body.link_names == tuple(link.name for link in engine_body.links)
+    # Single-robot scene: the body scope covers the full actuator set.
+    assert body.actuators == model.actuators
+
+    # The init joint angles are the designated key pose permuted into the
+    # engine body joint order.
+    by_joint = dict(zip(robot.key_pose.joint_names, robot.key_pose.poses[robot.init_key_pose]))
+    np.testing.assert_allclose(body.init_joint_pos, [by_joint[name] for name in body.joint_names])
+    assert len(body.joint_pos_limits[0]) == len(body.joint_names)
+
+    # FK snapshot: link-aligned arrays and unit quaternions at the default placement.
+    assert body.init_link_positions.shape == (len(body.link_names), 3)
+    assert body.init_link_quats.shape == (len(body.link_names), 4)
+    np.testing.assert_allclose(np.linalg.norm(body.init_link_quats, axis=-1), 1.0, rtol=1e-5)
+    assert body.init_base_position.shape == (3,)
+    assert body.init_base_quat.shape == (4,)
+    np.testing.assert_allclose(np.linalg.norm(body.init_base_quat), 1.0, rtol=1e-5)
+
+
+def test_bodies_stay_empty_for_scene_without_body_objs():
+    model = _resolve_core(SceneCfg(), SimCfg())
+
+    assert model.bodies == {}
+
+
 def test_dof_position_limits_follow_global_dof_position_order():
     import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("dm-humanoid-walk", mode="play")
     backend = MotrixSimBackend(cfg.scene, cfg.sim, 1)
-    model = backend.model_query_compiler.compile({"limits": DofPositionLimitsQuery()})
+    model = backend.model_compiler.compile(cfg.scene, {"limits": DofPositionLimitsQuery()})
     lower, upper = model.others["limits"]
 
     assert lower.shape == upper.shape == (backend.num_dof_pos,)
@@ -150,14 +188,14 @@ def test_geom_specs_include_only_declared_names_in_order():
 
     cfg = registry.make_env_config("dm-finger-turn-easy", mode="play")
     backend = MotrixSimBackend(cfg.scene, cfg.sim, 1)
-    model = backend.model_query_compiler.compile({"geoms": GeomSpecsQuery(names=("target_geom", "cap1"))})
+    model = backend.model_compiler.compile(cfg.scene, {"geoms": GeomSpecsQuery(names=("target_geom", "cap1"))})
 
     assert tuple(model.others["geoms"]) == ("target_geom", "cap1")
     assert len(model.others["geoms"]["target_geom"].local_pose) == 7
     assert model.others["geoms"]["cap1"].size
 
     with pytest.raises(KeyError, match="Unknown geom 'missing'"):
-        backend.model_query_compiler.compile({"geoms": GeomSpecsQuery(names=("missing",))})
+        backend.model_compiler.compile(cfg.scene, {"geoms": GeomSpecsQuery(names=("missing",))})
 
 
 def test_actuator_params_support_declared_names_or_full_model_order():
@@ -168,12 +206,13 @@ def test_actuator_params_support_declared_names_or_full_model_order():
     backend = MotrixSimBackend(cfg.scene, cfg.sim, 1)
     all_names = tuple(actuator.name for actuator in backend._model.actuators)
     selected_names = (all_names[-1], all_names[0])
-    model = backend.model_query_compiler.compile(
+    model = backend.model_compiler.compile(
+        cfg.scene,
         {
             "all_kp": ActuatorKpQuery(),
             "selected_kp": ActuatorKpQuery(names=selected_names),
             "selected_kd": ActuatorKdQuery(names=selected_names),
-        }
+        },
     )
 
     np.testing.assert_array_equal(
@@ -190,7 +229,7 @@ def test_actuator_params_support_declared_names_or_full_model_order():
     )
 
     with pytest.raises(KeyError, match="Unknown actuator 'missing'"):
-        backend.model_query_compiler.compile({"kp": ActuatorKpQuery(names=("missing",))})
+        backend.model_compiler.compile(cfg.scene, {"kp": ActuatorKpQuery(names=("missing",))})
 
 
 def test_named_joint_queries_follow_declared_order():

@@ -17,7 +17,9 @@ from motrix_env_core.config.scene import MjcfFileCfg, RobotCfg, SceneCfg
 from motrix_env_core.direct.env import DirectEnv, DirectEnvCfg
 from motrix_env_core.numba.manager.env import ManagerBasedEnvCfg, ManagerEnv
 from motrix_env_core.sim import ModelQuery
-from motrix_env_core.sim.backend import PhysicsReadProgram, SimBackend, SimModel
+from motrix_env_core.sim.backend import SimBackend
+from motrix_env_core.sim.model import SimModel
+from motrix_env_core.sim.read import PhysicsReadProgram
 from motrix_env_core.sim.registry import register_sim_backend
 
 
@@ -48,7 +50,7 @@ class _FakeRegistryBackend(SimBackend):
     name = "fake-registry"
 
     def __init__(self, scene, sim, num_envs: int) -> None:
-        del scene, sim
+        super().__init__(scene, sim, num_envs)
         self.num_envs = num_envs
 
     @property
@@ -67,11 +69,11 @@ class _FakeRegistryBackend(SimBackend):
         pass
 
     @property
-    def model_query_compiler(self):
+    def model_compiler(self):
         return self
 
-    def compile(self, queries: Mapping[str, ModelQuery]) -> SimModel:
-        del queries
+    def compile(self, scene, queries: Mapping[str, ModelQuery]) -> SimModel:
+        del scene, queries
         return SimModel(
             actuators=(),
             init_dof_pos=np.zeros((0,), dtype=np.float32),

@@ -22,12 +22,8 @@ from motrix_env_core.sim import (
     ModelQuery,
     PhysicsReadProgram,
 )
-from motrix_env_core.sim.backend import (
-    ActuatorSpec,
-    ActuatorType,
-    SimBackend,
-    SimModel,
-)
+from motrix_env_core.sim.backend import SimBackend
+from motrix_env_core.sim.model import ActuatorSpec, ActuatorType, SimModel
 from motrix_env_core.sim.registry import register_sim_backend
 from motrix_env_core.sim.write import CtrlTargetsWrite, DofVelocityWrite, WriteProgram
 
@@ -130,7 +126,7 @@ class _FakeBackend(SimBackend):
     last: "_FakeBackend | None" = None
 
     def __init__(self, scene, sim, num_envs: int) -> None:
-        del scene, sim  # the fake compiles nothing
+        super().__init__(scene, sim, num_envs)
         self.num_envs = num_envs
         self.dof_pos = np.zeros((num_envs, self.num_dof_pos), dtype=np.float32)
         self.dof_vel = np.zeros((num_envs, self.num_dof_vel), dtype=np.float32)
@@ -158,11 +154,11 @@ class _FakeBackend(SimBackend):
         self.dof_pos += self.dof_vel * np.float32(substeps)
 
     @property
-    def model_query_compiler(self):
+    def model_compiler(self):
         return self
 
-    def compile(self, queries: Mapping[str, ModelQuery]) -> SimModel:
-        del queries
+    def compile(self, scene, queries: Mapping[str, ModelQuery]) -> SimModel:
+        del scene, queries
         return _core_model()
 
     def compile_reads(self, queries) -> PhysicsReadProgram:

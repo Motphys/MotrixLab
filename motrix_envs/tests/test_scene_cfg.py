@@ -819,7 +819,7 @@ class SceneBackedCartPoleCfg(DirectEnvCfg):
 class SceneBackedCartPoleEnv(DirectEnv[SceneBackedCartPoleCfg]):
     def __init__(self, cfg: SceneBackedCartPoleCfg):
         super().__init__(cfg)
-        self.model = self.sim.model_query_compiler.compile({})
+        self.model = self.sim.compile_model({})
 
     @property
     def observation_space(self) -> gym.spaces.Box:

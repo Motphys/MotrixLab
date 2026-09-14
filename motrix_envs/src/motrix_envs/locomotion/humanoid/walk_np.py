@@ -25,7 +25,7 @@ from motrix_env_core.sim import (
     GeomSpecsQuery,
     JointPositionWrite,
 )
-from motrix_env_core.sim.backend import ActuatorType
+from motrix_env_core.sim.model import ActuatorType
 from motrix_env_core.sim.write import CtrlTargetsWrite, JointVelocityWrite
 from motrix_envs.locomotion.action_space import joint_position_action_space
 from motrix_envs.locomotion.humanoid.cfg import HumanoidVelocityTrackingEnvCfg, humanoid_sim_queries

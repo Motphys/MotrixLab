@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import Any, TypeAlias
 
 import motrixsim as mtx
@@ -14,16 +15,10 @@ import numpy.typing as npt
 
 from motrix_env_core.config import SimCfg
 from motrix_env_core.config.scene import SceneCfg, SystemCameraCfg
-from motrix_env_core.sim.backend import (
-    ActuatorSpec,
-    ActuatorType,
-    GeomSpec,
-    RenderConfig,
-    SimBackend,
-    SimModel,
-    SimRenderer,
-)
-from motrix_env_core.sim.model import SimModelQueryCompiler
+from motrix_env_core.config.scene.base import BodyCfg, RobotCfg
+from motrix_env_core.sim.backend import RenderConfig, SimBackend, SimRenderer
+from motrix_env_core.sim.body import assemble_body_model, resolved_key_pose
+from motrix_env_core.sim.model import ActuatorSpec, ActuatorType, BodyModel, GeomSpec, SimModel, SimModelCompiler
 from motrix_env_core.sim.read import PhysicsReadProgram, SimDataQuery
 from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler
 from motrix_env_motrixsim.renderer import MotrixSimRenderer
@@ -34,8 +29,8 @@ FloatArray: TypeAlias = npt.NDArray[np.float32]
 IntArray: TypeAlias = npt.NDArray[np.int64]
 
 
-class MotrixSimModelQueryCompiler(SimModelQueryCompiler):
-    """Compile typed model queries against one MotrixSim scene model."""
+class MotrixSimModelCompiler(SimModelCompiler):
+    """Assemble the neutral model surface against one MotrixSim scene model."""
 
     def __init__(self, model: mtx.SceneModel) -> None:
         self._model = model
@@ -44,9 +39,11 @@ class MotrixSimModelQueryCompiler(SimModelQueryCompiler):
     def _begin_compile(self) -> None:
         self._others = {}
 
-    def _build_model(self) -> SimModel:
-        core = _build_core(self._model)
-        return SimModel(actuators=core.actuators, init_dof_pos=core.init_dof_pos, others=self._others)
+    def _build_model(self, scene: SceneCfg) -> SimModel:
+        actuators = _actuator_specs(self._model.actuators)
+        init_dof_pos = np.asarray(self._model.compute_init_dof_pos(), dtype=np.float32)
+        bodies = _build_body_models(self._model, scene, actuators, init_dof_pos)
+        return SimModel(actuators=actuators, init_dof_pos=init_dof_pos, others=self._others, bodies=bodies)
 
     def compile_geom_specs(self, key: str, geom_names: tuple[str, ...]) -> None:
         self._others[key] = _geom_specs(self._model, geom_names)
@@ -122,13 +119,12 @@ def _as_pair(values: Iterable[float] | None) -> tuple[float, float] | None:
     return (lo, hi)
 
 
-def _build_core(model: mtx.SceneModel) -> SimModel:
-    """Snapshot a MotrixSim scene model as the required core model surface."""
-    actuators = []
-    for actuator in model.actuators:
+def _actuator_specs(actuators: Iterable[mtx.Actuator]) -> tuple[ActuatorSpec, ...]:
+    specs = []
+    for actuator in actuators:
         if actuator.name is None:
             raise ValueError("Every actuator must have a name.")
-        actuators.append(
+        specs.append(
             ActuatorSpec(
                 name=actuator.name,
                 actuator_type=ActuatorType(actuator.typ),
@@ -137,10 +133,99 @@ def _build_core(model: mtx.SceneModel) -> SimModel:
                 force_range=_as_pair(actuator.force_range),
             )
         )
-    return SimModel(
-        actuators=tuple(actuators),
-        init_dof_pos=np.asarray(model.compute_init_dof_pos(), dtype=np.float32),
+    return tuple(specs)
+
+
+@dataclass(frozen=True)
+class _BodyFacts:
+    """Engine-side facts extracted for one body, before the shared FK pass."""
+
+    name: str
+    cfg: BodyCfg
+    body: mtx.Body
+    joint_names: tuple[str, ...]
+    joint_pos_limits: tuple[FloatArray, FloatArray] | None
+    link_names: tuple[str, ...]
+    link_indices: list[int]
+    joint_dof: IntArray
+    init_joint_pos: FloatArray | None
+
+
+def _body_facts(model: mtx.SceneModel, name: str, cfg: BodyCfg) -> _BodyFacts:
+    body = _named_body(model, cfg.resolved_base_link_name)
+    joints = tuple(body.joints)
+    for joint in joints:
+        if joint.num_dof_pos != 1:
+            raise ValueError(
+                f"BodyModel requires single-dof joints, but joint {joint.name!r} of body {name!r} "
+                f"has {joint.num_dof_pos} position DOFs."
+            )
+    joint_names = tuple(joint.name for joint in joints)
+    robot_cfg = cfg if isinstance(cfg, RobotCfg) else None
+    init_joint_pos = (
+        resolved_key_pose(name, robot_cfg, robot_cfg.init_key_pose, joint_names)
+        if robot_cfg is not None and robot_cfg.key_pose.poses
+        else None
     )
+    return _BodyFacts(
+        name=name,
+        cfg=cfg,
+        body=body,
+        joint_names=joint_names,
+        joint_pos_limits=_body_joint_position_limits(model, cfg.resolved_base_link_name) if joints else None,
+        link_names=tuple(link.name for link in body.links),
+        link_indices=[link.index for link in body.links],
+        joint_dof=np.asarray(body.get_dof_pos_indices(include_floatingbase=False), dtype=np.int64),
+        init_joint_pos=init_joint_pos,
+    )
+
+
+def _build_body_models(
+    model: mtx.SceneModel,
+    scene: SceneCfg,
+    scene_actuators: tuple[ActuatorSpec, ...],
+    default_dof: FloatArray,
+) -> dict[str, BodyModel]:
+    """Assemble one ``BodyModel`` per ``BodyCfg`` declared in the scene."""
+    facts = [_body_facts(model, name, cfg) for name, cfg in scene.iter_objs() if isinstance(cfg, BodyCfg)]
+    if not facts:
+        return {}
+
+    # One FK evaluation on batch-1 data: each body's key-pose override
+    # touches only its own joints, so all overrides compose into a single
+    # init configuration.
+    init_dof = default_dof.copy()
+    for fact in facts:
+        if fact.init_joint_pos is not None:
+            init_dof[fact.joint_dof] = fact.init_joint_pos
+    data = mtx.SceneData(model, batch=[1])
+    data.reset(
+        model,
+        dof_pos=init_dof,
+        dof_vel=np.zeros((model.num_dof_vel,), dtype=np.float32),
+        forward_kinematic=True,
+    )
+    link_poses = np.asarray(model.get_link_poses(data), dtype=np.float32)[0]
+
+    bodies = {}
+    for fact in facts:
+        robot_cfg = fact.cfg if isinstance(fact.cfg, RobotCfg) else None
+        poses = link_poses[fact.link_indices]
+        base_pose = np.asarray(fact.body.get_pose(data), dtype=np.float32).reshape(7)
+        bodies[fact.name] = assemble_body_model(
+            name=fact.name,
+            base_link_name=fact.cfg.resolved_base_link_name,
+            link_names=fact.link_names,
+            joint_names=fact.joint_names,
+            joint_pos_limits=fact.joint_pos_limits,
+            scene_actuators=scene_actuators,
+            init_base_position=base_pose[:3],
+            init_base_quat=base_pose[3:],
+            init_link_positions=poses[:, :3],
+            init_link_quats=poses[:, 3:7],
+            robot_cfg=robot_cfg,
+        )
+    return bodies
 
 
 def _dof_position_limits(model: mtx.SceneModel) -> tuple[FloatArray, FloatArray]:
@@ -187,15 +272,16 @@ class MotrixSimBackend(SimBackend):
     name = "motrixsim"
 
     def __init__(self, scene: SceneCfg, sim: SimCfg, num_envs: int) -> None:
+        super().__init__(scene, sim, num_envs)
         self._model: mtx.SceneModel = MotrixSimSceneCompiler().compile(scene, sim)
         self._data: mtx.SceneData = mtx.SceneData(self._model, batch=[num_envs])
         self._num_envs = num_envs
-        self._model_query_compiler = MotrixSimModelQueryCompiler(self._model)
+        self._model_compiler = MotrixSimModelCompiler(self._model)
         self._write_compiler = MotrixSimWriteCompiler(self._model, self._data, self._masked_rows)
 
     @property
-    def model_query_compiler(self) -> SimModelQueryCompiler:
-        return self._model_query_compiler
+    def model_compiler(self) -> SimModelCompiler:
+        return self._model_compiler
 
     def compile_reads(self, queries: Mapping[str, SimDataQuery]) -> PhysicsReadProgram:
         return compile_read_program(self._model, self._data, queries)

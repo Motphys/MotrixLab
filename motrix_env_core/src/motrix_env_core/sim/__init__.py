@@ -1,18 +1,24 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+from motrix_env_core.sim.body import assemble_body_model
 from motrix_env_core.sim.config import SimQueriesCfg
 from motrix_env_core.sim.model import (
     ActuatorKdQuery,
     ActuatorKpQuery,
+    ActuatorSpec,
+    ActuatorType,
     BodyCenterOfMassQuery,
     BodyJointPositionLimitsQuery,
     BodyMassQuery,
+    BodyModel,
     DofPositionLimitsQuery,
     GeomFrictionQuery,
+    GeomSpec,
     GeomSpecsQuery,
     ModelQuery,
-    SimModelQueryCompiler,
+    SimModel,
+    SimModelCompiler,
 )
 from motrix_env_core.sim.read import (
     ActuatorCtrlQuery,
@@ -61,6 +67,10 @@ __all__ = [
     "ActuatorCtrlQuery",
     "ActuatorKdQuery",
     "ActuatorKpQuery",
+    "ActuatorSpec",
+    "ActuatorType",
+    "assemble_body_model",
+    "BodyModel",
     "BatchLinkAngularVelocityQuery",
     "BatchLinkLinearVelocityQuery",
     "BatchLinkNetContactForceQuery",
@@ -83,6 +93,7 @@ __all__ = [
     "DofVelocityWrite",
     "GeomFrictionQuery",
     "GeomLinearVelocityQuery",
+    "GeomSpec",
     "GeomPairCollidingQuery",
     "GeomPositionQuery",
     "GeomQuaternionQuery",
@@ -99,7 +110,8 @@ __all__ = [
     "LinkPositionQuery",
     "LinkQuaternionQuery",
     "ModelQuery",
-    "SimModelQueryCompiler",
+    "SimModel",
+    "SimModelCompiler",
     "PhysicsReadProgram",
     "SensorValuesQuery",
     "SimDataQuery",

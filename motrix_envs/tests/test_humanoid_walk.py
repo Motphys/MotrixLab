@@ -156,5 +156,6 @@ def test_humanoid_walk_rejects_incomplete_joint_preset():
     cfg.scene.objs.robot.key_pose.joint_names.pop(0)
     cfg.scene.objs.robot.key_pose.poses["default"].pop(0)
 
-    with pytest.raises(KeyError, match="robot key pose 'default' must match robot joints exactly"):
+    # The backend rejects incomplete key poses at model compile time.
+    with pytest.raises(ValueError, match="must cover every joint"):
         HumanoidVelocityTrackingEnv(cfg)

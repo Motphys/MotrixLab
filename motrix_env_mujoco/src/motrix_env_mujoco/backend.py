@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from motrix_env_core.config.sim import SimCfg
 from motrix_env_core.sim.backend import SimBackend
-from motrix_env_core.sim.model import SimModelQueryCompiler
+from motrix_env_core.sim.model import SimModelCompiler
 from motrix_env_core.sim.read import PhysicsReadProgram
 from motrix_env_mujoco.compiler import MuJoCoSceneCompiler
 
@@ -25,7 +25,7 @@ class MuJoCoSimBackend(SimBackend):
     _GAP = "MuJoCo only compiles scene models; it provides no live simulation."
 
     def __init__(self, scene, sim: SimCfg, num_envs: int) -> None:
-        del num_envs
+        super().__init__(scene, sim, num_envs)
         self._mujoco_model = MuJoCoSceneCompiler().compile(scene, sim)
 
     @property
@@ -47,5 +47,5 @@ class MuJoCoSimBackend(SimBackend):
         raise NotImplementedError(self._GAP)
 
     @property
-    def model_query_compiler(self) -> SimModelQueryCompiler:
+    def model_compiler(self) -> SimModelCompiler:
         raise NotImplementedError(self._GAP)

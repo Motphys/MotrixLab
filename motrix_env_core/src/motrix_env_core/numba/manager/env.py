@@ -58,7 +58,8 @@ from motrix_env_core.sim import (
     SimDataQuery,
     SimQueriesCfg,
 )
-from motrix_env_core.sim.backend import ActuatorSpec, RenderConfig, SimBackend, SimRenderer
+from motrix_env_core.sim.backend import RenderConfig, SimBackend, SimRenderer
+from motrix_env_core.sim.model import ActuatorSpec
 from motrix_env_core.sim.write import CtrlTargetsWrite, SimWrite
 
 _CfgT = TypeVar("_CfgT")

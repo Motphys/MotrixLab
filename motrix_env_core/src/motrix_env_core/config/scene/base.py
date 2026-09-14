@@ -301,12 +301,25 @@ class BodyCfg(SceneObjCfg):
 
 @configclass(kw_only=True)
 class RobotCfg(BodyCfg):
-    """Base config for a robot instance in a generated scene."""
+    """Base config for a robot instance in a generated scene.
+
+    ``init_key_pose`` designates which declared key pose provides the body's
+    initial joint state. Shared robot assets default to ``"default"``; envs
+    express task-level init choices by overriding the field on their scene's
+    robot instance, and the designation is resolved into the ``BodyModel``
+    init snapshot at model compile time.
+    """
 
     key_pose: KeyPoseCfg = KeyPoseCfg()
+    init_key_pose: str = "default"
 
     def validate(self, name: str) -> None:
         super().validate(name)
         if not isinstance(self.key_pose, KeyPoseCfg):
             raise TypeError(f"RobotCfg.key_pose must contain KeyPoseCfg, got {type(self.key_pose).__name__}")
         self.key_pose.validate()
+        if self.key_pose.poses and self.init_key_pose not in self.key_pose.poses:
+            raise ValueError(
+                f"RobotCfg {name!r} init_key_pose {self.init_key_pose!r} is not a declared key pose; "
+                f"available poses: {sorted(self.key_pose.poses)}."
+            )

@@ -14,7 +14,7 @@ from motrix_env_core.config import configclass
 
 if TYPE_CHECKING:
     from motrix_env_core.numba.manager.env import ManagerEnv
-    from motrix_env_core.sim.backend import ActuatorSpec
+    from motrix_env_core.sim.model import ActuatorSpec
 
 
 class ActionTerm(abc.ABC):

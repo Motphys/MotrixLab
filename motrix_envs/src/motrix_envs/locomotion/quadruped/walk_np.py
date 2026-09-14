@@ -27,7 +27,7 @@ from motrix_env_core.sim import (
     LinkPositionQuery,
     SensorValuesQuery,
 )
-from motrix_env_core.sim.backend import ActuatorType
+from motrix_env_core.sim.model import ActuatorType
 from motrix_env_core.sim.write import (
     ActuatorDampingWrite,
     ActuatorKpWrite,

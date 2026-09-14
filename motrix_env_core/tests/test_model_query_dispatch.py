@@ -3,6 +3,7 @@
 
 import numpy as np
 
+from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.sim import (
     ActuatorKdQuery,
     ActuatorKpQuery,
@@ -12,12 +13,12 @@ from motrix_env_core.sim import (
     DofPositionLimitsQuery,
     GeomFrictionQuery,
     GeomSpecsQuery,
-    SimModelQueryCompiler,
+    SimModelCompiler,
 )
-from motrix_env_core.sim.backend import SimModel
+from motrix_env_core.sim.model import SimModel
 
 
-class _DispatchCompiler(SimModelQueryCompiler):
+class _DispatchCompiler(SimModelCompiler):
     """Record the typed hook every query dispatches to."""
 
     def __init__(self) -> None:
@@ -26,7 +27,7 @@ class _DispatchCompiler(SimModelQueryCompiler):
     def _begin_compile(self) -> None:
         self.dispatched = {}
 
-    def _build_model(self) -> SimModel:
+    def _build_model(self, scene) -> SimModel:
         return SimModel(actuators=(), init_dof_pos=np.zeros(0, dtype=np.float32), others=dict(self.dispatched))
 
     def compile_geom_specs(self, key, geom_names) -> None:
@@ -74,6 +75,6 @@ def test_model_queries_dispatch_to_typed_compiler_methods() -> None:
         "friction": GeomFrictionQuery(name="geom"),
     }
 
-    model = compiler.compile(queries)
+    model = compiler.compile(SceneCfg(), queries)
 
     assert model.others == {name: name for name in queries}
