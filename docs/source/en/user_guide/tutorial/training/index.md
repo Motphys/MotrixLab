@@ -16,7 +16,7 @@ The pages follow the order of use:
   run and algorithm parameters, override values with `key=value`;
 - [Running Training and Analyzing Results](training_and_result.md): start training,
   read TensorBoard logs, replay policies with play;
-- [Training Artifacts: runs Directories and Checkpoints](runs_and_checkpoints.md):
+- [Training Artifacts: the runs Directory and Checkpoint Structure](runs_and_checkpoints.md):
   the `runs/` layout, best-policy selection, and how to resume.
 
 ```{toctree}
