@@ -32,10 +32,11 @@ from motrix_env_core.sim import (
     LinkLinearVelocityQuery,
     LinkPositionQuery,
     LinkQuaternionQuery,
+    SitePositionQuery,
 )
 from motrix_env_core.sim.backend import SimModel
 from motrix_env_core.sim.registry import create_sim_backend, list_sim_backends
-from motrix_env_core.sim.write import BodyJointVelocityWrite, DofVelocityWrite, JointVelocityWrite
+from motrix_env_core.sim.write import BodyJointVelocityWrite, DofVelocityWrite, JointVelocityWrite, MocapPoseWrite
 from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler
 from motrix_env_motrixsim.runtime import MotrixSimBackend
 
@@ -347,6 +348,92 @@ def test_body_state_reset_is_visible_to_link_queries():
     np.testing.assert_allclose(read["rotation"][0], [0.0, 0.0, 0.0, 1.0])
     np.testing.assert_allclose(read["linear_velocity"][0], [0.1, 0.2, 0.3])
     np.testing.assert_allclose(read["angular_velocity"][0], [0.4, 0.5, 0.6])
+
+
+def test_mixed_reset_program_applies_native_and_numpy_writes_together():
+    import motrix_envs  # noqa: F401
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("dm-humanoid-walk", mode="play")
+    backend = MotrixSimBackend(cfg.scene, cfg.sim, 2)
+    body = "torso"
+    reset = backend.write_compiler.compile(
+        {
+            "base_position": BodyPositionWrite((body,)),
+            "base_rotation": BodyRotationWrite((body,)),
+            "joint_position": JointPositionWrite(("abdomen_z",)),
+            "joint_velocity": JointVelocityWrite(("abdomen_z",)),
+        },
+        reset=True,
+    )
+    read = backend.compile_reads(
+        {
+            "position": LinkPositionQuery(link=body),
+            "joint_position": JointPositionQuery(joints=("abdomen_z",)),
+            "joint_velocity": JointVelocityQuery(joints=("abdomen_z",)),
+        }
+    )
+    assert reset.buffer("base_position").shape == (2, 1, 3)
+    reset.buffer("base_position")[1, 0] = [0.5, 0.0, 1.0]
+    reset.buffer("joint_position")[1] = [0.25]
+    reset.buffer("joint_velocity")[1] = [-0.75]
+
+    reset.execute(np.asarray([1], dtype=np.int64))
+    read.execute()
+
+    # Native reset applies first, then the declared writes land on top.
+    np.testing.assert_allclose(read["position"][1], [0.5, 0.0, 1.0])
+    np.testing.assert_allclose(read["joint_position"][1], [0.25])
+    np.testing.assert_allclose(read["joint_velocity"][1], [-0.75])
+    # The unselected environment stays at the model initial state.
+    assert not np.allclose(read["joint_position"][0], [0.25])
+
+
+def test_dof_channel_writes_without_reset_land_in_sim_state():
+    import motrix_envs  # noqa: F401
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("dm-finger-spin", mode="play")
+    backend = MotrixSimBackend(cfg.scene, cfg.sim, 2)
+    writes = backend.write_compiler.compile(
+        {"joint_position": JointPositionWrite(("hinge",)), "joint_velocity": JointVelocityWrite(("hinge",))}
+    )
+    read = backend.compile_reads(
+        {
+            "joint_position": JointPositionQuery(joints=("hinge",)),
+            "joint_velocity": JointVelocityQuery(joints=("hinge",)),
+        }
+    )
+    writes.buffer("joint_position")[0] = [0.3]
+    writes.buffer("joint_velocity")[0] = [-0.6]
+
+    writes.execute(np.asarray([0], dtype=np.int64))
+    read.execute(np.asarray([0], dtype=np.int64))
+
+    np.testing.assert_allclose(read["joint_position"][0], [0.3])
+    np.testing.assert_allclose(read["joint_velocity"][0], [-0.6])
+    np.testing.assert_array_equal(read["joint_velocity"][1], [0.0])
+
+
+def test_mocap_pose_writes_keep_the_flat_pose_layout_and_reach_the_sim():
+    import motrix_envs  # noqa: F401
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("dm-manipulator-bring-ball", mode="play")
+    backend = MotrixSimBackend(cfg.scene, cfg.sim, 2)
+    writes = backend.write_compiler.compile({"target": MocapPoseWrite(("target_ball",))})
+    read = backend.compile_reads({"pos": SitePositionQuery(site="target_ball")})
+
+    buffer = writes.buffer("target")
+    assert buffer.shape == (2, 1, 7)
+    buffer[1, 0] = [0.11, 0.22, 0.33, 0.0, 0.0, 0.0, 1.0]
+
+    writes.execute(np.asarray([1], dtype=np.int64))
+    read.execute(np.asarray([1], dtype=np.int64))
+
+    np.testing.assert_allclose(read["pos"][1], [0.11, 0.22, 0.33])
+    # The other environment keeps its own mocap pose.
+    np.testing.assert_allclose(read["pos"][0], [0.0, 0.0, 0.0])
 
 
 def test_named_joint_queries_reject_unknown_joints():

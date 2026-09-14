@@ -1021,7 +1021,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "motrix-env-core", editable = "motrix_env_core" },
-    { name = "motrixsim", specifier = "==0.10.1.dev123478" },
+    { name = "motrixsim", specifier = "==0.10.1.dev123565" },
     { name = "numpy", specifier = ">=1.26" },
 ]
 
@@ -1242,27 +1242,27 @@ provides-extras = ["skrl-jax", "skrl-torch", "rslrl"]
 
 [[package]]
 name = "motrixsim"
-version = "0.10.1.dev123478"
+version = "0.10.1.dev123565"
 source = { registry = "https://pypi.motphys.com/simple" }
 dependencies = [
     { name = "motrixsim-core" },
 ]
 wheels = [
-    { url = "https://pypi.motphys.com/packages/motrixsim-0.10.1.dev123478-py3-none-any.whl", hash = "sha256:53a86b45f9dbd7b3dc89c70e97740d5a582383ae137ecffbd7704696e25788ea" },
+    { url = "https://pypi.motphys.com/packages/motrixsim-0.10.1.dev123565-py3-none-any.whl", hash = "sha256:cdb1b0dd98774e54494db438de03e8c371d8bcf05ae0304d160336b7e394122c" },
 ]
 
 [[package]]
 name = "motrixsim-core"
-version = "0.10.1.dev123478+pro"
+version = "0.10.1.dev123565+pro"
 source = { registry = "https://pypi.motphys.com/simple" }
 dependencies = [
     { name = "absl-py" },
     { name = "numpy" },
 ]
 wheels = [
-    { url = "https://pypi.motphys.com/packages/motrixsim_core-0.10.1.dev123478+pro-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:fe585358b7c1dc9a81953e6820873e20e45a80bb226ca4ec287c5cdf72d75109" },
-    { url = "https://pypi.motphys.com/packages/motrixsim_core-0.10.1.dev123478+pro-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a9135536195f7139274ada6507cf1d23e0216ce0627867925bbefa06c706fca7" },
-    { url = "https://pypi.motphys.com/packages/motrixsim_core-0.10.1.dev123478+pro-cp310-cp310-win_amd64.whl", hash = "sha256:be99be2772c5ef8947c9f4b171b0cc4b68204dcd1fdbe2ab000a963ee46a4252" },
+    { url = "https://pypi.motphys.com/packages/motrixsim_core-0.10.1.dev123565+pro-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:44a45535c78c0236cc1c18f4819e725a4a2b43ab4dfb1ee2261db40b8bd2df02" },
+    { url = "https://pypi.motphys.com/packages/motrixsim_core-0.10.1.dev123565+pro-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:507bc1bd96ca208d0a3741b45ac86999f1252a864975dc4e2685f6a5b685e5e9" },
+    { url = "https://pypi.motphys.com/packages/motrixsim_core-0.10.1.dev123565+pro-cp310-cp310-win_amd64.whl", hash = "sha256:2ed2cdc77f2f3160e85f90bc24932422d1dd405e355f79057bac0b78c15b36ff" },
 ]
 
 [[package]]
