@@ -46,8 +46,7 @@ MotrixLab is a UV workspace made of nine packages, grouped by the loop above:
 
 A simulation backend (such as `motrix_env_motrixsim`) is isolated behind the `SimBackend` interface —
 when using an environment you normally do not need to care which one it is. To select or integrate a
-backend, see the SimBackend section of
-[Writing DirectEnv Environments](building_envs/direct_env.md).
+backend, see [SimBackend: Decoupling from the Simulator](building_envs/sim_backend.md).
 
 ## One full training run
 

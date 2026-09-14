@@ -18,6 +18,8 @@ config, then register the generic environment class under the environment name:
 
 ```python
 from motrix_env_core import registry
+from motrix_env_core.config import configclass
+from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.manager import (
     ManagerBasedEnvCfg,
     ManagerEnv,

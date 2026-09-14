@@ -40,8 +40,7 @@ MotrixLab 是一个 UV workspace，由九个 package 组成。按上述流程划
 | `motrix_deploy*`    | 策略的部署         | 框架无关 artifact 与运行时契约、MuJoCo 回放与 Unitree 真机后端   |
 
 仿真后端（如 `motrix_env_motrixsim`）通过 `SimBackend` 接口隔离在环境框架之下，使用环境时通常
-无需关心它；需要选择或接入仿真后端时，见[编写 DirectEnv 环境](building_envs/direct_env.md)中的
-SimBackend 一节。
+无需关心它；需要选择或接入仿真后端时，见[SimBackend：与仿真器解耦](building_envs/sim_backend.md)。
 
 ## 一次训练的完整流程
 

@@ -15,6 +15,8 @@ Manager 工作流不需要子类化 `ManagerEnv`：写好一个 `ManagerBasedEnv
 
 ```python
 from motrix_env_core import registry
+from motrix_env_core.config import configclass
+from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.manager import (
     ManagerBasedEnvCfg,
     ManagerEnv,

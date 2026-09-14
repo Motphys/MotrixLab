@@ -13,7 +13,7 @@ writes small buffers and calls `execute()`:
   simulation (actuator lists, joint limits, ...);
 - `compile_reads(queries)`: simulation data reads (joint positions, velocities, link poses, ...);
   each `execute(env_ids)` refreshes the batch, and results are indexed by the keys used at declaration;
-- `compile_writes({name: Write})`: write programs (carried by the `write_compiler`). Control targets use `CtrlTargetsWrite`;
+- `compile_writes({name: SimWrite})`: write programs (carried by the `write_compiler`). Control targets use `CtrlTargetsWrite`;
   reset writes (initial poses, ...) pass `reset=True`. Fill `buffer(name)` first, then call
   `execute(env_ids)`.
 
