@@ -4,55 +4,24 @@
 from __future__ import annotations
 
 import abc
-import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 from motrix_env_core.config import configclass
-from motrix_env_core.numba.kernel_data import canonicalize_kernel_data, is_kernel_data
+from motrix_env_core.numba.manager.context import BuildContext
+from motrix_env_core.numba.manager.terms import BaseTerm, canonicalize_term_args
 
 if TYPE_CHECKING:
     from motrix_env_core.numba.manager.env import ManagerEnv
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class RewardTerm:
+class RewardTerm(BaseTerm):
     """Host-side reward dispatch and its static Numba-compatible arguments."""
 
-    dispatch: Callable[..., float]
-    args: tuple[Any, ...]
-
     def __init__(self, dispatch: Callable[..., float], *args: Any) -> None:
-        object.__setattr__(self, "dispatch", dispatch)
-        object.__setattr__(self, "args", args)
-        self.__post_init__()
-
-    def __post_init__(self) -> None:
-        if not inspect.isfunction(self.dispatch):
-            raise TypeError(f"Reward dispatch must be a Python function, got {type(self.dispatch).__name__}.")
-        if not getattr(self.dispatch, "__motrix_manager_dispatch__", False):
-            raise TypeError(f"Reward dispatch {self.dispatch.__qualname__!r} must be decorated with @dispatch.")
-
-
-def _canonicalize_reward_args(args: tuple[Any, ...], *, context: str) -> tuple[Any, ...]:
-    values: list[Any] = []
-    for index, value in enumerate(args):
-        if is_kernel_data(value):
-            values.append(canonicalize_kernel_data(value, context=f"{context} args[{index}]"))
-        elif isinstance(value, tuple) and all(isinstance(item, (bool, int, float, np.generic)) for item in value):
-            values.append(value)
-        elif isinstance(value, (bool, int, float, np.generic)):
-            values.append(value)
-        else:
-            raise TypeError(
-                f"{context} args[{index}] must be a scalar, a scalar tuple, or a @kernel_data value; "
-                f"got {type(value).__name__}. Raw np.ndarray values are not supported: wrap array data in a "
-                f"@kernel_data type (e.g. with SharedArray fields) so it lowers into kernel inputs."
-            )
-    return tuple(values)
+        BaseTerm.__init__(self, dispatch, *args)
 
 
 @configclass(kw_only=True)
@@ -60,8 +29,8 @@ class RewardTermCfg(abc.ABC):
     weight: float
 
     @abc.abstractmethod
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        """Create one environment-local reward term."""
+    def __call__(self, ctx) -> RewardTerm:
+        """Assemble the runtime term (dispatch plus static arguments)."""
 
 
 @configclass
@@ -84,12 +53,12 @@ class ManagerRewardsCfg:
 def create_reward_terms(cfg: dict[str, RewardTermCfg], env: ManagerEnv) -> dict[str, RewardTerm]:
     terms = {}
     for name, term_cfg in cfg.items():
-        created = term_cfg(env)
+        created = term_cfg(BuildContext(env, f"rewards.{name}"))
         if not isinstance(created, RewardTerm):
             raise TypeError(f"Manager reward {name} __call__() must return RewardTerm, got {type(created).__name__}.")
         terms[name] = RewardTerm(
             created.dispatch,
-            *_canonicalize_reward_args(created.args, context=f"Manager term reward.{name}"),
+            *canonicalize_term_args(created.args, context=f"Manager term reward.{name}"),
         )
     return terms
 

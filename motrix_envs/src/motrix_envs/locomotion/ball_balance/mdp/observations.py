@@ -8,7 +8,6 @@ import numpy as np
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import (
     ManagerContext,
-    ManagerEnv,
     ObservationTermCfg,
     ObsTerm,
 )
@@ -31,8 +30,8 @@ class ProjectedGravityObsCfg(ObservationTermCfg):
 
     noise: UniformNoiseCfg = UniformNoiseCfg()
 
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
-        del env
+    def __call__(self, ctx) -> ObsTerm:
+        del ctx
         return ObsTerm(3, projected_gravity_obs, np.float32(self.noise.amplitude))
 
 
@@ -55,8 +54,8 @@ class BallRelativePositionObsCfg(ObservationTermCfg):
 
     noise: UniformNoiseCfg = UniformNoiseCfg()
 
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
-        del env
+    def __call__(self, ctx) -> ObsTerm:
+        del ctx
         return ObsTerm(3, ball_relative_position_obs, np.float32(self.noise.amplitude))
 
 
@@ -74,8 +73,8 @@ class BallRelativeVelocityObsCfg(ObservationTermCfg):
 
     noise: UniformNoiseCfg = UniformNoiseCfg()
 
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
-        del env
+    def __call__(self, ctx) -> ObsTerm:
+        del ctx
         return ObsTerm(3, ball_relative_velocity_obs, np.float32(self.noise.amplitude))
 
 
@@ -88,8 +87,8 @@ def ball_position_obs(ctx: ManagerContext, out: np.ndarray) -> None:
 class BallPositionObsCfg(ObservationTermCfg):
     """Ball position in the world frame (value observations only)."""
 
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
-        del env
+    def __call__(self, ctx) -> ObsTerm:
+        del ctx
         return ObsTerm(3, ball_position_obs)
 
 
@@ -102,6 +101,6 @@ def ball_velocity_obs(ctx: ManagerContext, out: np.ndarray) -> None:
 class BallVelocityObsCfg(ObservationTermCfg):
     """Ball linear velocity in the world frame (value observations only)."""
 
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
-        del env
+    def __call__(self, ctx) -> ObsTerm:
+        del ctx
         return ObsTerm(3, ball_velocity_obs)

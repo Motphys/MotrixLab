@@ -7,6 +7,8 @@ from typing import Any
 
 import numba
 import numpy as np
+from numba.core.errors import ForceLiteralArg
+from numba.core.types import StringLiteral
 
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.numba.kernel import clone_kernel_value
@@ -49,6 +51,21 @@ class _CompiledManagerProgram(CompiledManagerProgram):
     input_offsets: tuple[int, ...]
     context: ResolvedManagerContext
 
+    def _compile_dispatcher(self, dispatcher, args: tuple) -> None:
+        """Compile one dispatcher for the warmup argument types.
+
+        ``numba.literally`` in a dispatch body requests literal string
+        arguments via a ``ForceLiteralArg`` pseudo-exception; fold the
+        compile-time string values into the signature and retry.
+        """
+        try:
+            dispatcher.compile(tuple(numba.typeof(arg) for arg in args))
+        except ForceLiteralArg:
+            literal_types = tuple(
+                StringLiteral(str(arg)) if isinstance(arg, str) else numba.typeof(arg) for arg in args
+            )
+            dispatcher.compile(literal_types)
+
     def warmup_terms(self, env: ManagerEnv, state: ArrayEnvState, buffers: tuple[Any, ...]) -> None:
         del state, buffers
         inputs = clone_kernel_value(self.read_plan.read(env))
@@ -88,7 +105,7 @@ class _CompiledManagerProgram(CompiledManagerProgram):
                 args = (receiver, context)
             else:
                 args = (context,)
-            invocation.dispatcher.compile(tuple(numba.typeof(arg) for arg in args))
+            self._compile_dispatcher(invocation.dispatcher, args)
             result = invocation.dispatcher(*args)
             if invocation.kind.startswith("command") or invocation.kind == "observation":
                 if result is not None:

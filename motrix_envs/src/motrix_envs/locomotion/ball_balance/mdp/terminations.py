@@ -6,7 +6,7 @@
 import numpy as np
 
 from motrix_env_core.config import configclass
-from motrix_env_core.manager import ManagerContext, ManagerEnv, TerminationTerm, TerminationTermCfg
+from motrix_env_core.manager import ManagerContext, TerminationTerm, TerminationTermCfg
 from motrix_env_core.manager.math.quaternion import rotate_inverse
 from motrix_env_core.numba.manager.dispatch import dispatch
 
@@ -28,8 +28,8 @@ def bad_base_z_termination(ctx: ManagerContext, threshold: np.float32) -> bool:
 class BadBaseZTerminationCfg(_BallBalanceTerminationCfg):
     """Terminate when the base falls below its balanced on-ball height."""
 
-    def __call__(self, env: ManagerEnv) -> TerminationTerm:
-        del env
+    def __call__(self, ctx) -> TerminationTerm:
+        del ctx
         return TerminationTerm(
             bad_base_z_termination,
             np.float32(self.threshold),
@@ -51,8 +51,8 @@ def bad_orientation_termination(ctx: ManagerContext, threshold: np.float32) -> b
 class BadOrientationTerminationCfg(_BallBalanceTerminationCfg):
     """Terminate when the base tilts farther than ``threshold`` from upright."""
 
-    def __call__(self, env: ManagerEnv) -> TerminationTerm:
-        del env
+    def __call__(self, ctx) -> TerminationTerm:
+        del ctx
         return TerminationTerm(
             bad_orientation_termination,
             np.float32(self.threshold),
@@ -77,8 +77,8 @@ def ball_escaped_termination(ctx: ManagerContext, threshold: np.float32) -> bool
 class BallEscapedTerminationCfg(_BallBalanceTerminationCfg):
     """Terminate when the ball rolls out from under the feet."""
 
-    def __call__(self, env: ManagerEnv) -> TerminationTerm:
-        del env
+    def __call__(self, ctx) -> TerminationTerm:
+        del ctx
         return TerminationTerm(
             ball_escaped_termination,
             np.float32(self.threshold),

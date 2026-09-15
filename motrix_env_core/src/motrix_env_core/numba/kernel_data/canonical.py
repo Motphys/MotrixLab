@@ -6,7 +6,11 @@ from typing import TypeVar, cast
 import numpy as np
 
 from motrix_env_core.numba.kernel_data.lowering import KernelDataLowering
-from motrix_env_core.numba.kernel_data.tree import flatten_kernel_data, is_kernel_data, unflatten_kernel_data
+from motrix_env_core.numba.kernel_data.tree import (
+    flatten_kernel_data,
+    is_kernel_data,
+    unflatten_kernel_data,
+)
 
 KernelDataType = TypeVar("KernelDataType")
 

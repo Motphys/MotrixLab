@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 from motrix_env_core.config.decorate import configclass
 
 if TYPE_CHECKING:
-    from motrix_env_core.numba.manager.env import ManagerEnv
     from motrix_env_core.numba.manager.sim_reset import ResetTerm
 
 
@@ -19,8 +18,8 @@ class ResetTermCfg(abc.ABC):
     """Configuration that creates one reset dispatch descriptor."""
 
     @abc.abstractmethod
-    def __call__(self, env: ManagerEnv) -> ResetTerm:
-        """Create the concrete reset dispatch descriptor."""
+    def __call__(self, ctx) -> ResetTerm:
+        """Assemble the concrete reset dispatch descriptor."""
 
 
 @configclass

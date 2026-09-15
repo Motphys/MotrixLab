@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import abc
-import inspect
 import numbers
 from collections.abc import Callable
 from dataclasses import dataclass, fields
@@ -13,11 +12,10 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from motrix_env_core.config import configclass
-from motrix_env_core.numba.kernel_data import canonicalize_kernel_data, is_kernel_data
-from motrix_env_core.sim import SimQueriesCfg
+from motrix_env_core.numba.manager.context import BuildContext
+from motrix_env_core.numba.manager.terms import BaseTerm, canonicalize_term_args
 
 if TYPE_CHECKING:
-    from motrix_env_core.base import EnvCfg
     from motrix_env_core.numba.manager.env import ManagerBasedEnvCfg, ManagerEnv
 
 
@@ -25,52 +23,9 @@ if TYPE_CHECKING:
 class ObservationTermCfg(abc.ABC):
     """Configuration that creates one environment-local observation term."""
 
-    def required_sim_queries(self, env_cfg: EnvCfg) -> SimQueriesCfg:
-        """Return the simulator data and model queries this term requires."""
-        del env_cfg
-        return SimQueriesCfg()
-
     @abc.abstractmethod
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
-        """Resolve environment resources and create the runtime term."""
-
-
-def _canonicalize_observation_args(args: tuple[Any, ...], *, context: str) -> tuple[Any, ...]:
-    """Validate and canonicalize positional Numba-compatible arguments."""
-    values: list[Any] = []
-    for index, value in enumerate(args):
-        if is_kernel_data(value):
-            values.append(canonicalize_kernel_data(value, context=f"{context} args[{index}]"))
-        elif isinstance(value, (bool, int, float, np.generic)):
-            values.append(value)
-        else:
-            raise TypeError(
-                f"{context} args[{index}] must be a scalar or a @kernel_data value; got {type(value).__name__}. "
-                f"Raw np.ndarray values are not supported: wrap array data in a @kernel_data type "
-                f"(e.g. with SharedArray fields) so it lowers into kernel inputs."
-            )
-    return tuple(values)
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class BaseTerm:
-    """A dispatch function and its static positional arguments."""
-
-    dispatch: Callable[..., Any]
-    args: tuple[Any, ...]
-
-    def __init__(self, dispatch: Callable[..., Any], *args: Any) -> None:
-        object.__setattr__(self, "dispatch", dispatch)
-        object.__setattr__(self, "args", args)
-        self.__post_init__()
-
-    def __post_init__(self) -> None:
-        if not inspect.isfunction(self.dispatch):
-            raise TypeError(f"Term dispatch must be a Python function, got {type(self.dispatch).__name__}.")
-        if not getattr(self.dispatch, "__motrix_manager_dispatch__", False):
-            raise TypeError(f"Term dispatch {self.dispatch.__qualname__!r} must be decorated with @dispatch.")
-        if not isinstance(self.args, tuple):
-            raise TypeError("Term invocation args must be a tuple.")
+    def __call__(self, ctx: BuildContext) -> ObsTerm:
+        """Assemble the runtime term (dispatch plus static arguments)."""
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -154,7 +109,7 @@ def create_observation_groups(
         entries = []
         group_size = 0
         for term_name, term_cfg in term_cfgs.items():
-            created = term_cfg(env)
+            created = term_cfg(BuildContext(env, f"observations.{group_name}.{term_name}"))
             if not isinstance(created, ObsTerm):
                 raise TypeError(
                     f"Observation term {group_name}.{term_name} __call__() must return ObsTerm, "
@@ -163,7 +118,7 @@ def create_observation_groups(
             term = ObsTerm(
                 int(created.size),
                 created.dispatch,
-                *_canonicalize_observation_args(created.args, context=f"Observation term {group_name}.{term_name}"),
+                *canonicalize_term_args(created.args, context=f"Observation term {group_name}.{term_name}"),
             )
             resolved_size = int(term.size)
             entries.append(ObservationTermEntry(term_name, term, resolved_size))
@@ -176,7 +131,6 @@ def create_observation_groups(
 
 
 __all__ = [
-    "BaseTerm",
     "ManagerObservationGroupCfg",
     "ManagerObservationsCfg",
     "ObsTerm",

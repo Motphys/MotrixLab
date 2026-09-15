@@ -77,7 +77,7 @@ class WbtJointPositionActionCfg(ActionCfg):
         )
         action_scales = self._init_action_scales(env, kps)
         joint_lower, joint_upper = env.model.others["robot_joint_position_limits"]
-        expected_joint_shape = env.sim_data["robot_dof_pos"].shape[1:]
+        expected_joint_shape = (len(actuators),)
         if joint_lower.shape != expected_joint_shape or joint_upper.shape != expected_joint_shape:
             raise ValueError(
                 "WBT robot joint position limits must match robot_dof_pos: "

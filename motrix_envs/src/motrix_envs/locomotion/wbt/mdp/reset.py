@@ -12,7 +12,6 @@ import numpy as np
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import (
     ManagerContext,
-    ManagerEnv,
     ResetTerm,
     ResetTermCfg,
 )
@@ -51,8 +50,8 @@ class BodyPosResetCfg(ResetTermCfg):
     noise: tuple[float, float, float] = (0.05, 0.05, 0.01)
     noise_scale: float = 1.0
 
-    def __call__(self, env: ManagerEnv) -> ResetTerm:
-        body = env.cfg.scene.objs.robot.resolved_base_link_name
+    def __call__(self, ctx) -> ResetTerm:
+        body = ctx.cfg.scene.objs.robot.resolved_base_link_name
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_pos,
@@ -80,12 +79,7 @@ def _reset_body_rot(
     base_quat = np.empty((4,), dtype=np.float32)
     base_quat[:] = rotation[0]
     numba_quaternion.mul(noisy_quat, base_quat, rotation[0])
-    norm = math.sqrt(
-        rotation[0, 0] * rotation[0, 0]
-        + rotation[0, 1] * rotation[0, 1]
-        + rotation[0, 2] * rotation[0, 2]
-        + rotation[0, 3] * rotation[0, 3]
-    )
+    norm = math.sqrt(float(np.dot(rotation[0], rotation[0])))
     rotation[0] /= norm
 
 
@@ -96,8 +90,8 @@ class BodyRotResetCfg(ResetTermCfg):
     noise: tuple[float, float, float] = (0.1, 0.1, 0.2)
     noise_scale: float = 1.0
 
-    def __call__(self, env: ManagerEnv) -> ResetTerm:
-        body = env.cfg.scene.objs.robot.resolved_base_link_name
+    def __call__(self, ctx) -> ResetTerm:
+        body = ctx.cfg.scene.objs.robot.resolved_base_link_name
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_rot,
@@ -126,8 +120,8 @@ class BodyLinVelResetCfg(ResetTermCfg):
     noise: tuple[float, float, float] = (0.5, 0.5, 0.2)
     noise_scale: float = 1.0
 
-    def __call__(self, env: ManagerEnv) -> ResetTerm:
-        body = env.cfg.scene.objs.robot.resolved_base_link_name
+    def __call__(self, ctx) -> ResetTerm:
+        body = ctx.cfg.scene.objs.robot.resolved_base_link_name
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_lin_vel,
@@ -156,8 +150,8 @@ class BodyRotVelResetCfg(ResetTermCfg):
     noise: tuple[float, float, float] = (0.52, 0.52, 0.78)
     noise_scale: float = 1.0
 
-    def __call__(self, env: ManagerEnv) -> ResetTerm:
-        body = env.cfg.scene.objs.robot.resolved_base_link_name
+    def __call__(self, ctx) -> ResetTerm:
+        body = ctx.cfg.scene.objs.robot.resolved_base_link_name
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_rot_vel,
@@ -188,8 +182,8 @@ class BodyDofPosResetCfg(ResetTermCfg):
     noise: float = 0.1
     noise_scale: float = 1.0
 
-    def __call__(self, env: ManagerEnv) -> ResetTerm:
-        joints = env.cfg.commands.motion.joint_names
+    def __call__(self, ctx) -> ResetTerm:
+        joints = ctx.cfg.commands.motion.joint_names
         return ResetTerm(
             _reset_body_dof_pos,
             np.float32(self.noise * self.noise_scale),

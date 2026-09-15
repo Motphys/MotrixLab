@@ -8,7 +8,7 @@ import math
 import numpy as np
 
 from motrix_env_core.config import configclass
-from motrix_env_core.manager import ManagerContext, ManagerEnv, TerminationTerm, TerminationTermCfg
+from motrix_env_core.manager import ManagerContext, TerminationTerm, TerminationTermCfg
 from motrix_env_core.numba.manager.dispatch import dispatch
 from motrix_envs.locomotion.wbt.mdp.action import WbtJointPositionAction
 from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommand
@@ -30,8 +30,8 @@ def bad_ref_z_termination(ctx: ManagerContext, threshold: np.float32) -> bool:
 
 @configclass(kw_only=True)
 class BadRefZTerminationCfg(_WbtTerminationCfg):
-    def __call__(self, env: ManagerEnv) -> TerminationTerm:
-        del env
+    def __call__(self, ctx) -> TerminationTerm:
+        del ctx
         return TerminationTerm(
             bad_ref_z_termination,
             np.float32(self.threshold),
@@ -54,8 +54,8 @@ def bad_ref_orientation_termination(ctx: ManagerContext, threshold: np.float32) 
 
 @configclass(kw_only=True)
 class BadRefOrientationTerminationCfg(_WbtTerminationCfg):
-    def __call__(self, env: ManagerEnv) -> TerminationTerm:
-        del env
+    def __call__(self, ctx) -> TerminationTerm:
+        del ctx
         return TerminationTerm(
             bad_ref_orientation_termination,
             np.float32(self.threshold),
@@ -85,8 +85,8 @@ def bad_body_z_termination(
 class BadBodyZTerminationCfg(_WbtTerminationCfg):
     body_names: tuple[str, ...] = ()
 
-    def __call__(self, env: ManagerEnv) -> TerminationTerm:
-        tracked_body_names = env.cfg.commands.motion.tracked_body_names
+    def __call__(self, ctx) -> TerminationTerm:
+        tracked_body_names = ctx.cfg.commands.motion.tracked_body_names
         body_indices = tuple(tracked_body_names.index(name) for name in self.body_names)
         return TerminationTerm(
             bad_body_z_termination,
@@ -117,8 +117,8 @@ def bad_dof_position_termination(ctx: ManagerContext, threshold: np.float32) -> 
 
 @configclass(kw_only=True)
 class BadDofPositionTerminationCfg(_WbtTerminationCfg):
-    def __call__(self, env: ManagerEnv) -> TerminationTerm:
-        del env
+    def __call__(self, ctx) -> TerminationTerm:
+        del ctx
         return TerminationTerm(
             bad_dof_position_termination,
             np.float32(self.threshold),
@@ -144,8 +144,8 @@ def bad_dof_velocity_termination(ctx: ManagerContext, threshold: np.float32) -> 
 
 @configclass(kw_only=True)
 class BadDofVelocityTerminationCfg(_WbtTerminationCfg):
-    def __call__(self, env: ManagerEnv) -> TerminationTerm:
-        del env
+    def __call__(self, ctx) -> TerminationTerm:
+        del ctx
         return TerminationTerm(
             bad_dof_velocity_termination,
             np.float32(self.threshold),

@@ -19,7 +19,6 @@ from motrix_env_core.numba.manager.dispatch import dispatch
 from motrix_env_core.numba.manager.env import ManagerBasedEnvCfg, ManagerEnv
 from motrix_env_core.numba.manager.metrics import metric
 from motrix_env_core.numba.manager.observations import (
-    BaseTerm,
     ManagerObservationGroupCfg,
     ManagerObservationsCfg,
     ObservationTermCfg,
@@ -33,6 +32,7 @@ from motrix_env_core.numba.manager.terminations import (
     TerminationTerm,
     TerminationTermCfg,
 )
+from motrix_env_core.numba.manager.terms import BaseTerm
 from motrix_env_core.sim import SimQueriesCfg
 
 __all__ = [

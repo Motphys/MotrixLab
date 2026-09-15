@@ -25,6 +25,7 @@ from motrix_env_core.numba.kernel_data import (
     KernelDataLayout,
     KernelDataLowering,
     Map,
+    SharedArray,
     flatten_kernel_data,
     is_kernel_data,
     iter_layout_leaves,
@@ -82,6 +83,20 @@ def _invalidate_term_cache() -> None:
 
 
 @kernel_data
+class TermArrayBuffer:
+    """Shared array slot for one ndarray term argument.
+
+    Arrays passed directly as manager term arguments are lowered with shared
+    scope (every kernel lane sees the full array): they hold env-invariant
+    reference data such as default poses, weights, or lookup tables. Unlike
+    :class:`TermScalarBuffer` the full value participates in the plan
+    fingerprint, mirroring kernel-data array leaves.
+    """
+
+    value: SharedArray
+
+
+@kernel_data
 class TermScalarBuffer:
     """Runtime buffer slot for one numeric term argument.
 
@@ -117,6 +132,7 @@ class NumbaKernelCompiler:
     def __init__(self, env: ManagerEnv):
         self._env = env
         self._sim_inputs, sim_input_fingerprint = _manager_sim_inputs(env.sim_data)
+        self._sim_slots_by_key: dict[str, int] = {}
         self._prepared_terms: list[KernelInputSource] = []
         self._input_offsets: list[int] = []
         self._flat_input_count = 0
@@ -370,16 +386,7 @@ class NumbaKernelCompiler:
         )
 
     def _sim_input_layout(self) -> tuple[SimInputLayout, ...]:
-        context_index = next(
-            index for index, source in enumerate(self._prepared_terms) if source.value_type is ManagerContext
-        )
-        context_source = self._prepared_terms[context_index]
-        context_offset = self._input_offsets[context_index]
-        slots_by_key = {
-            field.path[1]: context_offset + field_index
-            for field_index, field in enumerate(context_source.fields)
-            if len(field.path) == 2 and field.path[0] == "sim"
-        }
+        slots_by_key = self._sim_slots_by_key
         return tuple(
             SimInputLayout(
                 slot=slots_by_key[key],
@@ -448,6 +455,16 @@ class NumbaKernelCompiler:
                 tuple((name, value.shape, value.dtype.str) for name, value in self._env.metrics.items()),
             )
         )
+        # Map each declared sim key to its global input slot inside the
+        # flattened context, so term args naming a sim key can resolve to the
+        # key's lane view instead of crossing the kernel as a string.
+        context_source = self._prepared_terms[prepared_index]
+        context_offset = self._input_offsets[prepared_index]
+        self._sim_slots_by_key = {
+            field.path[1]: context_offset + field_index
+            for field_index, field in enumerate(context_source.fields)
+            if len(field.path) == 2 and field.path[0] == "sim"
+        }
         return ResolvedManagerContext(prepared_index, expression)
 
     def _resolve_command_hooks(self, function_name: str) -> tuple[PreparedInvocation, ...]:
@@ -773,6 +790,24 @@ class NumbaKernelCompiler:
         leaf = iter_layout_leaves(layout)[0]
         return f"input_{self._input_offsets[prepared_index] + leaf.slot_index}", scalar
 
+    def _array_buffer_arg(self, source_name: str, value: np.ndarray) -> tuple[str, np.ndarray]:
+        """Lower one ndarray term argument into a per-environment input slot.
+
+        Returns the kernel-lane argument expression (the lane row) and the
+        warmup value. The array content participates in the plan fingerprint
+        via its shape and dtype, and the value is read from the input slot at
+        runtime.
+        """
+        wrapped = TermArrayBuffer(value=value)
+        _, tree_def = flatten_kernel_data(wrapped)
+        layout = self._kernel_data_lowering.lower(
+            tree_def,
+            context=source_name,
+        )
+        prepared_index, _ = self._register_prepared(source_name, wrapped, TermArrayBuffer, layout)
+        leaf = iter_layout_leaves(layout)[0]
+        return f"input_{self._input_offsets[prepared_index] + leaf.slot_index}", value
+
     def _resolve_plain_arg(self, source_name: str, value: Any) -> tuple[str | None, Any, str, int | None]:
         """Resolve one non-kernel-data term argument.
 
@@ -784,6 +819,22 @@ class NumbaKernelCompiler:
         if isinstance(value, (float, np.floating)):
             expression, warmup = self._scalar_buffer_arg(source_name, value)
             return expression, warmup, "scalar_buffer(np.float32)", None
+        if isinstance(value, np.ndarray):
+            expression, warmup = self._array_buffer_arg(source_name, value)
+            return expression, warmup, f"array_buffer({value.dtype.str}{value.shape})", None
+        if isinstance(value, str):
+            # String arguments are inlined as source-level literals. Dispatch
+            # bodies keep them literal via ``numba.literally`` so Map lookups
+            # like ``ctx.actions[name]`` resolve at compile time.
+            return repr(value), value, f"str({value!r})", None
+        if isinstance(value, SimDataQuery):
+            # A query passed as a term argument resolves to its registered
+            # read-program lane view; the dispatch receives the array in the
+            # argument's position.
+            key = self._env._term_query_keys[value]
+            slot = self._sim_slots_by_key[key]
+            lane_view = self._sim_inputs[key].value[0]
+            return f"input_{slot}[env_id]", lane_view, f"sim_input({key!r})", None
         return repr(value), value, repr(value), None
 
     def _validate_observation_spaces(self, groups: dict[str, ObservationGroupEntry]) -> None:

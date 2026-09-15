@@ -11,6 +11,7 @@ from motrix_env_core.base import EnvCfg, SimCfg
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import FlatTerrainCfg, SystemCameraCfg
 from motrix_env_core.manager import ManagerEnv
+from motrix_env_core.mdp.rewards import ActionRateRewardCfg
 from motrix_env_core.sim import BodyLinkNetContactForceQuery
 from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
 from motrix_envs.locomotion.wbt.cfg import ActionsCfg, CommandsCfg, RewardsCfg, TerminationsCfg, WbtEnvCfg
@@ -22,7 +23,6 @@ from motrix_envs.locomotion.wbt.mdp.command import (
     WbtMotionCommandCfg,
 )
 from motrix_envs.locomotion.wbt.mdp.rewards import (
-    ActionRateRewardCfg,
     GlobalRefPositionRewardCfg,
 )
 from motrix_envs.locomotion.wbt.mdp.terminations import (

@@ -17,7 +17,7 @@ from motrix_env_core.manager import (  # noqa: E402
     ManagerResetCfg,
 )
 from motrix_env_core.mdp.observations import (  # noqa: E402
-    RobotBaseAngularVelocityObsCfg,
+    BodyAngularVelocityObsCfg,
     UniformNoiseCfg,
 )
 from motrix_env_core.mdp.state import RandValue  # noqa: E402
@@ -71,7 +71,7 @@ def _deterministic_manager_cfg(*, hold_at_clip_end: bool = False) -> WbtEnvCfg:
     motion_ref_ori = policy.motion_ref_ori_b
     assert isinstance(dof_pos, DofPosRelObsCfg)
     assert isinstance(dof_vel, DofVelObsCfg)
-    assert isinstance(base_ang_vel, RobotBaseAngularVelocityObsCfg)
+    assert isinstance(base_ang_vel, BodyAngularVelocityObsCfg)
     assert isinstance(motion_ref_ori, MotionReferenceOrientationObsCfg)
     return replace(
         cfg,
@@ -165,7 +165,7 @@ def test_numba_wbt_read_plan_reuses_preallocated_arrays() -> None:
     ]
     assert len(motion_joint_entries) == 2
     motion = _motion_command(env)
-    assert all(entry.size == motion.command_buffer.shape[1] for entry in motion_joint_entries)
+    assert all(entry.size == motion.command.shape[1] for entry in motion_joint_entries)
     first = env._kernel_inputs
     env._refresh_sim_reads()
     second = env._kernel_inputs

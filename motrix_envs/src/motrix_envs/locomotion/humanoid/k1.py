@@ -8,9 +8,24 @@ from dataclasses import replace
 from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config.scene import HFieldTerrainCfg
+from motrix_env_core.manager import ManagerEnv
+from motrix_env_core.mdp.rewards import TrackingAngVelZRewardCfg, TrackingLinVelXyRewardCfg
+from motrix_env_core.mdp.terminations import CollidingTerminationCfg
 from motrix_envs.config.scene import StandardSceneObjsCfg
 from motrix_envs.locomotion.humanoid import cfg as humanoid_cfg
-from motrix_envs.locomotion.humanoid.walk_np import HumanoidVelocityTrackingEnv
+from motrix_envs.locomotion.humanoid.cfg import (
+    HumanoidVelocityTrackingManagerEnvCfg,
+    WalkResetCfg,
+    WalkRewardsCfg,
+    WalkTerminationsCfg,
+)
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.reset import WalkStateResetCfg
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.rewards import (
+    FeetPhaseRewardCfg,
+    PenaltyActionRateRewardCfg,
+    PenaltyCloseFeetXyRewardCfg,
+    PoseRewardCfg,
+)
 from motrix_envs.robot import BoosterK1
 
 
@@ -41,28 +56,14 @@ _K1_TERMINATION_GEOMS = (
 )
 
 
-@registry.envcfg("k1-walk-flat")
-def make_k1_walk_flat_cfg() -> humanoid_cfg.HumanoidVelocityTrackingEnvCfg:
-    """Track walking commands with Booster K1 on flat ground.
-
-    zh_CN: 控制 Booster K1 在平地上跟踪行走指令。
-    """
-
-    robot = _make_k1_robot()
-
-    return humanoid_cfg.HumanoidVelocityTrackingEnvCfg(
-        scene=humanoid_cfg.HumanoidWalkSceneCfg(
-            objs=StandardSceneObjsCfg(robot=robot),
-        ),
-        control_config=humanoid_cfg.ControlCfg(action_scale=0.5),
-        reward_config=humanoid_cfg.RewardCfg(
-            scales=humanoid_cfg.RewardScales(
-                tracking_lin_vel=2.0,
-                tracking_ang_vel=1.5,
-                penalty_action_rate=-2.0,
-            ),
-            tracking_sigma=0.25,
-            close_feet_threshold=0.15,
+def _make_k1_rewards() -> WalkRewardsCfg:
+    return WalkRewardsCfg(
+        tracking_lin_vel=TrackingLinVelXyRewardCfg(command_name="walk", sigma=0.25, weight=2.0),
+        tracking_ang_vel=TrackingAngVelZRewardCfg(command_name="walk", sigma=0.25, weight=1.5),
+        penalty_action_rate=PenaltyActionRateRewardCfg(weight=-2.0),
+        feet_phase=FeetPhaseRewardCfg(sole_l_site="left_foot", sole_r_site="right_foot", weight=5.0),
+        penalty_close_feet_xy=PenaltyCloseFeetXyRewardCfg(close_feet_threshold=0.15, weight=-10.0),
+        pose=PoseRewardCfg(
             pose_weights={
                 "AAHead_yaw": 50.0,
                 "Head_pitch": 50.0,
@@ -87,24 +88,42 @@ def make_k1_walk_flat_cfg() -> humanoid_cfg.HumanoidVelocityTrackingEnvCfg:
                 "Right_Ankle_Pitch": 5.0,
                 "Right_Ankle_Roll": 5.0,
             },
+            weight=-0.5,
         ),
-        asset=humanoid_cfg.AssetCfg(
-            foot_height_site_names=("left_foot", "right_foot"),
-            ground_geom_name="floor",
-            terminate_contact_geom_names=_K1_TERMINATION_GEOMS,
+    )
+
+
+def _make_k1_terminations() -> WalkTerminationsCfg:
+    return WalkTerminationsCfg(
+        colliding=CollidingTerminationCfg(
+            termination_geoms=_K1_TERMINATION_GEOMS,
+            ground_geom="floor",
+        )
+    )
+
+
+@registry.envcfg("k1-walk-flat")
+def make_k1_walk_flat_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
+    """Track walking commands with Booster K1 on flat ground.
+
+    zh_CN: 控制 Booster K1 在平地上跟踪行走指令。
+    """
+    return HumanoidVelocityTrackingManagerEnvCfg(
+        scene=humanoid_cfg.HumanoidWalkSceneCfg(
+            objs=StandardSceneObjsCfg(robot=_make_k1_robot()),
         ),
+        rewards=_make_k1_rewards(),
+        terminations=_make_k1_terminations(),
         sim=SimCfg(dt=0.005, solver_iterations=6, solver_tolerance=1e-4),
-        spawn_xy_range=0.0,
     )
 
 
 @registry.envcfg("k1-walk-rough")
-def make_k1_walk_rough_cfg() -> humanoid_cfg.HumanoidVelocityTrackingEnvCfg:
+def make_k1_walk_rough_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
     """Track walking commands with Booster K1 over uneven terrain.
 
     zh_CN: 控制 Booster K1 在起伏地形上跟踪行走指令。
     """
-
     return replace(
         make_k1_walk_flat_cfg(),
         scene=humanoid_cfg.HumanoidWalkSceneCfg(
@@ -117,10 +136,10 @@ def make_k1_walk_rough_cfg() -> humanoid_cfg.HumanoidVelocityTrackingEnvCfg:
                 robot=_make_k1_robot(),
             ),
         ),
-        spawn_xy_range=4.0,
+        sim_reset=WalkResetCfg(humanoid_state=WalkStateResetCfg(spawn_xy_range=4.0)),
         render_spacing=0.0,
     )
 
 
-registry.env("k1-walk-flat")(HumanoidVelocityTrackingEnv)
-registry.env("k1-walk-rough")(HumanoidVelocityTrackingEnv)
+registry.env("k1-walk-flat")(ManagerEnv)
+registry.env("k1-walk-rough")(ManagerEnv)

@@ -8,9 +8,26 @@ from dataclasses import replace
 from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config.scene import HFieldTerrainCfg, SystemCameraCfg
+from motrix_env_core.manager import ManagerEnv
+from motrix_env_core.mdp.rewards import TrackingAngVelZRewardCfg, TrackingLinVelXyRewardCfg
+from motrix_env_core.mdp.terminations import CollidingTerminationCfg
 from motrix_envs.config.scene import StandardSceneObjsCfg
 from motrix_envs.locomotion.humanoid import cfg as humanoid_cfg
-from motrix_envs.locomotion.humanoid.walk_np import HumanoidVelocityTrackingEnv
+from motrix_envs.locomotion.humanoid.cfg import (
+    HumanoidVelocityTrackingManagerEnvCfg,
+    WalkCommandsCfg,
+    WalkResetCfg,
+    WalkRewardsCfg,
+    WalkTerminationsCfg,
+)
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.command import WalkCommandCfg
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.reset import WalkStateResetCfg
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.rewards import (
+    FeetPhaseRewardCfg,
+    PenaltyActionRateRewardCfg,
+    PenaltyCloseFeetXyRewardCfg,
+    PoseRewardCfg,
+)
 from motrix_envs.robot import Microduck
 
 
@@ -22,46 +39,20 @@ def _make_microduck_robot() -> Microduck:
 _MICRODUCK_TERMINATION_GEOMS = ("trunk_collision",)
 
 
-@registry.envcfg("microduck-walk-flat")
-def make_microduck_walk_flat_cfg() -> humanoid_cfg.HumanoidVelocityTrackingEnvCfg:
-    """Track walking commands with Microduck on flat ground.
-
-    zh_CN: 控制 Microduck 小型双足机器人在平地上跟踪行走指令。
-    """
-
-    return humanoid_cfg.HumanoidVelocityTrackingEnvCfg(
-        scene=humanoid_cfg.HumanoidWalkSceneCfg(
-            # Microduck is a ~25 cm robot; frame the lead env much closer than
-            # the full-size humanoid default camera (grid center at z=0.75).
-            system_camera=SystemCameraCfg(
-                lookat=(0.0, 0.0, 0.12),
-                distance=0.35,
-                elevation=-20.0,
-                azimuth=180.0,
-            ),
-            objs=StandardSceneObjsCfg(robot=_make_microduck_robot()),
-        ),
-        control_config=humanoid_cfg.ControlCfg(action_scale=0.5),
-        commands=humanoid_cfg.CommandsCfg(
-            vel_limit=[
-                [-1.0, -1.0, -1.0],
-                [1.0, 1.0, 1.0],
-            ],
-        ),
-        gait=humanoid_cfg.GaitCfg(
-            period=0.5,
+def _make_microduck_rewards() -> WalkRewardsCfg:
+    return WalkRewardsCfg(
+        tracking_lin_vel=TrackingLinVelXyRewardCfg(command_name="walk", sigma=0.15, weight=10.0),
+        tracking_ang_vel=TrackingAngVelZRewardCfg(command_name="walk", sigma=0.15, weight=3.0),
+        penalty_action_rate=PenaltyActionRateRewardCfg(weight=-0.5),
+        feet_phase=FeetPhaseRewardCfg(
+            sole_l_site="left_foot",
+            sole_r_site="right_foot",
             swing_height=0.04,
             feet_phase_sigma=0.002,
+            weight=8.0,
         ),
-        reward_config=humanoid_cfg.RewardCfg(
-            scales=humanoid_cfg.RewardScales(
-                tracking_lin_vel=10.0,
-                tracking_ang_vel=3.0,
-                penalty_action_rate=-0.5,
-                feet_phase=8.0,
-            ),
-            tracking_sigma=0.15,
-            close_feet_threshold=0.05,
+        penalty_close_feet_xy=PenaltyCloseFeetXyRewardCfg(close_feet_threshold=0.05, weight=-10.0),
+        pose=PoseRewardCfg(
             pose_weights={
                 "left_hip_yaw": 5.0,
                 "left_hip_roll": 1.0,
@@ -78,34 +69,57 @@ def make_microduck_walk_flat_cfg() -> humanoid_cfg.HumanoidVelocityTrackingEnvCf
                 "right_knee": 0.01,
                 "right_ankle": 5.0,
             },
+            weight=-0.5,
         ),
-        asset=humanoid_cfg.AssetCfg(
-            foot_height_site_names=("left_foot", "right_foot"),
-            ground_geom_name="floor",
-            terminate_contact_geom_names=_MICRODUCK_TERMINATION_GEOMS,
+    )
+
+
+def _make_microduck_scene() -> humanoid_cfg.HumanoidWalkSceneCfg:
+    # Microduck is a ~25 cm robot; frame the lead env much closer than
+    # the full-size humanoid default camera (grid center at z=0.75).
+    return humanoid_cfg.HumanoidWalkSceneCfg(
+        system_camera=SystemCameraCfg(
+            lookat=(0.0, 0.0, 0.12),
+            distance=0.35,
+            elevation=-20.0,
+            azimuth=180.0,
+        ),
+        objs=StandardSceneObjsCfg(robot=_make_microduck_robot()),
+    )
+
+
+@registry.envcfg("microduck-walk-flat")
+def make_microduck_walk_flat_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
+    """Track walking commands with Microduck on flat ground.
+
+    zh_CN: 控制 Microduck 小型双足机器人在平地上跟踪行走指令。
+    """
+    return HumanoidVelocityTrackingManagerEnvCfg(
+        scene=_make_microduck_scene(),
+        commands=WalkCommandsCfg(walk=WalkCommandCfg(gait_period=0.5)),
+        rewards=_make_microduck_rewards(),
+        terminations=WalkTerminationsCfg(
+            colliding=CollidingTerminationCfg(
+                termination_geoms=_MICRODUCK_TERMINATION_GEOMS,
+                ground_geom="floor",
+            )
         ),
         sim=SimCfg(dt=0.005, solver_iterations=6, solver_tolerance=1e-4),
-        spawn_xy_range=0.0,
     )
 
 
 @registry.envcfg("microduck-walk-rough")
-def make_microduck_walk_rough_cfg() -> humanoid_cfg.HumanoidVelocityTrackingEnvCfg:
+def make_microduck_walk_rough_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
     """Track walking commands with Microduck over uneven terrain.
 
     zh_CN: 控制 Microduck 小型双足机器人在起伏地形上跟踪行走指令。
     """
-
+    flat = make_microduck_walk_flat_cfg()
     return replace(
-        make_microduck_walk_flat_cfg(),
+        flat,
         scene=humanoid_cfg.HumanoidWalkSceneCfg(
             assets=humanoid_cfg.TerrainSceneAssetsCfg(),
-            system_camera=SystemCameraCfg(
-                lookat=(0.0, 0.0, 0.12),
-                distance=0.35,
-                elevation=-20.0,
-                azimuth=180.0,
-            ),
+            system_camera=flat.scene.system_camera,
             objs=StandardSceneObjsCfg(
                 floor=HFieldTerrainCfg(
                     hfield="terrain",
@@ -114,10 +128,10 @@ def make_microduck_walk_rough_cfg() -> humanoid_cfg.HumanoidVelocityTrackingEnvC
                 robot=_make_microduck_robot(),
             ),
         ),
-        spawn_xy_range=4.0,
+        sim_reset=WalkResetCfg(humanoid_state=WalkStateResetCfg(spawn_xy_range=4.0)),
         render_spacing=0.0,
     )
 
 
-registry.env("microduck-walk-flat")(HumanoidVelocityTrackingEnv)
-registry.env("microduck-walk-rough")(HumanoidVelocityTrackingEnv)
+registry.env("microduck-walk-flat")(ManagerEnv)
+registry.env("microduck-walk-rough")(ManagerEnv)
