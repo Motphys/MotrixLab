@@ -8,7 +8,7 @@ actuator metadata, one forward-kinematics evaluation) and hand them to
 :func:`assemble_body_model`, which owns the cross-backend contract: key-pose
 permutation into the body joint order, existence/coverage validation, and the
 baked init snapshot. Consumers read the result through :class:`BodyModel`
-(defined with the other model-surface types in ``sim.backend``) on
+(defined with the other model-surface types in ``sim.model``) on
 ``SimModel.bodies``.
 
 Cross-backend invariants:
@@ -38,7 +38,7 @@ def resolved_key_pose(
     pose_name: str,
     joint_names: tuple[str, ...],
 ) -> np.ndarray:
-    """Permutate one declared key pose into the body joint order.
+    """Permute one declared key pose into the body joint order.
 
     Every declared joint must exist on the body and every body joint must be
     covered by the declaration; violations raise at compile time.
@@ -46,7 +46,7 @@ def resolved_key_pose(
     Args:
         name: ``SceneObjsCfg`` field name of the body, for error messages.
         robot_cfg: The robot config declaring the key poses.
-        pose_name: The key pose to permutate.
+        pose_name: The key pose to permute.
         joint_names: The body's named joints in joint-DOF order.
 
     Returns:
@@ -93,7 +93,7 @@ def assemble_body_model(
 ) -> BodyModel:
     """Assemble a :class:`BodyModel` from backend-extracted engine facts.
 
-    Permutates each declared key pose from ``KeyPoseCfg.joint_names`` order
+    Permutes each declared key pose from ``KeyPoseCfg.joint_names`` order
     into the body joint order — every declared joint must exist on the body
     and every body joint must be covered — and bakes the init snapshot from
     the configured ``init_key_pose``. The body-scoped actuator view is
@@ -151,9 +151,10 @@ def assemble_body_model(
         limits = None
 
     joint_names = tuple(joint_names)
+    joint_name_set = frozenset(joint_names)
     # Body-scoped view of the scene actuators: specs whose target is one of
     # this body's joints, keeping the scene-wide engine model order.
-    body_actuators = tuple(spec for spec in scene_actuators if spec.target_name in set(joint_names))
+    body_actuators = tuple(spec for spec in scene_actuators if spec.target_name in joint_name_set)
     if robot_cfg is None or not robot_cfg.key_pose.poses:
         # Bodies without key poses get zero init joint angles.
         init_joint_pos = np.zeros((len(joint_names),), dtype=np.float32)
