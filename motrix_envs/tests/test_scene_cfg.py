@@ -15,10 +15,13 @@ from motrix_env_core.base import SimCfg
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import (
     BodyCfg,
+    CompositeTerrainGeneratorCfg,
     ContactReportField,
     ContactSensorCfg,
     ContactSensorReduce,
+    DiscreteObstaclesTerrainGeneratorCfg,
     FlatTerrainCfg,
+    FlatTerrainGeneratorCfg,
     FrameObjectKind,
     FrameRefKind,
     FrameSensorCfg,
@@ -32,6 +35,8 @@ from motrix_env_core.config.scene import (
     ModelFileCfg,
     NoiseTerrainGeneratorCfg,
     ProceduralHFieldAssetCfg,
+    PyramidSlopeTerrainGeneratorCfg,
+    QuantizedTerrainGeneratorCfg,
     RobotCfg,
     SceneAssetCfg,
     SceneAssetsCfg,
@@ -42,9 +47,12 @@ from motrix_env_core.config.scene import (
     SceneSensorsCfg,
     SceneVisualCfg,
     SkyboxCfg,
+    StairsTerrainGeneratorCfg,
     SystemCameraCfg,
     TerrainGeneratorCfg,
+    TerrainRegionCfg,
     TextureCfg,
+    grid_terrain,
     validate_scene_cfg,
 )
 from motrix_env_core.direct.env import DirectEnv, DirectEnvCfg
@@ -496,7 +504,12 @@ def test_procedural_hfield_supports_hydra_overrides():
         ),
         (
             ProceduralHFieldAssetCfg(generator=NoiseTerrainGeneratorCfg(height_scale=-0.1)),
-            "height_scale must be finite and non-negative",
+            "height_scale must be finite and positive",
+        ),
+        (
+            # Generators divide by height_scale when normalizing, so zero is rejected.
+            ProceduralHFieldAssetCfg(generator=NoiseTerrainGeneratorCfg(height_scale=0.0)),
+            "height_scale must be finite and positive",
         ),
     ],
 )
@@ -532,6 +545,378 @@ def test_procedural_hfield_rejects_invalid_generator_output(heights, match):
 
     with pytest.raises(ValueError, match=match):
         build_scene_world(SceneCfg(assets=TerrainAssetsCfg()))
+
+
+def test_stairs_terrain_runs_along_configured_axis():
+    # axis semantics contract: "x" varies along shape[0] rows, "y" along shape[1] columns.
+    generator = StairsTerrainGeneratorCfg(
+        axis="x",
+        profile="ascending",
+        step_count=4,
+        step_height=0.05,
+        height_scale=0.15,
+    )
+
+    heights = generator.generate((8.0, 8.0), (8, 8))
+
+    assert np.all(heights == heights[:, :1])
+    row_levels = heights[:, 0]
+    assert sorted(np.unique(row_levels)) == pytest.approx([0.0, 1.0 / 3, 2.0 / 3, 1.0])
+    assert np.all(np.diff(row_levels) >= 0.0)
+
+    transposed = StairsTerrainGeneratorCfg(
+        axis="y",
+        profile="ascending",
+        step_count=4,
+        step_height=0.05,
+        height_scale=0.15,
+    ).generate((8.0, 8.0), (8, 8))
+    assert np.all(transposed == transposed[0:1, :])
+    assert np.all(transposed[:, 0] == heights[0, :])
+
+
+def test_stairs_terrain_profiles():
+    pyramid = StairsTerrainGeneratorCfg(
+        profile="pyramid",
+        step_count=8,
+        step_height=0.1,
+        height_scale=0.7,
+    ).generate((8.0, 8.0), (8, 8))[:, 0]
+    assert np.all(np.diff(pyramid[:4]) > 0.0)
+    assert np.all(np.diff(pyramid[4:]) < 0.0)
+    assert pyramid[0] == pytest.approx(0.0)
+    assert pyramid.max() == pyramid[3]
+
+    pit = StairsTerrainGeneratorCfg(
+        profile="inverted_pyramid",
+        step_count=8,
+        step_height=0.1,
+        height_scale=0.7,
+    ).generate((8.0, 8.0), (8, 8))[:, 0]
+    # The central pit floor is the lowest point and the edges are the highest.
+    assert pit[3:5].min() == pit.min()
+    assert pit[0] == pit.max()
+    assert np.all(pit >= 0.0)
+    assert np.all(pit <= 1.0)
+
+
+@pytest.mark.parametrize(
+    "generator",
+    [
+        StairsTerrainGeneratorCfg(step_count=4, step_height=0.2, height_scale=0.5),
+        StairsTerrainGeneratorCfg(step_count=3),
+        DiscreteObstaclesTerrainGeneratorCfg(height=0.1, height_scale=0.1),
+        DiscreteObstaclesTerrainGeneratorCfg(size_min=0.3, size_max=0.2),
+        QuantizedTerrainGeneratorCfg(source=FlatTerrainGeneratorCfg(), levels=1),
+        TerrainRegionCfg(generator=FlatTerrainGeneratorCfg(), size=(1.5, 0.5)),
+        TerrainRegionCfg(generator=FlatTerrainGeneratorCfg(), blend=0.9),
+    ],
+)
+def test_terrain_generators_reject_invalid_configuration(generator):
+    with pytest.raises(ValueError):
+        generator.validate()
+
+
+def test_stairs_terrain_lays_radial_rings():
+    pit = StairsTerrainGeneratorCfg(
+        axis="radial",
+        profile="ascending",
+        step_count=8,
+        step_height=0.1,
+        height_scale=0.7,
+    ).generate((8.0, 8.0), (16, 16))
+
+    # Concentric rings: the center cell is the lowest, the edges are the highest.
+    assert pit[7, 7] == pit.min()
+    assert pit[0, 0] == pit.max() == pit[0, 15] == pit[15, 0]
+    # Symmetric under both axis flips.
+    assert np.all(pit == pit[::-1, :])
+    assert np.all(pit == pit[:, ::-1])
+    # Ring levels are multiples of the normalized step height.
+    assert sorted(np.unique(pit)) == pytest.approx([index * 0.1 / 0.7 for index in range(8)])
+
+    peak = StairsTerrainGeneratorCfg(
+        axis="radial",
+        profile="descending",
+        step_count=8,
+        step_height=0.1,
+        height_scale=0.7,
+    ).generate((8.0, 8.0), (16, 16))
+    assert peak[7, 7] == peak.max()
+    assert np.all(peak + pit == pit.max())
+
+
+def test_quantized_terrain_snaps_heights_to_levels():
+    generator = QuantizedTerrainGeneratorCfg(
+        source=NoiseTerrainGeneratorCfg(seed=11),
+        levels=5,
+    )
+
+    heights = generator.generate((8.0, 8.0), (16, 16))
+
+    allowed = {round(index / 4, 6) for index in range(5)}
+    snapped = {round(float(value), 6) for value in np.unique(heights)}
+    assert snapped <= allowed
+    assert len(snapped) > 1
+    assert np.all(heights >= 0.0)
+    assert np.all(heights <= 1.0)
+
+
+def test_discrete_obstacles_terrain_is_reproducible():
+    generator = DiscreteObstaclesTerrainGeneratorCfg(seed=3, count=6, height=0.05, height_scale=0.2)
+
+    heights = generator.generate((8.0, 8.0), (32, 32))
+    replay = generator.generate((8.0, 8.0), (32, 32))
+
+    assert np.all(heights == replay)
+    # Flat base plus a single bump level at the signed obstacle height.
+    assert sorted(np.unique(heights)) == pytest.approx([0.5, 0.5 + 0.05 / 0.2])
+    assert np.any(heights > 0.5)
+
+
+def test_stairs_terrain_step_width_and_platform():
+    generator = StairsTerrainGeneratorCfg(
+        axis="radial",
+        profile="descending",
+        step_count=8,
+        step_height=0.1,
+        step_width=0.5,
+        platform_width=2.0,
+        height_scale=1.0,
+    )
+
+    heights = generator.generate((8.0, 8.0), (64, 64))
+
+    # The central platform is flat at the top step level.
+    assert np.all(heights[28:36, 28:36] == heights[32, 32])
+    assert np.isclose(heights[32, 32], 7 * 0.1 / 1.0)
+    # Rings descend outward with the configured tread width: mid-edge and corner
+    # cells sit strictly below the platform, and rings repeat every ~step_width.
+    assert heights[32, 4] < heights[32, 32]
+    assert heights[2, 2] < heights[32, 4]
+    assert np.all(heights >= 0.0) and np.all(heights <= 1.0)
+
+
+def test_stairs_terrain_platform_rejects_negative_width():
+    generator = StairsTerrainGeneratorCfg(step_count=4, step_height=0.05, height_scale=0.5, platform_width=-1.0)
+
+    with pytest.raises(ValueError, match="platform_width"):
+        generator.validate()
+
+
+def test_discrete_obstacles_terrain_choice_mode_and_platform():
+    generator = DiscreteObstaclesTerrainGeneratorCfg(
+        seed=2,
+        count=20,
+        size_min=0.05,
+        size_max=0.1,
+        height=0.2,
+        height_scale=0.5,
+        height_mode="choice",
+        platform_width=2.0,
+    )
+
+    heights = generator.generate((8.0, 8.0), (80, 80))
+
+    # Choice mode draws from +/- full and +/- half of the obstacle height.
+    magnitude = 0.2 / 0.5
+    unique = sorted(np.unique(np.round(heights, 4)).tolist())
+    assert unique == pytest.approx(
+        sorted([0.5, 0.5 + magnitude, 0.5 + magnitude / 2, 0.5 - magnitude / 2, 0.5 - magnitude])
+    )
+    assert np.any(heights > 0.5 + magnitude / 4)
+    assert np.any(heights < 0.5 - magnitude / 4)
+    # The central platform stays clear at base level.
+    assert np.all(heights[38:42, 38:42] == 0.5)
+
+
+def test_discrete_obstacles_terrain_rejects_unknown_height_mode():
+    generator = DiscreteObstaclesTerrainGeneratorCfg(height_mode="random")
+
+    with pytest.raises(ValueError, match="height_mode"):
+        generator.validate()
+
+
+def test_pyramid_slope_terrain_rises_to_center():
+    generator = PyramidSlopeTerrainGeneratorCfg(slope=0.25, height_scale=1.0)
+
+    heights = generator.generate((8.0, 8.0), (64, 64))
+
+    # The peak sits at the center: slope * half extent = 0.25 * 4 m = 1 m.
+    # Cell centers sample slightly inside the boundary, so the max is just below 1.
+    assert heights.max() == pytest.approx(1.0, abs=0.02)
+    assert heights[32, 32] == heights.max()
+    assert heights[0, 0] == heights.min()
+    # Smooth monotonic rise from each edge midpoint to the center, then fall.
+    assert np.all(np.diff(heights[:32, 32]) >= -1e-6)
+    assert np.all(np.diff(heights[32:, 32]) <= 1e-6)
+    assert np.all(np.diff(heights[32, :32]) >= -1e-6)
+    assert np.all(np.diff(heights[32, 32:]) <= 1e-6)
+
+
+def test_pyramid_slope_terrain_inverted_dips_at_center():
+    generator = PyramidSlopeTerrainGeneratorCfg(slope=0.25, inverted=True, height_scale=1.0)
+
+    heights = generator.generate((8.0, 8.0), (64, 64))
+
+    assert heights[32, 32] == heights.min() == pytest.approx(0.0)
+    # Corner cells sample 0.0625 m inside the boundary, so the rim tops out just below 1.
+    assert heights.max() == pytest.approx(1.0, abs=0.04)
+
+
+def test_pyramid_slope_terrain_rejects_peak_above_height_scale():
+    generator = PyramidSlopeTerrainGeneratorCfg(slope=0.5, height_scale=0.5)
+
+    with pytest.raises(ValueError, match="height_scale"):
+        generator.generate((8.0, 8.0), (16, 16))
+
+
+def test_noise_terrain_downsampled_scale_smooths_speckle():
+    def jaggedness(heights: np.ndarray) -> float:
+        return float(np.abs(np.diff(heights, axis=0)).mean() + np.abs(np.diff(heights, axis=1)).mean())
+
+    rough = NoiseTerrainGeneratorCfg(seed=3, height_scale=0.1)
+    smooth = NoiseTerrainGeneratorCfg(seed=3, height_scale=0.1, downsampled_scale=0.4)
+
+    rough_heights = rough.generate((8.0, 8.0), (80, 80))
+    smooth_heights = smooth.generate((8.0, 8.0), (80, 80))
+
+    assert jaggedness(smooth_heights) < jaggedness(rough_heights)
+    assert np.all(smooth_heights >= 0.0) and np.all(smooth_heights <= 1.0)
+    assert np.array_equal(smooth_heights, smooth.generate((8.0, 8.0), (80, 80)))
+
+
+def test_noise_terrain_rejects_invalid_downsampled_scale():
+    generator = NoiseTerrainGeneratorCfg(downsampled_scale=-0.1)
+
+    with pytest.raises(ValueError, match="downsampled_scale"):
+        generator.validate()
+
+
+def test_composite_terrain_conserves_physical_heights_and_stays_normalized():
+    composite = CompositeTerrainGeneratorCfg(
+        base=FlatTerrainGeneratorCfg(height=0.25, height_scale=0.4),
+        height_scale=0.4,
+        regions=(
+            TerrainRegionCfg(
+                generator=StairsTerrainGeneratorCfg(
+                    axis="x",
+                    profile="ascending",
+                    step_count=4,
+                    step_height=0.05,
+                    height_scale=0.15,
+                ),
+                center=(0.5, 0.75),
+                size=(1.0, 0.5),
+                blend=0.25,
+            ),
+            TerrainRegionCfg(
+                generator=FlatTerrainGeneratorCfg(height=1.0, height_scale=0.4),
+                center=(0.5, 0.75),
+                size=(0.25, 0.25),
+            ),
+        ),
+    )
+
+    heights = composite.generate((16.0, 16.0), (16, 16))
+
+    assert np.all(heights >= 0.0)
+    assert np.all(heights <= 1.0)
+    # Later regions overwrite earlier ones: the flat patch shows through at full
+    # height where it overlaps the stairs region.
+    assert heights[8, 11] == pytest.approx(1.0)
+    # Inside the stairs region (rows flush, right edge flush; the left edge is an
+    # interior seam) the physical step size is conserved after sub-generator rescaling.
+    core = np.unique(heights[6:10, 15])
+    assert np.diff(core) * 0.4 == pytest.approx(0.05)
+    assert core[0] * 0.4 == pytest.approx(0.05)
+    # The blend margin mixes the flat base into the stairs across the interior seam
+    # (row 3 lies on stairs level 0, i.e. normalized height 0).
+    assert heights[3, 8] == pytest.approx(0.25)
+    assert heights[3, 9] == pytest.approx(0.5 * 0.25)
+    assert heights[3, 8] > heights[3, 9] > heights[3, 12]
+
+
+def test_composite_terrain_rejects_sub_generator_above_height_scale():
+    composite = CompositeTerrainGeneratorCfg(
+        base=FlatTerrainGeneratorCfg(),
+        height_scale=0.05,
+        regions=(
+            TerrainRegionCfg(
+                generator=NoiseTerrainGeneratorCfg(seed=1, height_scale=0.2),
+                center=(0.5, 0.5),
+                size=(0.5, 0.5),
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="exceeds its composite height_scale"):
+        composite.generate((16.0, 16.0), (16, 16))
+
+
+def test_grid_terrain_lays_out_cells():
+    composite = grid_terrain(
+        [
+            [FlatTerrainGeneratorCfg(), StairsTerrainGeneratorCfg(step_count=3, step_height=0.05, height_scale=0.1)],
+            [StairsTerrainGeneratorCfg(step_count=3, step_height=0.05, height_scale=0.1), FlatTerrainGeneratorCfg()],
+        ],
+        blend=0.1,
+    )
+
+    assert isinstance(composite, CompositeTerrainGeneratorCfg)
+    assert len(composite.regions) == 4
+    assert composite.height_scale == pytest.approx(0.1)
+    assert composite.regions[0].center == pytest.approx((0.25, 0.25))
+    assert composite.regions[3].center == pytest.approx((0.75, 0.75))
+    assert all(region.blend == pytest.approx(0.1) for region in composite.regions)
+
+    heights = composite.generate((16.0, 16.0), (16, 16))
+    assert np.all(heights >= 0.0)
+    assert np.all(heights <= 1.0)
+
+
+def test_composite_terrain_supports_hydra_overrides():
+    cfg = OmegaConf.structured(
+        ProceduralHFieldAssetCfg(
+            generator=grid_terrain(
+                [
+                    [
+                        FlatTerrainGeneratorCfg(),
+                        StairsTerrainGeneratorCfg(step_count=8, step_height=0.01, height_scale=0.15),
+                    ],
+                    [
+                        StairsTerrainGeneratorCfg(step_count=8, step_height=0.01, height_scale=0.15),
+                        FlatTerrainGeneratorCfg(),
+                    ],
+                ]
+            ),
+            size=(4.0, 3.0),
+            shape=(8, 6),
+        )
+    )
+
+    OmegaConf.update(cfg, "generator.height_scale", 0.2)
+    OmegaConf.update(cfg, "generator.regions.1.generator.step_height", 0.02)
+    OmegaConf.update(cfg, "generator.regions.1.blend", 0.2)
+    asset = OmegaConf.to_object(cfg)
+
+    assert isinstance(asset.generator, CompositeTerrainGeneratorCfg)
+    assert asset.generator.height_scale == pytest.approx(0.2)
+    assert asset.generator.regions[1].generator.step_height == pytest.approx(0.02)
+    assert asset.generator.regions[1].blend == pytest.approx(0.2)
+
+    @configclass
+    class TerrainAssetsCfg(SceneAssetsCfg):
+        terrain: ProceduralHFieldAssetCfg = asset
+
+    world = build_scene_world(SceneCfg(assets=TerrainAssetsCfg()))
+    hfield = world.assets.hfields["terrain"]
+    assert hfield.nrow == 8
+    assert hfield.ncol == 6
+    assert hfield.height_scale == pytest.approx(0.2)
+    heights = hfield.source_type.value["hfield"].reshape(8, 6)
+    assert np.all(heights >= 0.0)
+    assert np.all(heights <= 1.0)
 
 
 @pytest.mark.parametrize(

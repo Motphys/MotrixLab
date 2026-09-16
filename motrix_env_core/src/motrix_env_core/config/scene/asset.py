@@ -23,10 +23,10 @@ class TerrainGeneratorCfg(ABC):
     def validate(self) -> None:
         if self.seed < 0:
             raise ValueError(f"TerrainGeneratorCfg.seed must be non-negative, got {self.seed}")
-        if not np.isfinite(self.height_scale) or self.height_scale < 0.0:
-            raise ValueError(
-                f"TerrainGeneratorCfg.height_scale must be finite and non-negative, got {self.height_scale}"
-            )
+        # Generators divide by ``height_scale`` when normalizing physical heights, and a
+        # zero span carries no information anyway, so it is rejected up front.
+        if not np.isfinite(self.height_scale) or self.height_scale <= 0.0:
+            raise ValueError(f"TerrainGeneratorCfg.height_scale must be finite and positive, got {self.height_scale}")
 
     @abstractmethod
     def generate(self, size: Vec2, shape: tuple[int, int]) -> np.ndarray:
@@ -39,12 +39,48 @@ class NoiseTerrainGeneratorCfg(TerrainGeneratorCfg):
 
     # Reverse the generated row axis for parity with an equivalent image-backed height field.
     flip_y: bool = False
+    # Optional coarse sampling pitch in meters. When set, heights are sampled on a grid
+    # of this pitch and bilinearly interpolated to the output resolution, producing
+    # smooth rolling noise instead of per-cell speckle (Isaac Lab ``downsampled_scale``).
+    downsampled_scale: float | None = None
+
+    def validate(self) -> None:
+        super().validate()
+        if self.downsampled_scale is not None and (
+            not np.isfinite(self.downsampled_scale) or self.downsampled_scale <= 0.0
+        ):
+            raise ValueError(
+                f"NoiseTerrainGeneratorCfg.downsampled_scale must be finite and positive when set, "
+                f"got {self.downsampled_scale!r}"
+            )
 
     def generate(self, size: Vec2, shape: tuple[int, int]) -> np.ndarray:
-        del size
         rng = np.random.default_rng(self.seed)
-        heights = rng.uniform(0.0, 1.0, size=shape).astype(np.float32)
+        if self.downsampled_scale is not None and size[0] > self.downsampled_scale and size[1] > self.downsampled_scale:
+            coarse_rows = max(int(size[0] / self.downsampled_scale), 2)
+            coarse_cols = max(int(size[1] / self.downsampled_scale), 2)
+            coarse = rng.uniform(0.0, 1.0, size=(coarse_rows, coarse_cols))
+            heights = _bilinear_resize(coarse, shape)
+        else:
+            heights = rng.uniform(0.0, 1.0, size=shape).astype(np.float32)
         return np.flipud(heights) if self.flip_y else heights
+
+
+def _bilinear_resize(grid: np.ndarray, out_shape: tuple[int, int]) -> np.ndarray:
+    """Bilinearly interpolate a 2D grid to ``out_shape`` (numpy-only)."""
+    rows, cols = grid.shape
+    out_rows, out_cols = out_shape
+    ys = np.linspace(0.0, rows - 1, out_rows)
+    xs = np.linspace(0.0, cols - 1, out_cols)
+    y0 = np.floor(ys).astype(np.int64)
+    x0 = np.floor(xs).astype(np.int64)
+    y1 = np.minimum(y0 + 1, rows - 1)
+    x1 = np.minimum(x0 + 1, cols - 1)
+    fy = (ys - y0)[:, None]
+    fx = (xs - x0)[None, :]
+    top = grid[np.ix_(y0, x0)] * (1.0 - fx) + grid[np.ix_(y0, x1)] * fx
+    bottom = grid[np.ix_(y1, x0)] * (1.0 - fx) + grid[np.ix_(y1, x1)] * fx
+    return (top * (1.0 - fy) + bottom * fy).astype(np.float32)
 
 
 @configclass

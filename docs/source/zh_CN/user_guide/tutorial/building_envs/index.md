@@ -73,7 +73,8 @@ MotrixLab 提供两种环境工作流，区别在于任务逻辑写在哪里：
 1. [编写 DirectEnv 环境](direct_env.md)：从最小示例理解环境骨架；
 2. [编写 ManagerEnv 环境](manager_env.md)：需要声明式组合时切换到 Manager 工作流；
 3. [SceneCfg：搭建物理场景](scene.md)：场景文件与仿真参数的细节；
-4. [SimBackend：与仿真器解耦](sim_backend.md)：环境与仿真器的边界、backend 选择与接入。
+4. [程序化地形生成](terrain.md)：用声明式生成器搭建高度场地形；
+5. [SimBackend：与仿真器解耦](sim_backend.md)：环境与仿真器的边界、backend 选择与接入。
 
 ```{toctree}
 :hidden:
@@ -81,5 +82,6 @@ MotrixLab 提供两种环境工作流，区别在于任务逻辑写在哪里：
 direct_env
 manager_env
 scene
+terrain
 sim_backend
 ```

@@ -87,7 +87,9 @@ section of [Writing ManagerEnv Environments](manager_env.md).
    when you need declarative composition;
 3. [SceneCfg: Setting Up the Physics Scene](scene.md): model files and simulation
    parameters in detail;
-4. [SimBackend: Decoupling from the Simulator](sim_backend.md): the environment–simulator
+4. [Procedural Terrain Generation](terrain.md): height-field terrain from declarative
+   generators;
+5. [SimBackend: Decoupling from the Simulator](sim_backend.md): the environment–simulator
    boundary, backend selection and integration.
 
 ```{toctree}
@@ -96,5 +98,6 @@ section of [Writing ManagerEnv Environments](manager_env.md).
 direct_env
 manager_env
 scene
+terrain
 sim_backend
 ```
