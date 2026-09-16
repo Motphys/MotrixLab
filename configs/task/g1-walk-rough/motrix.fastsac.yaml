@@ -1,0 +1,19 @@
+# @package _global_
+# Task g1-walk-rough: motrix.fastsac shared training recipe.
+defaults:
+  - /algo_base@algo: motrix.fastsac
+  - _self_
+task:
+  env: g1-walk-rough
+  rllib: motrix
+  algo: fastsac
+num_envs: 2048
+play_num_envs: 16
+seed: 1
+checkpoint:
+  interval: 1000
+algo:
+  agent:
+    alpha_init: 0.01
+    target_entropy_ratio: -0.1
+    num_updates: 4
