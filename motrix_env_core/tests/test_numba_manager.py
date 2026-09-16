@@ -227,8 +227,7 @@ class _CounterCommandCfg(CommandCfg):
 
 @kernel_data
 class _CounterCommand(CommandTerm):
-    double: np.ndarray
-    command: np.ndarray = metric(name="command_value")
+    double: np.ndarray = metric()
 
     @dispatch
     def update(self, ctx: ManagerContext) -> None:
@@ -647,7 +646,7 @@ def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> 
     np.testing.assert_array_equal(state.terminated, [False, True])
     np.testing.assert_allclose(env.metrics["source_at_termination"][:, 0], [0.25, 0.75])
     np.testing.assert_array_equal(state.metrics["limit"], [False, True])
-    np.testing.assert_allclose(state.metrics["command_value"], [-1.0, -1.0])
+    np.testing.assert_allclose(np.ravel(state.metrics["double"]), [0.5, 1.5])
     np.testing.assert_allclose(state.info["Reward"]["source"], [0.005, 0.015])
     np.testing.assert_array_equal(state.metrics["limit"], [False, True])
     assert env._compiled_manager_program is not None

@@ -9,7 +9,7 @@ from typing import cast
 import numpy as np
 
 from motrix_env_core.config import configclass
-from motrix_env_core.manager import ManagerContext, ManagerEnv, RewardTerm, RewardTermCfg
+from motrix_env_core.manager import ManagerContext, RewardTerm, RewardTermCfg
 from motrix_env_core.manager.math.quaternion import rotation_distance
 from motrix_env_core.numba.kernel_data import SharedArray, kernel_data
 from motrix_env_core.numba.manager.dispatch import dispatch
@@ -21,11 +21,8 @@ from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommand
 def global_ref_position_reward(ctx: ManagerContext, sigma: np.float32) -> float:
     tracked_body_pos = ctx.sim["tracked_body_pos"]
     motion: WbtMotionCommand = ctx.commands["motion"]
-    error_sq = 0.0
-    target_ref_pos = motion.clip.reference_body_pos_w[motion.steps[0]]
-    for axis in range(3):
-        error = target_ref_pos[axis] - tracked_body_pos[motion.reference_index, axis]
-        error_sq += error * error
+    error = motion.clip.reference_body_pos_w[motion.steps[0]] - tracked_body_pos[motion.reference_index]
+    error_sq = float(np.dot(error, error))
     return math.exp(-error_sq / (sigma * sigma))
 
 
@@ -33,8 +30,8 @@ def global_ref_position_reward(ctx: ManagerContext, sigma: np.float32) -> float:
 class GlobalRefPositionRewardCfg(RewardTermCfg):
     sigma: float
 
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        del env
+    def __call__(self, ctx) -> RewardTerm:
+        del ctx
         return RewardTerm(global_ref_position_reward, np.float32(self.sigma))
 
 
@@ -53,8 +50,8 @@ def global_ref_orientation_reward(ctx: ManagerContext, sigma: np.float32) -> flo
 class GlobalRefOrientationRewardCfg(RewardTermCfg):
     sigma: float
 
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        del env
+    def __call__(self, ctx) -> RewardTerm:
+        del ctx
         return RewardTerm(global_ref_orientation_reward, np.float32(self.sigma))
 
 
@@ -62,11 +59,8 @@ class GlobalRefOrientationRewardCfg(RewardTermCfg):
 def relative_body_position_reward(ctx: ManagerContext, sigma: np.float32) -> float:
     tracked_body_pos = ctx.sim["tracked_body_pos"]
     motion: WbtMotionCommand = ctx.commands["motion"]
-    error_sq = 0.0
-    for body_id in range(tracked_body_pos.shape[0]):
-        for axis in range(3):
-            error = motion.target_body_position_relative[body_id, axis] - tracked_body_pos[body_id, axis]
-            error_sq += error * error
+    diff = motion.target_body_position_relative - tracked_body_pos
+    error_sq = float(np.sum(diff * diff))
     return math.exp(-(error_sq / tracked_body_pos.shape[0]) / (sigma * sigma))
 
 
@@ -74,8 +68,8 @@ def relative_body_position_reward(ctx: ManagerContext, sigma: np.float32) -> flo
 class RelativeBodyPositionRewardCfg(RewardTermCfg):
     sigma: float
 
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        del env
+    def __call__(self, ctx) -> RewardTerm:
+        del ctx
         return RewardTerm(relative_body_position_reward, np.float32(self.sigma))
 
 
@@ -97,8 +91,8 @@ def relative_body_orientation_reward(ctx: ManagerContext, sigma: np.float32) -> 
 class RelativeBodyOrientationRewardCfg(RewardTermCfg):
     sigma: float
 
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        del env
+    def __call__(self, ctx) -> RewardTerm:
+        del ctx
         return RewardTerm(relative_body_orientation_reward, np.float32(self.sigma))
 
 
@@ -106,12 +100,8 @@ class RelativeBodyOrientationRewardCfg(RewardTermCfg):
 def global_body_linear_velocity_reward(ctx: ManagerContext, sigma: np.float32) -> float:
     tracked_body_linear_velocity = ctx.sim["tracked_body_linear_velocity"]
     motion: WbtMotionCommand = ctx.commands["motion"]
-    error_sq = 0.0
-    target_body_lin_vel = motion.clip.tracked_bodies_lin_vel_w[motion.steps[0]]
-    for body_id in range(tracked_body_linear_velocity.shape[0]):
-        for axis in range(3):
-            error = target_body_lin_vel[body_id, axis] - tracked_body_linear_velocity[body_id, axis]
-            error_sq += error * error
+    diff = motion.clip.tracked_bodies_lin_vel_w[motion.steps[0]] - tracked_body_linear_velocity
+    error_sq = float(np.sum(diff * diff))
     return math.exp(-(error_sq / tracked_body_linear_velocity.shape[0]) / (sigma * sigma))
 
 
@@ -119,8 +109,8 @@ def global_body_linear_velocity_reward(ctx: ManagerContext, sigma: np.float32) -
 class GlobalBodyLinearVelocityRewardCfg(RewardTermCfg):
     sigma: float
 
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        del env
+    def __call__(self, ctx) -> RewardTerm:
+        del ctx
         return RewardTerm(global_body_linear_velocity_reward, np.float32(self.sigma))
 
 
@@ -128,12 +118,8 @@ class GlobalBodyLinearVelocityRewardCfg(RewardTermCfg):
 def global_body_angular_velocity_reward(ctx: ManagerContext, sigma: np.float32) -> float:
     tracked_body_angular_velocity = ctx.sim["tracked_body_angular_velocity"]
     motion: WbtMotionCommand = ctx.commands["motion"]
-    error_sq = 0.0
-    target_body_ang_vel = motion.clip.tracked_bodies_ang_vel_w[motion.steps[0]]
-    for body_id in range(tracked_body_angular_velocity.shape[0]):
-        for axis in range(3):
-            error = target_body_ang_vel[body_id, axis] - tracked_body_angular_velocity[body_id, axis]
-            error_sq += error * error
+    diff = motion.clip.tracked_bodies_ang_vel_w[motion.steps[0]] - tracked_body_angular_velocity
+    error_sq = float(np.sum(diff * diff))
     return math.exp(-(error_sq / tracked_body_angular_velocity.shape[0]) / (sigma * sigma))
 
 
@@ -141,26 +127,9 @@ def global_body_angular_velocity_reward(ctx: ManagerContext, sigma: np.float32) 
 class GlobalBodyAngularVelocityRewardCfg(RewardTermCfg):
     sigma: float
 
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        del env
+    def __call__(self, ctx) -> RewardTerm:
+        del ctx
         return RewardTerm(global_body_angular_velocity_reward, np.float32(self.sigma))
-
-
-@dispatch
-def action_rate_reward(ctx: ManagerContext) -> float:
-    action: WbtJointPositionAction = ctx.actions["joint_position"]
-    total = 0.0
-    for joint_id in range(action.current.shape[0]):
-        delta = action.current[joint_id] - action.previous[joint_id]
-        total += delta * delta
-    return total
-
-
-@configclass(kw_only=True)
-class ActionRateRewardCfg(RewardTermCfg):
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        del env
-        return RewardTerm(action_rate_reward)
 
 
 @kernel_data
@@ -174,14 +143,8 @@ class DofLimitParams:
 @dispatch
 def dof_limit_reward(ctx: ManagerContext, params: DofLimitParams) -> float:
     dof_pos = ctx.sim["robot_dof_pos"]
-    total = 0.0
-    for joint_id in range(dof_pos.shape[0]):
-        violation = abs(dof_pos[joint_id] - params.midpoint[joint_id])
-        violation -= params.half_range[joint_id] * params.soft_limit
-        total += max(violation, 0.0)
-        if total >= params.cap:
-            return params.cap
-    return min(total, params.cap)
+    violation = np.abs(dof_pos - params.midpoint) - params.half_range * params.soft_limit
+    return min(float(np.sum(np.maximum(violation, 0.0))), params.cap)
 
 
 @configclass(kw_only=True)
@@ -189,8 +152,8 @@ class DofLimitRewardCfg(RewardTermCfg):
     soft_limit: float
     cap: float
 
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        action = cast(WbtJointPositionAction, env.action_terms["joint_position"])
+    def __call__(self, ctx) -> RewardTerm:
+        action = cast(WbtJointPositionAction, ctx.action_terms["joint_position"])
         params = DofLimitParams(
             midpoint=(action.joint_lower + action.joint_upper) * 0.5,
             half_range=(action.joint_upper - action.joint_lower) * 0.5,
@@ -215,6 +178,6 @@ def undesired_contacts_reward(ctx: ManagerContext, threshold: np.float32) -> flo
 class UndesiredContactsRewardCfg(RewardTermCfg):
     threshold: float
 
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        del env
+    def __call__(self, ctx) -> RewardTerm:
+        del ctx
         return RewardTerm(undesired_contacts_reward, np.float32(self.threshold))

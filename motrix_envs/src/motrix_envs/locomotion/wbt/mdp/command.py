@@ -25,7 +25,6 @@ from motrix_env_core.manager.math.quaternion import mul as quat_mul
 from motrix_env_core.manager.math.quaternion import rotate_vector
 from motrix_env_core.numba.manager.commands import ResetContext
 from motrix_env_core.numba.manager.dispatch import dispatch
-from motrix_env_core.sim import JointPositionQuery
 from motrix_envs.motion import MotrixMotion, WbtMotionClip
 
 
@@ -63,7 +62,8 @@ class WbtMotionCommand(CommandTerm):
     Attributes:
         clip: Shared numeric reference-motion clip in model and tracked-body order.
         reference_index: Index of the alignment body in the tracked-body order.
-        command_buffer: Per-environment joint-position and joint-velocity command buffer.
+        command: Per-environment joint-position and joint-velocity command buffer
+            (inherited ``CommandTerm.command``).
         target_body_position_relative: Tracked-body targets aligned to the current robot pose.
         target_body_orientation_relative: Aligned tracked-body target quaternions.
         adaptive_bin_failed_count: Exponential moving failure count for each sampling bin.
@@ -83,7 +83,6 @@ class WbtMotionCommand(CommandTerm):
 
     # Runtime buffers and tracked-body alignment metadata.
     reference_index: np.int64
-    command_buffer: np.ndarray
     target_body_position_relative: np.ndarray
     target_body_orientation_relative: np.ndarray
 
@@ -274,9 +273,9 @@ class WbtMotionCommandCfg(CommandCfg):
             raise TypeError(f"WBT scene robot must be RobotCfg, got {type(robot).__name__}")
         if not self.joint_names or len(set(self.joint_names)) != len(self.joint_names):
             raise ValueError("WBT motion joint_names must be non-empty and unique.")
-        robot_dof_pos_query = env.sim_data.query("robot_dof_pos")
-        if not isinstance(robot_dof_pos_query, JointPositionQuery) or robot_dof_pos_query.joints != self.joint_names:
-            raise ValueError("WBT robot_dof_pos must use commands.motion.joint_names order.")
+        body_joint_names = env.model.bodies["robot"].joint_names
+        if body_joint_names != tuple(self.joint_names):
+            raise ValueError("WBT robot body joint order must match commands.motion.joint_names order.")
         if robot.resolved_base_link_name not in self.tracked_body_names:
             raise ValueError(f"tracked_body_names must include the robot base link {robot.resolved_base_link_name!r}")
         try:
@@ -297,13 +296,13 @@ class WbtMotionCommandCfg(CommandCfg):
             num_bins = source.joint_pos.shape[0] // env_fps + 1
         else:
             num_bins = 0
-        tracked_shape = env.sim_data["tracked_body_pos"].shape[1:]
+        tracked_shape = (len(self.tracked_body_names), 3)
         return WbtMotionCommand(
             clip=source,
             reference_index=np.int64(reference_index),
             steps=np.zeros((env.num_envs, 1), dtype=np.int64),
             clip_ended=np.zeros((env.num_envs, 1), dtype=bool),
-            command_buffer=np.empty((env.num_envs, 2 * env.num_actuators), dtype=np.float32),
+            command=np.empty((env.num_envs, 2 * env.num_actuators), dtype=np.float32),
             target_body_position_relative=np.empty((env.num_envs, *tracked_shape), dtype=np.float32),
             target_body_orientation_relative=np.empty((env.num_envs, tracked_shape[0], 4), dtype=np.float32),
             adaptive_bin_failed_count=np.zeros((num_bins,), dtype=np.float32),

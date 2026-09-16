@@ -68,38 +68,6 @@ _Q = TypeVar("_Q")
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class RequiredQueryContribution:
-    """One observation term's resolved ``required_sim_queries()`` declaration."""
-
-    source: str
-    data: dict[str, SimDataQuery]
-    model: dict[str, ModelQuery]
-
-
-def observation_required_sim_queries(cfg: ManagerBasedEnvCfg) -> tuple[RequiredQueryContribution, ...]:
-    """Resolve every observation term's ``required_sim_queries()`` against ``cfg``."""
-    contributions = []
-    for group_name, term_cfgs in cfg.observation_cfgs().items():
-        for term_name, term_cfg in term_cfgs.items():
-            source = f"observations.{group_name}.{term_name}"
-            required = term_cfg.required_sim_queries(cfg)
-            if not isinstance(required, SimQueriesCfg):
-                raise TypeError(
-                    f"Observation term {source!r} required_sim_queries() must return SimQueriesCfg, "
-                    f"got {type(required).__name__}."
-                )
-            required.validate()
-            contributions.append(
-                RequiredQueryContribution(
-                    source=source,
-                    data=dict(required.data),
-                    model=dict(required.model),
-                )
-            )
-    return tuple(contributions)
-
-
 def _merge_query_declarations(
     declared: dict[str, _Q],
     required: Iterable[tuple[str, str, _Q]],
@@ -179,35 +147,18 @@ class ManagerBasedEnvCfg(EnvCfg):
         return self.sim_reset.to_dict()
 
     def sim_query_cfgs(self) -> dict[str, SimDataQuery]:
-        """Return task-declared plus term-required simulator data queries.
+        """Return the task-declared simulator data queries.
 
-        Observation terms contribute their ``required_sim_queries()`` declarations;
-        declarations from any source may share a key only when their query
-        definitions are equal, while unequal declarations fail.
+        Term query requirements flow through ``SimDataQuery`` term arguments
+        and are merged at environment construction, not through this method.
         """
         self.queries.validate()
-        declared = dict(self.queries.data)
-        required = (
-            (contribution.source, key, query)
-            for contribution in observation_required_sim_queries(self)
-            for key, query in contribution.data.items()
-        )
-        return _merge_query_declarations(declared, required, label="simulator data")
+        return dict(self.queries.data)
 
     def model_query_cfgs(self) -> dict[str, ModelQuery]:
-        """Return task-declared plus term-required model queries.
-
-        Merged like :meth:`sim_query_cfgs`; declarations from any source may
-        share a key only when their query definitions are equal.
-        """
+        """Return the task-declared model queries."""
         self.queries.validate()
-        declared = dict(self.queries.model)
-        required = (
-            (contribution.source, key, query)
-            for contribution in observation_required_sim_queries(self)
-            for key, query in contribution.model.items()
-        )
-        return _merge_query_declarations(declared, required, label="model")
+        return dict(self.queries.model)
 
     def observation_cfgs(self) -> dict[str, dict[str, ObservationTermCfg]]:
         if isinstance(self.observations, dict):
@@ -409,7 +360,6 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         # compiled ctrl write program; routing happens here, the backend only
         # receives the merged targets.
         self._sim_reset_runtime = SimResetRuntime.create(self, cfg.sim_reset, self.sim)
-        self.sim_data: PhysicsReadProgram = self.sim.compile_reads(cfg.sim_query_cfgs())
         from motrix_env_core.mdp.state import _create_rand_value
 
         self._task_program: NumbaTaskProgram | None = None
@@ -457,6 +407,29 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         self._reward_terms = create_reward_terms(cfg.reward_cfgs(), self)
         self.termination_manager = TerminationManager(cfg.termination_cfgs(), self)
         self._observation_groups = create_observation_groups(cfg, self)
+        # Terms are built before the read program: any SimDataQuery passed as
+        # a term argument is collected here, merged with task-declared
+        # queries, and compiled in one batch.
+        self._term_query_keys: dict[Any, str] = {}
+        declared = dict(cfg.queries.data)
+        collected_index = 0
+        for terms in (
+            (term for term in self._reward_terms.values()),
+            (term for term in self.termination_manager.terms.values()),
+            (entry.term for group in self._observation_groups.values() for entry in group.terms),
+        ):
+            for term in terms:
+                for arg in term.args:
+                    if isinstance(arg, SimDataQuery) and arg not in self._term_query_keys:
+                        key = f"terms.args[{collected_index}]"
+                        collected_index += 1
+                        self._term_query_keys[arg] = key
+                        existing = declared.get(key)
+                        if existing is not None and existing != arg:
+                            raise ValueError(f"Unequal declarations under term-arg key {key!r}.")
+                        declared[key] = arg
+        merged = _merge_query_declarations(declared, (), label="simulator data")
+        self.sim_data: PhysicsReadProgram = self.sim.compile_reads(merged)
         for name, term in self._command_terms.items():
             for binding in collect_metrics(
                 term,

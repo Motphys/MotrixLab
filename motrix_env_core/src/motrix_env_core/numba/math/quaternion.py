@@ -125,6 +125,26 @@ def rotation_distance(lhs: np.ndarray, rhs: np.ndarray) -> float:
 
 
 @numba.njit(inline="always")
+def rotate_inverse_components(quaternion: np.ndarray, vector):
+    """Rotate one 3D vector by the inverse ``[x, y, z, w]`` quaternion.
+
+    Allocation-free variant of :func:`rotate_inverse` that returns the three
+    components as a tuple, so callers inside fused kernels can destructure
+    them without a scratch array.
+    """
+    x, y, z, w = quaternion
+    vx, vy, vz = vector
+    cx = y * vz - z * vy - w * vx
+    cy = z * vx - x * vz - w * vy
+    cz = x * vy - y * vx - w * vz
+    return (
+        vx + 2.0 * (y * cz - z * cy),
+        vy + 2.0 * (z * cx - x * cz),
+        vz + 2.0 * (x * cy - y * cx),
+    )
+
+
+@numba.njit(inline="always")
 def to_matrix_first_two_rows(
     quaternion: np.ndarray,
     out: np.ndarray | None = None,
@@ -148,6 +168,7 @@ __all__ = [
     "inverse",
     "mul",
     "rotate_inverse",
+    "rotate_inverse_components",
     "rotate_vector",
     "rotation_distance",
     "to_matrix_first_two_rows",

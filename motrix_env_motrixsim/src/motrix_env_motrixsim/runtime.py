@@ -18,7 +18,14 @@ from motrix_env_core.config.scene import SceneCfg, SystemCameraCfg
 from motrix_env_core.config.scene.base import BodyCfg, RobotCfg
 from motrix_env_core.sim.backend import RenderConfig, SimBackend, SimRenderer
 from motrix_env_core.sim.body import assemble_body_model, resolved_key_pose
-from motrix_env_core.sim.model import ActuatorSpec, ActuatorType, BodyModel, GeomSpec, SimModel, SimModelCompiler
+from motrix_env_core.sim.model import (
+    ActuatorSpec,
+    ActuatorType,
+    BodyModel,
+    GeomSpec,
+    SimModel,
+    SimModelCompiler,
+)
 from motrix_env_core.sim.read import PhysicsReadProgram, SimDataQuery
 from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler
 from motrix_env_motrixsim.renderer import MotrixSimRenderer
@@ -47,6 +54,36 @@ class MotrixSimModelCompiler(SimModelCompiler):
 
     def compile_geom_specs(self, key: str, geom_names: tuple[str, ...]) -> None:
         self._others[key] = _geom_specs(self._model, geom_names)
+
+    def compile_height_field_data(self, key: str, geom_name: str) -> None:
+        geom = _named_geom(self._model, geom_name)
+        if not isinstance(geom, mtx.GeomHField) or geom.hfield is None:
+            raise ValueError(
+                f"HeightFieldDataQuery requires geom {geom_name!r} to carry a height field, got {type(geom).__name__}."
+            )
+        hfield = geom.hfield
+        pose = np.asarray(geom.local_pose, dtype=np.float32).reshape(-1)
+        quat_ijkw = pose[3:7]
+        if abs(float(quat_ijkw[3])) < 1.0 - 1e-5:
+            raise ValueError(
+                f"HeightFieldDataQuery requires geom {geom_name!r} to be world-aligned "
+                f"(identity rotation), got quaternion {tuple(quat_ijkw)}."
+            )
+        heights = np.ascontiguousarray(np.asarray(hfield.height_matrix, dtype=np.float32))
+        nrow, ncol = heights.shape
+        bound = np.asarray(hfield.bound, dtype=np.float32)
+        extent_x, extent_y = float(bound[3]), float(bound[4])
+        spacing = np.asarray(
+            [2.0 * extent_x / max(ncol - 1, 1), 2.0 * extent_y / max(nrow - 1, 1)],
+            dtype=np.float32,
+        )
+        origin = np.asarray([float(pose[0]) - extent_x, float(pose[1]) - extent_y], dtype=np.float32)
+        self._others[key] = {
+            "heights": heights,
+            "origin": origin,
+            "spacing": spacing,
+            "z0": np.asarray([pose[2]], dtype=np.float32),
+        }
 
     def compile_body_joint_position_limits(self, key: str, body: str) -> None:
         self._others[key] = _body_joint_position_limits(self._model, body)

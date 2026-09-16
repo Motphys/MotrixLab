@@ -23,10 +23,12 @@ from motrix_env_core.manager import (
     SimQueriesCfg,
 )
 from motrix_env_core.mdp.observations import (
-    RobotBaseAngularVelocityObsCfg,
-    RobotBaseLinearVelocityObsCfg,
+    ActionsObsCfg,
+    BodyAngularVelocityObsCfg,
+    BodyLinearVelocityObsCfg,
     UniformNoiseCfg,
 )
+from motrix_env_core.mdp.rewards import ActionRateRewardCfg
 from motrix_env_core.sim import (
     ActuatorKpQuery,
     BatchLinkAngularVelocityQuery,
@@ -44,7 +46,6 @@ from motrix_envs.locomotion.wbt.mdp.command import (
     WbtMotionCommandCfg,
 )
 from motrix_envs.locomotion.wbt.mdp.observations import (
-    ActionsObsCfg,
     DofPosRelObsCfg,
     DofVelObsCfg,
     MotionJointObsCfg,
@@ -61,7 +62,6 @@ from motrix_envs.locomotion.wbt.mdp.reset import (
     BodyRotVelResetCfg,
 )
 from motrix_envs.locomotion.wbt.mdp.rewards import (
-    ActionRateRewardCfg,
     DofLimitRewardCfg,
     GlobalBodyAngularVelocityRewardCfg,
     GlobalBodyLinearVelocityRewardCfg,
@@ -159,9 +159,7 @@ class ObservationsCfg(ManagerObservationsCfg):
         motion_ref_ori_b: MotionReferenceOrientationObsCfg = MotionReferenceOrientationObsCfg(
             noise=UniformNoiseCfg(amplitude=0.05)
         )
-        base_ang_vel: RobotBaseAngularVelocityObsCfg = RobotBaseAngularVelocityObsCfg(
-            noise=UniformNoiseCfg(amplitude=0.2)
-        )
+        base_ang_vel: BodyAngularVelocityObsCfg = BodyAngularVelocityObsCfg(noise=UniformNoiseCfg(amplitude=0.2))
         dof_pos: DofPosRelObsCfg = DofPosRelObsCfg(noise=UniformNoiseCfg(amplitude=0.01))
         dof_vel: DofVelObsCfg = DofVelObsCfg(noise=UniformNoiseCfg(amplitude=0.5))
         actions: ActionsObsCfg = ActionsObsCfg()
@@ -179,8 +177,8 @@ class ObservationsCfg(ManagerObservationsCfg):
         motion_ref_ori_b: MotionReferenceOrientationObsCfg = MotionReferenceOrientationObsCfg()
         robot_body_pos_b: RobotBodyPositionInReferenceFrameObsCfg = RobotBodyPositionInReferenceFrameObsCfg()
         robot_body_ori_b: RobotBodyOrientationObsCfg = RobotBodyOrientationObsCfg()
-        base_lin_vel: RobotBaseLinearVelocityObsCfg = RobotBaseLinearVelocityObsCfg()
-        base_ang_vel: RobotBaseAngularVelocityObsCfg = RobotBaseAngularVelocityObsCfg()
+        base_lin_vel: BodyLinearVelocityObsCfg = BodyLinearVelocityObsCfg()
+        base_ang_vel: BodyAngularVelocityObsCfg = BodyAngularVelocityObsCfg()
         dof_pos: DofPosRelObsCfg = DofPosRelObsCfg()
         dof_vel: DofVelObsCfg = DofVelObsCfg()
         actions: ActionsObsCfg = ActionsObsCfg()

@@ -1,60 +1,73 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared configuration schema for command-conditioned humanoid velocity tracking.
+"""Shared configuration for the manager-based humanoid velocity-tracking task.
 
-Robot configs provide the scene, model element names, and per-joint pose
-weights. :class:`HumanoidVelocityTrackingEnv` reads the default pose from the
-scene's robot config and contains no robot-specific names or joint counts.
+Robot presets (``g1`` / ``k1`` / ``microduck`` / ``dex_evt``) provide the
+scene and model element names; all task parameters live on the manager term
+cfgs declared here. The fused kernel owns observations, rewards,
+terminations, the gait-phase command clock, the penalty-scale curriculum,
+rough-terrain spawn sampling, and terrain-height lookups. Compile-time model
+queries (height-field grid, key-pose foot frames via FK) provide the static
+data those terms consume. No environment subclass is needed.
 """
-
-from omegaconf import MISSING
 
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config import configclass
-from motrix_env_core.config.scene import NoiseTerrainGeneratorCfg, ProceduralHFieldAssetCfg, SystemCameraCfg
-from motrix_env_core.direct.env import DirectEnvCfg
+from motrix_env_core.config.scene import (
+    HFieldTerrainCfg,
+    NoiseTerrainGeneratorCfg,
+    ProceduralHFieldAssetCfg,
+    SystemCameraCfg,
+)
+from motrix_env_core.manager import (
+    ManagerActionsCfg,
+    ManagerBasedEnvCfg,
+    ManagerCommandsCfg,
+    ManagerObservationGroupCfg,
+    ManagerObservationsCfg,
+    ManagerResetCfg,
+    ManagerRewardsCfg,
+    ManagerTerminationsCfg,
+    SimQueriesCfg,
+)
+from motrix_env_core.mdp.observations import (
+    ActionsObsCfg,
+    BodyAngularVelocityObsCfg,
+    BodyJointPosRelObsCfg,
+    BodyJointVelObsCfg,
+    BodyLinearVelocityObsCfg,
+    BodyProjectedGravityObsCfg,
+    CommandObsCfg,
+    UniformNoiseCfg,
+)
+from motrix_env_core.mdp.rewards import (
+    AliveRewardCfg,
+    TrackingAngVelZRewardCfg,
+    TrackingLinVelXyRewardCfg,
+)
+from motrix_env_core.mdp.terminations import CollidingTerminationCfg
 from motrix_env_core.sim import (
-    BatchLinkPositionQuery,
-    BatchLinkQuaternionQuery,
-    GeomPairCollidingQuery,
-    JointPositionQuery,
-    JointVelocityQuery,
-    LinkAngularVelocityQuery,
-    LinkLinearVelocityQuery,
-    LinkQuaternionQuery,
-    SitePositionQuery,
+    ActuatorKpQuery,
+    BodyJointPositionLimitsQuery,
+    GeomSpecsQuery,
+    HeightFieldDataQuery,
 )
 from motrix_envs.config.scene import StandardSceneAssetsCfg, StandardSceneCfg
-
-
-def humanoid_sim_queries(
-    *,
-    base_link: str,
-    foot_links: tuple[str, str],
-    sole_sites: tuple[str, str],
-    termination_geoms: tuple[str, ...],
-    ground_geom: str,
-    joints: tuple[str, ...],
-) -> dict:
-    """Build the shared humanoid walk sim-query set from robot-resolved names.
-
-    ``termination_geoms`` is the explicit collision-geom inventory supplied by
-    each robot task configuration.
-    """
-
-    return {
-        "robot_joint_pos": JointPositionQuery(joints=joints),
-        "robot_joint_vel": JointVelocityQuery(joints=joints),
-        "base_quat": LinkQuaternionQuery(link=base_link),
-        "base_lin_vel": LinkLinearVelocityQuery(link=base_link),
-        "base_ang_vel": LinkAngularVelocityQuery(link=base_link),
-        "foot_pos": BatchLinkPositionQuery(links=foot_links),
-        "foot_quat": BatchLinkQuaternionQuery(links=foot_links),
-        "sole_l_pos": SitePositionQuery(site=sole_sites[0]),
-        "sole_r_pos": SitePositionQuery(site=sole_sites[1]),
-        "termination_colliding": GeomPairCollidingQuery(pairs=tuple((name, ground_geom) for name in termination_geoms)),
-    }
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.command import WalkCommandCfg
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.observations import GaitPhaseObsCfg
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.reset import WalkStateResetCfg
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.rewards import (
+    FeetPhaseRewardCfg,
+    PenaltyActionRateRewardCfg,
+    PenaltyAngVelXyRewardCfg,
+    PenaltyCloseFeetXyRewardCfg,
+    PenaltyFeetOriRewardCfg,
+    PenaltyOrientationRewardCfg,
+    PoseRewardCfg,
+)
+from motrix_envs.locomotion.wbt.mdp.action import WbtControlCfg, WbtJointPositionActionCfg
+from motrix_envs.robot import HumanoidRobotCfg
 
 
 @configclass
@@ -78,107 +91,131 @@ class HumanoidWalkSceneCfg(StandardSceneCfg):
 
 
 @configclass
-class ControlCfg:
-    action_scale: float = 0.5
+class WalkActionsCfg(ManagerActionsCfg):
+    """Position action term shared with the WBT task family."""
 
-
-@configclass
-class CommandsCfg:
-    # Rows are min/max for [lin_vel_x, lin_vel_y, ang_vel_yaw].
-    vel_limit: list[list[float]] = [
-        [-1.0, -1.0, -1.0],
-        [1.0, 1.0, 1.0],
-    ]
-    stand_prob: float = 0.2
-    resampling_time: float = 10.0
-
-
-@configclass
-class NormalizationCfg:
-    base_lin_vel: float = 2.0
-    base_ang_vel: float = 0.25
-    dof_pos: float = 1.0
-    dof_vel: float = 0.05
-    noise_dof_pos: float = 0.01
-    noise_dof_vel: float = 0.1
-
-
-@configclass
-class GaitCfg:
-    period: float = 1.0
-    swing_height: float = 0.09
-    feet_phase_sigma: float = 0.008
-
-
-@configclass
-class CurriculumCfg:
-    enabled: bool = True
-    initial_scale: float = 0.5
-    min_scale: float = 0.5
-    max_scale: float = 1.0
-    level_down_threshold: float = 150.0
-    level_up_threshold: float = 750.0
-    degree: float = 0.001
-    penalty_terms: tuple[str, ...] = (
-        "penalty_ang_vel_xy",
-        "penalty_orientation",
-        "penalty_action_rate",
-        "pose",
-        "penalty_close_feet_xy",
-        "penalty_feet_ori",
+    joint_position: WbtJointPositionActionCfg = WbtJointPositionActionCfg(
+        control=WbtControlCfg(action_scale=0.5, action_scales_by_effort_limit_over_p_gain=False)
     )
 
 
 @configclass
-class AssetCfg:
-    """Model element names needed by the shared humanoid velocity-tracking environment.
+class WalkCommandsCfg(ManagerCommandsCfg):
+    """Velocity-command term: sampling, gait clock, and penalty curriculum."""
 
-    Attributes:
-        foot_height_site_names: Left and right sole-site names used to measure local foot clearance.
-        ground_geom_name: Ground geom used for terrain-height lookup and contact termination.
-        terminate_contact_geom_names: Robot geoms whose contact with the ground terminates an episode.
+    walk: WalkCommandCfg = WalkCommandCfg()
+
+
+@configclass
+class WalkRewardsCfg(ManagerRewardsCfg):
+    """Reward terms of the humanoid velocity-tracking task."""
+
+    tracking_lin_vel: TrackingLinVelXyRewardCfg = TrackingLinVelXyRewardCfg(command_name="walk", weight=4.0)
+    tracking_ang_vel: TrackingAngVelZRewardCfg = TrackingAngVelZRewardCfg(command_name="walk", weight=3.0)
+    penalty_ang_vel_xy: PenaltyAngVelXyRewardCfg = PenaltyAngVelXyRewardCfg(weight=-1.0)
+    penalty_orientation: PenaltyOrientationRewardCfg = PenaltyOrientationRewardCfg(weight=-10.0)
+    penalty_action_rate: PenaltyActionRateRewardCfg = PenaltyActionRateRewardCfg(weight=-0.5)
+    feet_phase: FeetPhaseRewardCfg = FeetPhaseRewardCfg(weight=5.0)
+    pose: PoseRewardCfg = PoseRewardCfg(weight=-0.5)
+    penalty_close_feet_xy: PenaltyCloseFeetXyRewardCfg = PenaltyCloseFeetXyRewardCfg(weight=-10.0)
+    penalty_feet_ori: PenaltyFeetOriRewardCfg = PenaltyFeetOriRewardCfg(weight=-5.0)
+    alive: AliveRewardCfg = AliveRewardCfg(weight=10.0)
+
+
+@configclass
+class WalkTerminationsCfg(ManagerTerminationsCfg):
+    colliding: CollidingTerminationCfg = CollidingTerminationCfg()
+
+
+@configclass
+class WalkObservationsCfg(ManagerObservationsCfg):
+    """Actor/critic observation layout of the humanoid velocity-tracking task."""
+
+    @configclass
+    class PolicyCfg(ManagerObservationGroupCfg):
+        base_ang_vel: BodyAngularVelocityObsCfg = BodyAngularVelocityObsCfg(scale=0.25)
+        projected_gravity: BodyProjectedGravityObsCfg = BodyProjectedGravityObsCfg()
+        command: CommandObsCfg = CommandObsCfg(command_name="walk")
+        joint_pos: BodyJointPosRelObsCfg = BodyJointPosRelObsCfg(scale=1.0, noise=UniformNoiseCfg(amplitude=0.01))
+        joint_vel: BodyJointVelObsCfg = BodyJointVelObsCfg(scale=0.05, noise=UniformNoiseCfg(amplitude=0.1))
+        actions: ActionsObsCfg = ActionsObsCfg()
+        sin_phase: GaitPhaseObsCfg = GaitPhaseObsCfg(offset=0, size=2)
+        cos_phase: GaitPhaseObsCfg = GaitPhaseObsCfg(offset=2, size=2)
+
+    @configclass
+    class ValueCfg(ManagerObservationGroupCfg):
+        base_lin_vel: BodyLinearVelocityObsCfg = BodyLinearVelocityObsCfg(scale=2.0)
+        base_ang_vel: BodyAngularVelocityObsCfg = BodyAngularVelocityObsCfg(scale=0.25)
+        projected_gravity: BodyProjectedGravityObsCfg = BodyProjectedGravityObsCfg()
+        command: CommandObsCfg = CommandObsCfg(command_name="walk")
+        joint_pos: BodyJointPosRelObsCfg = BodyJointPosRelObsCfg(scale=1.0)
+        joint_vel: BodyJointVelObsCfg = BodyJointVelObsCfg(scale=0.05)
+        actions: ActionsObsCfg = ActionsObsCfg()
+        sin_phase: GaitPhaseObsCfg = GaitPhaseObsCfg(offset=0, size=2)
+        cos_phase: GaitPhaseObsCfg = GaitPhaseObsCfg(offset=2, size=2)
+
+    policy: PolicyCfg = PolicyCfg()
+    value: ValueCfg = ValueCfg()
+
+
+@configclass
+class WalkResetCfg(ManagerResetCfg):
+    humanoid_state: WalkStateResetCfg = WalkStateResetCfg()
+
+
+@configclass
+class HumanoidVelocityTrackingManagerEnvCfg(ManagerBasedEnvCfg):
+    """Robot-agnostic manager-based humanoid velocity-tracking configuration.
+
+    Term cfgs own their parameters directly: reward weights and sigmas on the
+    reward terms, gait and curriculum knobs on ``commands.walk``, contact
+    termination geoms on ``terminations.colliding``. ``__post_init__`` only
+    assembles the shared model queries and propagates the scene-level floor
+    geom and control dt.
     """
 
-    foot_height_site_names: tuple[str, str] = ("", "")
-    ground_geom_name: str = ""
-    terminate_contact_geom_names: tuple[str, ...] = ()
-
-
-@configclass
-class RewardScales:
-    tracking_lin_vel: float = 4.0
-    tracking_ang_vel: float = 3.0
-    penalty_ang_vel_xy: float = -1.0
-    penalty_orientation: float = -10.0
-    penalty_action_rate: float = -0.5
-    feet_phase: float = 5.0
-    pose: float = -0.5
-    penalty_close_feet_xy: float = -10.0
-    penalty_feet_ori: float = -5.0
-    alive: float = 10.0
-
-
-@configclass
-class RewardCfg:
-    scales: RewardScales = RewardScales()
-    tracking_sigma: float = 0.25
-    close_feet_threshold: float = 0.15
-    pose_weights: dict[str, float] = {}
-
-
-@configclass
-class HumanoidVelocityTrackingEnvCfg(DirectEnvCfg):
-    """Robot-agnostic config consumed by ``HumanoidVelocityTrackingEnv``."""
-
+    scene: HumanoidWalkSceneCfg = HumanoidWalkSceneCfg()
     max_episode_seconds: float = 20.0
-    scene: HumanoidWalkSceneCfg = MISSING
-    control_config: ControlCfg = ControlCfg()
-    reward_config: RewardCfg = RewardCfg()
-    commands: CommandsCfg = CommandsCfg()
-    normalization: NormalizationCfg = NormalizationCfg()
-    gait: GaitCfg = GaitCfg()
-    curriculum: CurriculumCfg = CurriculumCfg()
-    asset: AssetCfg = AssetCfg()
     sim: SimCfg = SimCfg(dt=0.005)
     ctrl_dt: float = 0.02
-    spawn_xy_range: float = 0.0
+
+    queries: SimQueriesCfg = SimQueriesCfg()
+    sim_reset: WalkResetCfg = WalkResetCfg()
+    actions: WalkActionsCfg = WalkActionsCfg()
+    commands: WalkCommandsCfg = WalkCommandsCfg()
+    observations: WalkObservationsCfg = WalkObservationsCfg()
+    rewards: WalkRewardsCfg = WalkRewardsCfg()
+    terminations: WalkTerminationsCfg = WalkTerminationsCfg()
+
+    def __post_init__(self) -> None:
+        robot = self.scene.objs.robot
+        if not isinstance(robot, HumanoidRobotCfg):
+            raise TypeError(f"humanoid walk scene robot must be HumanoidRobotCfg, got {type(robot).__name__}")
+        if "default" not in robot.key_pose.poses:
+            raise ValueError("humanoid walk robot must define key pose 'default'")
+
+        ground_geom = self.terminations.colliding.ground_geom
+        if not ground_geom:
+            raise ValueError("terminations.colliding requires a non-empty ground_geom")
+        termination_geoms = tuple(name for name in self.terminations.colliding.termination_geoms if name != ground_geom)
+        # Reward and observation terms self-declare their data queries; the
+        # task declares only what no term owns.
+        self.queries.data = {}
+        self.queries.model = {
+            "geoms": GeomSpecsQuery(names=termination_geoms + (ground_geom,)),
+            "actuator_kp": ActuatorKpQuery(),
+            "robot_joint_position_limits": BodyJointPositionLimitsQuery(body=robot.resolved_base_link_name),
+        }
+
+        # Rough-terrain presets place an HField geom as the floor; export its
+        # static grid so the fused kernel can look up ground heights itself.
+        self.ground_heightfield_geom: str | None = None
+        floor_obj = getattr(self.scene.objs, "floor", None)
+        if isinstance(floor_obj, HFieldTerrainCfg):
+            self.ground_heightfield_geom = ground_geom
+            self.queries.model["ground_heightfield"] = HeightFieldDataQuery(geom=ground_geom)
+
+        # Scene-level facts shared by several terms.
+        self.rewards.feet_phase.ground_geom = ground_geom
+        self.sim_reset.humanoid_state.ground_geom = ground_geom
+        self.commands.walk.ctrl_dt = self.ctrl_dt

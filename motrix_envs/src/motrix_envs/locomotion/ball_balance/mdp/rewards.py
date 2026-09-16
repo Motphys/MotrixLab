@@ -8,7 +8,7 @@ import math
 import numpy as np
 
 from motrix_env_core.config import configclass
-from motrix_env_core.manager import ManagerContext, ManagerEnv, RewardTerm, RewardTermCfg
+from motrix_env_core.manager import ManagerContext, RewardTerm, RewardTermCfg
 from motrix_env_core.manager.math.quaternion import rotate_inverse
 from motrix_env_core.numba.kernel_data import SharedArray, kernel_data
 from motrix_env_core.numba.manager.dispatch import dispatch
@@ -28,8 +28,8 @@ class AliveRewardCfg(RewardTermCfg):
     cannot profit from terminating quickly.
     """
 
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        del env
+    def __call__(self, ctx) -> RewardTerm:
+        del ctx
         return RewardTerm(alive_reward)
 
 
@@ -50,8 +50,8 @@ class UprightRewardCfg(RewardTermCfg):
 
     sigma: float
 
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        del env
+    def __call__(self, ctx) -> RewardTerm:
+        del ctx
         return RewardTerm(upright_reward, np.float32(self.sigma))
 
 
@@ -69,8 +69,8 @@ class BaseHeightRewardCfg(RewardTermCfg):
     target_z: float
     sigma: float
 
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        del env
+    def __call__(self, ctx) -> RewardTerm:
+        del ctx
         return RewardTerm(base_height_reward, np.float32(self.target_z), np.float32(self.sigma))
 
 
@@ -92,8 +92,8 @@ class BallUnderFeetRewardCfg(RewardTermCfg):
 
     sigma: float
 
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        del env
+    def __call__(self, ctx) -> RewardTerm:
+        del ctx
         return RewardTerm(ball_under_feet_reward, np.float32(self.sigma))
 
 
@@ -120,9 +120,9 @@ class DofDefaultRewardCfg(RewardTermCfg):
 
     sigma: float
 
-    def __call__(self, env: ManagerEnv) -> RewardTerm:
-        query = env.sim_data.query("robot_dof_pos")
-        robot = env.cfg.scene.objs.robot
+    def __call__(self, ctx) -> RewardTerm:
+        robot = ctx.cfg.scene.objs.robot
+        joint_names = ctx.model.bodies["robot"].joint_names
         default = dict(
             zip(
                 (robot.resolve_name(name) for name in robot.key_pose.joint_names),
@@ -130,6 +130,9 @@ class DofDefaultRewardCfg(RewardTermCfg):
                 strict=True,
             )
         )
-        reference = np.asarray([default[name] for name in query.joints], dtype=np.float32)
+        missing = sorted(set(joint_names).difference(default))
+        if missing:
+            raise KeyError(f"key pose 'default' is missing joints: {missing}")
+        reference = np.asarray([default[name] for name in joint_names], dtype=np.float32)
         params = DofDefaultParams(reference, np.float32(self.sigma))
         return RewardTerm(dof_default_reward, params)

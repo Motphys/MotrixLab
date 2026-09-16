@@ -46,6 +46,19 @@ def _overload_lowered_rand_value_next_uniform(value_type):
     return impl
 
 
+@overload_method(types.BaseNamedTuple, "uniform_range")
+def _overload_lowered_rand_value_uniform_range(value_type, low, high):
+    """Expose ``RandValue.uniform_range`` on its compiler-owned tuple proxy."""
+    proxy_type = getattr(value_type, "instance_class", None)
+    if not getattr(proxy_type, "__name__", "").startswith("_RandValueKernelData_"):
+        return None
+
+    def impl(value_type, low, high):
+        return uniform_range(value_type[0], low, high)
+
+    return impl
+
+
 def initialize_rand_states(num_envs: int, rand_seed: int) -> np.ndarray:
     """Derive one deterministic, independently mutable SplitMix64 state per environment."""
 
@@ -64,6 +77,12 @@ def _mix_uint64_array(value: np.ndarray) -> np.ndarray:
 
 
 @numba.njit(inline="always")
+def uniform_range(rng_state: np.ndarray, low: np.float32, high: np.float32) -> np.float32:
+    """Uniform sample in ``[low, high)`` from the ``[-1, 1)`` PRNG primitive."""
+    return low + (high - low) * np.float32(0.5) * (next_uniform(rng_state) + np.float32(1.0))
+
+
+@numba.njit(inline="always")
 def next_uniform(rng_state: np.ndarray) -> np.float32:
     state = rng_state[0] + _GOLDEN_RATIO_64
     rng_state[0] = state
@@ -78,4 +97,5 @@ __all__ = [
     "RandValue",
     "initialize_rand_states",
     "next_uniform",
+    "uniform_range",
 ]

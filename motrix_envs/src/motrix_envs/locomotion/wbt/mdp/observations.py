@@ -9,7 +9,6 @@ from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import RobotCfg
 from motrix_env_core.manager import (
     ManagerContext,
-    ManagerEnv,
     ObservationTermCfg,
     ObsTerm,
     kernel_data,
@@ -24,7 +23,6 @@ from motrix_env_core.mdp.observations import (
 )
 from motrix_env_core.numba.kernel_data import SharedArray
 from motrix_env_core.numba.manager.dispatch import dispatch
-from motrix_envs.locomotion.wbt.mdp.action import WbtJointPositionAction
 from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommand
 
 
@@ -41,21 +39,6 @@ def _write_relative_orientation_6d(
 
 
 @dispatch
-def actions_obs(ctx: ManagerContext, out: np.ndarray) -> None:
-    action: WbtJointPositionAction = ctx.actions["joint_position"]
-    out[:] = action.current
-
-
-@configclass(kw_only=True)
-class ActionsObsCfg(ObservationTermCfg):
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
-        action = env.action_terms["joint_position"]
-        if not isinstance(action, WbtJointPositionAction):
-            raise TypeError(f"WBT joint-position action must be WbtJointPositionAction, got {type(action).__name__}.")
-        return ObsTerm(action.current.shape[1], actions_obs)
-
-
-@dispatch
 def motion_joint_obs(ctx: ManagerContext, out: np.ndarray) -> None:
     motion: WbtMotionCommand = ctx.commands["motion"]
     joint_count = motion.clip.joint_pos.shape[1]
@@ -65,8 +48,8 @@ def motion_joint_obs(ctx: ManagerContext, out: np.ndarray) -> None:
 
 @configclass(kw_only=True)
 class MotionJointObsCfg(ObservationTermCfg):
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
-        motion = env.command_terms["motion"]
+    def __call__(self, ctx) -> ObsTerm:
+        motion = ctx.command_terms["motion"]
         if not isinstance(motion, WbtMotionCommand):
             raise TypeError(f"WBT motion command must be WbtMotionCommand, got {type(motion).__name__}.")
         return ObsTerm(2 * motion.clip.joint_pos.shape[1], motion_joint_obs)
@@ -93,8 +76,8 @@ def motion_reference_position_obs(ctx: ManagerContext, out: np.ndarray) -> None:
 
 @configclass(kw_only=True)
 class MotionReferencePositionObsCfg(ObservationTermCfg):
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
-        del env
+    def __call__(self, ctx) -> ObsTerm:
+        del ctx
         return ObsTerm(3, motion_reference_position_obs)
 
 
@@ -112,8 +95,8 @@ def motion_reference_orientation_obs(ctx: ManagerContext, out: np.ndarray, noise
 class MotionReferenceOrientationObsCfg(ObservationTermCfg):
     noise: UniformNoiseCfg = UniformNoiseCfg()
 
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
-        del env
+    def __call__(self, ctx) -> ObsTerm:
+        del ctx
         return ObsTerm(6, motion_reference_orientation_obs, np.float32(self.noise.amplitude))
 
 
@@ -139,9 +122,9 @@ def robot_body_position_in_reference_frame_obs(ctx: ManagerContext, out: np.ndar
 
 @configclass(kw_only=True)
 class RobotBodyPositionInReferenceFrameObsCfg(ObservationTermCfg):
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
-        size = 3 * env.sim_data["tracked_body_pos"].shape[1:][0]
-        return ObsTerm(size, robot_body_position_in_reference_frame_obs)
+    def __call__(self, ctx) -> ObsTerm:
+        num_tracked = len(ctx.cfg.commands.motion.tracked_body_names)
+        return ObsTerm(3 * num_tracked, robot_body_position_in_reference_frame_obs)
 
 
 @dispatch
@@ -149,23 +132,19 @@ def robot_body_orientation_obs(ctx: ManagerContext, out: np.ndarray) -> None:
     tracked_body_quat = ctx.sim["tracked_body_quat"]
     motion: WbtMotionCommand = ctx.commands["motion"]
     quat_inverse(tracked_body_quat[motion.reference_index], out[:4])
-    iqx, iqy, iqz, iqw = out[:4]
     for body_id in range(tracked_body_quat.shape[0]):
         offset = body_id * 6
         relative_quat = out[offset : offset + 4]
-        relative_quat[0] = iqx
-        relative_quat[1] = iqy
-        relative_quat[2] = iqz
-        relative_quat[3] = iqw
+        relative_quat[:] = out[:4]
         quat_mul(relative_quat, tracked_body_quat[body_id], relative_quat)
         to_matrix_first_two_rows(relative_quat, out[offset : offset + 6])
 
 
 @configclass(kw_only=True)
 class RobotBodyOrientationObsCfg(ObservationTermCfg):
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
-        size = 6 * env.sim_data["tracked_body_quat"].shape[1:][0]
-        return ObsTerm(size, robot_body_orientation_obs)
+    def __call__(self, ctx) -> ObsTerm:
+        num_tracked = len(ctx.cfg.commands.motion.tracked_body_names)
+        return ObsTerm(6 * num_tracked, robot_body_orientation_obs)
 
 
 @kernel_data
@@ -194,11 +173,11 @@ class DofPosRelObsCfg(ObservationTermCfg):
     reference_key_pose: str = "default"
     noise: UniformNoiseCfg = UniformNoiseCfg()
 
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
+    def __call__(self, ctx) -> ObsTerm:
         # The motion command's __call__() already validates that
         # ``robot_dof_pos`` is a JointPositionQuery in motion joint order.
-        query = env.sim_data.query("robot_dof_pos")
-        robot = env.cfg.scene.objs.robot
+        queried_joints = ctx.model.bodies["robot"].joint_names
+        robot = ctx.cfg.scene.objs.robot
         if not isinstance(robot, RobotCfg):
             raise TypeError(f"WBT scene robot must be RobotCfg, got {type(robot).__name__}.")
         robot_name = robot.resolved_base_link_name
@@ -211,18 +190,12 @@ class DofPosRelObsCfg(ObservationTermCfg):
             ) from error
         resolved_names = (robot.resolve_name(name) for name in robot.key_pose.joint_names)
         positions = dict(zip(resolved_names, key_pose, strict=True))
-        missing = sorted(set(query.joints).difference(positions))
+        missing = sorted(set(queried_joints).difference(positions))
         if missing:
             raise ValueError(f"RobotCfg {robot_name!r} key pose is missing queried joints: {missing}.")
-        reference = np.asarray([positions[name] for name in query.joints], dtype=np.float32)
-        expected = env.sim_data["robot_dof_pos"].shape[1:]
-        if reference.shape != expected:
-            raise ValueError(
-                f"RobotCfg {robot_name!r} key pose {self.reference_key_pose!r} has shape {reference.shape}, "
-                f"expected {expected}."
-            )
+        reference = np.asarray([positions[name] for name in queried_joints], dtype=np.float32)
         params = RelativePositionParams(reference, np.float32(self.noise.amplitude))
-        return ObsTerm(env.sim_data["robot_dof_pos"].shape[1], dof_pos_rel_obs, params)
+        return ObsTerm(reference.shape[0], dof_pos_rel_obs, params)
 
 
 @dispatch
@@ -239,5 +212,6 @@ class DofVelObsCfg(ObservationTermCfg):
 
     noise: UniformNoiseCfg = UniformNoiseCfg()
 
-    def __call__(self, env: ManagerEnv) -> ObsTerm:
-        return ObsTerm(env.sim_data["robot_dof_vel"].shape[1], dof_vel_obs, np.float32(self.noise.amplitude))
+    def __call__(self, ctx) -> ObsTerm:
+        num_joints = len(ctx.model.bodies["robot"].joint_names)
+        return ObsTerm(num_joints, dof_vel_obs, np.float32(self.noise.amplitude))

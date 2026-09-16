@@ -194,6 +194,27 @@ class ActuatorKdQuery(ModelQuery):
 
 
 @dataclass(frozen=True)
+class HeightFieldDataQuery(ModelQuery):
+    """Static height-field grid of one named geom, world-aligned.
+
+    Resolves to a mapping with:
+
+    - ``heights``: ``(nrow, ncol)`` float32 grid; row 0 is the -Y side.
+    - ``origin``: ``(2,)`` float32 world xy of the grid corner (-extent side).
+    - ``spacing``: ``(2,)`` float32 world step per column (x) and row (y).
+    - ``z0``: float32 world z of the height-field origin plane.
+
+    The geom must carry a height field and be world-aligned (identity
+    rotation relative to world), which holds for static terrain.
+    """
+
+    geom: str
+
+    def compile_with(self, compiler: SimModelCompiler, *, key: str) -> None:
+        compiler.compile_height_field_data(key, self.geom)
+
+
+@dataclass(frozen=True)
 class BodyMassQuery(ModelQuery):
     """Scalar ``float`` nominal mass of one named link."""
 
@@ -266,6 +287,15 @@ class SimModelCompiler(abc.ABC):
         Args:
             key: Logical key under which the result is stored.
             geom_names: Ordered geometry names to inspect.
+        """
+
+    @abc.abstractmethod
+    def compile_height_field_data(self, key: str, geom: str) -> None:
+        """Compile the static height-field grid of one geom.
+
+        Args:
+            key: Logical key under which the result is stored.
+            geom: Name of a geom carrying a height field.
         """
 
     @abc.abstractmethod

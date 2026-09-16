@@ -13,6 +13,7 @@ from motrix_env_core.sim import (
     DofPositionLimitsQuery,
     GeomFrictionQuery,
     GeomSpecsQuery,
+    HeightFieldDataQuery,
     SimModelCompiler,
 )
 from motrix_env_core.sim.model import SimModel
@@ -61,6 +62,10 @@ class _DispatchCompiler(SimModelCompiler):
         del geom
         self.dispatched[key] = "friction"
 
+    def compile_height_field_data(self, key, geom) -> None:
+        del geom
+        self.dispatched[key] = "heightfield"
+
 
 def test_model_queries_dispatch_to_typed_compiler_methods() -> None:
     compiler = _DispatchCompiler()
@@ -73,6 +78,7 @@ def test_model_queries_dispatch_to_typed_compiler_methods() -> None:
         "mass": BodyMassQuery(name="body"),
         "com": BodyCenterOfMassQuery(name="body"),
         "friction": GeomFrictionQuery(name="geom"),
+        "heightfield": HeightFieldDataQuery(geom="floor"),
     }
 
     model = compiler.compile(SceneCfg(), queries)

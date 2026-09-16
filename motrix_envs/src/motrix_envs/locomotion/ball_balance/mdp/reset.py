@@ -12,7 +12,6 @@ import numpy as np
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import (
     ManagerContext,
-    ManagerEnv,
     ResetTerm,
     ResetTermCfg,
 )
@@ -49,8 +48,8 @@ class BodyPosResetCfg(ResetTermCfg):
     noise: tuple[float, float, float] = (0.02, 0.02, 0.005)
     noise_scale: float = 1.0
 
-    def __call__(self, env: ManagerEnv) -> ResetTerm:
-        body = env.cfg.scene.objs.robot.resolved_base_link_name
+    def __call__(self, ctx) -> ResetTerm:
+        body = ctx.cfg.scene.objs.robot.resolved_base_link_name
         return ResetTerm(
             _reset_body_pos,
             tuple(np.asarray(self.spawn, dtype=np.float32)),
@@ -90,8 +89,8 @@ class BodyRotResetCfg(ResetTermCfg):
     noise: tuple[float, float, float] = (0.05, 0.05, 0.05)
     noise_scale: float = 1.0
 
-    def __call__(self, env: ManagerEnv) -> ResetTerm:
-        body = env.cfg.scene.objs.robot.resolved_base_link_name
+    def __call__(self, ctx) -> ResetTerm:
+        body = ctx.cfg.scene.objs.robot.resolved_base_link_name
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_rot,
@@ -118,8 +117,8 @@ class BodyLinVelResetCfg(ResetTermCfg):
     noise: tuple[float, float, float] = (0.1, 0.1, 0.05)
     noise_scale: float = 1.0
 
-    def __call__(self, env: ManagerEnv) -> ResetTerm:
-        body = env.cfg.scene.objs.robot.resolved_base_link_name
+    def __call__(self, ctx) -> ResetTerm:
+        body = ctx.cfg.scene.objs.robot.resolved_base_link_name
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_lin_vel,
@@ -146,8 +145,8 @@ class BodyRotVelResetCfg(ResetTermCfg):
     noise: tuple[float, float, float] = (0.2, 0.2, 0.2)
     noise_scale: float = 1.0
 
-    def __call__(self, env: ManagerEnv) -> ResetTerm:
-        body = env.cfg.scene.objs.robot.resolved_base_link_name
+    def __call__(self, ctx) -> ResetTerm:
+        body = ctx.cfg.scene.objs.robot.resolved_base_link_name
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_rot_vel,
@@ -182,13 +181,13 @@ class BodyDofPosResetCfg(ResetTermCfg):
     noise: float = 0.05
     noise_scale: float = 1.0
 
-    def __call__(self, env: ManagerEnv) -> ResetTerm:
-        robot = env.cfg.scene.objs.robot
+    def __call__(self, ctx) -> ResetTerm:
+        robot = ctx.cfg.scene.objs.robot
         joints = tuple(robot.resolve_name(name) for name in robot.key_pose.joint_names)
         if "default" not in robot.key_pose.poses:
             raise ValueError("ball-balance robot must define key pose 'default'")
         default_pos = np.asarray(robot.key_pose.poses["default"], dtype=np.float32)
-        joint_lower, joint_upper = env.model.others["robot_joint_position_limits"]
+        joint_lower, joint_upper = ctx.model.others["robot_joint_position_limits"]
         expected_joint_shape = (len(joints),)
         if (
             default_pos.shape != expected_joint_shape
@@ -239,7 +238,7 @@ class BallResetCfg(ResetTermCfg):
     velocity_noise: tuple[float, float, float] = (0.05, 0.05, 0.0)
     noise_scale: float = 1.0
 
-    def __call__(self, env: ManagerEnv) -> ResetTerm:
+    def __call__(self, ctx) -> ResetTerm:
         return ResetTerm(
             _reset_ball,
             tuple(np.asarray(self.spawn, dtype=np.float32)),

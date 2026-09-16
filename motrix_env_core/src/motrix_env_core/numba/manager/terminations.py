@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from motrix_env_core.config import configclass
-from motrix_env_core.numba.manager.observations import BaseTerm
+from motrix_env_core.numba.manager.context import BuildContext
+from motrix_env_core.numba.manager.terms import BaseTerm, canonicalize_term_args
 
 if TYPE_CHECKING:
     from motrix_env_core.numba.manager.env import ManagerEnv
@@ -35,19 +36,18 @@ class TerminationTerm(BaseTerm):
             raise ValueError("Termination metric names must be unique.")
 
 
-def _canonicalize_termination_args(args: tuple[Any, ...], *, context: str) -> tuple[Any, ...]:
-    from motrix_env_core.numba.manager.rewards import _canonicalize_reward_args
-
-    return _canonicalize_reward_args(args, context=context)
-
-
 @configclass(kw_only=True)
 class TerminationTermCfg(abc.ABC):
-    """Configuration that creates one immutable termination term."""
+    """Configuration that creates one immutable termination term.
+
+    Terms that read simulator state may declare their queries by overriding
+    :meth:`required_sim_queries`; declarations are merged into the compiled
+    read set like task-declared queries.
+    """
 
     @abc.abstractmethod
-    def __call__(self, env: ManagerEnv) -> TerminationTerm:
-        """Create one environment-local termination term."""
+    def __call__(self, ctx) -> TerminationTerm:
+        """Assemble the runtime term (dispatch plus static arguments)."""
 
 
 @configclass
@@ -86,12 +86,12 @@ class TerminationManager:
                     f"{existing_name!r} and {name!r}; each configured termination type must be unique."
                 )
             termination_types[type(term_cfg)] = name
-            created = term_cfg(self._env)
+            created = term_cfg(BuildContext(self._env, f"terminations.{name}"))
             if not isinstance(created, TerminationTerm):
                 raise TypeError(
                     f"Manager termination {name} __call__() must return TerminationTerm, got {type(created).__name__}."
                 )
-            canonical_args = _canonicalize_termination_args(created.args, context=f"Manager term termination.{name}")
+            canonical_args = canonicalize_term_args(created.args, context=f"Manager term termination.{name}")
             for metric_name in created.metric_names:
                 if metric_name in self._env.metrics:
                     raise ValueError(f"Duplicate per-environment metric name: {metric_name!r}")

@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -13,7 +12,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from motrix_env_core.config.sim_reset import ManagerResetCfg
-from motrix_env_core.numba.kernel_data import canonicalize_kernel_data, is_kernel_data
+from motrix_env_core.numba.manager.context import BuildContext
+from motrix_env_core.numba.manager.terms import BaseTerm, canonicalize_term_args
 from motrix_env_core.perf import active_perf_scope
 from motrix_env_core.sim.write import SimWrite, WriteProgram
 
@@ -24,47 +24,19 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class ResetTerm:
+class ResetTerm(BaseTerm):
     """Immutable reset dispatch descriptor and its static Numba-compatible arguments."""
 
-    dispatch: Callable[..., None]
-    args: tuple[Any, ...]
     writes: dict[str, SimWrite]
 
     def __init__(self, dispatch: Callable[..., None], *args: Any, writes: dict[str, SimWrite]) -> None:
-        object.__setattr__(self, "dispatch", dispatch)
-        object.__setattr__(self, "args", args)
         object.__setattr__(self, "writes", dict(writes))
-        self.__post_init__()
+        BaseTerm.__init__(self, dispatch, *args)
 
     def __post_init__(self) -> None:
-        if not inspect.isfunction(self.dispatch):
-            raise TypeError(f"Reset dispatch must be a Python function, got {type(self.dispatch).__name__}.")
-        if not getattr(self.dispatch, "__motrix_manager_dispatch__", False):
-            raise TypeError(f"Reset dispatch {self.dispatch.__qualname__!r} must be decorated with @dispatch.")
-        if not isinstance(self.args, tuple):
-            raise TypeError("Reset term args must be a tuple.")
+        BaseTerm.__post_init__(self)
         if not isinstance(self.writes, dict):
             raise TypeError("Reset term writes must be a dict.")
-
-
-def _canonicalize_reset_args(args: tuple[Any, ...], *, context: str) -> tuple[Any, ...]:
-    """Validate and canonicalize positional Numba-compatible reset arguments."""
-    values: list[Any] = []
-    for index, value in enumerate(args):
-        if is_kernel_data(value):
-            values.append(canonicalize_kernel_data(value, context=f"{context} args[{index}]"))
-        elif isinstance(value, tuple) and all(isinstance(item, (bool, int, float, np.generic)) for item in value):
-            values.append(value)
-        elif isinstance(value, (bool, int, float, np.generic)):
-            values.append(value)
-        else:
-            raise TypeError(
-                f"{context} args[{index}] must be a scalar, a scalar tuple, or a @kernel_data value; "
-                f"got {type(value).__name__}. Raw np.ndarray values are not supported: wrap array data in a "
-                f"@kernel_data type (e.g. with SharedArray fields) so it lowers into kernel inputs."
-            )
-    return tuple(values)
 
 
 @dataclass
@@ -86,7 +58,7 @@ class SimResetRuntime:
         """Create terms, compile their declared writes, and bind output buffers."""
         terms = {}
         for name, term_cfg in cfg.to_dict().items():
-            created = term_cfg(env)
+            created = term_cfg(BuildContext(env, f"sim_reset.{name}"))
             if not isinstance(created, ResetTerm):
                 raise TypeError(
                     f"Manager simulator reset term {name!r} __call__() must return ResetTerm, "
@@ -94,7 +66,7 @@ class SimResetRuntime:
                 )
             terms[name] = ResetTerm(
                 created.dispatch,
-                *_canonicalize_reset_args(created.args, context=f"Manager simulator reset term {name!r}"),
+                *canonicalize_term_args(created.args, context=f"Manager simulator reset term {name!r}"),
                 writes=created.writes,
             )
         writes = {name: term.writes for name, term in terms.items()}

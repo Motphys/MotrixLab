@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from motrix_env_core.config import configclass
+from motrix_env_core.numba.kernel_data import kernel_data
 from motrix_env_core.numba.manager.dispatch import dispatch
 
 if TYPE_CHECKING:
@@ -26,8 +27,18 @@ class ResetContext:
     metrics: dict[str, Any]
 
 
+@kernel_data
 class CommandTerm(abc.ABC):
-    """Environment-local KernelData command pipeline with persistent runtime state."""
+    """Environment-local KernelData command pipeline with persistent runtime state.
+
+    Contract: every command term carries a ``command`` field — one
+    ``(num_envs, command_dim)`` float array holding the lane's goal vector.
+    The kernel lowering hands each lane a writable row view, and generic
+    consumers (for example ``mdp.observations.CommandObsCfg``)
+    read it by field name.
+    """
+
+    command: np.ndarray
 
     @dispatch
     @abc.abstractmethod
