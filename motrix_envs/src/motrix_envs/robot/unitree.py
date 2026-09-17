@@ -12,6 +12,12 @@ UNITREE_G1_ASSET_DIR = Path(__file__).parent / "assets" / "g1"
 UNITREE_GO1_ASSET_DIR = Path(__file__).parents[1] / "locomotion" / "go1" / "xmls"
 UNITREE_GO2_ASSET_DIR = Path(__file__).parent / "assets" / "go2"
 _G1_29DOF_MJCF = UNITREE_G1_ASSET_DIR / "g1_29dof.xml"
+# Leg gains follow the Unitree unitree_rl_gym G1 PD table (hip 100, knee 150,
+# ankle 40 N*m/rad): the stock menagerie-derived gains (28-99) cannot hold a
+# standing pose against gravity, which starves whole-body tracking of any
+# learning signal. Arms and waist keep the stock gains (not covered by the
+# official table).
+_G1_29DOF_OFFICIAL_MJCF = UNITREE_G1_ASSET_DIR / "g1_29dof_official.xml"
 _GO1_MJCF = UNITREE_GO1_ASSET_DIR / "go1_position_actuator.xml"
 _GO2_MJCF = UNITREE_GO2_ASSET_DIR / "go2_mjx.xml"
 
@@ -90,6 +96,16 @@ class UnitreeG129Dof(HumanoidRobotCfg):
             ]
         },
     )
+
+
+@configclass(kw_only=True)
+class UnitreeG129DofOfficialGains(UnitreeG129Dof):
+    """Unitree G1 29-DOF with official RL leg gains (hip 100, knee 150, ankle 40).
+
+    zh_CN: 腿部增益对齐 Unitree 官方 RL 配置的 G1 29-DOF 模型。
+    """
+
+    model: MjcfFileCfg = MjcfFileCfg(file=_G1_29DOF_OFFICIAL_MJCF)
 
 
 @configclass(kw_only=True)

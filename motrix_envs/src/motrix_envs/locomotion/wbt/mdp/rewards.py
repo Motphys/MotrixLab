@@ -7,6 +7,7 @@ import math
 from typing import cast
 
 import numpy as np
+from numba import literally
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, RewardTerm, RewardTermCfg
@@ -71,6 +72,124 @@ class RelativeBodyPositionRewardCfg(RewardTermCfg):
     def __call__(self, ctx) -> RewardTerm:
         del ctx
         return RewardTerm(relative_body_position_reward, np.float32(self.sigma))
+
+
+@dispatch
+def ee_body_pos_z_reward(ctx: ManagerContext, body_indices: tuple[int, ...], sigma: np.float32) -> float:
+    tracked_body_pos = ctx.sim["tracked_body_pos"]
+    motion: WbtMotionCommand = ctx.commands["motion"]
+    error_sq = 0.0
+    for body_id in body_indices:
+        diff = motion.target_body_position_relative[body_id, 2] - tracked_body_pos[body_id, 2]
+        error_sq += diff * diff
+    return math.exp(-(error_sq / len(body_indices)) / (sigma * sigma))
+
+
+@configclass(kw_only=True)
+class EeBodyPosZRewardCfg(RewardTermCfg):
+    """Extra height-tracking reward on end-effector bodies (ankles, wrists).
+
+    zh_CN: 末端 body（踝、腕）的高度专项跟踪奖励。
+
+    Mirrors UniLab's ``motion_ee_body_pos_z``: during a flip the extremity
+    heights carry the launch/rotation signal that the all-body mean dilutes,
+    so this term tracks their z error separately.
+    """
+
+    body_names: tuple[str, ...] = ()
+    sigma: float
+
+    def __call__(self, ctx) -> RewardTerm:
+        tracked_body_names = ctx.cfg.commands.motion.tracked_body_names
+        body_indices = tuple(tracked_body_names.index(name) for name in self.body_names)
+        return RewardTerm(ee_body_pos_z_reward, body_indices, np.float32(self.sigma))
+
+
+@dispatch
+def flight_tuck_reward(
+    ctx: ManagerContext,
+    dof_indices: tuple[int, ...],
+    ankle_body_ids: tuple[int, ...],
+    ground_z: np.float32,
+    sigma: np.float32,
+) -> float:
+    motion: WbtMotionCommand = ctx.commands["motion"]
+    step = motion.steps[0]
+    ref_z = -1.0
+    for i in ankle_body_ids:
+        ref_z = max(ref_z, motion.clip.tracked_bodies_pos_w[step, i, 2])
+    if ref_z <= ground_z:
+        # Grounded frames carry no tuck signal; the all-body terms handle them.
+        return 0.0
+    dof_pos = ctx.sim["robot_dof_pos"]
+    clip_pos = motion.clip.joint_pos[step]
+    error_sq = 0.0
+    for j in dof_indices:
+        diff = clip_pos[j] - dof_pos[j]
+        error_sq += diff * diff
+    return math.exp(-(error_sq / len(dof_indices)) / (sigma * sigma))
+
+
+@configclass(kw_only=True)
+class FlightTuckRewardCfg(RewardTermCfg):
+    """Flight-window tuck reward on flexion joints (knees, hip pitch).
+
+    zh_CN: 腾空段团身奖励（膝、髋屈曲专项跟踪）。
+
+    Active only while the reference is airborne (both reference ankles above
+    ``ground_z``): a tighter tuck spins the flip faster, and the all-body mean
+    position reward dilutes exactly this signal. Empirically load-bearing: the
+    landing breakthrough regressed from length ~326 to ~138 without it.
+    Joints are resolved by name against the model body joint order, which the
+    clip loader enforces on the clip column order.
+    """
+
+    body_names: tuple[str, ...] = ()
+    joint_names: tuple[str, ...] = ()
+    ground_z: float
+    sigma: float
+
+    def __call__(self, ctx) -> RewardTerm:
+        tracked_body_names = ctx.cfg.commands.motion.tracked_body_names
+        ankle_body_ids = tuple(tracked_body_names.index(name) for name in self.body_names)
+        joint_names = ctx.model.bodies["robot"].joint_names
+        dof_indices = tuple(joint_names.index(name) for name in self.joint_names)
+        return RewardTerm(
+            flight_tuck_reward,
+            dof_indices,
+            ankle_body_ids,
+            np.float32(self.ground_z),
+            np.float32(self.sigma),
+        )
+
+
+@dispatch
+def curriculum_action_rate_reward(ctx: ManagerContext, action_name: str) -> float:
+    action_name = literally(action_name)
+    action: WbtJointPositionAction = ctx.actions[action_name]
+    delta = action.current - action.previous
+    rate = float(np.dot(delta, delta))
+    motion: WbtMotionCommand = ctx.commands["motion"]
+    return rate * motion.action_rate_scale[0]
+
+
+@configclass(kw_only=True)
+class CurriculumActionRateRewardCfg(RewardTermCfg):
+    """Action-rate penalty scaled by the episode-length curriculum controller.
+
+    zh_CN: 动作率惩罚，倍率由 episode 长度课程控制器（滞环）驱动。
+
+    The motion command maintains an EMA of mean episode length; once it clears
+    ``curriculum_high`` the penalty multiplier ramps up toward
+    ``curriculum_max_scale`` (anti-jitter phase), and falls back toward 1.0 if
+    it drops below ``curriculum_low`` — a closed loop that only taxes jitter
+    once the skill is reliably landing.
+    """
+
+    action_name: str = "joint_position"
+
+    def __call__(self, ctx) -> RewardTerm:
+        return RewardTerm(curriculum_action_rate_reward, self.action_name)
 
 
 @dispatch

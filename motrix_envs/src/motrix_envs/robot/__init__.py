@@ -10,6 +10,7 @@ from motrix_envs.robot.microduck import Microduck
 from motrix_envs.robot.quadruped import QuadrupedLegCfg, QuadrupedLegsCfg, QuadrupedRobotCfg
 from motrix_envs.robot.unitree import (
     UnitreeG129Dof,
+    UnitreeG129DofOfficialGains,
     UnitreeGo1Robot,
     UnitreeGo2Robot,
 )
@@ -17,6 +18,7 @@ from motrix_envs.robot.unitree import (
 registry.robotcfg("anymal_c")(AnymalC)
 registry.robotcfg("dex-evt")(DexEvt)
 registry.robotcfg("g1-29dof")(UnitreeG129Dof)
+registry.robotcfg("g1-29dof-official-gains")(UnitreeG129DofOfficialGains)
 registry.robotcfg("go1")(UnitreeGo1Robot)
 registry.robotcfg("go2")(UnitreeGo2Robot)
 registry.robotcfg("k1")(BoosterK1)
@@ -32,6 +34,7 @@ __all__ = [
     "QuadrupedLegsCfg",
     "QuadrupedRobotCfg",
     "UnitreeG129Dof",
+    "UnitreeG129DofOfficialGains",
     "UnitreeGo1Robot",
     "UnitreeGo2Robot",
 ]

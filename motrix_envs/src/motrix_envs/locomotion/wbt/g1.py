@@ -18,8 +18,15 @@ from motrix_envs.locomotion.wbt.cfg import CommandsCfg, RewardsCfg, Terminations
 from motrix_envs.locomotion.wbt.mdp.command import (
     WbtMotionCommandCfg,
 )
+from motrix_envs.locomotion.wbt.mdp.rewards import (
+    CurriculumActionRateRewardCfg,
+    EeBodyPosZRewardCfg,
+    FlightTuckRewardCfg,
+    GlobalBodyAngularVelocityRewardCfg,
+)
 from motrix_envs.locomotion.wbt.mdp.terminations import (
     BadBodyZTerminationCfg,
+    BadRefOrientationTerminationCfg,
 )
 from motrix_envs.robot import UnitreeG129Dof
 
@@ -105,4 +112,130 @@ def make_g129dof_wbt_dance_cfg() -> EnvCfg:
 
 
 registry.env("g1-29dof-wbt-largebox")(ManagerEnv)
+
+
+@configclass
+class G1BackflipRewardsCfg(RewardsCfg):
+    """Backflip rewards: add the UniLab-style end-effector height term.
+
+    zh_CN: 后空翻奖励：附加末梢高度项，并放宽动作率惩罚。
+
+    ``action_rate_l2`` is relaxed to -0.1 (UniLab's flip task uses -0.005): the
+    launch is the most violent joint-acceleration window of the whole clip, and
+    a heavy action-rate tax teaches the policy to stay gentle exactly when it
+    must explode.
+    """
+
+    # Flat -0.005 scaled by the closed-loop curriculum: once mean episode
+    # length clears 400 (reliable landing + hold) the multiplier ramps toward
+    # 4x for anti-jitter; falling back under 300 relaxes it again.
+    action_rate_l2: CurriculumActionRateRewardCfg = CurriculumActionRateRewardCfg(weight=-0.005)
+
+    # Load-bearing for the landing breakthrough (length ~326 with, ~138
+    # without): the undiluted tuck signal through the flight window.
+    flight_tuck: FlightTuckRewardCfg = FlightTuckRewardCfg(
+        weight=1.5,
+        sigma=1.5,
+        ground_z=0.15,
+        body_names=(
+            "left_ankle_roll_link",
+            "right_ankle_roll_link",
+        ),
+        joint_names=(
+            "left_knee_joint",
+            "right_knee_joint",
+            "left_hip_pitch_joint",
+            "right_hip_pitch_joint",
+        ),
+    )
+
+    motion_ee_body_pos_z: EeBodyPosZRewardCfg = EeBodyPosZRewardCfg(
+        weight=2.0,
+        sigma=0.3,
+        body_names=(
+            "left_ankle_roll_link",
+            "right_ankle_roll_link",
+            "left_wrist_yaw_link",
+            "right_wrist_yaw_link",
+        ),
+    )
+    # The stock sigma (pi rad/s) makes the reward nearly insensitive to angular
+    # velocity error, so the policy has no gradient to rotate faster — the direct
+    # cause of under-rotated, inverted touchdowns. Tighten it to sharpen the
+    # rotation-speed signal during flight.
+    motion_global_body_ang_vel: GlobalBodyAngularVelocityRewardCfg = GlobalBodyAngularVelocityRewardCfg(
+        weight=1.0,
+        sigma=1.0,
+    )
+
+
+@configclass(kw_only=True)
+class G1BackflipWbtEnvCfg(G1WbtEnvCfg):
+    """Backflip tracking with the official-gain G1 model.
+
+    zh_CN: 后空翻跟踪：官方增益 G1 模型 + 放宽 body 高度跟踪终止。
+
+    The stock menagerie gains (28-99 N*m/rad) sag so much under gravity that no
+    learning signal survives the standing frames (perfect-tracking rollouts
+    collapse identically with and without controls). The official Unitree RL
+    gains (hip 100, knee 150, ankle 40) keep the stance phase stable and let the
+    policy learn the feedforward offsets the flip needs. ``bad_body_z`` is
+    restricted to the ankle links at 0.5 m: wrists and ankles legitimately swing
+    far from the reference mid-flip. ``bad_ref_ori`` is effectively disabled
+    (threshold 1e9, matching UniLab's anchor_ori): torso orientation error is
+    expected to spike while airborne and the tracking rewards already penalize
+    it. The extra ``motion_ee_body_pos_z`` reward (weight 2.0) mirrors UniLab's
+    flip recipe, giving the launch/rotation signal an undiluted path.
+    """
+
+    scene: StandardSceneCfg = StandardSceneCfg(
+        system_camera=SystemCameraCfg(distance=6.0, elevation=-20.0, azimuth=180.0),
+        # Stock menagerie gains keep the per-joint action scales large
+        # (scale = 0.25 * effort/kp); official gains shrank them ~2.5x,
+        # limiting how far the policy can push targets per step during the
+        # violent launch.
+        objs=StandardSceneObjsCfg(robot=UnitreeG129Dof()),
+    )
+
+    commands: CommandsCfg = CommandsCfg(
+        motion=WbtMotionCommandCfg(
+            # Start-mode reset (UniLab's sampling_mode: start): mid-clip resets
+            # zero the pelvis velocity at the most violent frames, which is a
+            # near-guaranteed death and teaches nothing. Starting at frame 0
+            # gives 75 standing/crouch frames to build phase state first.
+            adaptive_sampling_enabled=False,
+            start_at_timestep_zero_prob=1.0,
+            # Anti-jitter curriculum: ramp the action-rate multiplier when the
+            # mean episode length EMA clears 400, relax below 300.
+            action_rate_curriculum=True,
+            curriculum_high=400.0,
+            curriculum_low=300.0,
+        ),
+    )
+
+    terminations: TerminationsCfg = TerminationsCfg(
+        bad_body_z=BadBodyZTerminationCfg(
+            threshold=0.5,
+            body_names=(
+                "left_ankle_roll_link",
+                "right_ankle_roll_link",
+            ),
+        ),
+        bad_ref_ori=BadRefOrientationTerminationCfg(threshold=1.0e9),
+    )
+
+    rewards: G1BackflipRewardsCfg = G1BackflipRewardsCfg()
+
+
+@registry.envcfg("g1-wbt-backflip")
+def make_g129dof_wbt_backflip_cfg() -> EnvCfg:
+    """Track the bundled G1 backflip reference motion.
+
+    zh_CN: 让 Unitree G1 跟踪内置后空翻参考动作。
+    """
+
+    return G1BackflipWbtEnvCfg(motion_file=str(_MOTION_DIR / "flip_360_001__A304.npz"))
+
+
 registry.env("g1-wbt-dance")(ManagerEnv)
+registry.env("g1-wbt-backflip")(ManagerEnv)

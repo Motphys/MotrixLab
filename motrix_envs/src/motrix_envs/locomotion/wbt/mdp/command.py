@@ -97,12 +97,24 @@ class WbtMotionCommand(CommandTerm):
     kernel_size: np.int64
     kernel_lambda: np.float32
 
+    # Host-side action-rate curriculum state: EMA of episode length and the
+    # current penalty multiplier, host-written and reward-kernel-read.
+    action_rate_curriculum: bool
+    curriculum_high: np.float32
+    curriculum_low: np.float32
+    curriculum_step: np.float32
+    curriculum_max_scale: np.float32
+    curriculum_ema_alpha: np.float32
+    action_rate_scale: SharedArray
+    curriculum_ep_len_ema: SharedArray
+
     # Per-environment frame state exposed through the manager metrics system.
     # Kept as ``(num_envs, 1)`` per-env arrays: the kernel lowering hands each
     # lane a writable row view, so advance/reset_env can update the lane's
     # frame in place without a shared backing.
     steps: np.ndarray = metric(name="motion_step", dtype=np.float32)
     clip_ended: np.ndarray = metric()
+    episode_length: np.ndarray = metric(name="episode_length", dtype=np.float32)
 
     @dispatch
     def update(self, ctx: ManagerContext) -> None:
@@ -156,8 +168,9 @@ class WbtMotionCommand(CommandTerm):
             quat_mul(out_quat, motion_tracked_bodies_quat_w[body_id], out_quat)
 
     def reset(self, ctx: ResetContext) -> None:
-        """Update adaptive statistics and prepare sampling for selected environments."""
+        """Update curriculum/adaptive statistics and prepare sampling for selected environments."""
         env_ids = ctx.env_ids
+        self._update_action_rate_curriculum(ctx)
         if self.sampling_cdf.size:
             episode_failed = ctx.terminated[env_ids]
             if np.any(episode_failed):
@@ -189,6 +202,36 @@ class WbtMotionCommand(CommandTerm):
             self.sampling_cdf[:] = np.cumsum(probabilities, dtype=np.float32)
             self.sampling_cdf[-1] = 1.0
 
+    def _update_action_rate_curriculum(self, ctx: ResetContext) -> None:
+        """Hysteresis controller on mean episode length driving the penalty scale.
+
+        zh_CN: 基于平均 episode 长度的滞环控制器，驱动动作率惩罚倍率。
+
+        Once the EMA of episode length clears ``curriculum_high`` the multiplier
+        ramps up (anti-jitter phase); if it falls back below ``curriculum_low``
+        the multiplier relaxes again, protecting the skill while it is still
+        fragile.
+        """
+        if not self.action_rate_curriculum:
+            return
+        lengths = self.episode_length[ctx.env_ids]
+        batch_mean = float(np.mean(lengths)) if lengths.size else 0.0
+        # Zero only on true episode resets: the kernel reset_env hook also
+        # fires for clip-wrap rematerialization, which is not an episode
+        # boundary, so the counter must be cleared here instead.
+        self.episode_length[ctx.env_ids] = 0.0
+        alpha = float(self.curriculum_ema_alpha)
+        ema = alpha * batch_mean + (1.0 - alpha) * float(self.curriculum_ep_len_ema[0])
+        self.curriculum_ep_len_ema[0] = np.float32(ema)
+        scale = float(self.action_rate_scale[0])
+        if ema >= float(self.curriculum_high):
+            scale = min(float(self.curriculum_max_scale), scale + float(self.curriculum_step))
+        elif ema <= float(self.curriculum_low):
+            scale = max(1.0, scale - float(self.curriculum_step))
+        self.action_rate_scale[0] = np.float32(scale)
+        ctx.metrics["curriculum_ep_len_ema"] = ema
+        ctx.metrics["action_rate_scale"] = scale
+
     def on_transition(self) -> None:
         """Fold accumulated failures into the adaptive sampler once per step."""
         if self.adaptive_bin_failed_count.size:
@@ -219,6 +262,7 @@ class WbtMotionCommand(CommandTerm):
         """
         num_frames = self.clip.joint_pos.shape[0]
         self.steps[0] += 1
+        self.episode_length[0] += 1.0
         self.clip_ended[0] = self.steps[0] >= num_frames
         if self.hold_at_clip_end:
             self.steps[0] = min(self.steps[0], num_frames - 1)
@@ -266,6 +310,16 @@ class WbtMotionCommandCfg(CommandCfg):
     alpha: float = 0.001
     kernel_size: int = 1
     kernel_lambda: float = 0.8
+    # Action-rate curriculum (hysteresis on mean episode length).
+    # The step is per reset batch (~33 batches/s): 0.002 ramps 1.0 -> 4.0 over
+    # ~1500 batches so the policy can adapt incrementally; 0.05 hit the cap in
+    # seconds and collapsed the skill (observed 350 -> 250).
+    action_rate_curriculum: bool = False
+    curriculum_high: float = 400.0
+    curriculum_low: float = 300.0
+    curriculum_step: float = 0.002
+    curriculum_max_scale: float = 4.0
+    curriculum_ema_alpha: float = 0.05
 
     def __call__(self, env: ManagerEnv) -> CommandTerm:
         robot = env.cfg.scene.objs.robot
@@ -302,6 +356,7 @@ class WbtMotionCommandCfg(CommandCfg):
             reference_index=np.int64(reference_index),
             steps=np.zeros((env.num_envs, 1), dtype=np.int64),
             clip_ended=np.zeros((env.num_envs, 1), dtype=bool),
+            episode_length=np.zeros((env.num_envs, 1), dtype=np.float32),
             command=np.empty((env.num_envs, 2 * env.num_actuators), dtype=np.float32),
             target_body_position_relative=np.empty((env.num_envs, *tracked_shape), dtype=np.float32),
             target_body_orientation_relative=np.empty((env.num_envs, tracked_shape[0], 4), dtype=np.float32),
@@ -314,6 +369,14 @@ class WbtMotionCommandCfg(CommandCfg):
             alpha=np.float32(self.alpha),
             kernel_size=np.int64(self.kernel_size),
             kernel_lambda=np.float32(self.kernel_lambda),
+            action_rate_curriculum=self.action_rate_curriculum,
+            curriculum_high=np.float32(self.curriculum_high),
+            curriculum_low=np.float32(self.curriculum_low),
+            curriculum_step=np.float32(self.curriculum_step),
+            curriculum_max_scale=np.float32(self.curriculum_max_scale),
+            curriculum_ema_alpha=np.float32(self.curriculum_ema_alpha),
+            action_rate_scale=np.ones((1,), dtype=np.float32),
+            curriculum_ep_len_ema=np.zeros((1,), dtype=np.float32),
         )
 
 
