@@ -182,9 +182,14 @@ def penalty_close_feet_xy_reward(
 ) -> float:
     left = foot_pos[0]
     right = foot_pos[1]
-    fx, fy, _ = rotate_inverse_components(base_quat, (1.0, 0.0, 0.0))
-    yaw = math.atan2(fy, fx)
-    distance = abs(math.cos(yaw) * (left[1] - right[1]) - math.sin(yaw) * (left[0] - right[0]))
+    # Lateral foot separation in the base frame: rotate the world-frame foot
+    # delta's XY components (z forced to zero — vertical separation is
+    # intentionally ignored) back into the base frame and take its y
+    # magnitude. Rotating the world x-axis instead (as a yaw proxy) flips the
+    # yaw sign under the inverse rotation and misjudges staggered feet as
+    # crossing.
+    _, lateral, _ = rotate_inverse_components(base_quat, (left[0] - right[0], left[1] - right[1], 0.0))
+    distance = abs(lateral)
     walk: WalkCommand = ctx.commands["walk"]
     if distance < close_feet_threshold:
         return 1.0 * walk.penalty_scale[0]

@@ -24,17 +24,18 @@ from motrix_env_core.numba.manager.dispatch import dispatch
 
 @njit(inline="always")
 def _lane_phase(cmd, phase_out, sin_cos_out, phase_offset, steps, phase_dt) -> None:
-    """Refresh one lane's phase clock, pinning standing commands to ``pi``."""
-    phi = (steps * phase_dt + phase_offset[0] + math.pi) % (2.0 * math.pi) - math.pi
+    """Refresh both lanes' phase clocks, pinning standing commands to ``pi``."""
+    tau = 2.0 * math.pi
+    for i in range(2):
+        phase_out[i] = (steps * phase_dt + phase_offset[i] + math.pi) % tau - math.pi
     speed = math.sqrt(cmd[0] * cmd[0] + cmd[1] * cmd[1])
     if speed < 0.01 and abs(cmd[2]) < 0.01:
-        phi = math.pi
-    phase_out[0] = phi
-    phase_out[1] = (steps * phase_dt + phase_offset[1] + math.pi) % (2.0 * math.pi) - math.pi
-    sin_cos_out[0] = math.sin(phase_out[0])
-    sin_cos_out[1] = math.sin(phase_out[1])
-    sin_cos_out[2] = math.cos(phase_out[0])
-    sin_cos_out[3] = math.cos(phase_out[1])
+        # Standing commands pin both lanes, matching the direct env's
+        # ``phase[stand] = pi``: the gait clock must freeze for both feet.
+        phase_out[:] = math.pi
+    for i in range(2):
+        sin_cos_out[i] = math.sin(phase_out[i])
+        sin_cos_out[2 + i] = math.cos(phase_out[i])
 
 
 @njit(inline="always")
@@ -111,6 +112,7 @@ class WalkCommand(CommandTerm):
         truncated), so the EMA sample matches the direct env's
         ``done = terminated | truncated``.
         """
+        ctx.metrics["penalty_scale"] = float(self.penalty_scale[0])
         if not self.curriculum_enabled or ctx.env_ids.size == 0:
             return
         ep_len = self.steps[ctx.env_ids, 0].astype(np.float64) + 1.0
