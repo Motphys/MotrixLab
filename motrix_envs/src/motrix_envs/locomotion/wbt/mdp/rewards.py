@@ -106,6 +106,38 @@ class EeBodyPosZRewardCfg(RewardTermCfg):
 
 
 @dispatch
+def ee_body_pos_reward(ctx: ManagerContext, body_indices: tuple[int, ...], sigma: np.float32) -> float:
+    tracked_body_pos = ctx.sim["tracked_body_pos"]
+    motion: WbtMotionCommand = ctx.commands["motion"]
+    error_sq = 0.0
+    for body_id in body_indices:
+        diff = motion.target_body_position_relative[body_id] - tracked_body_pos[body_id]
+        error_sq += float(np.dot(diff, diff))
+    return math.exp(-(error_sq / len(body_indices)) / (sigma * sigma))
+
+
+@configclass(kw_only=True)
+class EeBodyPosRewardCfg(RewardTermCfg):
+    """Full-3D end-effector position tracking (ankles, wrists).
+
+    zh_CN: 末端 body（踝、腕）的三维位置专项跟踪奖励。
+
+    ``motion_ee_body_pos_z`` only constrains height; foot placement error
+    lives mostly in the horizontal plane, and each foot is 1/14 of the
+    all-body relative-position mean — too diluted to shape landing accuracy.
+    This term tracks the full 3D end-effector error directly.
+    """
+
+    body_names: tuple[str, ...] = ()
+    sigma: float
+
+    def __call__(self, ctx) -> RewardTerm:
+        tracked_body_names = ctx.cfg.commands.motion.tracked_body_names
+        body_indices = tuple(tracked_body_names.index(name) for name in self.body_names)
+        return RewardTerm(ee_body_pos_reward, body_indices, np.float32(self.sigma))
+
+
+@dispatch
 def flight_tuck_reward(
     ctx: ManagerContext,
     dof_indices: tuple[int, ...],
@@ -190,6 +222,74 @@ class CurriculumActionRateRewardCfg(RewardTermCfg):
 
     def __call__(self, ctx) -> RewardTerm:
         return RewardTerm(curriculum_action_rate_reward, self.action_name)
+
+
+@dispatch
+def flight_gated_action_rate_reward(ctx: ManagerContext, action_name: str, lead: np.int64) -> float:
+    action_name = literally(action_name)
+    action: WbtJointPositionAction = ctx.actions[action_name]
+    motion: WbtMotionCommand = ctx.commands["motion"]
+    step = motion.steps[0]
+    # The launch (and its violent joint accelerations) lives in the short
+    # window from takeoff through touchdown; taxing it there makes any
+    # imperfect attempt strictly worse than not attempting (raw L2 ~30-47
+    # against saturated tracking kernels), so the tax is skipped inside the
+    # window and collected everywhere else.
+    if (motion.flight_start - lead) <= step <= motion.land_check_step:
+        return 0.0
+    delta = action.current - action.previous
+    return float(np.dot(delta, delta))
+
+
+@configclass(kw_only=True)
+class FlightGatedActionRateRewardCfg(RewardTermCfg):
+    """Action-rate penalty suspended over the launch/flight/landing window.
+
+    zh_CN: 起跳/飞行/落地窗口内暂停征收的动作率惩罚。
+
+    With a heavy flat weight (e.g. -0.5) a from-scratch policy converges to a
+    smooth small-hop local optimum: every imperfect launch attempt pays the
+    full tax immediately while its tracking rewards are still saturated at
+    zero. Gating the tax to the stance/hold phases keeps the smoothing
+    benefit where jitter matters (visually and for balance) without pricing
+    out the explosive launch.
+    """
+
+    action_name: str = "joint_position"
+    lead: int = 5
+
+    def __call__(self, ctx) -> RewardTerm:
+        return RewardTerm(flight_gated_action_rate_reward, self.action_name, np.int64(self.lead))
+
+
+@dispatch
+def flight_rotation_progress_reward(ctx: ManagerContext, cap: np.float32) -> float:
+    motion: WbtMotionCommand = ctx.commands["motion"]
+    step = motion.steps[0]
+    if not (motion.flight_start <= step <= motion.flight_end):
+        return 0.0
+    pelvis_ang_vel = ctx.sim["tracked_body_angular_velocity"][0]
+    ref_ang_vel = motion.clip.tracked_bodies_ang_vel_w[step, 0]
+    # Reward pitch-axis rotation speed in the reference's direction, linear
+    # and capped: every radian earned pays immediately (exp kernels cannot do
+    # this — they saturate to zero exactly when rotation is still partial).
+    direction = 1.0 if ref_ang_vel[1] >= 0.0 else -1.0
+    progress = pelvis_ang_vel[1] * direction
+    return min(max(progress, 0.0), cap)
+
+
+@configclass(kw_only=True)
+class FlightRotationProgressRewardCfg(RewardTermCfg):
+    """Dense, unsaturating rotation-progress reward inside the flight window.
+
+    zh_CN: 飞行窗口内按参考方向的俯仰转速线性计分（不饱和）的稠密奖励。
+    """
+
+    cap: float = 15.0
+
+    def __call__(self, ctx) -> RewardTerm:
+        del ctx
+        return RewardTerm(flight_rotation_progress_reward, np.float32(self.cap))
 
 
 @dispatch

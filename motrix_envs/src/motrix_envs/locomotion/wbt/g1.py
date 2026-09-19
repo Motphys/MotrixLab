@@ -19,14 +19,23 @@ from motrix_envs.locomotion.wbt.mdp.command import (
     WbtMotionCommandCfg,
 )
 from motrix_envs.locomotion.wbt.mdp.rewards import (
-    CurriculumActionRateRewardCfg,
+    EeBodyPosRewardCfg,
     EeBodyPosZRewardCfg,
+    FlightRotationProgressRewardCfg,
     FlightTuckRewardCfg,
     GlobalBodyAngularVelocityRewardCfg,
+    GlobalRefOrientationRewardCfg,
+    GlobalRefPositionRewardCfg,
 )
 from motrix_envs.locomotion.wbt.mdp.terminations import (
     BadBodyZTerminationCfg,
+    BadDofPositionTerminationCfg,
+    BadDofVelocityTerminationCfg,
+    BadMotionBodyPositionTerminationCfg,
+    BadRefFullOrientationTerminationCfg,
     BadRefOrientationTerminationCfg,
+    BadRefPositionPhasedTerminationCfg,
+    BadRefZPhasedTerminationCfg,
 )
 from motrix_envs.robot import UnitreeG129Dof
 
@@ -116,26 +125,38 @@ registry.env("g1-29dof-wbt-largebox")(ManagerEnv)
 
 @configclass
 class G1BackflipRewardsCfg(RewardsCfg):
-    """Backflip rewards: add the UniLab-style end-effector height term.
+    """Backflip rewards: v5 hybrid — v3's proven stack, holosoma-aligned base.
 
-    zh_CN: 后空翻奖励：附加末梢高度项，并放宽动作率惩罚。
+    zh_CN: 后空翻奖励：v3 验证过的组合（tuck/EE 高度/轻动作率课程）保留。
 
-    ``action_rate_l2`` is relaxed to -0.1 (UniLab's flip task uses -0.005): the
-    launch is the most violent joint-acceleration window of the whole clip, and
-    a heavy action-rate tax teaches the policy to stay gentle exactly when it
-    must explode.
+    The pure holosoma fastsac weights (v4) regressed the launch: the strict
+    EE termination killed every takeoff attempt before the skill formed, and
+    without ``flight_tuck`` / ``motion_ee_body_pos_z`` / the light
+    curriculum-scaled ``action_rate_l2`` there was no remaining signal that
+    rewards the launch itself. This hybrid keeps those three launch-critical
+    terms (validated by the v1-v3 ablations) on top of the holosoma-aligned
+    base weights.
     """
 
-    # Flat -0.005 scaled by the closed-loop curriculum: once mean episode
-    # length clears 400 (reliable landing + hold) the multiplier ramps toward
-    # 4x for anti-jitter; falling back under 300 relaxes it again.
-    action_rate_l2: CurriculumActionRateRewardCfg = CurriculumActionRateRewardCfg(weight=-0.005)
+    # Flat -0.01 (gating removed): the action-rate sweep established -0.01 as
+    # the only weight that unlocks rotation within a 40k budget (pitch 1.04,
+    # vs 0.04-0.25 for every heavier flat or gated variant tested).
+    action_rate_l2: ActionRateRewardCfg = ActionRateRewardCfg(weight=-0.01)
 
-    # Load-bearing for the landing breakthrough (length ~326 with, ~138
-    # without): the undiluted tuck signal through the flight window.
+    # Dense rotation signal: linear pay per radian of reference-direction
+    # pitch rate inside the flight window — the exp ang-vel kernel alone
+    # cannot bootstrap rotation from partial attempts.
+    flight_rotation_progress: FlightRotationProgressRewardCfg = FlightRotationProgressRewardCfg(weight=0.3)
+
+    # Load-bearing for the launch/landing breakthrough (v1 ablation: episode
+    # length ~326 with vs ~138 without). Sigma widened 1.5 -> 2.5: the v7 run
+    # showed the kernel declining (0.19 -> 0.08) — over-tight sigma saturates
+    # against the flight-window tracking error and removes the gradient.
+    # Weight raised 1.5 -> 2.5 alongside the rotation-progress term: tucking
+    # shrinks the moment of inertia, the physical lever on rotation speed.
     flight_tuck: FlightTuckRewardCfg = FlightTuckRewardCfg(
-        weight=1.5,
-        sigma=1.5,
+        weight=2.5,
+        sigma=2.5,
         ground_z=0.15,
         body_names=(
             "left_ankle_roll_link",
@@ -159,11 +180,39 @@ class G1BackflipRewardsCfg(RewardsCfg):
             "right_wrist_yaw_link",
         ),
     )
-    # The stock sigma (pi rad/s) makes the reward nearly insensitive to angular
-    # velocity error, so the policy has no gradient to rotate faster — the direct
-    # cause of under-rotated, inverted touchdowns. Tighten it to sharpen the
-    # rotation-speed signal during flight.
+
+    # Full-3D EE tracking: the z-only variant left foot placement (xy) error
+    # at ~0.12 m — diluted to 1/14 in the all-body mean, so landing accuracy
+    # had no dedicated gradient. Kernel at the observed error is ~0.86,
+    # comfortably inside the learning band.
+    motion_ee_body_pos: EeBodyPosRewardCfg = EeBodyPosRewardCfg(
+        weight=1.0,
+        sigma=0.3,
+        body_names=(
+            "left_ankle_roll_link",
+            "right_ankle_roll_link",
+            "left_wrist_yaw_link",
+            "right_wrist_yaw_link",
+        ),
+    )
+
+    # holosoma semantics restored (weight 1.0, sigma 3.14): the v2-era
+    # tightening to sigma 1.0 saturated the kernel against the ~1.5-2 rad/s
+    # whole-body angular-velocity noise floor (kernel pinned at 0.02 for the
+    # entire v7 run — no gradient, rotation never learned).
     motion_global_body_ang_vel: GlobalBodyAngularVelocityRewardCfg = GlobalBodyAngularVelocityRewardCfg(
+        weight=1.0,
+        sigma=3.14,
+    )
+    motion_global_ref_orientation_error_exp: GlobalRefOrientationRewardCfg = GlobalRefOrientationRewardCfg(
+        weight=1.0,
+        sigma=0.4,
+    )
+    # Planar drift needs an unsaturated gradient: at the observed 1.28 m drift
+    # the stock sigma 0.3 kernel is exp(-18) ~ 0. Widening to 1.0 restores a
+    # learnable signal (exp(-1.6) ~ 0.2 at current drift); near-field
+    # precision is handled by the relative-body terms.
+    motion_global_ref_position_error_exp: GlobalRefPositionRewardCfg = GlobalRefPositionRewardCfg(
         weight=1.0,
         sigma=1.0,
     )
@@ -173,19 +222,21 @@ class G1BackflipRewardsCfg(RewardsCfg):
 class G1BackflipWbtEnvCfg(G1WbtEnvCfg):
     """Backflip tracking with the official-gain G1 model.
 
-    zh_CN: 后空翻跟踪：官方增益 G1 模型 + 放宽 body 高度跟踪终止。
-
+    zh_CN: 后空翻跟踪：官方增益 G1 模型 + holosoma fastsac 配方（含跟踪终止）。
     The stock menagerie gains (28-99 N*m/rad) sag so much under gravity that no
     learning signal survives the standing frames (perfect-tracking rollouts
     collapse identically with and without controls). The official Unitree RL
     gains (hip 100, knee 150, ankle 40) keep the stance phase stable and let the
-    policy learn the feedforward offsets the flip needs. ``bad_body_z`` is
-    restricted to the ankle links at 0.5 m: wrists and ankles legitimately swing
-    far from the reference mid-flip. ``bad_ref_ori`` is effectively disabled
-    (threshold 1e9, matching UniLab's anchor_ori): torso orientation error is
-    expected to spike while airborne and the tracking rewards already penalize
-    it. The extra ``motion_ee_body_pos_z`` reward (weight 2.0) mirrors UniLab's
-    flip recipe, giving the launch/rotation signal an undiluted path.
+    policy learn the feedforward offsets the flip needs. Termination follows
+    holosoma's ``BadTrackingZOnly`` contract: anchor 3D position error
+    > 0.5 m (catches planar drift a z-only check cannot see), full anchor
+    orientation error > 0.8 rad, and end-effector (ankle/wrist) position error
+    vs the reference targets > 0.25 m — sloppy limb motion terminates the
+    episode early, and the adaptive sampler re-samples those failing frames
+    instead of the rollout surviving to timeout with garbage in the buffer.
+    Rewards and reset are the holosoma fastsac recipe unchanged (centered
+    noise reference-state teleport with velocities, adaptive failure-biased
+    frame sampling).
     """
 
     scene: StandardSceneCfg = StandardSceneCfg(
@@ -199,21 +250,47 @@ class G1BackflipWbtEnvCfg(G1WbtEnvCfg):
 
     commands: CommandsCfg = CommandsCfg(
         motion=WbtMotionCommandCfg(
-            # Start-mode reset (UniLab's sampling_mode: start): mid-clip resets
-            # zero the pelvis velocity at the most violent frames, which is a
-            # near-guaranteed death and teaches nothing. Starting at frame 0
-            # gives 75 standing/crouch frames to build phase state first.
+            # UniLab SAC flip's "mixed" sampling over the whole clip: 10% of
+            # episodes start at frame 0 (full skill from standing), 90% start
+            # uniformly anywhere — mid-air frames included, as in holosoma's
+            # RSI and UniLab's flip recipes. Frame-0-only start concentrated
+            # resets on the run-up frames the early policy dies in, starving
+            # the flight window and the landing hold of episode-start coverage.
+            # The gate variant (start_before_flight_only) kept teleport
+            # ballistics out of the flight metrics; with the gate off those
+            # metrics are again inflated by mid-air starts — judge flips by
+            # frame-0-start episodes (play) or the land_check timestamp, not
+            # by the raw training-time mean.
+            # Mid-air resets are exact in velocity (see __post_init__: root
+            # velocity reset noise zeroed for this task), so teleports into
+            # the flight window land on the reference ballistic trajectory.
             adaptive_sampling_enabled=False,
-            start_at_timestep_zero_prob=1.0,
-            # Anti-jitter curriculum: ramp the action-rate multiplier when the
-            # mean episode length EMA clears 400, relax below 300.
-            action_rate_curriculum=True,
-            curriculum_high=400.0,
-            curriculum_low=300.0,
+            start_at_timestep_zero_prob=0.1,
+            start_before_flight_only=False,
+            flight_metrics_enabled=True,
+            # Hold the final frame instead of wrap-rematerializing: an episode
+            # that reaches the clip end keeps tracking the landing hold until
+            # timeout, so "land and stay standing" is the terminal skill.
+            hold_at_clip_end=True,
         ),
     )
 
     terminations: TerminationsCfg = TerminationsCfg(
+        # v6: v3's launch-forcing stack (validated to produce full flips).
+        # bad_ref_z at 0.35 is the load-bearing term: standing through the
+        # flight window yields a pelvis-z error of ~0.44 against the 1.19 m
+        # apex, so standing is fatal and jumping is mandatory. The v5 experiment
+        # replaced it with the holosoma 3D/EE contract (0.5/0.8/0.45) which
+        # standing survives (0.44 < 0.5) — the policy rationally unlearned the
+        # launch. Strict contract terms stay as metrics-only here; enable them
+        # (with real thresholds) only to fine-tune an already-flipping policy.
+        # Phased anchor-z: loose (0.5) outside the flight window so the early
+        # policy survives the crouch/run-up, tight (0.25) inside it — at the
+        # 1.19 m apex the pelvis must reach >= 0.94 m, beyond any grounded pose
+        # (tiptoe tops out ~0.9 m), so passing the window requires actually
+        # leaving the ground.
+        bad_ref_z=BadRefZPhasedTerminationCfg(threshold=0.5, threshold_in=0.25),
+        bad_ref_ori=BadRefOrientationTerminationCfg(threshold=1.5),
         bad_body_z=BadBodyZTerminationCfg(
             threshold=0.5,
             body_names=(
@@ -221,10 +298,40 @@ class G1BackflipWbtEnvCfg(G1WbtEnvCfg):
                 "right_ankle_roll_link",
             ),
         ),
-        bad_ref_ori=BadRefOrientationTerminationCfg(threshold=1.0e9),
+        # Aligned-contract terms as metrics-only (disabled thresholds), except
+        # the phased 3D position check: grounded drift beyond 0.8 m is a real
+        # failure (v7 drifted 1.28 m with zero pressure), while mid-flight the
+        # robot is ballistic so only divergence beyond 1.0 m dies.
+        bad_ref_pos=BadRefPositionPhasedTerminationCfg(threshold=0.8, threshold_in=1.0),
+        bad_ref_full_ori=BadRefFullOrientationTerminationCfg(threshold=1.0e9),
+        bad_motion_body_pos=BadMotionBodyPositionTerminationCfg(
+            threshold=1.0e9,
+            body_names=(
+                "left_ankle_roll_link",
+                "right_ankle_roll_link",
+                "left_wrist_yaw_link",
+                "right_wrist_yaw_link",
+            ),
+        ),
+        # Kept as NaN/divergence guards; they never fire on healthy rollouts.
+        bad_dof_pos=BadDofPositionTerminationCfg(threshold=0.5),
+        bad_dof_vel=BadDofVelocityTerminationCfg(threshold=100.0),
     )
 
     rewards: G1BackflipRewardsCfg = G1BackflipRewardsCfg()
+
+    def __post_init__(self, motion_file: str | None) -> None:
+        super().__post_init__(motion_file)
+        # Zero the root velocity reset noise for this task only. Starts are
+        # gated to grounded pre-flight frames (start_before_flight_only) whose
+        # reference velocities are near zero, so the holosoma velocity noise
+        # (lin ±0.5 m/s, ang ±0.52/0.78 rad/s) degenerates into a random push
+        # on a standing robot: same start frame, scattered launch ballistics.
+        # UniLab's flip recipes use exact reference-state resets for exactly
+        # this reason. Position/rotation/dof noise stays — harmless robustness
+        # for grounded starts.
+        self.sim_reset.body_lin_vel.noise_scale = 0.0
+        self.sim_reset.body_rot_vel.noise_scale = 0.0
 
 
 @registry.envcfg("g1-wbt-backflip")
@@ -234,7 +341,7 @@ def make_g129dof_wbt_backflip_cfg() -> EnvCfg:
     zh_CN: 让 Unitree G1 跟踪内置后空翻参考动作。
     """
 
-    return G1BackflipWbtEnvCfg(motion_file=str(_MOTION_DIR / "flip_360_001__A304.npz"))
+    return G1BackflipWbtEnvCfg(motion_file=str(_MOTION_DIR / "backflip.npz"))
 
 
 registry.env("g1-wbt-dance")(ManagerEnv)

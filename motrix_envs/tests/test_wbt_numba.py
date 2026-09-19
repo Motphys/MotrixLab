@@ -695,6 +695,9 @@ def test_numba_wbt_manager_builds_for_all_wbt_presets(env_name: str) -> None:
         "bad_body_z",
         "bad_dof_pos",
         "bad_dof_vel",
+        "bad_ref_pos",
+        "bad_ref_full_ori",
+        "bad_motion_body_pos",
     ]
 
 

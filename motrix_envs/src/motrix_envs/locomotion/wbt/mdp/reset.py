@@ -40,7 +40,10 @@ def _reset_body_pos(
     motion: WbtMotionCommand = ctx.commands["motion"]
     position[0] = motion.clip.root_body_pos_w[motion.steps[0]]
     for index in range(3):
-        position[0, index] += ctx.rand.next_uniform() * noise_scale[index]
+        # Centered uniform noise, matching the holosoma/BeyondMimic reference
+        # initialization. One-sided noise systematically biases the teleported
+        # state (fatally so for velocities at mid-flight frames).
+        position[0, index] += (ctx.rand.next_uniform() - np.float32(0.5)) * np.float32(2.0) * noise_scale[index]
 
 
 @configclass(kw_only=True)
@@ -71,9 +74,9 @@ def _reset_body_rot(
     rotation[0] = motion.clip.root_body_quat_w[motion.steps[0]]
     noisy_quat = np.empty((4,), dtype=np.float32)
     numba_quaternion.from_euler(
-        ctx.rand.next_uniform() * noise_scale[0],
-        ctx.rand.next_uniform() * noise_scale[1],
-        ctx.rand.next_uniform() * noise_scale[2],
+        (ctx.rand.next_uniform() - np.float32(0.5)) * np.float32(2.0) * noise_scale[0],
+        (ctx.rand.next_uniform() - np.float32(0.5)) * np.float32(2.0) * noise_scale[1],
+        (ctx.rand.next_uniform() - np.float32(0.5)) * np.float32(2.0) * noise_scale[2],
         noisy_quat,
     )
     base_quat = np.empty((4,), dtype=np.float32)
@@ -110,7 +113,8 @@ def _reset_body_lin_vel(
     motion: WbtMotionCommand = ctx.commands["motion"]
     linear_velocity[0] = motion.clip.root_body_lin_vel_w[motion.steps[0]]
     for index in range(3):
-        linear_velocity[0, index] += ctx.rand.next_uniform() * noise_scale[index]
+        # Centered noise: see _reset_body_pos.
+        linear_velocity[0, index] += (ctx.rand.next_uniform() - np.float32(0.5)) * np.float32(2.0) * noise_scale[index]
 
 
 @configclass(kw_only=True)
@@ -140,7 +144,10 @@ def _reset_body_rot_vel(
     motion: WbtMotionCommand = ctx.commands["motion"]
     angular_velocity[0] = motion.clip.root_body_ang_vel_w[motion.steps[0]]
     for index in range(3):
-        angular_velocity[0, index] += ctx.rand.next_uniform() * noise_scale[index]
+        # Centered noise: see _reset_body_pos. The old one-sided bias added a
+        # consistent extra rotation rate that made mid-flight resets
+        # unrecoverable.
+        angular_velocity[0, index] += (ctx.rand.next_uniform() - np.float32(0.5)) * np.float32(2.0) * noise_scale[index]
 
 
 @configclass(kw_only=True)
@@ -171,7 +178,7 @@ def _reset_body_dof_pos(ctx: ManagerContext, sim_writes: Map[np.ndarray], noise_
     velocity[:] = motion.clip.joint_vel[step]
     rng = ctx.rand
     for index in range(position.shape[0]):
-        value = position[index] + rng.next_uniform() * noise_scale
+        value = position[index] + (rng.next_uniform() - np.float32(0.5)) * np.float32(2.0) * noise_scale
         position[index] = min(max(value, action.joint_lower[index]), action.joint_upper[index])
 
 

@@ -29,8 +29,21 @@ from motrix_envs.motion import MotrixMotion, WbtMotionClip
 
 
 @njit(inline="always")
-def _sample_motion_step(rand, sampling_cdf, num_frames: np.int64, start_at_timestep_zero_prob: np.float32):
-    """Draw one start frame from the adaptive-bin CDF (or uniformly when disabled)."""
+def _sample_motion_step(
+    rand,
+    sampling_cdf,
+    num_frames: np.int64,
+    start_at_timestep_zero_prob: np.float32,
+    phase_start_min: np.int64,
+    phase_start_max: np.int64,
+):
+    """Draw one start frame from the adaptive-bin CDF (or uniformly when disabled).
+
+    ``phase_start_min`` / ``phase_start_max`` are static start-frame gates: the
+    sampled frame clamps into ``[min, max]``. ``max`` bounds resets to episodes
+    that must still pass through the aerial phase of the clip, so completion
+    statistics cannot be inflated by tail-frame starts.
+    """
     unit = (rand.next_uniform() + np.float32(1.0)) * np.float32(0.5)
     if sampling_cdf.size == 0:
         step_value = unit * np.float32(num_frames - 1)
@@ -46,6 +59,10 @@ def _sample_motion_step(rand, sampling_cdf, num_frames: np.int64, start_at_times
     step = np.int64(step_value)
     if (rand.next_uniform() + np.float32(1.0)) * np.float32(0.5) < start_at_timestep_zero_prob:
         step = np.int64(0)
+    if step < phase_start_min:
+        step = phase_start_min
+    if phase_start_max >= 0 and step > phase_start_max:
+        step = phase_start_max
     return step
 
 
@@ -108,6 +125,35 @@ class WbtMotionCommand(CommandTerm):
     action_rate_scale: SharedArray
     curriculum_ep_len_ema: SharedArray
 
+    # Reverse start-frame curriculum state: grounded candidate start frames
+    # (sorted), the current gate index into them, and the kernel-read earliest
+    # allowed start frame. Host-written on episode resets, kernel-read in
+    # reset_env / advance resampling.
+    phase_curriculum: bool
+    phase_curriculum_high: np.float32
+    phase_curriculum_low: np.float32
+    phase_curriculum_step: np.int64
+    # Candidate grounded start frames (sorted, read-only in kernels — but
+    # lowered as SHARED because the frame axis, not the env axis, is leading).
+    grounded_start_steps: SharedArray
+    phase_gate_index: SharedArray
+    phase_start_min: SharedArray
+
+    # Aerial-phase ("flight window") honest-skill metrics. The window is
+    # derived once from the clip's root-z profile; the kernel accumulates
+    # per-lane max pelvis height and unwrapped pitch rotation inside it and
+    # stamps an upright-landing check right after it. Static window bounds are
+    # baked in at compile time (never mutated at runtime).
+    flight_metrics: bool
+    flight_start: np.int64
+    flight_end: np.int64
+    land_check_step: np.int64
+    # Static upper bound on sampled start frames (-1 = unlimited).
+    phase_start_max: np.int64
+    flight_max_z: np.ndarray = metric(name="flight_max_pelvis_z", dtype=np.float32)
+    flight_pitch_acc: np.ndarray = metric(name="flight_pitch_rotation", dtype=np.float32)
+    landed_upright: np.ndarray = metric()
+
     # Per-environment frame state exposed through the manager metrics system.
     # Kept as ``(num_envs, 1)`` per-env arrays: the kernel lowering hands each
     # lane a writable row view, so advance/reset_env can update the lane's
@@ -167,10 +213,36 @@ class WbtMotionCommand(CommandTerm):
             out_pos[2] += robot_reference_body_pos_w[2] + height_delta
             quat_mul(out_quat, motion_tracked_bodies_quat_w[body_id], out_quat)
 
+        if self.flight_metrics:
+            # Honest flip metrics, evaluated inside the aerial window only.
+            # Rotation progress integrates the pelvis pitch rate (angular
+            # velocity y-component): an asin-based euler pitch folds beyond
+            # ±90° (asin(sinθ) is non-monotonic through inversion), so the
+            # old euler-delta accumulator returned ~0 for a full flip and
+            # mixed signs for partial flips past vertical. Integrating the
+            # rate accumulates exactly ±2π over a complete rotation.
+            pelvis_pos = ctx.sim["tracked_body_pos"][0]
+            pelvis_ang_vel = ctx.sim["tracked_body_angular_velocity"][0]
+            step = self.steps[0]
+            if self.flight_start <= step <= self.flight_end:
+                self.flight_pitch_acc[0] += pelvis_ang_vel[1] * ctx.dt
+                if pelvis_pos[2] > self.flight_max_z[0]:
+                    self.flight_max_z[0] = pelvis_pos[2]
+            if step == self.land_check_step:
+                pelvis_quat = ctx.sim["tracked_body_quat"][0]
+                sin_pitch = 2.0 * (pelvis_quat[3] * pelvis_quat[1] - pelvis_quat[2] * pelvis_quat[0])
+                sin_pitch = min(max(sin_pitch, -1.0), 1.0)
+                pitch = math.asin(sin_pitch)
+                self.landed_upright[0] = abs(pitch) < 0.3
+
     def reset(self, ctx: ResetContext) -> None:
         """Update curriculum/adaptive statistics and prepare sampling for selected environments."""
         env_ids = ctx.env_ids
-        self._update_action_rate_curriculum(ctx)
+        self._update_curricula(ctx)
+        if self.flight_metrics:
+            self.flight_max_z[env_ids, 0] = 0.0
+            self.flight_pitch_acc[env_ids, 0] = 0.0
+            self.landed_upright[env_ids, 0] = False
         if self.sampling_cdf.size:
             episode_failed = ctx.terminated[env_ids]
             if np.any(episode_failed):
@@ -202,35 +274,54 @@ class WbtMotionCommand(CommandTerm):
             self.sampling_cdf[:] = np.cumsum(probabilities, dtype=np.float32)
             self.sampling_cdf[-1] = 1.0
 
-    def _update_action_rate_curriculum(self, ctx: ResetContext) -> None:
-        """Hysteresis controller on mean episode length driving the penalty scale.
+    def _update_curricula(self, ctx: ResetContext) -> None:
+        """Shared episode-length EMA feeding the closed-loop controllers.
 
-        zh_CN: 基于平均 episode 长度的滞环控制器，驱动动作率惩罚倍率。
+        zh_CN: 共享的 episode 长度 EMA，驱动动作率惩罚与起始帧课程两个控制器。
 
-        Once the EMA of episode length clears ``curriculum_high`` the multiplier
-        ramps up (anti-jitter phase); if it falls back below ``curriculum_low``
-        the multiplier relaxes again, protecting the skill while it is still
-        fragile.
+        The EMA of episode length is computed once per reset batch; the
+        action-rate hysteresis and the reverse start-frame curriculum both
+        consume it. ``episode_length`` is zeroed here (not in the kernel reset
+        hook) because that hook also fires for clip-wrap rematerialization,
+        which is not an episode boundary.
         """
-        if not self.action_rate_curriculum:
+        if not (self.action_rate_curriculum or self.phase_curriculum):
             return
         lengths = self.episode_length[ctx.env_ids]
         batch_mean = float(np.mean(lengths)) if lengths.size else 0.0
-        # Zero only on true episode resets: the kernel reset_env hook also
-        # fires for clip-wrap rematerialization, which is not an episode
-        # boundary, so the counter must be cleared here instead.
         self.episode_length[ctx.env_ids] = 0.0
         alpha = float(self.curriculum_ema_alpha)
         ema = alpha * batch_mean + (1.0 - alpha) * float(self.curriculum_ep_len_ema[0])
         self.curriculum_ep_len_ema[0] = np.float32(ema)
-        scale = float(self.action_rate_scale[0])
-        if ema >= float(self.curriculum_high):
-            scale = min(float(self.curriculum_max_scale), scale + float(self.curriculum_step))
-        elif ema <= float(self.curriculum_low):
-            scale = max(1.0, scale - float(self.curriculum_step))
-        self.action_rate_scale[0] = np.float32(scale)
         ctx.metrics["curriculum_ep_len_ema"] = ema
-        ctx.metrics["action_rate_scale"] = scale
+
+        if self.action_rate_curriculum:
+            # Once the EMA clears ``curriculum_high`` the action-rate penalty
+            # ramps up (anti-jitter phase); falling back below
+            # ``curriculum_low`` relaxes it again, protecting a fragile skill.
+            scale = float(self.action_rate_scale[0])
+            if ema >= float(self.curriculum_high):
+                scale = min(float(self.curriculum_max_scale), scale + float(self.curriculum_step))
+            elif ema <= float(self.curriculum_low):
+                scale = max(1.0, scale - float(self.curriculum_step))
+            self.action_rate_scale[0] = np.float32(scale)
+            ctx.metrics["action_rate_scale"] = scale
+
+        if self.phase_curriculum:
+            # Reverse start-frame curriculum: while the policy survives only
+            # short episodes the gate stays at the clip tail (landing hold);
+            # sustained long episodes unlock earlier grounded frames, moving
+            # the start toward frame zero (the full flip). Short episodes
+            # retreat the gate back toward the tail.
+            num_frames = max(self.clip.joint_pos.shape[0], 1)
+            gate = int(self.phase_gate_index[0])
+            if ema >= float(self.phase_curriculum_high):
+                gate = max(0, gate - int(self.phase_curriculum_step))
+            elif ema <= float(self.phase_curriculum_low):
+                gate = min(self.grounded_start_steps.size - 1, gate + int(self.phase_curriculum_step))
+            self.phase_gate_index[0] = np.int64(gate)
+            self.phase_start_min[0] = np.int64(self.grounded_start_steps[gate])
+            ctx.metrics["phase_start_fraction"] = float(self.grounded_start_steps[gate]) / num_frames
 
     def on_transition(self) -> None:
         """Fold accumulated failures into the adaptive sampler once per step."""
@@ -246,7 +337,12 @@ class WbtMotionCommand(CommandTerm):
         """Sample the starting frame for one reset environment lane."""
         num_frames = self.clip.joint_pos.shape[0]
         self.steps[0] = _sample_motion_step(
-            ctx.rand, self.sampling_cdf, np.int64(num_frames), self.start_at_timestep_zero_prob
+            ctx.rand,
+            self.sampling_cdf,
+            np.int64(num_frames),
+            self.start_at_timestep_zero_prob,
+            self.phase_start_min[0],
+            self.phase_start_max,
         )
         # ``clip_ended`` is intentionally left untouched: advance recomputes it
         # every transition, so a lane that just wrapped keeps its flag for the
@@ -274,7 +370,12 @@ class WbtMotionCommand(CommandTerm):
             # resample keeps steps valid and consistently distributed between
             # this kernel and the reset pipeline.
             self.steps[0] = _sample_motion_step(
-                ctx.rand, self.sampling_cdf, np.int64(num_frames), self.start_at_timestep_zero_prob
+                ctx.rand,
+                self.sampling_cdf,
+                np.int64(num_frames),
+                self.start_at_timestep_zero_prob,
+                self.phase_start_min[0],
+                self.phase_start_max,
             )
             ctx.sim_reset_requested[0] = True
 
@@ -320,6 +421,26 @@ class WbtMotionCommandCfg(CommandCfg):
     curriculum_step: float = 0.002
     curriculum_max_scale: float = 4.0
     curriculum_ema_alpha: float = 0.05
+    # Reverse start-frame curriculum: resets start from grounded frames only
+    # (root z below ``phase_grounded_z``, so never mid-flight), initially at
+    # the clip tail (landing hold). Sustained episode-length EMA above
+    # ``phase_curriculum_high`` unlocks earlier grounded frames toward frame
+    # zero; EMA below ``phase_curriculum_low`` retreats back toward the tail.
+    phase_curriculum: bool = False
+    phase_grounded_z: float = 0.85
+    phase_curriculum_high: float = 180.0
+    phase_curriculum_low: float = 120.0
+    phase_curriculum_step: int = 1
+    # Honest aerial-skill metrics: the flight window is derived from the clip
+    # root-z profile (frames above min + flight_z_fraction * (max - min)).
+    # Inside it the command accumulates per-env max pelvis height, unwrapped
+    # pelvis pitch rotation, and an upright-landing check half a second after
+    # touchdown. ``start_before_flight_only`` additionally clamps sampled start
+    # frames to <= flight_start so every episode must pass through the aerial
+    # phase — clip completion can then no longer be inflated by tail starts.
+    flight_metrics_enabled: bool = False
+    flight_z_fraction: float = 0.5
+    start_before_flight_only: bool = False
 
     def __call__(self, env: ManagerEnv) -> CommandTerm:
         robot = env.cfg.scene.objs.robot
@@ -350,6 +471,39 @@ class WbtMotionCommandCfg(CommandCfg):
             num_bins = source.joint_pos.shape[0] // env_fps + 1
         else:
             num_bins = 0
+        if self.phase_curriculum:
+            root_z = np.asarray(source.root_body_pos_w)[:, 2]
+            grounded_steps = np.flatnonzero(root_z < self.phase_grounded_z).astype(np.int64)
+            if grounded_steps.size < 2:
+                raise ValueError(
+                    f"WBT phase curriculum found <2 grounded frames below z={self.phase_grounded_z} "
+                    f"in {self.motion_file!r}; adjust phase_grounded_z."
+                )
+            num_frames = source.joint_pos.shape[0]
+            if grounded_steps[-1] > num_frames - 2:
+                grounded_steps = grounded_steps[grounded_steps <= num_frames - 2]
+            initial_gate = grounded_steps.size - 1
+        else:
+            grounded_steps = np.zeros((1,), dtype=np.int64)
+            initial_gate = 0
+        if self.flight_metrics_enabled:
+            root_z = np.asarray(source.root_body_pos_w)[:, 2]
+            threshold = root_z.min() + self.flight_z_fraction * (root_z.max() - root_z.min())
+            airborne = np.flatnonzero(root_z > threshold)
+            if airborne.size < 2:
+                raise ValueError(
+                    f"WBT flight metrics found <2 airborne frames above z={threshold:.3f} "
+                    f"in {self.motion_file!r}; adjust flight_z_fraction."
+                )
+            flight_start = int(airborne[0])
+            flight_end = int(airborne[-1])
+            env_fps = max(int(round(1.0 / env.cfg.ctrl_dt)), 1)
+            land_check_step = flight_end + env_fps // 2
+        else:
+            flight_start = 0
+            flight_end = -1
+            land_check_step = -1
+        phase_start_max = flight_start if self.start_before_flight_only else -1
         tracked_shape = (len(self.tracked_body_names), 3)
         return WbtMotionCommand(
             clip=source,
@@ -377,6 +531,21 @@ class WbtMotionCommandCfg(CommandCfg):
             curriculum_ema_alpha=np.float32(self.curriculum_ema_alpha),
             action_rate_scale=np.ones((1,), dtype=np.float32),
             curriculum_ep_len_ema=np.zeros((1,), dtype=np.float32),
+            phase_curriculum=self.phase_curriculum,
+            phase_curriculum_high=np.float32(self.phase_curriculum_high),
+            phase_curriculum_low=np.float32(self.phase_curriculum_low),
+            phase_curriculum_step=np.int64(self.phase_curriculum_step),
+            grounded_start_steps=grounded_steps,
+            phase_gate_index=np.full((1,), initial_gate, dtype=np.int64),
+            phase_start_min=np.full((1,), grounded_steps[initial_gate], dtype=np.int64),
+            flight_metrics=self.flight_metrics_enabled,
+            flight_start=np.int64(flight_start),
+            flight_end=np.int64(flight_end),
+            land_check_step=np.int64(land_check_step),
+            phase_start_max=np.int64(phase_start_max),
+            flight_max_z=np.zeros((env.num_envs, 1), dtype=np.float32),
+            flight_pitch_acc=np.zeros((env.num_envs, 1), dtype=np.float32),
+            landed_upright=np.zeros((env.num_envs, 1), dtype=bool),
         )
 
 

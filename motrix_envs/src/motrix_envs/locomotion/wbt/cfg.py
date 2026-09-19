@@ -75,7 +75,10 @@ from motrix_envs.locomotion.wbt.mdp.terminations import (
     BadBodyZTerminationCfg,
     BadDofPositionTerminationCfg,
     BadDofVelocityTerminationCfg,
+    BadMotionBodyPositionTerminationCfg,
+    BadRefFullOrientationTerminationCfg,
     BadRefOrientationTerminationCfg,
+    BadRefPositionTerminationCfg,
     BadRefZTerminationCfg,
 )
 
@@ -141,6 +144,15 @@ class TerminationsCfg(ManagerTerminationsCfg):
     bad_body_z: BadBodyZTerminationCfg = BadBodyZTerminationCfg(threshold=0.25)
     bad_dof_pos: BadDofPositionTerminationCfg = BadDofPositionTerminationCfg(threshold=0.5)
     bad_dof_vel: BadDofVelocityTerminationCfg = BadDofVelocityTerminationCfg(threshold=100.0)
+    # Holosoma-aligned tracking terminations. Disabled by default (threshold
+    # far above any real error); strict-tracking tasks opt in with real
+    # thresholds — see the G1 backflip preset.
+    bad_ref_pos: BadRefPositionTerminationCfg = BadRefPositionTerminationCfg(threshold=1.0e9)
+    bad_ref_full_ori: BadRefFullOrientationTerminationCfg = BadRefFullOrientationTerminationCfg(threshold=1.0e9)
+    bad_motion_body_pos: BadMotionBodyPositionTerminationCfg = BadMotionBodyPositionTerminationCfg(
+        threshold=1.0e9,
+        body_names=(),
+    )
 
 
 @configclass
@@ -244,6 +256,11 @@ class WbtEnvCfg(ManagerBasedEnvCfg):
         cfg.commands.motion.adaptive_sampling_enabled = False
         cfg.commands.motion.start_at_timestep_zero_prob = 1.0
         cfg.commands.motion.hold_at_clip_end = False
+        # The reverse start-frame curriculum is a training bootstrap: its gate
+        # keys off the episode-length EMA, which is zero at play startup, so a
+        # play env would stay clamped to the clip-tail standing frames forever.
+        # Play always demonstrates the full clip from frame zero.
+        cfg.commands.motion.phase_curriculum = False
         cfg.sim_reset.body_pos.noise_scale = 0.0
         cfg.sim_reset.body_rot.noise_scale = 0.0
         cfg.sim_reset.body_lin_vel.noise_scale = 0.0
