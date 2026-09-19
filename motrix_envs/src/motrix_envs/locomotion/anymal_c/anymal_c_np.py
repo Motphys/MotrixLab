@@ -23,7 +23,12 @@ from motrix_env_core.sim import (
     LinkQuaternionQuery,
     SensorValuesQuery,
 )
-from motrix_env_core.sim.write import BodyJointVelocityWrite, CtrlTargetsWrite, MocapPoseWrite
+from motrix_env_core.sim.write import (
+    BodyJointVelocityWrite,
+    CtrlTargetsWrite,
+    KinematicBodyPositionWrite,
+    KinematicBodyRotationWrite,
+)
 
 from .cfg import AnymalCEnvCfg
 
@@ -59,11 +64,18 @@ class AnymalCEnv(DirectEnv):
         self.sim_data = self.sim.compile_reads(_sim_data_queries(cfg))
         self._heading_writes = self.sim.write_compiler.compile(
             {
-                "robot": MocapPoseWrite(("robot_heading_arrow",)),
-                "desired": MocapPoseWrite(("desired_heading_arrow",)),
+                "robot_pos": KinematicBodyPositionWrite(("robot_heading_arrow",)),
+                "robot_rot": KinematicBodyRotationWrite(("robot_heading_arrow",)),
+                "desired_pos": KinematicBodyPositionWrite(("desired_heading_arrow",)),
+                "desired_rot": KinematicBodyRotationWrite(("desired_heading_arrow",)),
             },
         )
-        self._target_writes = self.sim.write_compiler.compile({"target": MocapPoseWrite(("target_marker",))})
+        self._target_writes = self.sim.write_compiler.compile(
+            {
+                "target_pos": KinematicBodyPositionWrite(("target_marker",)),
+                "target_rot": KinematicBodyRotationWrite(("target_marker",)),
+            }
+        )
         self._ctrl_writes = self.sim.write_compiler.compile({"ctrl": CtrlTargetsWrite()})
         self._reset_program = self.sim.write_compiler.compile(
             {
@@ -330,18 +342,16 @@ class AnymalCEnv(DirectEnv):
         )
         robot_arrow_pos = robot_pos.copy()
         robot_arrow_pos[:, 2] = arrow_height
-        robot_arrow_quat = quaternion.from_euler(0, 0, cur_yaw)
-        self._heading_writes.buffer("robot")[env_ids, 0] = np.concatenate(
-            [robot_arrow_pos, robot_arrow_quat], axis=1
-        ).astype(np.float32)
+        robot_arrow_quat = quaternion.from_euler(0, 0, cur_yaw).astype(np.float32)
+        self._heading_writes.buffer("robot_pos")[env_ids, 0] = robot_arrow_pos.astype(np.float32)
+        self._heading_writes.buffer("robot_rot")[env_ids, 0] = robot_arrow_quat
 
         des_yaw = np.where(
             np.linalg.norm(desired_vel_xy, axis=1) > 1e-6, np.arctan2(desired_vel_xy[:, 1], desired_vel_xy[:, 0]), 0.0
         )
-        desired_arrow_quat = quaternion.from_euler(0, 0, des_yaw)
-        self._heading_writes.buffer("desired")[env_ids, 0] = np.concatenate(
-            [robot_arrow_pos, desired_arrow_quat], axis=1
-        ).astype(np.float32)
+        desired_arrow_quat = quaternion.from_euler(0, 0, des_yaw).astype(np.float32)
+        self._heading_writes.buffer("desired_pos")[env_ids, 0] = robot_arrow_pos.astype(np.float32)
+        self._heading_writes.buffer("desired_rot")[env_ids, 0] = desired_arrow_quat
         # Both heading markers go to the backend in one crossing.
         self._heading_writes.execute(env_ids)
 
@@ -474,10 +484,9 @@ class AnymalCEnv(DirectEnv):
         arrow_pos = pose_commands.copy()
         arrow_pos[:, 2] = 0.05
         arrow_pos = np.column_stack([pose_commands[:, 0], pose_commands[:, 1], np.full((num_envs, 1), 0.5)])
-        arrow_quat = quaternion.from_euler(0, 0, pose_commands[:, 2])
-        self._target_writes.buffer("target")[env_ids, 0] = np.concatenate([arrow_pos, arrow_quat], axis=1).astype(
-            np.float32
-        )
+        arrow_quat = quaternion.from_euler(0, 0, pose_commands[:, 2]).astype(np.float32)
+        self._target_writes.buffer("target_pos")[env_ids, 0] = arrow_pos.astype(np.float32)
+        self._target_writes.buffer("target_rot")[env_ids, 0] = arrow_quat
         self._target_writes.execute(env_ids)
 
     def _compute_terminated(self, state: ArrayEnvState) -> ArrayEnvState:

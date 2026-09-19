@@ -12,13 +12,20 @@ from motrix_env_core.sim import (
     BodyJointPositionQuery,
     BodyJointPositionWrite,
     BodyJointVelocityQuery,
+    BodyJointVelocityWrite,
     DofPositionQuery,
     GeomLinearVelocityQuery,
     GeomPositionQuery,
     GeomQuaternionQuery,
     SitePositionQuery,
 )
-from motrix_env_core.sim.write import BodyJointVelocityWrite, CtrlTargetsWrite
+from motrix_env_core.sim.write import (
+    CtrlTargetsWrite,
+    JointAngularVelocityWrite,
+    JointPositionWrite,
+    JointQuaternionWrite,
+    JointVelocityWrite,
+)
 
 from .cfg import PegInsertEnvCfg
 
@@ -52,11 +59,15 @@ class PegInsertEnv(DirectEnv):
             {
                 "robot_position": BodyJointPositionWrite("base_link"),
                 "robot_velocity": BodyJointVelocityWrite("base_link"),
-                "peg_position": BodyJointPositionWrite("free_peg"),
-                "peg_velocity": BodyJointVelocityWrite("free_peg"),
+                "peg_translation": JointPositionWrite(("peg_x", "peg_y", "peg_z")),
+                "peg_translation_velocity": JointVelocityWrite(("peg_x", "peg_y", "peg_z")),
+                "peg_orientation": JointQuaternionWrite(("peg_rot",)),
+                "peg_angular_velocity": JointAngularVelocityWrite(("peg_rot",)),
             },
             reset=True,
         )
+        self._peg_reset_translation = self._reset_program.buffer("peg_translation")
+        self._peg_reset_orientation = self._reset_program.buffer("peg_orientation")[:, 0]
         self.default_joint_pos = self._cfg.init_state.default_joint_pos
 
         self._action_dim = 7
@@ -353,10 +364,9 @@ class PegInsertEnv(DirectEnv):
         robot_pos[row_ids] = 0.0
         robot_pos[row_ids, : self._num_dof_pos] = self._init_dof_pos
         self._reset_program.buffer("robot_velocity")[row_ids] = 0.0
-        peg_pos = self._reset_program.buffer("peg_position")
-        peg_pos[row_ids] = 0.0
-        peg_pos[row_ids, -1] = 1.0
-        self._reset_program.buffer("peg_velocity")[row_ids] = 0.0
+        self._peg_reset_translation[row_ids] = 0.0
+        self._peg_reset_orientation[row_ids] = 0.0
+        self._peg_reset_orientation[row_ids, 3] = 1.0  # identity quaternion (xyzw)
         self._reset_program.execute(row_ids)
         self.sim_data.execute(row_ids)
 
@@ -374,10 +384,9 @@ class PegInsertEnv(DirectEnv):
         robot_pos[row_ids] = 0.0
         robot_pos[row_ids, : self._num_dof_pos] = np.asarray(robot_dof_pos, dtype=np.float32)
         self._reset_program.buffer("robot_velocity")[row_ids] = 0.0
-        peg_pos[row_ids, :3] = np.stack([peg_x, peg_y, peg_z], axis=-1)
-        peg_pos[row_ids, 3:6] = 0.0
-        peg_pos[row_ids, 6] = 1.0
-        self._reset_program.buffer("peg_velocity")[row_ids] = 0.0
+        self._peg_reset_translation[row_ids] = np.stack([peg_x, peg_y, peg_z], axis=-1)
+        self._peg_reset_orientation[row_ids] = 0.0
+        self._peg_reset_orientation[row_ids, 3] = 1.0  # identity quaternion (xyzw)
         self._reset_program.execute(row_ids)
         self.sim_data.execute(row_ids)
 

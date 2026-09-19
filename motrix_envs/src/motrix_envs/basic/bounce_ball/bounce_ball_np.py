@@ -18,7 +18,12 @@ from motrix_env_core.sim import (
     GeomSpecsQuery,
     JointPositionWrite,
 )
-from motrix_env_core.sim.write import CtrlTargetsWrite, JointVelocityWrite, MocapPoseWrite
+from motrix_env_core.sim.write import (
+    CtrlTargetsWrite,
+    JointVelocityWrite,
+    KinematicBodyPositionWrite,
+    KinematicBodyRotationWrite,
+)
 
 from .cfg import BounceBallEnvCfg
 
@@ -40,8 +45,10 @@ class BounceBallEnv(DirectEnv):
         self.sim_data = self.sim.compile_reads(_SIM_DATA_QUERIES)
         self._marker_writes = self.sim.write_compiler.compile(
             {
-                "height": MocapPoseWrite(("target_height_marker",)),
-                "paddle": MocapPoseWrite(("paddle_home_marker",)),
+                "height_pos": KinematicBodyPositionWrite(("target_height_marker",)),
+                "height_rot": KinematicBodyRotationWrite(("target_height_marker",)),
+                "paddle_pos": KinematicBodyPositionWrite(("paddle_home_marker",)),
+                "paddle_rot": KinematicBodyRotationWrite(("paddle_home_marker",)),
             },
         )
         self._ctrl_writes = self.sim.write_compiler.compile({"ctrl": CtrlTargetsWrite()})
@@ -580,14 +587,20 @@ class BounceBallEnv(DirectEnv):
         target_marker_poses = np.tile(self._target_marker_base_pose, (num_reset, 1))
         target_marker_poses[:, 2] = new_target_heights + self._ball_radius  # Set z position
 
-        self._marker_writes.buffer("height")[env_ids, 0] = np.ascontiguousarray(target_marker_poses, dtype=np.float32)
-
-        # Update paddle home marker position
-        paddle_home_marker_poses = np.tile(self._paddle_home_marker_pose, (num_reset, 1))
+        self._marker_writes.buffer("height_pos")[env_ids, 0] = np.ascontiguousarray(
+            target_marker_poses[:, :3], dtype=np.float32
+        )
+        self._marker_writes.buffer("height_rot")[env_ids, 0] = np.ascontiguousarray(
+            target_marker_poses[:, 3:7], dtype=np.float32
+        )
 
         # Set paddle home marker mocap body pose
-        self._marker_writes.buffer("paddle")[env_ids, 0] = np.ascontiguousarray(
-            paddle_home_marker_poses, dtype=np.float32
+        paddle_home_marker_poses = np.tile(self._paddle_home_marker_pose, (num_reset, 1))
+        self._marker_writes.buffer("paddle_pos")[env_ids, 0] = np.ascontiguousarray(
+            paddle_home_marker_poses[:, :3], dtype=np.float32
+        )
+        self._marker_writes.buffer("paddle_rot")[env_ids, 0] = np.ascontiguousarray(
+            paddle_home_marker_poses[:, 3:7], dtype=np.float32
         )
         # Both markers go to the backend in one crossing.
         self._marker_writes.execute(env_ids)

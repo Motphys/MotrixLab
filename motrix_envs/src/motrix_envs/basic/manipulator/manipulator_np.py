@@ -19,7 +19,12 @@ from motrix_env_core.sim import (
     SitePositionQuery,
     SiteQuaternionQuery,
 )
-from motrix_env_core.sim.write import CtrlTargetsWrite, JointVelocityWrite, MocapPoseWrite
+from motrix_env_core.sim.write import (
+    CtrlTargetsWrite,
+    JointVelocityWrite,
+    KinematicBodyPositionWrite,
+    KinematicBodyRotationWrite,
+)
 from motrix_envs.basic.manipulator.cfg import BringBallCfg
 
 _ARM_JOINTS = (
@@ -106,7 +111,12 @@ class ManipulatorBase(DirectEnv):
         super().__init__(cfg, num_envs, backend=backend)
         self.model = self.sim.compile_model(_SIM_MODEL_QUERIES)
         self.sim_data = self.sim.compile_reads(_SIM_DATA_QUERIES)
-        self._target_writes = self.sim.write_compiler.compile({"target": MocapPoseWrite(("target_ball",))})
+        self._target_writes = self.sim.write_compiler.compile(
+            {
+                "target_pos": KinematicBodyPositionWrite(("target_ball",)),
+                "target_rot": KinematicBodyRotationWrite(("target_ball",)),
+            }
+        )
         self._ctrl_writes = self.sim.write_compiler.compile({"ctrl": CtrlTargetsWrite()})
         object_joints = ("ball_x", "ball_z", "ball_y")
         self._reset_program = self.sim.write_compiler.compile(
@@ -229,7 +239,8 @@ class ManipulatorBase(DirectEnv):
         pose[:, 2] = target_z
         pose[:, 3:7] = _quat_from_y_angle(target_angle)
         env_ids = np.asarray(env_ids, dtype=np.int64)
-        self._target_writes.buffer("target")[env_ids, 0] = pose
+        self._target_writes.buffer("target_pos")[env_ids, 0] = pose[:, :3]
+        self._target_writes.buffer("target_rot")[env_ids, 0] = pose[:, 3:7]
         self._target_writes.execute(env_ids)
 
     def _set_object_state(

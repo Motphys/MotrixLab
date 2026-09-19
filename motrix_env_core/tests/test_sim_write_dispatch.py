@@ -17,12 +17,13 @@ from motrix_env_core.sim.write import (
     BodyPositionWrite,
     BodyRotationWrite,
     CtrlTargetsWrite,
-    DofPositionWrite,
-    DofVelocityWrite,
     GeomFrictionWrite,
+    JointAngularVelocityWrite,
     JointPositionWrite,
+    JointQuaternionWrite,
     JointVelocityWrite,
-    MocapPoseWrite,
+    KinematicBodyPositionWrite,
+    KinematicBodyRotationWrite,
     SimWriteCompiler,
     WriteProgram,
 )
@@ -49,14 +50,6 @@ class _DispatchCompiler(SimWriteCompiler):
         del reset, forward_kinematics
         return _RecordingProgram()
 
-    def compile_dof_position(self, name, write) -> None:
-        del name, write
-        self.dispatched.append("dof_position")
-
-    def compile_dof_velocity(self, name, write) -> None:
-        del name, write
-        self.dispatched.append("dof_velocity")
-
     def compile_body_joint_position(self, name, write) -> None:
         del name, write
         self.dispatched.append("body_dof_position")
@@ -72,6 +65,14 @@ class _DispatchCompiler(SimWriteCompiler):
     def compile_joint_velocity(self, name, write) -> None:
         del name, write
         self.dispatched.append("joint_velocity")
+
+    def compile_joint_quaternion(self, name, write) -> None:
+        del name, write
+        self.dispatched.append("joint_quaternion")
+
+    def compile_joint_angular_velocity(self, name, write) -> None:
+        del name, write
+        self.dispatched.append("joint_angular_velocity")
 
     def compile_ctrl_targets(self, name, write) -> None:
         del name, write
@@ -93,9 +94,13 @@ class _DispatchCompiler(SimWriteCompiler):
         del name, write
         self.dispatched.append("body_angular_velocity")
 
-    def compile_mocap_pose(self, name, write) -> None:
+    def compile_kinematic_body_position(self, name, write) -> None:
         del name, write
-        self.dispatched.append("mocap")
+        self.dispatched.append("kinematic_body_position")
+
+    def compile_kinematic_body_rotation(self, name, write) -> None:
+        del name, write
+        self.dispatched.append("kinematic_body_rotation")
 
     def compile_actuator_kp(self, name, write) -> None:
         del name, write
@@ -121,18 +126,19 @@ class _DispatchCompiler(SimWriteCompiler):
 def test_sim_write_compiler_dispatches_each_write_to_its_typed_compiler() -> None:
     compiler = _DispatchCompiler()
 
-    DofPositionWrite().compile_with(compiler, "write")
-    DofVelocityWrite().compile_with(compiler, "write")
     BodyJointPositionWrite("body").compile_with(compiler, "write")
     BodyJointVelocityWrite("body").compile_with(compiler, "write")
     JointPositionWrite(("joint",)).compile_with(compiler, "write")
     JointVelocityWrite(("joint",)).compile_with(compiler, "write")
+    JointQuaternionWrite(("joint",)).compile_with(compiler, "write")
+    JointAngularVelocityWrite(("joint",)).compile_with(compiler, "write")
     CtrlTargetsWrite().compile_with(compiler, "write")
     BodyPositionWrite(("body",)).compile_with(compiler, "write")
     BodyRotationWrite(("body",)).compile_with(compiler, "write")
     BodyLinearVelocityWrite(("body",)).compile_with(compiler, "write")
     BodyAngularVelocityWrite(("body",)).compile_with(compiler, "write")
-    MocapPoseWrite(("body",)).compile_with(compiler, "write")
+    KinematicBodyPositionWrite(("body",)).compile_with(compiler, "write")
+    KinematicBodyRotationWrite(("body",)).compile_with(compiler, "write")
     ActuatorKpWrite(("actuator",)).compile_with(compiler, "write")
     ActuatorDampingWrite(("actuator",)).compile_with(compiler, "write")
     BodyMassWrite(("link",)).compile_with(compiler, "write")
@@ -140,18 +146,19 @@ def test_sim_write_compiler_dispatches_each_write_to_its_typed_compiler() -> Non
     GeomFrictionWrite(("geom",)).compile_with(compiler, "write")
 
     assert compiler.dispatched == [
-        "dof_position",
-        "dof_velocity",
         "body_dof_position",
         "body_dof_velocity",
         "joint_position",
         "joint_velocity",
+        "joint_quaternion",
+        "joint_angular_velocity",
         "ctrl",
         "body_position",
         "body_rotation",
         "body_linear_velocity",
         "body_angular_velocity",
-        "mocap",
+        "kinematic_body_position",
+        "kinematic_body_rotation",
         "kp",
         "damping",
         "mass",
@@ -164,10 +171,10 @@ def test_compile_dispatches_every_write_in_order_and_builds_one_program() -> Non
     compiler = _DispatchCompiler()
 
     program = compiler.compile(
-        {"a": DofPositionWrite(), "b": CtrlTargetsWrite(), "c": MocapPoseWrite(("body",))},
+        {"a": JointQuaternionWrite(("joint",)), "b": CtrlTargetsWrite(), "c": KinematicBodyRotationWrite(("body",))},
         reset=True,
         forward_kinematics=False,
     )
 
     assert isinstance(program, WriteProgram)
-    assert compiler.dispatched == ["dof_position", "ctrl", "mocap"]
+    assert compiler.dispatched == ["joint_quaternion", "ctrl", "kinematic_body_rotation"]

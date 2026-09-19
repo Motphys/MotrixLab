@@ -314,7 +314,7 @@ class MotrixSimBackend(SimBackend):
         self._data: mtx.SceneData = mtx.SceneData(self._model, batch=[num_envs])
         self._num_envs = num_envs
         self._model_compiler = MotrixSimModelCompiler(self._model)
-        self._write_compiler = MotrixSimWriteCompiler(self._model, self._data, self._masked_rows)
+        self._write_compiler = MotrixSimWriteCompiler(self._model, self._data)
 
     @property
     def model_compiler(self) -> SimModelCompiler:
@@ -354,11 +354,6 @@ class MotrixSimBackend(SimBackend):
 
     def step(self, substeps: int) -> None:
         self._model.step_n(self._data, substeps)
-
-    def _masked_rows(self, env_ids: IntArray) -> mtx.SceneData:
-        mask = np.zeros((self._data.shape[0],), dtype=bool)
-        mask[env_ids] = True
-        return self._data[mask]
 
     def sample_terrain_height(self, geom_name: str, env_ids: IntArray, xy: FloatArray) -> FloatArray:
         geom = self._model.get_geom(geom_name)

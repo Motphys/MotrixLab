@@ -32,22 +32,6 @@ class SimWrite(abc.ABC):
 
 
 @dataclass(frozen=True)
-class DofPositionWrite(SimWrite):
-    """Complete canonical DOF position write."""
-
-    def compile_with(self, compiler: SimWriteCompiler, name: str) -> None:
-        compiler.compile_dof_position(name, self)
-
-
-@dataclass(frozen=True)
-class DofVelocityWrite(SimWrite):
-    """Complete canonical DOF velocity write."""
-
-    def compile_with(self, compiler: SimWriteCompiler, name: str) -> None:
-        compiler.compile_dof_velocity(name, self)
-
-
-@dataclass(frozen=True)
 class BodyJointPositionWrite(SimWrite):
     """One body's articulated-joint position write."""
 
@@ -85,6 +69,29 @@ class JointVelocityWrite(SimWrite):
 
     def compile_with(self, compiler: SimWriteCompiler, name: str) -> None:
         compiler.compile_joint_velocity(name, self)
+
+
+@dataclass(frozen=True)
+class JointQuaternionWrite(SimWrite):
+    """Local orientation quaternions (xyzw) of declared ball joints: ``(N, J, 4)``.
+
+    The backend normalizes each quaternion on write.
+    """
+
+    joints: tuple[str, ...]
+
+    def compile_with(self, compiler: SimWriteCompiler, name: str) -> None:
+        compiler.compile_joint_quaternion(name, self)
+
+
+@dataclass(frozen=True)
+class JointAngularVelocityWrite(SimWrite):
+    """Local angular velocities of declared ball joints: ``(N, J, 3)``."""
+
+    joints: tuple[str, ...]
+
+    def compile_with(self, compiler: SimWriteCompiler, name: str) -> None:
+        compiler.compile_joint_angular_velocity(name, self)
 
 
 @dataclass(frozen=True)
@@ -143,13 +150,23 @@ class BodyAngularVelocityWrite(SimWrite):
 
 
 @dataclass(frozen=True)
-class MocapPoseWrite(SimWrite):
-    """Mocap body poses in declared order: ``(N, B, 7)`` float32."""
+class KinematicBodyPositionWrite(SimWrite):
+    """Kinematic body world positions in declared order: ``(N, B, 3)`` float32."""
 
     bodies: tuple[str, ...]
 
     def compile_with(self, compiler: SimWriteCompiler, name: str) -> None:
-        compiler.compile_mocap_pose(name, self)
+        compiler.compile_kinematic_body_position(name, self)
+
+
+@dataclass(frozen=True)
+class KinematicBodyRotationWrite(SimWrite):
+    """Kinematic body world quaternions in declared order: ``(N, B, 4)`` float32."""
+
+    bodies: tuple[str, ...]
+
+    def compile_with(self, compiler: SimWriteCompiler, name: str) -> None:
+        compiler.compile_kinematic_body_rotation(name, self)
 
 
 @dataclass(frozen=True)
@@ -240,14 +257,6 @@ class SimWriteCompiler(abc.ABC):
         """Assemble the program from the ops recorded during dispatch."""
 
     @abc.abstractmethod
-    def compile_dof_position(self, name: str, write: DofPositionWrite) -> None:
-        """Record a complete canonical DOF position write."""
-
-    @abc.abstractmethod
-    def compile_dof_velocity(self, name: str, write: DofVelocityWrite) -> None:
-        """Record a complete canonical DOF velocity write."""
-
-    @abc.abstractmethod
     def compile_body_joint_position(self, name: str, write: BodyJointPositionWrite) -> None:
         """Record one body's articulated DOF position write."""
 
@@ -262,6 +271,14 @@ class SimWriteCompiler(abc.ABC):
     @abc.abstractmethod
     def compile_joint_velocity(self, name: str, write: JointVelocityWrite) -> None:
         """Record named one-DOF joint velocity writes."""
+
+    @abc.abstractmethod
+    def compile_joint_quaternion(self, name: str, write: JointQuaternionWrite) -> None:
+        """Record ball-joint local orientation writes."""
+
+    @abc.abstractmethod
+    def compile_joint_angular_velocity(self, name: str, write: JointAngularVelocityWrite) -> None:
+        """Record ball-joint local angular velocity writes."""
 
     @abc.abstractmethod
     def compile_ctrl_targets(self, name: str, write: CtrlTargetsWrite) -> None:
@@ -284,8 +301,12 @@ class SimWriteCompiler(abc.ABC):
         """Record floating-body world angular velocity writes."""
 
     @abc.abstractmethod
-    def compile_mocap_pose(self, name: str, write: MocapPoseWrite) -> None:
-        """Record mocap-body pose writes."""
+    def compile_kinematic_body_position(self, name: str, write: KinematicBodyPositionWrite) -> None:
+        """Record kinematic-body world position writes."""
+
+    @abc.abstractmethod
+    def compile_kinematic_body_rotation(self, name: str, write: KinematicBodyRotationWrite) -> None:
+        """Record kinematic-body world rotation writes."""
 
     @abc.abstractmethod
     def compile_actuator_kp(self, name: str, write: ActuatorKpWrite) -> None:

@@ -50,7 +50,7 @@ from motrix_env_core.numba.manager.dispatch import dispatch
 from motrix_env_core.numba.manager.observations import create_observation_groups
 from motrix_env_core.numba.manager.rewards import create_reward_terms
 from motrix_env_core.numba.manager.terminations import TerminationManager
-from motrix_env_core.sim import DofPositionWrite
+from motrix_env_core.sim.write import CtrlTargetsWrite
 
 
 @kernel_data
@@ -352,14 +352,13 @@ class _ManagerEnv(ManagerEnv[EnvCfg]):
 
 @dispatch
 def _recording_reset(ctx: ManagerContext, sim_writes: Map[np.ndarray]) -> None:
-    dof_pos = sim_writes["dof_pos"]
-    dof_pos[:] = 0.0
+    sim_writes["ctrl"][:] = 0.0
 
 
 @dispatch
 def _noop_reset(ctx: ManagerContext, sim_writes: Map[np.ndarray]) -> None:
     _ = ctx
-    sim_writes["dof_pos"][:] = 0.0
+    sim_writes["ctrl"][:] = 0.0
 
 
 @configclass(kw_only=True)
@@ -368,14 +367,14 @@ class _DescriptorResetTermCfg(ResetTermCfg):
 
     def __call__(self, env: ManagerEnv) -> ResetTerm:
         del env
-        return ResetTerm(_noop_reset, writes={"dof_pos": DofPositionWrite()})
+        return ResetTerm(_noop_reset, writes={"ctrl": CtrlTargetsWrite()})
 
 
 @configclass
 class _RecordingResetTermCfg(ResetTermCfg):
     def __call__(self, env: ManagerEnv) -> ResetTerm:
         del env
-        return ResetTerm(_recording_reset, writes={"dof_pos": DofPositionWrite()})
+        return ResetTerm(_recording_reset, writes={"ctrl": CtrlTargetsWrite()})
 
 
 @configclass

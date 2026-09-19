@@ -99,8 +99,8 @@ url = "https://download.pytorch.org/whl/rocm7.2"
 explicit = true
 
 [[tool.uv.index]]
-name = "motphys-dev"
-url = "https://pypi.motphys.com/simple"
+name = "pypi"
+url = "https://pypi.org/simple"
 
 [tool.uv.sources]
 motrix-env-core = { workspace = true }

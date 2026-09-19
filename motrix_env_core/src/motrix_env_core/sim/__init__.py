@@ -58,8 +58,6 @@ from motrix_env_core.sim.write import (
     BodyLinearVelocityWrite,
     BodyPositionWrite,
     BodyRotationWrite,
-    DofPositionWrite,
-    DofVelocityWrite,
     JointPositionWrite,
     JointVelocityWrite,
 )
@@ -89,9 +87,7 @@ __all__ = [
     "BodyMassQuery",
     "DofPositionLimitsQuery",
     "DofPositionQuery",
-    "DofPositionWrite",
     "DofVelocityQuery",
-    "DofVelocityWrite",
     "GeomFrictionQuery",
     "GeomLinearVelocityQuery",
     "GeomSpec",

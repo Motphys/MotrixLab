@@ -3,107 +3,79 @@
 
 """Execution-level behavior of compiled MotrixSim write programs."""
 
-import numpy as np
+import numpy
+import pytest
 
-from motrix_env_motrixsim.write_compiler import _CompiledWrite, _MotrixSimWriteProgram
-
-
-class _Model:
-    num_dof_pos = 0
-    num_dof_vel = 0
-
-    def __init__(self) -> None:
-        self.forward_kinematic_rows = []
-
-    def compute_init_dof_pos(self) -> np.ndarray:
-        return np.zeros((0,), dtype=np.float32)
-
-    def forward_kinematic(self, rows) -> None:
-        self.forward_kinematic_rows.append(rows)
+from motrix_env_motrixsim.write_compiler import _MotrixSimWriteProgram
 
 
 class _Data:
     shape = (3,)
 
 
-class _ResetData(_Data):
+class _NativeProgram:
     def __init__(self) -> None:
-        self.reset_calls = []
+        self.execute_calls = []
 
-    def reset(self, model, **kwargs) -> None:
-        self.reset_calls.append((model, kwargs))
-
-
-class _Op:
-    def __init__(self) -> None:
-        self.rows = []
-
-    def __call__(self, buffers, idx, rows) -> None:
-        del buffers, idx
-        self.rows.append(rows)
+    def execute(self, data, env_ids=None) -> None:
+        self.execute_calls.append((data, None if env_ids is None else tuple(env_ids)))
 
 
-def test_write_program_refreshes_kinematics_once_after_all_ops() -> None:
-    model = _Model()
+def _program(native: _NativeProgram | None = None, data: _Data | None = None) -> _MotrixSimWriteProgram:
+    return _MotrixSimWriteProgram(data if data is not None else _Data(), {}, native)
+
+
+def test_write_program_executes_native_program_with_selected_ids() -> None:
+    native = _NativeProgram()
     data = _Data()
-    first = _Op()
-    second = _Op()
-    program = _MotrixSimWriteProgram(
-        model,
-        data,
-        lambda env_ids: ("rows", tuple(env_ids)),
-        {},
-        [(_CompiledWrite(first), {}), (_CompiledWrite(second), {})],
-        reset=False,
-        refresh_kinematics=True,
-    )
+    program = _program(native, data)
 
-    program.execute(np.asarray([2, 0], dtype=np.int64))
+    program.execute(numpy.asarray([2, 0], dtype=numpy.int64))
 
-    expected_rows = ("rows", (0, 2))
-    assert first.rows == [expected_rows]
-    assert second.rows == [expected_rows]
-    assert model.forward_kinematic_rows == [expected_rows]
+    assert native.execute_calls == [(data, (0, 2))]
 
 
-def test_reset_program_passes_compile_time_kinematics_flag_to_native_reset() -> None:
-    model = _Model()
-    data = _ResetData()
-    program = _MotrixSimWriteProgram(model, data, lambda env_ids: env_ids, {}, [], reset=True, refresh_kinematics=False)
+def test_write_program_executes_full_batch_without_env_ids() -> None:
+    native = _NativeProgram()
+    data = _Data()
+    program = _program(native, data)
 
     program.execute()
 
-    assert data.reset_calls == [(model, {"forward_kinematic": False})]
-    assert model.forward_kinematic_rows == []
+    assert native.execute_calls == [(data, None)]
 
 
-def test_reset_program_applies_non_fused_writes_after_native_reset_and_refreshes_once() -> None:
-    model = _Model()
-    data = _ResetData()
-    op = _Op()
-    program = _MotrixSimWriteProgram(
-        model,
-        data,
-        lambda env_ids: env_ids,
-        {},
-        [(_CompiledWrite(op), {})],
-        reset=True,
-        refresh_kinematics=True,
-    )
+def test_write_program_without_native_plan_is_a_no_op() -> None:
+    program = _program()
 
-    program.execute()
-
-    assert data.reset_calls == [(model, {"forward_kinematic": False})]
-    assert op.rows == [data]
-    assert model.forward_kinematic_rows == [data]
+    program.execute(numpy.asarray([0, 1], dtype=numpy.int64))
 
 
-def test_write_program_skips_kinematic_refresh_when_no_op_requires_it() -> None:
-    model = _Model()
-    program = _MotrixSimWriteProgram(
-        model, _Data(), lambda env_ids: env_ids, {}, [], reset=False, refresh_kinematics=False
-    )
+@pytest.mark.parametrize(
+    "env_ids",
+    [
+        numpy.asarray([0], dtype=numpy.int32),
+        numpy.asarray([[0, 1]], dtype=numpy.int64),
+        [0, 1],
+    ],
+)
+def test_write_program_rejects_non_int64_1d_ids(env_ids) -> None:
+    with pytest.raises(TypeError, match="int64 ndarray"):
+        _program().execute(env_ids)
 
-    program.execute()
 
-    assert model.forward_kinematic_rows == []
+def test_write_program_rejects_out_of_range_ids() -> None:
+    with pytest.raises(IndexError, match="out of range"):
+        _program().execute(numpy.asarray([3], dtype=numpy.int64))
+
+
+def test_write_program_rejects_duplicate_ids() -> None:
+    with pytest.raises(ValueError, match="duplicates"):
+        _program().execute(numpy.asarray([0, 0], dtype=numpy.int64))
+
+
+def test_write_program_skips_empty_selection() -> None:
+    native = _NativeProgram()
+    _program(native).execute(numpy.asarray([], dtype=numpy.int64))
+
+    assert native.execute_calls == []

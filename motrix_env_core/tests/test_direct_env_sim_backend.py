@@ -17,7 +17,6 @@ from motrix_env_core.direct.env import ArrayEnvState, DirectEnv, DirectEnvCfg
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     DofPositionQuery,
-    DofPositionWrite,
     DofVelocityQuery,
     ModelQuery,
     PhysicsReadProgram,
@@ -25,7 +24,7 @@ from motrix_env_core.sim import (
 from motrix_env_core.sim.backend import SimBackend
 from motrix_env_core.sim.model import ActuatorSpec, ActuatorType, SimModel
 from motrix_env_core.sim.registry import register_sim_backend
-from motrix_env_core.sim.write import CtrlTargetsWrite, DofVelocityWrite, WriteProgram
+from motrix_env_core.sim.write import CtrlTargetsWrite, JointPositionWrite, JointVelocityWrite, WriteProgram
 
 
 def _core_model() -> SimModel:
@@ -47,9 +46,9 @@ class _FakeWriteProgram(WriteProgram):
         for name, write in writes.items():
             if isinstance(write, CtrlTargetsWrite):
                 self._buffers[name] = np.zeros((backend.num_envs, backend.num_actuators), dtype=np.float32)
-            elif isinstance(write, DofPositionWrite):
+            elif isinstance(write, JointPositionWrite):
                 self._buffers[name] = np.zeros_like(backend.dof_pos)
-            elif isinstance(write, DofVelocityWrite):
+            elif isinstance(write, JointVelocityWrite):
                 self._buffers[name] = np.zeros_like(backend.dof_vel)
 
     def buffer(self, name: str) -> np.ndarray:
@@ -189,7 +188,11 @@ class _FakeDirectEnv(DirectEnv[_FakeDirectCfg]):
         )
         self._ctrl_writes = self.sim.compile_writes({"ctrl": CtrlTargetsWrite()})
         self._reset_program = self.sim.compile_writes(
-            {"state_position": DofPositionWrite(), "state_velocity": DofVelocityWrite()}, reset=True
+            {
+                "state_position": JointPositionWrite(("j0", "j1")),
+                "state_velocity": JointVelocityWrite(("j0", "j1")),
+            },
+            reset=True,
         )
         self._action_space = gym.spaces.Box(-1.0, 1.0, (2,), dtype=np.float32)
         self._observation_space = gym.spaces.Box(-np.inf, np.inf, (6,), dtype=np.float32)

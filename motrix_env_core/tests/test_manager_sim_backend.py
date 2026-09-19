@@ -38,7 +38,7 @@ from motrix_env_core.sim import (
 from motrix_env_core.sim.backend import SimBackend
 from motrix_env_core.sim.model import ActuatorSpec, ActuatorType, SimModel
 from motrix_env_core.sim.registry import register_sim_backend
-from motrix_env_core.sim.write import CtrlTargetsWrite, DofPositionWrite, DofVelocityWrite, WriteProgram
+from motrix_env_core.sim.write import CtrlTargetsWrite, WriteProgram
 
 _ACTUATORS = (
     ActuatorSpec(
@@ -82,10 +82,6 @@ class _FakeWriteProgram(WriteProgram):
                 )
                 self._routes[name] = route
                 self._buffers[name] = np.zeros((backend.num_envs, len(route)), dtype=np.float32)
-            elif isinstance(write, DofPositionWrite):
-                self._buffers[name] = np.zeros_like(backend.dof_pos)
-            elif isinstance(write, DofVelocityWrite):
-                self._buffers[name] = np.zeros_like(backend.dof_vel)
 
     def buffer(self, name: str) -> np.ndarray:
         return self._buffers[name]

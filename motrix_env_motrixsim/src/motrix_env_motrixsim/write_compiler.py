@@ -3,12 +3,11 @@
 
 """MotrixSim compiler and executable program for declarative sim writes."""
 
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
 
 import motrixsim as mtx
 import numpy as np
+from motrixsim import write as mtx_write
 
 from motrix_env_core.sim.write import (
     ActuatorDampingWrite,
@@ -22,116 +21,142 @@ from motrix_env_core.sim.write import (
     BodyPositionWrite,
     BodyRotationWrite,
     CtrlTargetsWrite,
-    DofPositionWrite,
-    DofVelocityWrite,
     GeomFrictionWrite,
+    JointAngularVelocityWrite,
     JointPositionWrite,
+    JointQuaternionWrite,
     JointVelocityWrite,
-    MocapPoseWrite,
+    KinematicBodyPositionWrite,
+    KinematicBodyRotationWrite,
     SimWriteCompiler,
     WriteProgram,
 )
 
 
-class _WriteOp(Protocol):
-    def alloc(self, num_envs: int) -> np.ndarray: ...
-
-    def __call__(self, buffers, idx: np.ndarray | slice, rows: mtx.SceneData) -> None: ...
-
-
-class _ResetPatchOp(Protocol):
-    def apply(self, dof_pos, dof_vel, buffers, env_ids) -> None: ...
-
-
 @dataclass(frozen=True)
 class _CompiledWrite:
-    op: _WriteOp
-    reset_op: _ResetPatchOp | None = None
     pos_indices: np.ndarray | None = None
     vel_indices: np.ndarray | None = None
     refresh_kinematics: bool = False
+    native: mtx_write.WriteSource | None = None
+    ctrl_indices: np.ndarray | None = None
 
 
 class MotrixSimWriteCompiler(SimWriteCompiler):
-    """Compile neutral write declarations against one MotrixSim model and data batch."""
+    """Compile neutral write declarations against one MotrixSim model and data batch.
 
-    def __init__(
-        self,
-        model: mtx.SceneModel,
-        data: mtx.SceneData,
-        masked_rows: Callable[[np.ndarray], mtx.SceneData],
-    ) -> None:
+    Every write compiles into one native write plan; reset and
+    forward-kinematics behavior are baked into the plan at compile time.
+    """
+
+    def __init__(self, model: mtx.SceneModel, data: mtx.SceneData) -> None:
         self._model = model
         self._data = data
-        self._masked_rows = masked_rows
         self._pending: list[tuple[str, _CompiledWrite]] = []
 
     def _begin_compile(self) -> None:
         self._pending = []
 
     def _build_program(self, *, reset: bool, forward_kinematics: bool) -> WriteProgram:
-        buffers: dict[str, np.ndarray] = {}
-        ops: list[tuple[_CompiledWrite, np.ndarray]] = []
+        native_fields: dict[str, mtx_write.WriteSource] = {}
         ctrl_owners: dict[int, str] = {}
         claimed_pos: dict[int, str] = {}
         claimed_vel: dict[int, str] = {}
         refresh_kinematics = False
         for name, compiled in self._pending:
-            if isinstance(compiled.op, _CtrlOp):
-                self._claim_ctrl_targets(name, compiled.op.indices, ctrl_owners)
+            if compiled.ctrl_indices is not None:
+                self._claim_ctrl_targets(name, compiled.ctrl_indices, ctrl_owners)
             if compiled.pos_indices is not None:
                 self._claim(name, compiled.pos_indices, claimed_pos, "position")
             if compiled.vel_indices is not None:
                 self._claim(name, compiled.vel_indices, claimed_vel, "velocity")
-            sub = compiled.op.alloc(self._data.shape[0])
-            ops.append((compiled, sub))
-            buffers[name] = sub
+            native_fields[name] = compiled.native
             refresh_kinematics |= compiled.refresh_kinematics
-        return _MotrixSimWriteProgram(
-            self._model,
-            self._data,
-            self._masked_rows,
-            buffers,
-            ops,
-            reset=reset,
-            refresh_kinematics=forward_kinematics and (reset or refresh_kinematics),
-        )
-
-    def compile_dof_position(self, name: str, write: DofPositionWrite) -> None:
-        del write
-        indices = np.arange(self._model.num_dof_pos, dtype=np.int64)
-        op = _DofChannelOp(indices)
-        self._pending.append((name, _CompiledWrite(op, op, pos_indices=indices, refresh_kinematics=True)))
-
-    def compile_dof_velocity(self, name: str, write: DofVelocityWrite) -> None:
-        del write
-        indices = np.arange(self._model.num_dof_vel, dtype=np.int64)
-        op = _DofChannelOp(indices, velocity=True)
-        self._pending.append((name, _CompiledWrite(op, op, vel_indices=indices)))
+        buffers: dict[str, np.ndarray] = {}
+        native_program = None
+        if native_fields:
+            # Reset (restore defaults, then apply the writes) and the FK pass
+            # are baked into the native plan at compile time.
+            refresh = forward_kinematics and (reset or refresh_kinematics)
+            native_program = self._model.compile_write(native_fields, reset=reset, forward_kinematic=refresh).allocate(
+                self._data
+            )
+            for name in native_fields:
+                buffers[name] = native_program[name]
+        return _MotrixSimWriteProgram(self._data, buffers, native_program)
 
     def compile_body_joint_position(self, name: str, write: BodyJointPositionWrite) -> None:
-        indices = np.asarray(_named_body(self._model, write.body).get_dof_pos_indices(False), dtype=np.int64)
-        op = _DofChannelOp(indices)
-        self._pending.append((name, _CompiledWrite(op, op, pos_indices=indices, refresh_kinematics=True)))
+        body = _named_body(self._model, write.body)
+        joints = list(body.joints)
+        indices = np.asarray(body.get_dof_pos_indices(False), dtype=np.int64)
+        self._require_single_dof_body(name, write.body, joints, "position")
+        self._pending.append(
+            (
+                name,
+                _CompiledWrite(
+                    native=mtx_write.BodyJointPosition([joint.name for joint in joints]),
+                    pos_indices=indices,
+                    refresh_kinematics=True,
+                ),
+            )
+        )
 
     def compile_body_joint_velocity(self, name: str, write: BodyJointVelocityWrite) -> None:
-        indices = np.asarray(_named_body(self._model, write.body).get_dof_vel_indices(False), dtype=np.int64)
-        op = _DofChannelOp(indices, velocity=True)
-        self._pending.append((name, _CompiledWrite(op, op, vel_indices=indices)))
+        body = _named_body(self._model, write.body)
+        joints = list(body.joints)
+        indices = np.asarray(body.get_dof_vel_indices(False), dtype=np.int64)
+        self._require_single_dof_body(name, write.body, joints, "velocity")
+        self._pending.append(
+            (
+                name,
+                _CompiledWrite(
+                    native=mtx_write.BodyJointVelocity([joint.name for joint in joints]),
+                    vel_indices=indices,
+                ),
+            )
+        )
 
     def compile_joint_position(self, name: str, write: JointPositionWrite) -> None:
-        indices = np.asarray([joint.dof_pos_index for joint in self._joints(name, write.joints)], dtype=np.int64)
-        op = _DofChannelOp(indices)
-        self._pending.append((name, _CompiledWrite(op, op, pos_indices=indices, refresh_kinematics=True)))
+        joints = self._joints(name, write.joints)
+        indices = np.asarray([joint.dof_pos_index for joint in joints], dtype=np.int64)
+        self._pending.append(
+            (
+                name,
+                _CompiledWrite(
+                    native=mtx_write.BodyJointPosition([joint.name for joint in joints]),
+                    pos_indices=indices,
+                    refresh_kinematics=True,
+                ),
+            )
+        )
 
     def compile_joint_velocity(self, name: str, write: JointVelocityWrite) -> None:
-        indices = np.asarray([joint.dof_vel_index for joint in self._joints(name, write.joints)], dtype=np.int64)
-        op = _DofChannelOp(indices, velocity=True)
-        self._pending.append((name, _CompiledWrite(op, op, vel_indices=indices)))
+        joints = self._joints(name, write.joints)
+        indices = np.asarray([joint.dof_vel_index for joint in joints], dtype=np.int64)
+        self._pending.append(
+            (
+                name,
+                _CompiledWrite(
+                    native=mtx_write.BodyJointVelocity([joint.name for joint in joints]),
+                    vel_indices=indices,
+                ),
+            )
+        )
+
+    def compile_joint_quaternion(self, name: str, write: JointQuaternionWrite) -> None:
+        self._ball_joints(name, write.joints)
+        self._pending.append(
+            (name, _CompiledWrite(native=mtx_write.JointQuaternion(list(write.joints)), refresh_kinematics=True))
+        )
+
+    def compile_joint_angular_velocity(self, name: str, write: JointAngularVelocityWrite) -> None:
+        self._ball_joints(name, write.joints)
+        self._pending.append((name, _CompiledWrite(native=mtx_write.JointAngularVelocity(list(write.joints)))))
 
     def compile_ctrl_targets(self, name: str, write: CtrlTargetsWrite) -> None:
         if write.actuators is None:
             indices = np.arange(self._model.num_actuators, dtype=np.int64)
+            selection = None
         else:
             if not write.actuators:
                 raise ValueError(f"CtrlTargetsWrite {name!r} actuator names must not be empty.")
@@ -140,74 +165,94 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
             indices = np.asarray(
                 [_named_actuator(self._model, actuator).index for actuator in write.actuators], dtype=np.int64
             )
-        self._pending.append((name, _CompiledWrite(_CtrlOp(indices))))
+            selection = list(write.actuators)
+        self._pending.append((name, _CompiledWrite(native=mtx_write.ActuatorCtrls(selection), ctrl_indices=indices)))
 
     def compile_body_position(self, name: str, write: BodyPositionWrite) -> None:
         bases = self._floating_bases(name, write.bodies, type(write).__name__)
         indices = np.asarray([base.dof_pos_indices[:3] for base in bases], dtype=np.int64)
-        op = _MultiTargetOp(bases, "set_translation", 3)
         self._pending.append(
             (
                 name,
-                _CompiledWrite(op, _DofComponentPatchOp(indices), pos_indices=indices.ravel(), refresh_kinematics=True),
+                _CompiledWrite(
+                    pos_indices=indices.ravel(),
+                    refresh_kinematics=True,
+                    native=mtx_write.BodyPosition(list(write.bodies)),
+                ),
             )
         )
 
     def compile_body_rotation(self, name: str, write: BodyRotationWrite) -> None:
         bases = self._floating_bases(name, write.bodies, type(write).__name__)
         indices = np.asarray([base.dof_pos_indices[3:] for base in bases], dtype=np.int64)
-        op = _MultiTargetOp(bases, "set_rotation", 4, contiguous=True)
         self._pending.append(
             (
                 name,
-                _CompiledWrite(op, _DofComponentPatchOp(indices), pos_indices=indices.ravel(), refresh_kinematics=True),
+                _CompiledWrite(
+                    pos_indices=indices.ravel(),
+                    refresh_kinematics=True,
+                    native=mtx_write.BodyRotation(list(write.bodies)),
+                ),
             )
         )
 
     def compile_body_linear_velocity(self, name: str, write: BodyLinearVelocityWrite) -> None:
         bases = self._floating_bases(name, write.bodies, type(write).__name__)
         indices = np.asarray([base.dof_vel_indices[:3] for base in bases], dtype=np.int64)
-        op = _MultiTargetOp(bases, "set_global_linear_velocity", 3)
         self._pending.append(
-            (name, _CompiledWrite(op, _DofComponentPatchOp(indices, velocity=True), vel_indices=indices.ravel()))
+            (
+                name,
+                _CompiledWrite(
+                    vel_indices=indices.ravel(),
+                    native=mtx_write.BodyLinearVelocity(list(write.bodies)),
+                ),
+            )
         )
 
     def compile_body_angular_velocity(self, name: str, write: BodyAngularVelocityWrite) -> None:
         bases = self._floating_bases(name, write.bodies, type(write).__name__)
         indices = np.asarray([base.dof_vel_indices[3:] for base in bases], dtype=np.int64)
-        op = _MultiTargetOp(bases, "set_global_angular_velocity", 3)
         self._pending.append(
-            (name, _CompiledWrite(op, _DofComponentPatchOp(indices, velocity=True), vel_indices=indices.ravel()))
+            (
+                name,
+                _CompiledWrite(
+                    vel_indices=indices.ravel(),
+                    native=mtx_write.BodyAngularVelocity(list(write.bodies)),
+                ),
+            )
         )
 
-    def compile_mocap_pose(self, name: str, write: MocapPoseWrite) -> None:
-        bodies = self._targets(name, write.bodies, "body", _named_body)
-        mocaps = []
-        for body_name, body in zip(write.bodies, bodies):
-            if body.mocap is None:
-                raise ValueError(f"MocapPoseWrite body {body_name!r} is not a mocap body.")
-            mocaps.append(body.mocap)
-        self._pending.append((name, _CompiledWrite(_MultiTargetOp(mocaps, "set_pose", 7), refresh_kinematics=True)))
+    def compile_kinematic_body_position(self, name: str, write: KinematicBodyPositionWrite) -> None:
+        self._mocaps(name, write.bodies)
+        self._pending.append(
+            (name, _CompiledWrite(native=mtx_write.BodyPosition(list(write.bodies)), refresh_kinematics=True))
+        )
+
+    def compile_kinematic_body_rotation(self, name: str, write: KinematicBodyRotationWrite) -> None:
+        self._mocaps(name, write.bodies)
+        self._pending.append(
+            (name, _CompiledWrite(native=mtx_write.BodyRotation(list(write.bodies)), refresh_kinematics=True))
+        )
 
     def compile_actuator_kp(self, name: str, write: ActuatorKpWrite) -> None:
-        targets = self._targets(name, write.actuators, "actuator", _named_actuator)
-        self._pending.append((name, _CompiledWrite(_MultiTargetOp(targets, "set_kp_override", 1))))
+        self._targets(name, write.actuators, "actuator", _named_actuator)
+        self._pending.append((name, _CompiledWrite(native=mtx_write.ActuatorKpOverride(list(write.actuators)))))
 
     def compile_actuator_damping(self, name: str, write: ActuatorDampingWrite) -> None:
-        targets = self._targets(name, write.actuators, "actuator", _named_actuator)
-        self._pending.append((name, _CompiledWrite(_MultiTargetOp(targets, "set_damping_override", 1))))
+        self._targets(name, write.actuators, "actuator", _named_actuator)
+        self._pending.append((name, _CompiledWrite(native=mtx_write.ActuatorDampingOverride(list(write.actuators)))))
 
     def compile_body_mass(self, name: str, write: BodyMassWrite) -> None:
-        targets = self._targets(name, write.links, "link", _named_link)
-        self._pending.append((name, _CompiledWrite(_MultiTargetOp(targets, "set_mass_override", 1))))
+        self._targets(name, write.links, "link", _named_link)
+        self._pending.append((name, _CompiledWrite(native=mtx_write.LinkMassOverride(list(write.links)))))
 
     def compile_body_com(self, name: str, write: BodyComWrite) -> None:
-        targets = self._targets(name, write.links, "link", _named_link)
-        self._pending.append((name, _CompiledWrite(_MultiTargetOp(targets, "set_center_of_mass_override", 3))))
+        self._targets(name, write.links, "link", _named_link)
+        self._pending.append((name, _CompiledWrite(native=mtx_write.LinkCenterOfMassOverride(list(write.links)))))
 
     def compile_geom_friction(self, name: str, write: GeomFrictionWrite) -> None:
-        targets = self._targets(name, write.geoms, "geom", _named_geom)
-        self._pending.append((name, _CompiledWrite(_MultiTargetOp(targets, "set_friction_override", 3))))
+        self._targets(name, write.geoms, "geom", _named_geom)
+        self._pending.append((name, _CompiledWrite(native=mtx_write.GeomFrictionOverride(list(write.geoms)))))
 
     def _joints(self, name: str, joint_names: tuple[str, ...]):
         if not joint_names:
@@ -224,6 +269,29 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
             joints.append(joint)
         return joints
 
+    def _ball_joints(self, name: str, joint_names: tuple[str, ...]) -> None:
+        if not joint_names:
+            raise ValueError(f"Simulator write {name!r} must declare at least one joint.")
+        if len(set(joint_names)) != len(joint_names):
+            raise ValueError(f"Simulator write {name!r} contains duplicate joint names.")
+        for joint_name in joint_names:
+            joint = self._model.get_joint(joint_name)
+            if joint is None:
+                raise KeyError(f"Unknown joint {joint_name!r} in write {name!r}.")
+            if joint.num_dof_pos != 4 or joint.num_dof_vel != 3:
+                raise ValueError(f"Simulator write joint {joint_name!r} in {name!r} must be a ball joint.")
+
+    def _require_single_dof_body(self, name: str, body_name: str, joints, channel: str) -> None:
+        if joints and all(joint.num_dof_pos == 1 and joint.num_dof_vel == 1 for joint in joints):
+            return
+        multi = [joint.name for joint in joints if joint.num_dof_pos != 1 or joint.num_dof_vel != 1]
+        orientation = "JointQuaternionWrite" if channel == "position" else "JointAngularVelocityWrite"
+        raise ValueError(
+            f"Simulator write {name!r} body {body_name!r} has multi-DoF joints {multi}; declare per-quantity "
+            f"writes instead (JointPositionWrite/{orientation} for position, "
+            "JointVelocityWrite/JointAngularVelocityWrite for velocity)."
+        )
+
     def _floating_bases(self, name: str, body_names: tuple[str, ...], write_type: str):
         bodies = self._targets(name, body_names, "body", _named_body)
         bases = []
@@ -232,6 +300,11 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
                 raise ValueError(f"{write_type} {name!r} body {body_name!r} has no floating base.")
             bases.append(body.floatingbase)
         return bases
+
+    def _mocaps(self, name: str, body_names: tuple[str, ...]) -> None:
+        for body_name in body_names:
+            if _named_body(self._model, body_name).mocap is None:
+                raise ValueError(f"Kinematic body write target {body_name!r} in {name!r} is not a mocap body.")
 
     def _targets(self, name: str, names: tuple[str, ...], target_type: str, resolver):
         if not names:
@@ -264,22 +337,13 @@ class _MotrixSimWriteProgram(WriteProgram):
 
     def __init__(
         self,
-        model: mtx.SceneModel,
         data: mtx.SceneData,
-        masked_rows: Callable[[np.ndarray], mtx.SceneData],
         buffers: dict[str, np.ndarray],
-        ops: list[tuple[_CompiledWrite, np.ndarray]],
-        *,
-        reset: bool,
-        refresh_kinematics: bool,
+        native_program: mtx_write.WriteProgram | None = None,
     ) -> None:
-        self._model = model
         self._data = data
-        self._masked_rows = masked_rows
         self._buffers = buffers
-        self._ops = ops
-        self._reset = reset
-        self._refresh_kinematics = refresh_kinematics
+        self._native_program = native_program
 
     def buffer(self, name: str) -> np.ndarray:
         return self._buffers[name]
@@ -294,106 +358,8 @@ class _MotrixSimWriteProgram(WriteProgram):
                 raise ValueError("Simulator write env_ids must not contain duplicates.")
             if env_ids.size == 0:
                 return
-        selected_ids = np.arange(self._data.shape[0], dtype=np.int64) if env_ids is None else np.sort(env_ids)
-        rows = self._data if env_ids is None else self._masked_rows(selected_ids)
-        idx = slice(None) if env_ids is None else selected_ids
-        if self._reset:
-            self._execute_reset(rows, selected_ids, idx)
-            return
-        for compiled, sub_buffers in self._ops:
-            compiled.op(sub_buffers, idx, rows)
-        if self._refresh_kinematics:
-            self._model.forward_kinematic(rows)
-
-    def _execute_reset(self, rows: mtx.SceneData, env_ids: np.ndarray, idx: np.ndarray | slice) -> None:
-        default_dof_pos = np.asarray(self._model.compute_init_dof_pos(), dtype=np.float32)
-        dof_pos = np.broadcast_to(default_dof_pos, (env_ids.size, self._model.num_dof_pos)).copy()
-        dof_vel = np.zeros((env_ids.size, self._model.num_dof_vel), dtype=np.float32)
-        post_reset_ops = []
-        for compiled, buffers in self._ops:
-            if compiled.reset_op is None:
-                post_reset_ops.append((compiled.op, buffers))
-            else:
-                compiled.reset_op.apply(dof_pos, dof_vel, buffers, env_ids)
-        kwargs = {"forward_kinematic": self._refresh_kinematics and not post_reset_ops}
-        if self._model.num_dof_pos:
-            kwargs["dof_pos"] = np.ascontiguousarray(dof_pos)
-        if self._model.num_dof_vel:
-            kwargs["dof_vel"] = np.ascontiguousarray(dof_vel)
-        rows.reset(self._model, **kwargs)
-        for op, buffers in post_reset_ops:
-            op(buffers, idx, rows)
-        if post_reset_ops and self._refresh_kinematics:
-            self._model.forward_kinematic(rows)
-
-
-class _DofChannelOp:
-    def __init__(self, indices: np.ndarray, *, velocity: bool = False) -> None:
-        self._indices = indices
-        self._velocity = velocity
-
-    def alloc(self, num_envs: int) -> np.ndarray:
-        return np.zeros((num_envs, self._indices.size), dtype=np.float32)
-
-    def __call__(self, buffers, idx: np.ndarray | slice, rows: mtx.SceneData) -> None:
-        target = rows.dof_vel if self._velocity else rows.dof_pos
-        target[:, self._indices] = buffers[idx]
-
-    def apply(self, dof_pos, dof_vel, buffers, env_ids) -> None:
-        target = dof_vel if self._velocity else dof_pos
-        target[:, self._indices] = buffers[env_ids]
-
-
-class _DofComponentPatchOp:
-    def __init__(self, indices: np.ndarray, *, velocity: bool = False) -> None:
-        self._indices = indices
-        self._velocity = velocity
-
-    def apply(self, dof_pos, dof_vel, buffers, env_ids) -> None:
-        target = dof_vel if self._velocity else dof_pos
-        values = buffers[env_ids]
-        for target_index, indices in enumerate(self._indices):
-            target[:, indices] = values[:, target_index]
-
-
-class _CtrlOp:
-    """Ctrl targets routed to fixed native actuator columns."""
-
-    def __init__(self, indices: np.ndarray) -> None:
-        self.indices = indices
-
-    def alloc(self, num_envs: int) -> np.ndarray:
-        return np.zeros((num_envs, self.indices.size), dtype=np.float32)
-
-    def __call__(self, buffers, idx: np.ndarray | slice, rows: mtx.SceneData) -> None:
-        values = buffers[idx]
-        if not values.shape[1]:
-            return
-        if self.indices.size == rows.actuator_ctrls.shape[1]:
-            rows.actuator_ctrls = values
-        else:
-            rows.actuator_ctrls[:, self.indices] = values
-
-
-class _MultiTargetOp:
-    """Apply one fixed-width property to targets in declared order."""
-
-    def __init__(self, targets, setter_name: str, width: int, *, contiguous: bool = False) -> None:
-        self._setters = [getattr(target, setter_name) for target in targets]
-        self._width = width
-        self._contiguous = contiguous
-
-    def alloc(self, num_envs: int) -> np.ndarray:
-        shape = (num_envs, len(self._setters)) if self._width == 1 else (num_envs, len(self._setters), self._width)
-        return np.zeros(shape, dtype=np.float32)
-
-    def __call__(self, buffers, idx: np.ndarray | slice, rows: mtx.SceneData) -> None:
-        values = buffers[idx]
-        for target_index, setter in enumerate(self._setters):
-            target_values = values[:, target_index]
-            if self._contiguous:
-                target_values = np.ascontiguousarray(target_values)
-            setter(rows, target_values)
+        if self._native_program is not None:
+            self._native_program.execute(self._data, env_ids=None if env_ids is None else np.sort(env_ids))
 
 
 def _named_body(model: mtx.SceneModel, body_name: str):

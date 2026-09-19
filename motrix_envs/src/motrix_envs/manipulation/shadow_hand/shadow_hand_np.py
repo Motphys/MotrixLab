@@ -24,7 +24,12 @@ from motrix_env_core.sim import (
     LinkPositionQuery,
     LinkQuaternionQuery,
 )
-from motrix_env_core.sim.write import BodyJointVelocityWrite, CtrlTargetsWrite, MocapPoseWrite
+from motrix_env_core.sim.write import (
+    BodyJointVelocityWrite,
+    CtrlTargetsWrite,
+    KinematicBodyPositionWrite,
+    KinematicBodyRotationWrite,
+)
 
 from .cfg import ShadowHandReposeEnvCfg
 
@@ -83,7 +88,12 @@ class ShadowHandReposeEnv(DirectEnv):
         super().__init__(cfg, num_envs, backend=backend)
         self.model = self.sim.compile_model(_SIM_MODEL_QUERIES)
         self.sim_data = self.sim.compile_reads(_SIM_DATA_QUERIES)
-        self._target_writes = self.sim.write_compiler.compile({"target": MocapPoseWrite(("target",))})
+        self._target_writes = self.sim.write_compiler.compile(
+            {
+                "target_pos": KinematicBodyPositionWrite(("target",)),
+                "target_rot": KinematicBodyRotationWrite(("target",)),
+            }
+        )
         self._ctrl_writes = self.sim.write_compiler.compile({"ctrl": CtrlTargetsWrite()})
         self._reset_program = self.sim.write_compiler.compile(
             {
@@ -345,12 +355,10 @@ class ShadowHandReposeEnv(DirectEnv):
         # Compute visualization position (offset from goal position)
         viz_pos = self._goal_pos + np.array(cfg.viz_target_offset, dtype=np.float32)
 
-        # Combine into pose array: [x, y, z, qx, qy, qz, qw]
-        viz_pose = np.concatenate([viz_pos, self._goal_rot], axis=-1)
-
         # Update mocap body pose
         all_ids = np.arange(self._num_envs, dtype=np.int64)
-        self._target_writes.buffer("target")[all_ids, 0] = np.asarray(viz_pose, dtype=np.float32)
+        self._target_writes.buffer("target_pos")[all_ids, 0] = np.asarray(viz_pos, dtype=np.float32)
+        self._target_writes.buffer("target_rot")[all_ids, 0] = np.asarray(self._goal_rot, dtype=np.float32)
         self._target_writes.execute(all_ids)
 
     def reset(self, env_ids: np.ndarray) -> None:

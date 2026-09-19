@@ -12,7 +12,7 @@ readme = "README.md"
 license = "Apache-2.0"
 dependencies = [
     "motrix-env-core",
-    "motrixsim==0.10.1.dev123478",
+    "motrixsim==0.10.1",
     "numpy>=1.26",
 ]
 
