@@ -74,6 +74,158 @@ class RelativeBodyPositionRewardCfg(RewardTermCfg):
 
 
 @dispatch
+def ee_body_pos_z_reward(ctx: ManagerContext, body_indices: tuple[int, ...], sigma: np.float32) -> float:
+    tracked_body_pos = ctx.sim["tracked_body_pos"]
+    motion: WbtMotionCommand = ctx.commands["motion"]
+    error_sq = 0.0
+    for body_id in body_indices:
+        diff = motion.target_body_position_relative[body_id, 2] - tracked_body_pos[body_id, 2]
+        error_sq += diff * diff
+    return math.exp(-(error_sq / len(body_indices)) / (sigma * sigma))
+
+
+@configclass(kw_only=True)
+class EeBodyPosZRewardCfg(RewardTermCfg):
+    """Extra height-tracking reward on end-effector bodies (ankles, wrists).
+
+    zh_CN: 末端 body（踝、腕）的高度专项跟踪奖励。
+
+    Mirrors UniLab's ``motion_ee_body_pos_z``: during a flip the extremity
+    heights carry the launch/rotation signal that the all-body mean dilutes,
+    so this term tracks their z error separately.
+    """
+
+    body_names: tuple[str, ...] = ()
+    sigma: float
+
+    def __call__(self, ctx) -> RewardTerm:
+        tracked_body_names = ctx.cfg.commands.motion.tracked_body_names
+        body_indices = tuple(tracked_body_names.index(name) for name in self.body_names)
+        return RewardTerm(ee_body_pos_z_reward, body_indices, np.float32(self.sigma))
+
+
+@dispatch
+def ee_body_pos_reward(ctx: ManagerContext, body_indices: tuple[int, ...], sigma: np.float32) -> float:
+    tracked_body_pos = ctx.sim["tracked_body_pos"]
+    motion: WbtMotionCommand = ctx.commands["motion"]
+    error_sq = 0.0
+    for body_id in body_indices:
+        diff = motion.target_body_position_relative[body_id] - tracked_body_pos[body_id]
+        error_sq += float(np.dot(diff, diff))
+    return math.exp(-(error_sq / len(body_indices)) / (sigma * sigma))
+
+
+@configclass(kw_only=True)
+class EeBodyPosRewardCfg(RewardTermCfg):
+    """Full-3D end-effector position tracking (ankles, wrists).
+
+    zh_CN: 末端 body（踝、腕）的三维位置专项跟踪奖励。
+
+    ``motion_ee_body_pos_z`` only constrains height; foot placement error
+    lives mostly in the horizontal plane, and each foot is 1/14 of the
+    all-body relative-position mean — too diluted to shape landing accuracy.
+    This term tracks the full 3D end-effector error directly.
+    """
+
+    body_names: tuple[str, ...] = ()
+    sigma: float
+
+    def __call__(self, ctx) -> RewardTerm:
+        tracked_body_names = ctx.cfg.commands.motion.tracked_body_names
+        body_indices = tuple(tracked_body_names.index(name) for name in self.body_names)
+        return RewardTerm(ee_body_pos_reward, body_indices, np.float32(self.sigma))
+
+
+@dispatch
+def flight_tuck_reward(
+    ctx: ManagerContext,
+    dof_indices: tuple[int, ...],
+    ankle_body_ids: tuple[int, ...],
+    ground_z: np.float32,
+    sigma: np.float32,
+) -> float:
+    motion: WbtMotionCommand = ctx.commands["motion"]
+    step = motion.steps[0]
+    ref_z = -1.0
+    for i in ankle_body_ids:
+        ref_z = max(ref_z, motion.clip.tracked_bodies_pos_w[step, i, 2])
+    if ref_z <= ground_z:
+        # Grounded frames carry no tuck signal; the all-body terms handle them.
+        return 0.0
+    dof_pos = ctx.sim["robot_dof_pos"]
+    clip_pos = motion.clip.joint_pos[step]
+    error_sq = 0.0
+    for j in dof_indices:
+        diff = clip_pos[j] - dof_pos[j]
+        error_sq += diff * diff
+    return math.exp(-(error_sq / len(dof_indices)) / (sigma * sigma))
+
+
+@configclass(kw_only=True)
+class FlightTuckRewardCfg(RewardTermCfg):
+    """Flight-window tuck reward on flexion joints (knees, hip pitch).
+
+    zh_CN: 腾空段团身奖励（膝、髋屈曲专项跟踪）。
+
+    Active only while the reference is airborne (both reference ankles above
+    ``ground_z``): a tighter tuck spins the flip faster, and the all-body mean
+    position reward dilutes exactly this signal. Empirically load-bearing: the
+    landing breakthrough regressed from length ~326 to ~138 without it.
+    Joints are resolved by name against the model body joint order, which the
+    clip loader enforces on the clip column order.
+    """
+
+    body_names: tuple[str, ...] = ()
+    joint_names: tuple[str, ...] = ()
+    ground_z: float
+    sigma: float
+
+    def __call__(self, ctx) -> RewardTerm:
+        tracked_body_names = ctx.cfg.commands.motion.tracked_body_names
+        ankle_body_ids = tuple(tracked_body_names.index(name) for name in self.body_names)
+        joint_names = ctx.model.bodies["robot"].joint_names
+        dof_indices = tuple(joint_names.index(name) for name in self.joint_names)
+        return RewardTerm(
+            flight_tuck_reward,
+            dof_indices,
+            ankle_body_ids,
+            np.float32(self.ground_z),
+            np.float32(self.sigma),
+        )
+
+
+@dispatch
+def flight_rotation_progress_reward(ctx: ManagerContext, cap: np.float32) -> float:
+    motion: WbtMotionCommand = ctx.commands["motion"]
+    step = motion.steps[0]
+    if not (motion.flight_start <= step <= motion.flight_end):
+        return 0.0
+    pelvis_ang_vel = ctx.sim["tracked_body_angular_velocity"][0]
+    axis = motion.flight_axis
+    # Reward rotation speed along the clip's flight axis (world frame, signed
+    # to the reference direction), linear and capped: every radian earned pays
+    # immediately (exp kernels cannot do this — they saturate to zero exactly
+    # when rotation is still partial). A fixed world-y projection would reward
+    # the wrong component whenever the robot's heading is not axis-aligned.
+    progress = pelvis_ang_vel[0] * axis[0] + pelvis_ang_vel[1] * axis[1] + pelvis_ang_vel[2] * axis[2]
+    return min(max(progress, 0.0), cap)
+
+
+@configclass(kw_only=True)
+class FlightRotationProgressRewardCfg(RewardTermCfg):
+    """Dense, unsaturating rotation-progress reward inside the flight window.
+
+    zh_CN: 飞行窗口内沿参考翻转轴的转速线性计分（不饱和）的稠密奖励。
+    """
+
+    cap: float = 15.0
+
+    def __call__(self, ctx) -> RewardTerm:
+        del ctx
+        return RewardTerm(flight_rotation_progress_reward, np.float32(self.cap))
+
+
+@dispatch
 def relative_body_orientation_reward(ctx: ManagerContext, sigma: np.float32) -> float:
     tracked_body_quat = ctx.sim["tracked_body_quat"]
     motion: WbtMotionCommand = ctx.commands["motion"]

@@ -40,6 +40,9 @@ def _reset_body_pos(
     motion: WbtMotionCommand = ctx.commands["motion"]
     position[0] = motion.clip.root_body_pos_w[motion.steps[0]]
     for index in range(3):
+        # next_uniform() returns [-1, 1), so this is centered uniform noise
+        # in [-scale, +scale) per axis. (An earlier "centering fix" subtracted
+        # 0.5 from an already-centered sample, producing a [-3s, +1s) bias.)
         position[0, index] += ctx.rand.next_uniform() * noise_scale[index]
 
 
@@ -110,6 +113,7 @@ def _reset_body_lin_vel(
     motion: WbtMotionCommand = ctx.commands["motion"]
     linear_velocity[0] = motion.clip.root_body_lin_vel_w[motion.steps[0]]
     for index in range(3):
+        # Centered noise: see _reset_body_pos.
         linear_velocity[0, index] += ctx.rand.next_uniform() * noise_scale[index]
 
 
@@ -140,6 +144,7 @@ def _reset_body_rot_vel(
     motion: WbtMotionCommand = ctx.commands["motion"]
     angular_velocity[0] = motion.clip.root_body_ang_vel_w[motion.steps[0]]
     for index in range(3):
+        # Centered noise: see _reset_body_pos.
         angular_velocity[0, index] += ctx.rand.next_uniform() * noise_scale[index]
 
 
