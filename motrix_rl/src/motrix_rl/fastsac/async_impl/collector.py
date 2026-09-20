@@ -157,8 +157,8 @@ class Collector:
                 inductor_config.compile_threads = 1
                 self._policy_runtime = torch.compile(self._policy, mode="reduce-overhead")
 
-        self._action_scale_cpu = action_scale.detach().cpu()
-        self._action_bias_cpu = action_bias.detach().cpu()
+        self._action_scale_cpu = self.actor.action_scale.detach().cpu()
+        self._action_bias_cpu = self.actor.action_bias.detach().cpu()
 
         # rollout state
         self.obs = None
@@ -244,6 +244,7 @@ class Collector:
         """How many published versions behind the collector's local policy is."""
         return max(0, self.weights.version - self._local_version)
 
+    # ------------------------------------------------------------------ ring handoff
     # ------------------------------------------------------------------ step
     def step_once(self) -> bool:
         """Run one env-step batch and push it to the ring.
@@ -270,15 +271,19 @@ class Collector:
         next_obs, next_critic_obs, rewards, terminated, truncated = self.env.step(actions)
         t_push = time.perf_counter()
 
+        # The transition is (obs, action, reward, done) with obs being the
+        # pre-step observation; next_obs of step t is the stored obs of t+1.
+        # The learner derives next_obs from the successor slot, so the newest
+        # batch only becomes ingestible after the next push; the final batch
+        # pushed before training stops is intentionally dropped (one batch of
+        # num_envs transitions out of a full training run).
         pushed = self.ring.push(
-            self.obs.detach().cpu(),
-            self.critic_obs.detach().cpu(),
-            actions.detach().cpu(),
-            rewards.detach().cpu(),
-            terminated.detach().long().cpu(),
-            truncated.detach().long().cpu(),
-            next_obs.detach().cpu(),
-            next_critic_obs.detach().cpu(),
+            self.obs.detach(),
+            self.critic_obs.detach(),
+            actions.detach(),
+            rewards.detach(),
+            terminated.detach().long(),
+            truncated.detach().long(),
         )
         assert pushed, "ring became full after is_full() check — single-producer invariant violated"
         t_bookkeep = time.perf_counter()

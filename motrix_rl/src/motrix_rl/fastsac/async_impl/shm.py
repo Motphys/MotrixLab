@@ -61,19 +61,24 @@ def _shared(shape, dtype) -> torch.Tensor:
 class SharedTransitionRing:
     """SPSC ring of transition batches with bounded backpressure.
 
-    Each slot holds one env-step batch: the eight tensors that
-    :meth:`motrix_rl.fastsac.buffer.SimpleReplayBuffer.extend` consumes, with the
-    leading dimension being ``num_envs`` (so a slot is ``(num_envs, dim)``).
+    Each slot holds one env-step batch: the six tensors produced by one
+    collector step, with the leading dimension being ``num_envs`` (so a slot
+    is ``(num_envs, dim)``). ``next_obs``/``next_critic_obs`` are NOT stored:
+    with auto-reset envs the observation returned by step ``t`` is exactly the
+    stored observation of step ``t+1`` (at episode ends it is the reset
+    observation), so the consumer derives them from the successive slot via
+    :meth:`has_next`/:meth:`peek_next`. This halves the per-slot copy volume
+    and shared-memory footprint.
 
     Producer (collector) calls :meth:`push`; when the ring is full it returns
     ``False`` and the caller must retry/backoff — that is the backpressure that
     keeps the collector from outrunning the learner and flooding memory.
 
     Consumer (learner) calls :meth:`read_slot` to get zero-copy CPU views of the
-    oldest unread slot, moves them to its device, then calls :meth:`commit_read`.
-    The read cursor only advances after the copy, so the producer can never
-    clobber a slot that is still being ingested (``push`` blocks while the ring
-    is full).
+    oldest unread slot plus :meth:`peek_next` for the derived next-observation
+    views, moves them to its device, then calls :meth:`commit_read`. The read
+    cursor only advances after the copy, so the producer can never clobber a
+    slot that is still being ingested (``push`` blocks while the ring is full).
 
     Memory ordering
     ~~~~~~~~~~~~~~~
@@ -83,7 +88,9 @@ class SharedTransitionRing:
     needs the consumer to not observe the ``_write`` bump before the slot's data
     stores have landed (and symmetrically for ``_read``); on x86/TSO that
     ordering is free, so no memory barrier is used and this path is x86-only
-    (see the module "Memory ordering" note).
+    (see the module "Memory ordering" note). The same guarantee covers
+    :meth:`peek_next`: the producer wrote the successor slot's data before
+    publishing it, which is a precondition of the consumer seeing it committed.
     """
 
     FIELDS = (
@@ -93,8 +100,6 @@ class SharedTransitionRing:
         "rewards",
         "dones",
         "truncations",
-        "next_obs",
-        "next_critic_obs",
     )
 
     def __init__(
@@ -105,6 +110,10 @@ class SharedTransitionRing:
         critic_obs_dim: int,
         act_dim: int,
     ):
+        # The consumer derives next_obs from the successor slot, so capacity 1
+        # can never satisfy has_next() and would deadlock the pipeline.
+        if capacity < 2:
+            raise ValueError(f"ring_capacity must be >= 2 (consumer reads the successor slot), got {capacity}")
         self.capacity = capacity
         self.num_envs = num_envs
         f32, i64 = torch.float32, torch.int64
@@ -114,8 +123,6 @@ class SharedTransitionRing:
         self.rewards = _shared((capacity, num_envs), f32)
         self.dones = _shared((capacity, num_envs), i64)
         self.truncations = _shared((capacity, num_envs), i64)
-        self.next_obs = _shared((capacity, num_envs, obs_dim), f32)
-        self.next_critic_obs = _shared((capacity, num_envs, critic_obs_dim), f32)
         # cursors are shared so the two processes see each other's progress.
         self._write = _shared((1,), i64)
         self._read = _shared((1,), i64)
@@ -140,7 +147,7 @@ class SharedTransitionRing:
     def is_full(self) -> bool:
         return self.size() >= self.capacity
 
-    def push(self, obs, critic_obs, actions, rewards, dones, truncations, next_obs, next_critic_obs) -> bool:
+    def push(self, obs, critic_obs, actions, rewards, dones, truncations) -> bool:
         """Copy one env-step batch into the next slot. Returns False if full.
 
         Inputs are CPU tensors shaped ``(num_envs, dim)``; ``dones``/``truncations``
@@ -155,8 +162,6 @@ class SharedTransitionRing:
         self.rewards[slot].copy_(rewards)
         self.dones[slot].copy_(dones)
         self.truncations[slot].copy_(truncations)
-        self.next_obs[slot].copy_(next_obs)
-        self.next_critic_obs[slot].copy_(next_critic_obs)
         # Publish the slot. On x86/TSO the field copies above are guaranteed
         # visible before this cursor bump, so a consumer that reads the new
         # write_idx also sees the data (x86-only; ARM would need a release here).
@@ -179,9 +184,26 @@ class SharedTransitionRing:
             self.rewards[slot],
             self.dones[slot],
             self.truncations[slot],
-            self.next_obs[slot],
-            self.next_critic_obs[slot],
         )
+
+    def has_next(self) -> bool:
+        """Whether the successor of the oldest unread slot is already committed.
+
+        The consumer needs it to derive ``next_obs``/``next_critic_obs`` for the
+        oldest slot (see :meth:`peek_next`), so it must wait for one extra
+        committed slot before ingesting.
+        """
+        return self.size() > 1
+
+    def peek_next(self):
+        """Return CPU views of the successor slot's obs/critic_obs.
+
+        Valid only when :meth:`has_next` is true; the views alias ring memory
+        that stays untouched until the consumer's own ``commit_read`` calls
+        advance past it.
+        """
+        slot = (self.read_idx + 1) % self.capacity
+        return self.obs[slot], self.critic_obs[slot]
 
     def commit_read(self) -> None:
         # Free the slot. On x86/TSO our reads above complete before this cursor

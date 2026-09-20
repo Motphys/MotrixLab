@@ -56,15 +56,20 @@ class Learner:
         """Move up to ``max_ingest_per_iter`` ring slots into the replay buffer.
 
         Returns the number of slots ingested. Read cursor advances only after the
-        GPU copy, so the collector cannot clobber an in-flight slot.
+        GPU copy, so the collector cannot clobber an in-flight slot. Each slot's
+        ``next_obs``/``next_critic_obs`` come from the successor slot
+        (``ring.peek_next``), so a slot is only ingested once its successor is
+        committed; the last slot of a drain wave waits for the next one.
         """
         device = self.agent.device
         ingested = 0
         for _ in range(max(self.async_options.max_ingest_per_iter, 1)):
-            slot = self.ring.read_slot()
-            if slot is None:
+            if not self.ring.has_next():
                 break
-            obs, critic_obs, actions, rewards, dones, truncations, next_obs, next_critic_obs = slot
+            slot = self.ring.read_slot()
+            assert slot is not None  # has_next implies a readable slot
+            obs, critic_obs, actions, rewards, dones, truncations = slot
+            next_obs, next_critic_obs = self.ring.peek_next()
             self.agent.rb.extend(
                 obs.to(device),
                 critic_obs.to(device),

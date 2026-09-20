@@ -93,7 +93,9 @@ def _collector(args, source_actor, source_normalizer, action_scale, action_bias)
         ),
     )
     env = _BenchmarkEnv(args.num_envs, args.obs_dim, args.critic_obs_dim)
-    ring = SharedTransitionRing(1, args.num_envs, args.obs_dim, args.critic_obs_dim, args.act_dim)
+    # Stub ring (never pushed: the bench only exercises inference/sync); capacity
+    # 2 satisfies the ring's successor-slot contract.
+    ring = SharedTransitionRing(2, args.num_envs, args.obs_dim, args.critic_obs_dim, args.act_dim)
     weights = WeightSnapshot(sum(p.numel() for p in source_actor.parameters()), args.obs_dim)
     weights.publish(source_actor, source_normalizer)
     collector = Collector(

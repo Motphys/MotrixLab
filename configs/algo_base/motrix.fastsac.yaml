@@ -95,3 +95,9 @@ trainer:
     collector_amp: true
     # Collector autocast dtype: fp16 or bf16.
     collector_amp_dtype: fp16
+    # CPU affinity pinning spec per side, e.g. "0:5,7" pins cores 0-5 and 7.
+    # Cores outside the process's available set are dropped; null disables
+    # that side's pinning. Defaults off: the optimal split depends on the
+    # machine's CPU/GPU balance (see issue #62's sweep table).
+    learner_cpu_cores: null
+    collector_cpu_cores: null

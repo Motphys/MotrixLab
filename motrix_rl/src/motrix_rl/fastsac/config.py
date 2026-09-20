@@ -69,6 +69,14 @@ class FastSacAsyncOptionsCfg:
     collector_compile: bool = MISSING
     collector_amp: bool = MISSING
     collector_amp_dtype: str = MISSING
+    # CPU affinity pinning for the async learner and collector processes, as a
+    # core spec like "0:5,7" (cores 0-5 and 7). Out-of-range and duplicate
+    # cores are dropped; an empty effective set or null disables pinning. The
+    # env step is CPU-bound while the learner is GPU-bound, so isolating them
+    # keeps learner-side drain/ingest work from stealing cores from the
+    # collector.
+    learner_cpu_cores: str | None = None
+    collector_cpu_cores: str | None = None
 
 
 @dataclass

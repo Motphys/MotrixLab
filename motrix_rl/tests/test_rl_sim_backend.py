@@ -241,6 +241,8 @@ def _async_cfg():
                 collector_compile=False,
                 collector_amp=False,
                 collector_amp_dtype="fp16",
+                learner_cpu_cores=None,
+                collector_cpu_cores=None,
             )
         ),
     )
