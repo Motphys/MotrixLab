@@ -269,9 +269,7 @@ class WeightReceiver(ABC):
     def _ensure_buffer_staging(self, actor: nn.Module) -> torch.Tensor:
         if self._buffer_staging is None:
             pinned = next(actor.parameters()).is_cuda
-            self._buffer_staging = torch.empty(
-                self.shared.buffer_numel, dtype=torch.float32, pin_memory=pinned
-            )
+            self._buffer_staging = torch.empty(self.shared.buffer_numel, dtype=torch.float32, pin_memory=pinned)
         return self._buffer_staging
 
     @abstractmethod

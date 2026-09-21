@@ -16,7 +16,7 @@ from motrix_env_core.manager import (
 )
 from motrix_env_core.manager.math.quaternion import inverse as quat_inverse
 from motrix_env_core.manager.math.quaternion import mul as quat_mul
-from motrix_env_core.manager.math.quaternion import rotate_inverse, to_matrix_first_two_rows
+from motrix_env_core.manager.math.quaternion import rotate_inverse, to_matrix_first_two_columns
 from motrix_env_core.mdp.noise import add_uniform_noise
 from motrix_env_core.mdp.observations import (
     UniformNoiseCfg,
@@ -35,7 +35,7 @@ def _write_relative_orientation_6d(
     relative_quat = out[:4]
     quat_inverse(reference_quat_w, relative_quat)
     quat_mul(relative_quat, target_quat_w, relative_quat)
-    to_matrix_first_two_rows(relative_quat, out[:6])
+    to_matrix_first_two_columns(relative_quat, out[:6])
 
 
 @dispatch
@@ -137,7 +137,7 @@ def robot_body_orientation_obs(ctx: ManagerContext, out: np.ndarray) -> None:
         relative_quat = out[offset : offset + 4]
         relative_quat[:] = out[:4]
         quat_mul(relative_quat, tracked_body_quat[body_id], relative_quat)
-        to_matrix_first_two_rows(relative_quat, out[offset : offset + 6])
+        to_matrix_first_two_columns(relative_quat, out[offset : offset + 6])
 
 
 @configclass(kw_only=True)

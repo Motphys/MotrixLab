@@ -20,8 +20,8 @@ import torch.nn.functional as F
 from torch import nn, optim
 
 from motrix_rl.fastsac.buffer import EmpiricalNormalization, SimpleReplayBuffer
-from motrix_rl.fastsac.config import FastSacAgentCfg, SonicSacCfg
-from motrix_rl.fastsac.factory import make_actor
+from motrix_rl.fastsac.config import FastSacCfg
+from motrix_rl.fastsac.factory import make_actor, resolve_policy_variant
 from motrix_rl.fastsac.networks import Critic
 
 
@@ -63,9 +63,8 @@ class FastSacAgent:
         critic_obs_dim: int,
         act_dim: int,
         num_envs: int,
-        cfg: FastSacAgentCfg,
+        cfg: FastSacCfg,
         device: torch.device,
-        sonic_cfg: SonicSacCfg | None = None,
         action_scale: torch.Tensor | None = None,
         action_bias: torch.Tensor | None = None,
         writer=None,
@@ -79,13 +78,16 @@ class FastSacAgent:
         (defaults to identity when ``None``). AMP autocast and ``torch.compile``
         are enabled per ``cfg`` but auto-disabled on CPU.
         """
-        self.cfg = cfg
+        self.cfg = cfg.agent
+        self._provider_cfg = cfg
         self.device = device
         self.obs_dim = obs_dim
         self.critic_obs_dim = critic_obs_dim
         self.act_dim = act_dim
         self.num_envs = num_envs
         self.writer = writer
+        self.policy_variant = resolve_policy_variant(cfg.policy_variant)
+        self._aux_loss_weights = self.policy_variant.aux_loss_weights(cfg)
         self.global_step = 0
         # Persistent gradient-update counter shared by all trainers. Used for
         # policy_frequency gating (so the actor/Q ratio is exactly 1/policy_freq
@@ -94,16 +96,14 @@ class FastSacAgent:
         self.update_idx = 0
         self._last_update_timing_ms: dict[str, float] = {}
 
-        self.sonic_cfg = sonic_cfg
         self.actor = make_actor(
             cfg,
-            sonic_cfg,
-            obs_dim=obs_dim,
-            act_dim=act_dim,
-            action_scale=action_scale if action_scale is not None else torch.ones(act_dim, device=device),
-            action_bias=action_bias if action_bias is not None else torch.zeros(act_dim, device=device),
+            dims=(obs_dim, act_dim),
+            action_scale=action_scale,
+            action_bias=action_bias,
             device=device,
         )
+        cfg = self.cfg
         critic_kwargs = dict(
             n_obs=critic_obs_dim,
             n_act=act_dim,
@@ -140,7 +140,7 @@ class FastSacAgent:
         self.alpha_optimizer = optim.AdamW([self.log_alpha], lr=cfg.alpha_learning_rate, betas=(0.9, 0.95), fused=fused)
 
         if cfg.obs_normalization:
-            selector_dims = 2 if sonic_cfg is not None and sonic_cfg.enabled else 0
+            selector_dims = self.policy_variant.passthrough_dims(self._provider_cfg)
             self.obs_normalizer: nn.Module = EmpiricalNormalization(
                 shape=obs_dim, device=device, passthrough_dims=selector_dims
             )
@@ -267,7 +267,11 @@ class FastSacAgent:
             q_values = self._qnet_runtime.get_value(F.softmax(q_outputs, dim=-1))
             qf_value = q_values.mean(dim=0)
             policy_loss = (self.log_alpha.exp().detach() * log_probs - qf_value).mean()
-            auxiliary_loss = auxiliary.get("total", policy_loss.new_zeros(()))
+            auxiliary_loss = policy_loss.new_zeros(())
+            for name, value in auxiliary.items():
+                if name not in self._aux_loss_weights:
+                    raise ValueError(f"policy variant returned unweighted auxiliary loss {name!r}")
+                auxiliary_loss = auxiliary_loss + self._aux_loss_weights[name] * value
             actor_loss = policy_loss + auxiliary_loss
 
         self.actor_optimizer.zero_grad(set_to_none=True)
@@ -276,9 +280,10 @@ class FastSacAgent:
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.cfg.max_grad_norm)
         self.actor_optimizer.step()
         auxiliary_metrics = {
-            f"sonic_{name}": value.detach().float() for name, value in auxiliary.items() if value.numel() == 1
+            f"aux_{name}": value.detach().float() for name, value in auxiliary.items() if value.numel() == 1
         }
-        auxiliary_metrics["sonic_auxiliary_loss"] = auxiliary_loss.detach().float()
+        if auxiliary:
+            auxiliary_metrics["aux_loss"] = auxiliary_loss.detach().float()
         return actor_loss.detach().float(), (-log_probs.mean()).detach().float(), auxiliary_metrics
 
     @torch.no_grad()
@@ -425,10 +430,8 @@ class FastSacAgent:
             "alpha_optimizer": self.alpha_optimizer.state_dict(),
             "global_step": self.global_step,
             "update_idx": self.update_idx,
-            "sonic": {
-                "enabled": bool(self.sonic_cfg is not None and self.sonic_cfg.enabled),
-                "profile": self.sonic_cfg.profile if self.sonic_cfg is not None else None,
-            },
+            "policy_variant": self.policy_variant.name,
+            "policy_variant_metadata": self.policy_variant.checkpoint_metadata(self._provider_cfg),
         }
 
     def load_state_dict(self, ckpt: dict, load_optimizers: bool = True) -> None:

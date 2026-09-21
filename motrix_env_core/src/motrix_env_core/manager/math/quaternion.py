@@ -9,7 +9,14 @@ from motrix_env_core.numba.math.quaternion import (
     rotate_inverse,
     rotate_vector,
     rotation_distance,
-    to_matrix_first_two_rows,
+    to_matrix_first_two_columns,
 )
 
-__all__ = ["inverse", "mul", "rotate_inverse", "rotate_vector", "rotation_distance", "to_matrix_first_two_rows"]
+__all__ = [
+    "inverse",
+    "mul",
+    "rotate_inverse",
+    "rotate_vector",
+    "rotation_distance",
+    "to_matrix_first_two_columns",
+]

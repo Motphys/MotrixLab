@@ -33,6 +33,7 @@ class Actor(nn.Module):
         device: torch.device | str | None = None,
     ):
         super().__init__()
+        self.n_obs = n_obs
         self.n_act = n_act
         self.log_std_max = log_std_max
         self.log_std_min = log_std_min

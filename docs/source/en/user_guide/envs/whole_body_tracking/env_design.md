@@ -34,7 +34,7 @@ range supplies both this target scaling input and the actual actuator force clam
 ## Observation space
 
 Reference joint arrays are reordered to model actuator order. Position and orientation differences are expressed in the
-current `reference_body_name` frame, and orientation uses the first two rows of a rotation matrix as a 6D representation.
+current `reference_body_name` frame, and orientation uses the first two columns of a rotation matrix as a 6D representation.
 Base velocities are expressed in the robot base-link frame.
 
 | Observation                                | Actor | Critic | Meaning                                                                           |

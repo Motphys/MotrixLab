@@ -145,21 +145,21 @@ def rotate_inverse_components(quaternion: np.ndarray, vector):
 
 
 @numba.njit(inline="always")
-def to_matrix_first_two_rows(
+def to_matrix_first_two_columns(
     quaternion: np.ndarray,
     out: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Write the first two rows of the quaternion rotation matrix in row-major order."""
+    """Write the first two columns of the quaternion rotation matrix in row-major order."""
     if out is None:
         out = np.empty(6, dtype=quaternion.dtype)
     x, y, z, w = quaternion
     two_s = 2.0 / (x * x + y * y + z * z + w * w)
     out[0] = 1.0 - two_s * (y * y + z * z)
     out[1] = two_s * (x * y - z * w)
-    out[2] = two_s * (x * z + y * w)
-    out[3] = two_s * (x * y + z * w)
-    out[4] = 1.0 - two_s * (x * x + z * z)
-    out[5] = two_s * (y * z - x * w)
+    out[2] = two_s * (x * y + z * w)
+    out[3] = 1.0 - two_s * (x * x + z * z)
+    out[4] = two_s * (x * z - y * w)
+    out[5] = two_s * (y * z + x * w)
     return out
 
 
@@ -171,5 +171,5 @@ __all__ = [
     "rotate_inverse_components",
     "rotate_vector",
     "rotation_distance",
-    "to_matrix_first_two_rows",
+    "to_matrix_first_two_columns",
 ]

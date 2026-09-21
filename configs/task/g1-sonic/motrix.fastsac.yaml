@@ -4,7 +4,6 @@
 # (2026-09-15 run_config.json) for cross-platform comparison.
 defaults:
   - /algo_base@algo: motrix.fastsac
-  - /sonic_model@algo.sonic.model: release
   - _self_
 task:
   env: g1-sonic
@@ -16,12 +15,28 @@ seed: 1
 checkpoint:
   interval: 50000
 algo:
-  sonic:
-    enabled: true
-    profile: release
+  # Encoder and motion-decoder geometry for the SONIC tokenizer. The control
+  # decoder is the standard FastSAC actor head below.
+  policy_variant: sonic
+  variant:
+    model:
+      num_future_frames: 10
+      num_tokens: 2
+      token_dim: 32
+      fsq_levels: 32
+      action_dim: 29
+      g1_encoder_hidden_dims: [2048, 1024, 512, 512]
+      smpl_encoder_hidden_dims: [2048, 1024, 512, 512]
+      g1_motion_decoder_hidden_dims: [2048, 1024, 512, 512]
+    auxiliary:
+      reconstruction: 0.01
+      latent_alignment: 1.0
+      cycle_consistency: 1.0
   agent:
     actor_learning_rate: 1.0e-4
     weight_decay: 0.0
+    actor_hidden_dim: 512
+    critic_hidden_dim: 512
     log_std_min: -10.0
     num_atoms: 101
     v_min: -5.0

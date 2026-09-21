@@ -24,7 +24,7 @@ from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing, bind
 from motrix_rl.fastsac.async_impl.shm.weight_channel import WeightReceiver
 from motrix_rl.fastsac.buffer import EmpiricalNormalization
 from motrix_rl.fastsac.config import FastSacAgentCfg, FastSacCfg
-from motrix_rl.fastsac.factory import make_actor
+from motrix_rl.fastsac.factory import make_actor, resolve_policy_variant
 from motrix_rl.fastsac.wrap import FastSacEnvWrap
 
 
@@ -98,18 +98,15 @@ class Collector:
         self._learning_starts = acfg.learning_starts
 
         self.actor = make_actor(
-            acfg,
-            getattr(cfg, "sonic", None),
-            obs_dim=obs_dim,
-            act_dim=act_dim,
+            cfg,
+            dims=(obs_dim, act_dim),
             action_scale=action_scale,
             action_bias=action_bias,
             device=self.device,
         )
         self.actor.eval()
         if acfg.obs_normalization:
-            sonic_cfg = getattr(cfg, "sonic", None)
-            selector_dims = 2 if sonic_cfg is not None and sonic_cfg.enabled else 0
+            selector_dims = resolve_policy_variant(cfg.policy_variant).passthrough_dims(cfg)
             self.obs_normalizer = EmpiricalNormalization(
                 shape=obs_dim, device=self.device, passthrough_dims=selector_dims
             )
@@ -245,8 +242,6 @@ class Collector:
         warming = self.control.collector_steps < self._learning_starts
         t_sample_actions = time.perf_counter()
         actions = self._sample_actions(warming)
-        if not torch.isfinite(actions).all():
-            raise RuntimeError("collector policy produced non-finite actions")
         t_env = time.perf_counter()
         next_obs, next_critic_obs, rewards, terminated, truncated = self.env.step(actions)
         t_push = time.perf_counter()

@@ -95,10 +95,8 @@ def actor_param_numel(cfg: FastSacCfg, dims, action_scale, action_bias) -> int:
 
     obs_dim, _critic_obs_dim, act_dim = dims
     actor = make_actor(
-        cfg.agent,
-        getattr(cfg, "sonic", None),
-        obs_dim=obs_dim,
-        act_dim=act_dim,
+        cfg,
+        dims=(obs_dim, act_dim),
         action_scale=action_scale,
         action_bias=action_bias,
         device="cpu",
@@ -112,10 +110,8 @@ def actor_buffer_numel(cfg: FastSacCfg, dims, action_scale, action_bias) -> int:
 
     obs_dim, _critic_obs_dim, act_dim = dims
     actor = make_actor(
-        cfg.agent,
-        getattr(cfg, "sonic", None),
-        obs_dim=obs_dim,
-        act_dim=act_dim,
+        cfg,
+        dims=(obs_dim, act_dim),
         action_scale=action_scale,
         action_bias=action_bias,
         device="cpu",
@@ -130,8 +126,7 @@ def build_agent(cfg: FastSacCfg, dims, num_envs, device, action_scale, action_bi
         critic_obs_dim=critic_obs_dim,
         act_dim=act_dim,
         num_envs=num_envs,
-        cfg=cfg.agent,
-        sonic_cfg=getattr(cfg, "sonic", None),
+        cfg=cfg,
         device=device,
         action_scale=action_scale,
         action_bias=action_bias,

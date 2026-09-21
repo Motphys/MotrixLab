@@ -9,9 +9,8 @@ from motrix_rl.fastsac.config import (
     FastSacAsyncOptionsCfg,
     FastSacCfg,
     FastSacTrainerCfg,
-    SonicSacCfg,
 )
 
 _framework.register_framework()
 
-__all__ = ["FastSacCfg", "FastSacAgentCfg", "FastSacTrainerCfg", "FastSacAsyncOptionsCfg", "SonicSacCfg"]
+__all__ = ["FastSacCfg", "FastSacAgentCfg", "FastSacTrainerCfg", "FastSacAsyncOptionsCfg"]

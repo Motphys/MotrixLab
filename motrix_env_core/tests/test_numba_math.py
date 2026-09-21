@@ -12,7 +12,7 @@ from motrix_env_core.numba.math.quaternion import (
     rotate_inverse,
     rotate_vector,
     rotation_distance,
-    to_matrix_first_two_rows,
+    to_matrix_first_two_columns,
 )
 
 
@@ -54,8 +54,8 @@ def _rotation_distance(lhs: np.ndarray, rhs: np.ndarray) -> float:
 
 
 @numba.njit
-def _to_matrix_first_two_rows(value: np.ndarray) -> np.ndarray:
-    return to_matrix_first_two_rows(value)
+def _to_matrix_first_two_columns(value: np.ndarray) -> np.ndarray:
+    return to_matrix_first_two_columns(value)
 
 
 def test_numba_quaternion_from_euler_matches_numpy_and_supports_caller_owned_out() -> None:
@@ -120,14 +120,14 @@ def test_numba_rotation_distance_matches_numpy() -> None:
     np.testing.assert_allclose(_rotation_distance(lhs, rhs), expected, atol=1e-6)
 
 
-def test_numba_to_matrix_first_two_rows_matches_numpy_and_supports_overlapping_out() -> None:
+def test_numba_to_matrix_first_two_columns_matches_numpy_and_supports_overlapping_out() -> None:
     value = np.asarray([0.1, -0.2, 0.3, 0.9], dtype=np.float32)
-    expected = quaternion.to_matrix(value)[:2].reshape(6)
+    expected = quaternion.to_matrix(value)[:, :2].reshape(6)
 
-    np.testing.assert_allclose(_to_matrix_first_two_rows(value), expected, atol=1e-6)
+    np.testing.assert_allclose(_to_matrix_first_two_columns(value), expected, atol=1e-6)
     out = np.full(6, np.nan, dtype=np.float32)
     out[:4] = value
-    returned = to_matrix_first_two_rows(out[:4], out)
+    returned = to_matrix_first_two_columns(out[:4], out)
     assert returned is out
     np.testing.assert_allclose(returned, expected, atol=1e-6)
 

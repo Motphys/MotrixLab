@@ -39,6 +39,7 @@ from motrix_env_core.manager.math.quaternion import (
     rotate_inverse,
     rotate_vector,
     rotation_distance,
+    to_matrix_first_two_columns,
 )
 from motrix_env_core.mdp.rewards import (
     ActionRateRewardCfg as ActionRateRewardCfg,
@@ -552,18 +553,6 @@ class SonicJointPositionActionCfg(ActionCfg):
         )
 
 
-@njit(inline="always")
-def _sonic_release_rotation6(quat: np.ndarray, out: np.ndarray) -> None:
-    """Write the release checkpoint's first-two-columns rotation encoding."""
-    x, y, z, w = quat
-    out[0] = 1.0 - 2.0 * (y * y + z * z)
-    out[1] = 2.0 * (x * y - w * z)
-    out[2] = 2.0 * (x * y + w * z)
-    out[3] = 1.0 - 2.0 * (x * x + z * z)
-    out[4] = 2.0 * (x * z - w * y)
-    out[5] = 2.0 * (y * z + w * x)
-
-
 @kernel_data
 class SonicActorObservation:
     history: np.ndarray
@@ -672,7 +661,7 @@ class SonicG1ReferenceObservation:
             out[position_offset : position_offset + joint_count] = clip.joint_pos[step]
             out[velocity_offset : velocity_offset + joint_count] = clip.joint_vel[step]
             quat_mul(inverse_root, clip.tracked_bodies_quat_w[step, SONIC_ROOT_BODY_INDEX], rel)
-            _sonic_release_rotation6(
+            to_matrix_first_two_columns(
                 rel,
                 out[rotation_offset : rotation_offset + SONIC_ROTATION_REPRESENTATION_DIM],
             )
@@ -717,7 +706,7 @@ class SonicSmplReferenceObservation:
                     out[joint_start : joint_start + SONIC_VECTOR_DIM],
                 )
             quat_mul(inverse_robot_root, clip.smpl_root_quat[step], relative_human_root)
-            _sonic_release_rotation6(
+            to_matrix_first_two_columns(
                 relative_human_root,
                 out[rotation_start : rotation_start + SONIC_ROTATION_REPRESENTATION_DIM],
             )
@@ -784,7 +773,7 @@ class SonicCriticObservation:
             out[offset : offset + 3],
         )
         quat_mul(inverse, clip.reference_body_quat_w[step], relative)
-        _sonic_release_rotation6(relative, out[offset + 3 : offset + 9])
+        to_matrix_first_two_columns(relative, out[offset + 3 : offset + 9])
         offset += 9
         body_count = clip.tracked_bodies_pos_w.shape[1]
         tracked_body_pos = ctx.sim["tracked_body_pos"]
@@ -798,7 +787,7 @@ class SonicCriticObservation:
             )
             start = offset + 3 * body_count + 6 * i
             quat_mul(inverse, ctx.sim["tracked_body_quat"][i], relative)
-            _sonic_release_rotation6(relative, out[start : start + 6])
+            to_matrix_first_two_columns(relative, out[start : start + 6])
         offset += 9 * body_count
         history = state.history[ctx.env_id]
         reset = state.seen_reset[ctx.env_id] != motion.reset_counter[0]

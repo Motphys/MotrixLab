@@ -135,6 +135,7 @@ def test_task_checkpoint_policy_composes_at_root(env, rllib, algo):
 
 
 def test_motrix_fastsac_asynchronous_switches_trainer(tmp_path):
+    import motrix_envs  # noqa: F401 registers built-in environments
     from motrix_rl.fastsac.async_impl.train import Trainer as AsyncTrainer
     from motrix_rl.fastsac.config import FastSacAsyncOptionsCfg
     from motrix_rl.fastsac.sync.train import Trainer as SyncTrainer

@@ -8,39 +8,45 @@ Manager、simulator registry、Hydra Task 和 FastSAC 公共契约。不引入�
 
 迁移包含：
 
-- Manager-based G1 环境与三种 temporal profile；
+- Manager-based G1 环境与 canonical 10 future-frame 时序契约；
 - 版本化、只读 mmap 的 SONIC packed motion store；
-- SONIC FastSAC actor、辅助损失和同步/异步训练；
-- MotrixLab checkpoint 导出及官方 SONIC checkpoint 的受限回放入口；
+- 通过 `PolicyVariant` 注册的 SONIC FastSAC actor、命名辅助损失和同步/异步训练；
+- MotrixLab checkpoint 导出与回放；
 - 小型 smoke store、行为测试和双语用户文档。
 
 ## 环境与数据
 
-环境注册名为 `g1-sonic`、`g1-sonic-lafan` 和 `g1-sonic-smoke`。配置使用 typed
+环境注册名为 `g1-sonic`，没有 profile 或兄弟变体。配置使用 typed
 Manager group，term factory 返回 `ObsTerm`、`RewardTerm`、`TerminationTerm` 或
 `ResetTerm`；所有 fused-kernel 入口使用 `@dispatch`。
 
 `SonicMotionClip` 在通用 `WbtMotionClip` 数组之外保存 SMPL reference 和逐帧 clip
 边界。运行时只读取 `motrixlab_sonic_packed_v1`，四元数统一为 `xyzw`，关节和 body
-数组按 task contract 排列。三个环境在未设置变量时都回退到仓库内的小型 store，以满足
+数组按 task contract 排列。环境在未设置变量时回退到仓库内的小型 store，以满足
 registry 和集成测试契约；有效训练所需的完整动作集由 `SONIC_PACKED_STORE` 外部提供。
+`configs/task/g1-sonic/motrix.fastsac.yaml` 是唯一 task recipe，直接内联
+`algo.variant`。`model.num_future_frames=10` 同时驱动环境 observation 布局和
+SONIC actor 输入；小规模验证只覆盖 CLI 的环境数、播放环境数、checkpoint 间隔和迭代数。
 
 Action manager 在每次 `process` 前调用 `ActionTerm.prepare(sim_data)`。SONIC action
 利用该 hook 保存动作应用前的足部关节速度，从而让 acceleration reward 使用正确的时间点。
 
 ## FastSAC
 
-`FastSacCfg.sonic` 选择专用 actor 和模型 profile。普通 FastSAC 路径不变。SONIC
-observation 最后两个 encoder selector 维度绕过经验归一化，actor 自己输出归一化动作，
-具体 `effort/kp` 缩放由环境 action term 完成。
+`FastSacCfg.policy_variant` 通过中性 `policy_variant_registry` 选择专用 actor；
+`FastSacCfg.variant` 是由 SONIC 变体自解析的映射，FastSAC 不理解其字段。普通
+FastSAC 路径不变。SONIC observation 最后两个 encoder selector 维度绕过经验归一化，
+actor 自己输出归一化动作，具体 `effort/kp` 缩放由环境 action term 完成。
+训练 checkpoint 写入 `policy_variant` 与 `policy_variant_metadata`，后者包含完整
+模型映射和辅助权重，使 export/play 不依赖当前 YAML。训练 task recipe 不包含
+`g1_control_decoder_hidden_dims`：本地 `SonicActor` 不构造该 decoder，并用
+FastSAC policy head 替代上游 PPO control head。
 
 异步 collector/learner 快照同时传输 actor parameters、persistent buffers 和 observation
 normalizer state。这样 SONIC 的归一化 buffer 与 learner 保持一致，而普通 actor 的
 buffer snapshot 大小仍为零。
 
-MotrixLab 自身训练 checkpoint 继续依赖 run metadata。只有用户显式指定
-`env=g1-sonic policy=<file>` 且文件上方不存在 `metadata.json` 时，play CLI 才进入
-官方 SONIC release loader；其他环境不接受该 fallback。
+MotrixLab 训练 checkpoint 的回放继续依赖 run metadata，与其他任务一致。
 
 ## MotrixSim 兼容依据
 

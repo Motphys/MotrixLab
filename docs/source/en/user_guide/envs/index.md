@@ -56,9 +56,7 @@ python scripts/view.py env=<env-id>
 | <img src="../../_static/images/poster/franka-lift-cube.jpg" alt="franka-lift-cube" width="240"> | `franka-lift-cube` | Control a Franka arm to grasp and lift a cube. | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/franka-open-cabinet.jpg" alt="franka-open-cabinet" width="240"> | `franka-open-cabinet` | Control a Franka arm to grasp a handle and open a drawer. | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/g1-29dof-wbt-largebox.jpg" alt="g1-29dof-wbt-largebox" width="240"> | `g1-29dof-wbt-largebox` | Track a large-box carrying reference motion with Unitree G1. | `motrix.fastsac` |
-| <img src="../../_static/images/poster/g1-sonic.jpg" alt="g1-sonic" width="240"> | `g1-sonic` | Track SONIC motion on G1 with the release-capacity temporal profile. | `motrix.fastsac` |
-| <img src="../../_static/images/poster/g1-sonic-lafan.jpg" alt="g1-sonic-lafan" width="240"> | `g1-sonic-lafan` | Track a packed LAFAN motion corpus with the intermediate SONIC profile. | `motrix.fastsac` |
-| <img src="../../_static/images/poster/g1-sonic-smoke.jpg" alt="g1-sonic-smoke" width="240"> | `g1-sonic-smoke` | Exercise the SONIC environment contract with the bundled smoke clip. | `motrix.fastsac` |
+| <img src="../../_static/images/poster/g1-sonic.jpg" alt="g1-sonic" width="240"> | `g1-sonic` | Track SONIC motion on G1 with a 10-future-frame PolicyVariant. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/g1-walk-flat.jpg" alt="g1-walk-flat" width="240"> | `g1-walk-flat` | Track walking commands with Unitree G1 on flat ground. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/g1-walk-rough.jpg" alt="g1-walk-rough" width="240"> | `g1-walk-rough` | Track walking commands with Unitree G1 over uneven terrain. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/g1-wbt-dance.jpg" alt="g1-wbt-dance" width="240"> | `g1-wbt-dance` | Track the bundled G1 dance motion with the manager-based environment. | `motrix.fastsac` |

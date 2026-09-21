@@ -35,7 +35,7 @@ def test_sonic_config_defaults_match_upstream_base() -> None:
     assert tracking.std == 0.1
 
 
-def test_sonic_release_action_scale_uses_policy_actuator_contract() -> None:
+def test_sonic_action_scale_uses_policy_actuator_contract() -> None:
     scales = mdp._sonic_policy_action_scale()
     left_hip_pitch = mdp.G1_SONIC_JOINTS.index("left_hip_pitch_joint")
     right_hip_pitch = mdp.G1_SONIC_JOINTS.index("right_hip_pitch_joint")
@@ -260,15 +260,6 @@ def test_sonic_smpl_reference_matches_release_local_frame_and_wrist_tail() -> No
     wrists = joint_positions[:, mdp.SONIC_WRIST_POLICY_INDICES]
     expected = np.concatenate((human_features.reshape(-1), wrists.reshape(-1)))
     np.testing.assert_allclose(output, expected, atol=1.0e-6)
-
-
-def test_sonic_rotation6_uses_release_first_two_columns_contract() -> None:
-    quarter_turn_z = np.asarray((0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5)), dtype=np.float32)
-    output = np.empty(6, dtype=np.float32)
-
-    mdp._sonic_release_rotation6(quarter_turn_z, output)
-
-    np.testing.assert_allclose(output, (0.0, -1.0, 1.0, 0.0, 0.0, 0.0), atol=1.0e-6)
 
 
 def test_sonic_observation_sizes_are_derived_from_runtime_shapes() -> None:

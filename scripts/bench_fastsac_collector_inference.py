@@ -73,6 +73,8 @@ def _source_policy(args):
 
 def _collector(args, source_actor, source_normalizer, action_scale, action_bias):
     cfg = SimpleNamespace(
+        policy_variant="default",
+        variant={},
         agent=SimpleNamespace(
             actor_hidden_dim=args.hidden_dim,
             log_std_max=0.0,

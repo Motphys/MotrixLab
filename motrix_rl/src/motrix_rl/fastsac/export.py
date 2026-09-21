@@ -25,8 +25,7 @@ class FastSacOnnxExporter(OnnxPolicyExporter):
             raise RuntimeError("FastSAC ONNX export requires the 'motrix-rl[onnx]' extra") from error
 
         from motrix_rl.fastsac.buffer import EmpiricalNormalization
-        from motrix_rl.fastsac.factory import make_actor
-        from motrix_rl.fastsac.sonic import SonicModelConfig
+        from motrix_rl.fastsac.factory import resolve_policy_variant
 
         algo_cfg = request.task_config.algo
         if not isinstance(algo_cfg, FastSacCfg):
@@ -37,34 +36,35 @@ class FastSacOnnxExporter(OnnxPolicyExporter):
             raise ValueError(f"FastSAC checkpoint must be a mapping: {request.checkpoint}")
         actor_state = _module_state(checkpoint, "actor", request.checkpoint)
         actor_cfg = algo_cfg.agent
-        sonic_meta = checkpoint.get("sonic", {})
-        sonic_enabled = isinstance(sonic_meta, Mapping) and bool(sonic_meta.get("enabled", False))
-        if sonic_enabled:
-            profile = str(sonic_meta.get("profile") or algo_cfg.sonic.profile)
-            model_values = dict(algo_cfg.sonic.model) if algo_cfg.sonic.model else {}
-            model = (
-                SonicModelConfig.from_mapping(model_values) if model_values else SonicModelConfig.from_profile(profile)
+        if isinstance(checkpoint.get("sonic"), Mapping):
+            raise ValueError(
+                "FastSAC checkpoint uses the pre-PolicyVariant SONIC format; "
+                "re-export or retrain it with the current FastSAC policy variant"
             )
-            observation_size, action_size = model.packed_obs_dim, model.action_dim
-        else:
+        variant_name = checkpoint.get("policy_variant", "default")
+        variant_metadata = checkpoint.get("policy_variant_metadata", {})
+        if not isinstance(variant_name, str) or not isinstance(variant_metadata, Mapping):
+            raise ValueError("FastSAC checkpoint has invalid policy variant metadata")
+        variant = resolve_policy_variant(variant_name)
+        passthrough_dims = variant.passthrough_dims(algo_cfg)
+        if variant_name == "default":
             observation_size, action_size = _actor_sizes(actor_state)
-        actor = make_actor(
-            actor_cfg,
-            algo_cfg.sonic if sonic_enabled else None,
-            obs_dim=observation_size,
-            act_dim=action_size,
-            action_scale=torch.ones(action_size),
-            action_bias=torch.zeros(action_size),
+            variant_metadata = {**variant_metadata, "obs_dim": observation_size, "act_dim": action_size}
+        actor = type(variant).build_from_checkpoint(
+            variant_metadata,
+            algo_cfg,
             device="cpu",
         )
+        export_observation = getattr(actor, "export_observation", None)
         actor.load_state_dict(actor_state, strict=True)
         actor.eval()
+        observation_size, action_size = actor.n_obs, actor.n_act
 
         if actor_cfg.obs_normalization:
             normalizer = EmpiricalNormalization(
                 shape=observation_size,
                 device="cpu",
-                passthrough_dims=2 if sonic_enabled else 0,
+                passthrough_dims=passthrough_dims,
             )
             normalizer.load_state_dict(_module_state(checkpoint, "obs_normalizer", request.checkpoint), strict=True)
             normalizer.eval()
@@ -81,6 +81,8 @@ class FastSacOnnxExporter(OnnxPolicyExporter):
                 self.normalizer = normalizer
 
             def forward(self, observations):
+                if export_observation is not None:
+                    observations = export_observation(observations)
                 if isinstance(self.normalizer, EmpiricalNormalization):
                     observations = self.normalizer(observations, update=False)
                 actions, _, _ = self.actor(observations)
@@ -90,7 +92,7 @@ class FastSacOnnxExporter(OnnxPolicyExporter):
         buffer = io.BytesIO()
         torch.onnx.export(
             policy,
-            torch.zeros(1, observation_size, dtype=torch.float32),
+            _export_observation(torch.zeros(1, observation_size, dtype=torch.float32), export_observation),
             buffer,
             export_params=True,
             opset_version=request.opset,
@@ -124,6 +126,10 @@ def _module_state(checkpoint: Mapping, name: str, path) -> Mapping:
     if not isinstance(state, Mapping):
         raise ValueError(f"FastSAC checkpoint has no {name!r} state_dict: {path}")
     return state
+
+
+def _export_observation(observations, export_observation):
+    return export_observation(observations) if export_observation is not None else observations
 
 
 def _actor_sizes(actor_state: Mapping) -> tuple[int, int]:

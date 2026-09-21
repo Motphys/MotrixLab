@@ -213,7 +213,7 @@ def test_fastsac_checkpoint_excludes_runtime_wrappers() -> None:
         critic_obs_dim=7,
         act_dim=3,
         num_envs=1,
-        cfg=config.algo.agent,
+        cfg=config.algo,
         device=torch.device("cpu"),
     )
 

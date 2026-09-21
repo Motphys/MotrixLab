@@ -26,34 +26,28 @@ from motrix_envs.robot import UnitreeG129Dof
 from motrix_envs.robot.unitree import UNITREE_G1_ASSET_DIR
 
 
-def _sonic_num_future_frames(profile: str) -> int:
-    """Temporal depth from the single-source ``configs/sonic_model/<profile>.yaml``.
+def _sonic_num_future_frames() -> int:
+    """Temporal depth from the single-source SONIC PolicyVariant config.
 
-    The RL side mounts the same file (``/sonic_model@algo.sonic.model``), so
-    the environment observation layout and the actor input width always follow
-    one edit. Paths are resolved from the working directory like the packed
-    motion stores.
+    The RL task recipe owns ``algo.variant.model``, so the environment
+    observation layout and the actor input width always follow one edit. Paths
+    are resolved from the working directory like the packed motion stores.
     """
-    path = Path("configs/sonic_model") / f"{profile}.yaml"
+    path = Path("configs/task/g1-sonic/motrix.fastsac.yaml")
     try:
-        value = OmegaConf.load(path).num_future_frames
+        value = OmegaConf.load(path).algo.variant.model.num_future_frames
     except (OSError, OmegaConfBaseException) as exc:
         raise RuntimeError(
-            f"Cannot read SONIC model profile {path}: {exc}. "
-            "Run from the repository root so configs/sonic_model is reachable."
+            f"Cannot read SONIC task config {path}: {exc}. Run from the repository root so configs/task is reachable."
         ) from exc
     num = int(value)
     if num < 1:
-        raise ValueError(f"{path}: num_future_frames must be >= 1, got {num}")
+        raise ValueError(f"{path}: algo.variant.model.num_future_frames must be >= 1, got {num}")
     return num
 
 
-def _make_g1_sonic_cfg(
-    profile: str,
-    *,
-    default_packed_store: str = "data/sonic/lafan1-pack-smoke",
-) -> SonicManagerEnvCfg:
-    num_future_frames = _sonic_num_future_frames(profile)
+def _make_g1_sonic_cfg() -> SonicManagerEnvCfg:
+    num_future_frames = _sonic_num_future_frames()
     return SonicManagerEnvCfg(
         sim=SimCfg(dt=0.005, solver_iterations=3),
         scene=StandardSceneCfg(
@@ -64,7 +58,7 @@ def _make_g1_sonic_cfg(
         commands=SonicCommandsCfg(
             motion=mdp.SonicMotionCommandCfg(
                 motion_file=os.path.join(os.environ.get("SONIC_DATA_ROOT", "data/sonic"), "sonic.npz"),
-                packed_store=os.environ.get("SONIC_PACKED_STORE", default_packed_store),
+                packed_store=os.environ.get("SONIC_PACKED_STORE", "data/sonic/lafan1-pack-smoke"),
                 num_future_frames=num_future_frames,
             )
         ),
@@ -83,31 +77,11 @@ def _make_g1_sonic_cfg(
 
 @registry.envcfg("g1-sonic")
 def make_g1_sonic_cfg() -> SonicManagerEnvCfg:
-    """Track SONIC motion on G1 with the release-capacity temporal profile.
+    """Track SONIC motion on G1 with a 10-future-frame PolicyVariant.
 
-    zh_CN: 使用发布容量的时序配置在 G1 上跟踪 SONIC 动作。
+    zh_CN: 使用 10 个未来帧的 SONIC PolicyVariant 在 G1 上跟踪动作。
     """
-    return _make_g1_sonic_cfg("release")
-
-
-@registry.envcfg("g1-sonic-lafan")
-def make_g1_sonic_lafan_cfg() -> SonicManagerEnvCfg:
-    """Track a packed LAFAN motion corpus with the intermediate SONIC profile.
-
-    zh_CN: 使用中等规模 SONIC 配置在 G1 上跟踪打包后的 LAFAN 动作集。
-    """
-    return _make_g1_sonic_cfg("lafan")
-
-
-@registry.envcfg("g1-sonic-smoke")
-def make_g1_sonic_smoke_cfg() -> SonicManagerEnvCfg:
-    """Exercise the SONIC environment contract with the bundled smoke clip.
-
-    zh_CN: 使用仓库内置的小型动作片段验证 SONIC 环境契约。
-    """
-    return _make_g1_sonic_cfg("smoke", default_packed_store="data/sonic/lafan1-pack-smoke")
+    return _make_g1_sonic_cfg()
 
 
 registry.env("g1-sonic")(ManagerEnv)
-registry.env("g1-sonic-lafan")(ManagerEnv)
-registry.env("g1-sonic-smoke")(ManagerEnv)
