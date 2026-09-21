@@ -165,10 +165,17 @@ def test_agent_weights_and_logs_sonic_auxiliary_losses() -> None:
         torch.ones(1),
         torch.zeros(1),
         torch.zeros(1),
+    )
+    # The buffer derives next_obs from the successor slot — one extra append
+    # makes the first transition complete (num_stored == 1).
+    agent.rb.extend(
         _packed(obs_dim, 1),
         torch.zeros(1, 3),
+        torch.zeros(1, model["action_dim"]),
+        torch.zeros(1),
+        torch.zeros(1),
+        torch.zeros(1),
     )
-    agent.rb.ptr = 1
 
     metrics = agent.update(1)
 
@@ -217,10 +224,16 @@ def test_default_variant_has_no_auxiliary_metrics() -> None:
         torch.ones(1),
         torch.zeros(1),
         torch.zeros(1),
+    )
+    # Successor append completes the first transition (time-shared next_obs).
+    agent.rb.extend(
         torch.randn(1, 5),
         torch.randn(1, 7),
+        torch.zeros(1, 3),
+        torch.zeros(1),
+        torch.zeros(1),
+        torch.zeros(1),
     )
-    agent.rb.ptr = 1
 
     metrics = agent.update(1)
 
