@@ -9,47 +9,47 @@ task:
   env: g1-sonic
   rllib: motrix
   algo: fastsac
-num_envs: 4096
+num_envs: 2048
 play_num_envs: 16
 seed: 1
 checkpoint:
-  interval: 50000
+  interval: 1000
 algo:
   # Encoder and motion-decoder geometry for the SONIC tokenizer. The control
   # decoder is the standard FastSAC actor head below.
   policy_variant: sonic
   variant:
     model:
-      num_future_frames: 10
+      num_future_frames: 4
       num_tokens: 2
-      token_dim: 32
+      token_dim: 8
       fsq_levels: 32
       action_dim: 29
-      g1_encoder_hidden_dims: [2048, 1024, 512, 512]
-      smpl_encoder_hidden_dims: [2048, 1024, 512, 512]
-      g1_motion_decoder_hidden_dims: [2048, 1024, 512, 512]
+      g1_encoder_hidden_dims: [512, 256]
+      smpl_encoder_hidden_dims: [512, 256]
+      g1_motion_decoder_hidden_dims: [512, 256]
     auxiliary:
       reconstruction: 0.01
       latent_alignment: 1.0
       cycle_consistency: 1.0
   agent:
-    actor_learning_rate: 1.0e-4
+    actor_learning_rate: 3.0e-4
     weight_decay: 0.0
     actor_hidden_dim: 512
-    critic_hidden_dim: 512
-    log_std_min: -10.0
-    num_atoms: 101
+    critic_hidden_dim: 768
+    log_std_min: -5.0
+    num_atoms: 501
     v_min: -5.0
     v_max: 5.0
     gamma: 0.99
-    tau: 0.01
-    alpha_init: 0.01
-    batch_size: 2048
+    tau: 0.05
+    alpha_init: 0.001
+    target_entropy_ratio: 0.5
+    batch_size: 8192
     learning_starts: 24
     policy_frequency: 2
-    num_updates: 8
-    obs_normalization: false
+    num_updates: 4
   trainer:
-    num_learning_iterations: 500000
+    num_learning_iterations: 40000
     async_options:
       utd_mode: strict
