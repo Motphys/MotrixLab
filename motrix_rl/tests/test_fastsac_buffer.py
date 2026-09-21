@@ -87,11 +87,15 @@ def test_sample_rejects_empty_buffer_and_keeps_effective_n_steps_integer():
     with pytest.raises(RuntimeError):
         empty.sample(4)
     # with a single ingested step there is no complete transition yet either
-    # (its next observation is the following step's stored observation)
-    single = SimpleReplayBuffer(N_ENV, BUFFER_SIZE, N_OBS, N_ACT, N_CRITIC_OBS, device="cpu")
-    _fill(single, 1, [0], [0])
-    with pytest.raises(RuntimeError):
-        single.sample(4)
+    # (its next observation is the following step's stored observation); this
+    # previously let the n-step branch fabricate next_obs from slot garbage
+    for n_steps in (1, 3):
+        single = SimpleReplayBuffer(
+            N_ENV, BUFFER_SIZE, N_OBS, N_ACT, N_CRITIC_OBS, n_steps=n_steps, gamma=GAMMA, device="cpu"
+        )
+        _fill(single, 1, [0], [0])
+        with pytest.raises(RuntimeError):
+            single.sample(4)
     # the n-step branch must return the same dtype as the 1-step branch
     for n_steps in (1, 3):
         rb = SimpleReplayBuffer(

@@ -61,10 +61,8 @@ class SharedTransitionRing:
         critic_obs_dim: int,
         act_dim: int,
     ):
-        # The consumer derives next_obs from the successor slot, so capacity 1
-        # can never satisfy has_next() and would deadlock the pipeline.
-        if capacity < 2:
-            raise ValueError(f"ring_capacity must be >= 2 (consumer reads the successor slot), got {capacity}")
+        if capacity < 1:
+            raise ValueError(f"ring_capacity must be >= 1, got {capacity}")
         self.capacity = capacity
         self.num_envs = num_envs
         f32, i64 = torch.float32, torch.int64
