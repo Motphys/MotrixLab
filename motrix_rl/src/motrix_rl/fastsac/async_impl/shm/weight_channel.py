@@ -59,6 +59,12 @@ from motrix_rl.fastsac.async_impl.shm.common import (
     load_flat_params,
 )
 
+# How long a reader may spin for an in-progress publish before skipping the
+# poll. Short enough that a collector core is never parked on the learner's
+# gradient tail; long enough that the tail end of a normal publish (event
+# completion of a small slot copy) is still picked up synchronously.
+_WRITER_SPIN_BUDGET_S = 50e-6
+
 # obs-normalizer stat buffers that the collector needs (read-only) to reproduce
 # the sync ``act()`` path (normalize with update=False, see agent.act).
 
@@ -330,15 +336,21 @@ class WeightReceiver(ABC):
         while True:
             s1 = int(self.shared.seq[0])
             if s1 & 1:
-                # Writer is mid-publish. Weights are eventually consistent —
-                # keep running the current policy and pick up the new version
-                # on the next poll. Busy-waiting here would burn a core on the
-                # collector's critical path: the odd window spans the learner's
-                # in-flight gradient kernels (publish runs right after the
-                # async update), so it can last tens of milliseconds. This
-                # also covers retries: a torn read re-reads seq fresh instead
-                # of spinning on the stale value.
-                return local_version, wait_writer_s, host_snapshot_s, 0.0
+                # Writer is mid-publish. Its odd window covers the CUDA-event
+                # completion of the slot copy, which sits behind the learner's
+                # in-flight gradient kernels — potentially tens of milliseconds.
+                # Spinning for it would burn a collector core on the stepping
+                # critical path, and the weights are eventually consistent
+                # anyway (the caller polls again next step): give the writer a
+                # short spin budget to catch quickly-completing publishes, then
+                # skip this poll instead of waiting longer.
+                wait_start = time.perf_counter()
+                deadline = wait_start + _WRITER_SPIN_BUDGET_S
+                while s1 & 1 and time.perf_counter() < deadline:
+                    s1 = int(self.shared.seq[0])
+                wait_writer_s += time.perf_counter() - wait_start
+                if s1 & 1:
+                    return local_version, wait_writer_s, host_snapshot_s, 0.0
             version = s1 // 2
             if version <= local_version:  # nothing new to load
                 return local_version, wait_writer_s, host_snapshot_s, 0.0

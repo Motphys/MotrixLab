@@ -159,7 +159,8 @@ def test_seqlock_read_is_nonblocking_during_publish() -> None:
     elapsed = time.perf_counter() - start
 
     assert version == 0  # keeps the receiver's current version (nothing loaded yet)
-    assert wait_writer_s == 0.0
+    # Bounded by the reader's spin budget (50us) instead of the publish window.
+    assert wait_writer_s <= 50e-6 * 10
     assert elapsed < 1.0  # returned immediately, did not spin until seq closes
 
     shared.seq[0] = 4  # publish completed
