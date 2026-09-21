@@ -19,19 +19,19 @@ class SharedTransitionRing:
     is ``(num_envs, dim)``). ``next_obs``/``next_critic_obs`` are NOT stored:
     with auto-reset envs the observation returned by step ``t`` is exactly the
     stored observation of step ``t+1`` (at episode ends it is the reset
-    observation), so the consumer derives them from the successive slot via
-    :meth:`has_next`/:meth:`peek_next`. This halves the per-slot copy volume
-    and shared-memory footprint.
+    observation), so the consumer's replay buffer derives them from the
+    successive slot. This halves the per-slot copy volume and shared-memory
+    footprint.
 
     Producer (collector) calls :meth:`push`; when the ring is full it returns
     ``False`` and the caller must retry/backoff — that is the backpressure that
     keeps the collector from outrunning the learner and flooding memory.
 
     Consumer (learner) calls :meth:`read_slot` to get zero-copy CPU views of the
-    oldest unread slot plus :meth:`peek_next` for the derived next-observation
-    views, moves them to its device, then calls :meth:`commit_read`. The read
-    cursor only advances after the copy, so the producer can never clobber a
-    slot that is still being ingested (``push`` blocks while the ring is full).
+    oldest unread slot, moves them to its device, then calls :meth:`commit_read`.
+    The read cursor only advances after the copy, so the producer can never
+    clobber a slot that is still being ingested (``push`` blocks while the ring
+    is full).
 
     Memory ordering
     ~~~~~~~~~~~~~~~
@@ -41,9 +41,7 @@ class SharedTransitionRing:
     needs the consumer to not observe the ``_write`` bump before the slot's data
     stores have landed (and symmetrically for ``_read``); on x86/TSO that
     ordering is free, so no memory barrier is used and this path is x86-only
-    (see the module "Memory ordering" note). The same guarantee covers
-    :meth:`peek_next`: the producer wrote the successor slot's data before
-    publishing it, which is a precondition of the consumer seeing it committed.
+    (see the module "Memory ordering" note).
     """
 
     FIELDS = (
@@ -140,23 +138,8 @@ class SharedTransitionRing:
         )
 
     def has_next(self) -> bool:
-        """Whether the successor of the oldest unread slot is already committed.
-
-        The consumer needs it to derive ``next_obs``/``next_critic_obs`` for the
-        oldest slot (see :meth:`peek_next`), so it must wait for one extra
-        committed slot before ingesting.
-        """
-        return self.size() > 1
-
-    def peek_next(self):
-        """Return CPU views of the successor slot's obs/critic_obs.
-
-        Valid only when :meth:`has_next` is true; the views alias ring memory
-        that stays untouched until the consumer's own ``commit_read`` calls
-        advance past it.
-        """
-        slot = (self.read_idx + 1) % self.capacity
-        return self.obs[slot], self.critic_obs[slot]
+        """Whether at least one unread slot is committed (i.e. readable)."""
+        return self.size() > 0
 
     def commit_read(self) -> None:
         # Free the slot. On x86/TSO our reads above complete before this cursor

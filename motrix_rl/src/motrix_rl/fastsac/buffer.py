@@ -64,24 +64,23 @@ class SimpleReplayBuffer(nn.Module):
 
     @property
     def num_stored(self) -> int:
-        return min(self.ptr, self.buffer_size)
+        # The newest transition is only complete once the following step's
+        # observation has been written (ring ``has_next`` semantics), so at most
+        # ``ptr - 1`` transitions are sampleable.
+        return min(max(self.ptr - 1, 0), self.buffer_size)
 
-    def extend(self, obs, critic_obs, actions, rewards, dones, truncations, next_obs, next_critic_obs) -> None:
+    def extend(self, obs, critic_obs, actions, rewards, dones, truncations) -> None:
         """Append one transition per environment.
 
-        ``next_obs``/``next_critic_obs`` must equal the ``obs``/``critic_obs``
-        of the following step (auto-reset semantics); the buffer stores them at
-        slot ``ptr + 1`` and the next call's data lands there, so per step only
-        one observation write per field is performed.
+        Only the observation of step ``ptr`` is written. Its next-observation
+        slot (``ptr + 1``) is filled by the following call — with auto-reset
+        envs the observation returned by step ``t`` is exactly the observation
+        of step ``t + 1`` (at episode ends it is the reset observation), the
+        invariant already relied upon by the async transition ring.
         """
-        ptr = self.ptr
-        slot = ptr % self._cap
-        if ptr == 0:
-            self.observations[:, 0] = obs
-            self.critic_observations[:, 0] = critic_obs
-        next_slot = (ptr + 1) % self._cap
-        self.observations[:, next_slot] = next_obs
-        self.critic_observations[:, next_slot] = next_critic_obs
+        slot = self.ptr % self._cap
+        self.observations[:, slot] = obs
+        self.critic_observations[:, slot] = critic_obs
         self.actions[:, slot] = actions
         self.rewards[:, slot] = rewards
         self.dones[:, slot] = dones
@@ -100,7 +99,7 @@ class SimpleReplayBuffer(nn.Module):
             # Sampled ring positions are expressed as absolute time steps over
             # the contiguous valid window, then folded into the ring. The next
             # observation of step ``t`` is the observation stored at ``t + 1``.
-            t = self.ptr - self.num_stored + idx
+            t = self.ptr - 1 - self.num_stored + idx
             ring = t % self._cap
             next_ring = (t + 1) % self._cap
             oi = ring.unsqueeze(-1).expand(-1, -1, no)
@@ -122,13 +121,13 @@ class SimpleReplayBuffer(nn.Module):
             return out
 
         # n-step (>1)
-        if self.ptr < self.buffer_size:
-            max_start = max(1, self.ptr - self.n_steps + 1)
+        if self.ptr - 1 < self.buffer_size:
+            max_start = max(1, self.ptr - self.n_steps)
             idx = torch.randint(0, max_start, (n_env, batch_size), device=self.device)
             t = idx
         else:
             idx = torch.randint(0, self.buffer_size, (n_env, batch_size), device=self.device)
-            t = self.ptr - self.buffer_size + idx
+            t = self.ptr - 1 - self.buffer_size + idx
         ring = t % self._cap
 
         oi = ring.unsqueeze(-1).expand(-1, -1, no)
@@ -144,9 +143,9 @@ class SimpleReplayBuffer(nn.Module):
         all_done = torch.gather(self.dones.unsqueeze(-1).expand(-1, -1, self.n_steps), 1, all_idx)
         all_trunc = torch.gather(self.truncations.unsqueeze(-1).expand(-1, -1, self.n_steps), 1, all_idx)
 
-        # A window must not read past the newest stored transition; folded ring
-        # positions beyond it hold stale data from a full cycle earlier.
-        max_off = (self.ptr - 1 - t).clamp(min=0)
+        # A window must not read past the newest stored observation; folded
+        # ring positions beyond it hold stale data from a full cycle earlier.
+        max_off = (self.ptr - 2 - t).clamp(min=0)
         in_win = offsets <= max_off.unsqueeze(-1)
         all_rew = all_rew * in_win
         all_done = all_done * in_win

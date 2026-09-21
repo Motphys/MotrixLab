@@ -251,9 +251,7 @@ class Trainer(TrainerBase):
 
                 next_obs, next_critic_obs, rewards, terminated, truncated = env.step(actions)
 
-                agent.rb.extend(
-                    obs, critic_obs, actions, rewards, terminated.long(), truncated.long(), next_obs, next_critic_obs
-                )
+                agent.rb.extend(obs, critic_obs, actions, rewards, terminated.long(), truncated.long())
 
                 ep_return += rewards
                 ep_len += 1

@@ -34,27 +34,21 @@ def _fill(rb, times, dones_by_t, truncs_by_t, rewards=None):
         rew = torch.full((N_ENV,), float(t)) if rewards is None else rewards[t]
         dones = torch.full((N_ENV,), dones_by_t[t], dtype=torch.long)
         truncs = torch.full((N_ENV,), truncs_by_t[t], dtype=torch.long)
-        rb.extend(
-            obs,
-            critic_obs,
-            actions,
-            rew,
-            dones,
-            truncs,
-            torch.full((N_ENV, N_OBS), float(t + 1)),
-            torch.full((N_ENV, N_CRITIC_OBS), float(100 + t + 1)),
-        )
+        rb.extend(obs, critic_obs, actions, rew, dones, truncs)
     return times
 
 
-def _expected_n_step(t0, total, n_steps, dones_by_t, truncs_by_t):
+def _expected_n_step(t0, last, n_steps, dones_by_t, truncs_by_t):
     """Ground truth for a window starting at ``t0`` (mirrors SAC semantics).
 
-    Rewards are accumulated until the first done (exclusive shift: the reward
-    leading into a terminal step counts) and capped at the newest stored
-    transition; ``final`` additionally stops at the first truncation.
+    ``last`` is the index of the newest complete transition (the buffer lags
+    one step behind ingestion because a transition's next observation is the
+    following step's stored observation). Rewards are accumulated until the
+    first done (exclusive shift: the reward leading into a terminal step
+    counts) and capped at that newest transition; ``final`` additionally stops
+    at the first truncation.
     """
-    max_off = min(n_steps - 1, total - 1 - t0)
+    max_off = min(n_steps - 1, last - t0)
     first_done = next((k for k in range(n_steps) if k <= max_off and dones_by_t[t0 + k]), n_steps - 1)
     first_trunc = next((k for k in range(n_steps) if k <= max_off and truncs_by_t[t0 + k]), n_steps - 1)
     final = min(first_done, first_trunc, max_off)
@@ -108,7 +102,8 @@ def test_one_step_samples_after_wrap():
     batch = _sample_all(rb, rb.num_stored)
     for row in range(batch["obs"].shape[0]):
         t0 = int(batch["obs"][row, 0])
-        assert 0 <= t0 <= total - 1
+        # the newest transition (t = total - 1) waits for its successor obs
+        assert 0 <= t0 <= total - 2
         assert int(batch["next_obs"][row, 0]) == t0 + 1
         assert int(batch["next_critic_obs"][row, 0]) == 100 + t0 + 1
         assert float(batch["rewards"][row]) == t0
@@ -126,7 +121,7 @@ def test_n_step_matches_ground_truth_with_terminations(n_steps):
     flat = batch["obs"].shape[0]
     for row in range(flat):
         t0 = int(batch["obs"][row, 0])
-        ret, eff, final = _expected_n_step(t0, total, n_steps, dones, truncs)
+        ret, eff, final = _expected_n_step(t0, total - 2, n_steps, dones, truncs)
         assert batch["rewards"][row] == pytest.approx(ret, abs=1e-5), f"t0={t0}"
         assert int(batch["effective_n_steps"][row]) == eff, f"t0={t0}"
         assert int(batch["next_obs"][row, 0]) == t0 + final + 1, f"t0={t0}"
@@ -143,17 +138,17 @@ def test_n_step_window_clamped_at_newest_transition():
     batch = _sample_all(rb, rb.num_stored)
     for row in range(batch["obs"].shape[0]):
         t0 = int(batch["obs"][row, 0])
-        ret, eff, final = _expected_n_step(t0, total, 3, [0] * total, [0] * total)
+        ret, eff, final = _expected_n_step(t0, total - 2, 3, [0] * total, [0] * total)
         assert batch["rewards"][row] == pytest.approx(ret, abs=1e-5)
         assert int(batch["next_obs"][row, 0]) == t0 + final + 1
-        assert t0 + final + 1 <= total
+        assert t0 + final + 1 <= total - 1
 
 
 def test_partial_buffer_n_step_only_full_windows():
     rb = SimpleReplayBuffer(N_ENV, BUFFER_SIZE, N_OBS, N_ACT, N_CRITIC_OBS, n_steps=3, gamma=GAMMA, device="cpu")
-    total = 4  # < buffer_size: only starts 0..total-n_steps are sampled
+    total = 4  # < buffer_size: only full windows within complete transitions
     _fill(rb, total, [0] * total, [0] * total)
-    batch = _sample_all(rb, max(1, total - 3 + 1))
+    batch = _sample_all(rb, max(1, total - 3))
     for row in range(batch["obs"].shape[0]):
         t0 = int(batch["obs"][row, 0])
         assert t0 <= total - 3
