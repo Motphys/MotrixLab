@@ -49,8 +49,11 @@ class SimpleReplayBuffer(nn.Module):
         self.n_steps = n_steps
         self.device = device
 
-        # Observation rings use one extra slot so the next-observation of the
-        # newest transition never aliases its own observation slot.
+        # All fields share the same capacity so one absolute-time indexing
+        # scheme (t % cap) covers them; the extra slot over buffer_size keeps
+        # the newest transition's next-observation slot distinct from its own.
+        # The scalar fields' extra slot is negligible and NOT independently
+        # shrinkable — a different modulus would break the shared indexing.
         cap = buffer_size + 1
         self._cap = cap
         z = lambda d: torch.zeros((n_env, cap, d), device=device, dtype=torch.float)  # noqa: E731
