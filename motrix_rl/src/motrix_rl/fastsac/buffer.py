@@ -64,9 +64,9 @@ class SimpleReplayBuffer(nn.Module):
 
     @property
     def num_stored(self) -> int:
-        # The newest transition is only complete once the following step's
-        # observation has been written (ring ``has_next`` semantics), so at most
-        # ``ptr - 1`` transitions are sampleable.
+        # A transition is only complete once the following step's observation
+        # has been written (its next observation), so ingestion runs one step
+        # ahead of what is sampleable.
         return min(max(self.ptr - 1, 0), self.buffer_size)
 
     def extend(self, obs, critic_obs, actions, rewards, dones, truncations) -> None:
@@ -89,8 +89,8 @@ class SimpleReplayBuffer(nn.Module):
 
     @torch.no_grad()
     def sample(self, batch_size: int) -> dict:
-        if self.ptr == 0:
-            raise RuntimeError("cannot sample from an empty replay buffer")
+        if self.num_stored == 0:
+            raise RuntimeError("cannot sample from a replay buffer with no complete transitions")
         n_env, no, na, nco = self.n_env, self.n_obs, self.n_act, self.n_critic_obs
         flat = n_env * batch_size
 
