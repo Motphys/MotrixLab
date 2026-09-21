@@ -88,6 +88,20 @@ def test_observations_stored_once_per_timestep():
     assert not hasattr(rb, "next_observations") and not hasattr(rb, "next_critic_observations")
 
 
+def test_sample_rejects_empty_buffer_and_keeps_effective_n_steps_integer():
+    empty = SimpleReplayBuffer(N_ENV, BUFFER_SIZE, N_OBS, N_ACT, N_CRITIC_OBS, device="cpu")
+    with pytest.raises(RuntimeError):
+        empty.sample(4)
+    # the n-step branch must return the same dtype as the 1-step branch
+    for n_steps in (1, 3):
+        rb = SimpleReplayBuffer(
+            N_ENV, BUFFER_SIZE, N_OBS, N_ACT, N_CRITIC_OBS, n_steps=n_steps, gamma=GAMMA, device="cpu"
+        )
+        _fill(rb, BUFFER_SIZE + 2, [0] * (BUFFER_SIZE + 2), [0] * (BUFFER_SIZE + 2))
+        batch = _sample_all(rb, rb.num_stored)
+        assert batch["effective_n_steps"].dtype == torch.long
+
+
 def test_one_step_samples_after_wrap():
     rb = SimpleReplayBuffer(N_ENV, BUFFER_SIZE, N_OBS, N_ACT, N_CRITIC_OBS, gamma=GAMMA, device="cpu")
     total = _fill(rb, BUFFER_SIZE * 3 + 2, [0] * (BUFFER_SIZE * 3 + 2), [0] * (BUFFER_SIZE * 3 + 2))

@@ -90,6 +90,8 @@ class SimpleReplayBuffer(nn.Module):
 
     @torch.no_grad()
     def sample(self, batch_size: int) -> dict:
+        if self.ptr == 0:
+            raise RuntimeError("cannot sample from an empty replay buffer")
         n_env, no, na, nco = self.n_env, self.n_obs, self.n_act, self.n_critic_obs
         flat = n_env * batch_size
 
@@ -152,7 +154,8 @@ class SimpleReplayBuffer(nn.Module):
 
         done_shift = torch.cat([torch.zeros_like(all_done[:, :, :1]), all_done[:, :, :-1]], dim=2)
         done_mask = torch.cumprod(1.0 - done_shift, dim=2) * in_win
-        eff_n = done_mask.sum(2)
+        # Keep the same integer dtype as the 1-step branch's ones_like(dones).
+        eff_n = done_mask.sum(2).long()
         discounts = torch.pow(self.gamma, torch.arange(self.n_steps, device=self.device))
         n_step_rew = (all_rew * done_mask * discounts.view(1, 1, -1)).sum(dim=2)
 
