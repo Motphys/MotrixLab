@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import time
 
+import torch
+
 from motrix_rl.fastsac.agent import FastSacAgent
 from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing
 from motrix_rl.fastsac.async_impl.shm.weight_channel import WeightSender
@@ -41,6 +43,9 @@ class Learner:
         self.control = control
         self._learning_starts = agent.cfg.learning_starts
         self._last_publish_ms = 0.0
+        # Device-transport ingest bookkeeping: one CUDA event per ingested slot
+        # whose replay-buffer copy is still in flight (see _retire_device_reads).
+        self._device_read_events: list = []
 
         # keep normalizers/actor in train mode: the learner is the update side.
         self.agent.set_train_mode()
@@ -57,11 +62,16 @@ class Learner:
         """Move up to ``max_ingest_per_iter`` ring slots into the replay buffer.
 
         Returns the number of slots ingested. Read cursor advances only after the
-        GPU copy, so the collector cannot clobber an in-flight slot. The replay
-        buffer derives each transition's ``next_obs`` from the following slot's
-        stored observation, so no successor peek is needed and a slot is
-        ingested as soon as it is committed.
+        slot data has left the ring (synchronously on the host transport; after
+        the enqueued device copies are *proven complete* on the device transport
+        — see ``_retire_device_reads``), so the collector cannot clobber an
+        in-flight slot. The replay buffer derives each transition's
+        ``next_obs`` from the following slot's stored observation, so no
+        successor peek is needed and a slot is ingested as soon as it is
+        committed.
         """
+        if self.ring.device_slots_bound:
+            return self._drain_device()
         device = self.agent.device
         ingested = 0
         for _ in range(max(self.async_options.max_ingest_per_iter, 1)):
@@ -79,6 +89,52 @@ class Learner:
                 truncations.to(device),
             )
             self.ring.commit_read()
+            ingested += 1
+        return ingested
+
+    def _retire_device_reads(self) -> None:
+        """Advance the read cursor for device-ingested slots whose copies landed.
+
+        The replay-buffer writes are asynchronous D2D copies enqueued on the
+        learner's compute stream; committing the slot before they retire would
+        let the collector wrap around and overwrite memory the GPU has not
+        read yet. Each drain records one event per slot; polling them here
+        keeps the cursor lag bounded by the in-flight window (the copies sit
+        ahead of the update kernels on the same stream, so they complete
+        within one learner loop).
+        """
+        while self._device_read_events and self._device_read_events[0].query():
+            self._device_read_events.pop(0)
+            self.ring.commit_read()
+
+    def _drain_device(self) -> int:
+        """Device-transport ingest: ring slots alias CUDA-IPC device memory.
+
+        obs/critic_obs go straight into the replay buffer as D2D copies on the
+        current stream (ordered before the update's replay sampling for free —
+        same stream); only the small scalar fields cross from host shared
+        memory. Nothing blocks the CPU.
+        """
+        self._retire_device_reads()
+        device = self.agent.device
+        ingested = 0
+        for _ in range(max(self.async_options.max_ingest_per_iter, 1)):
+            if not self.ring.has_next():
+                break
+            slot = self.ring.read_slot()
+            assert slot is not None  # has_next implies a readable slot
+            obs, critic_obs, actions, rewards, dones, truncations = slot
+            self.agent.rb.extend(
+                obs,
+                critic_obs,
+                actions.to(device),
+                rewards.to(device),
+                dones.to(device),
+                truncations.to(device),
+            )
+            event = torch.cuda.Event()
+            event.record()
+            self._device_read_events.append(event)
             ingested += 1
         return ingested
 

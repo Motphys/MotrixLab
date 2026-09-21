@@ -27,11 +27,23 @@ class SharedTransitionRing:
     ``False`` and the caller must retry/backoff — that is the backpressure that
     keeps the collector from outrunning the learner and flooding memory.
 
-    Consumer (learner) calls :meth:`read_slot` to get zero-copy CPU views of the
+    Consumer (learner) calls :meth:`read_slot` to get zero-copy views of the
     oldest unread slot, moves them to its device, then calls :meth:`commit_read`.
     The read cursor only advances after the copy, so the producer can never
     clobber a slot that is still being ingested (``push`` blocks while the ring
     is full).
+
+    Transport
+    ~~~~~~~~~
+    By default every field lives in host shared memory. When learner and
+    collector share one GPU, the two large fields (``obs``/``critic_obs``) can
+    instead live in CUDA-IPC device slots allocated by the collector
+    (:meth:`init_device_slots`) and bound by the learner
+    (:meth:`bind_device_slots`): the collector pushes device-side copies of
+    observations it already uploaded for inference (one D2D copy per field)
+    and the learner drains straight into its device replay buffer without any
+    host crossing. The small fields stay in host shared memory either way —
+    they are a few dozen kilobytes per slot.
 
     Memory ordering
     ~~~~~~~~~~~~~~~
@@ -42,6 +54,15 @@ class SharedTransitionRing:
     stores have landed (and symmetrically for ``_read``); on x86/TSO that
     ordering is free, so no memory barrier is used and this path is x86-only
     (see the module "Memory ordering" note).
+
+    With device slots the data stores are asynchronous GPU copies, so the
+    producer records and synchronizes a CUDA event before bumping ``_write``
+    (device-globally visible once complete — both processes alias the same
+    device memory). Symmetrically the consumer must NOT call
+    :meth:`commit_read` right after enqueueing its asynchronous reads; it keeps
+    per-slot events and retires commits only once the copies have completed
+    (see the learner's device drain). The read cursor therefore lags by at most
+    a few in-flight slots, which only makes backpressure fire slightly early.
     """
 
     FIELDS = (
@@ -75,6 +96,37 @@ class SharedTransitionRing:
         # cursors are shared so the two processes see each other's progress.
         self._write = _shared((1,), i64)
         self._read = _shared((1,), i64)
+        # CUDA-IPC device slots for the two large fields (None -> host path).
+        self._device_obs: list[torch.Tensor] | None = None
+        self._device_critic_obs: list[torch.Tensor] | None = None
+        self._push_event: torch.cuda.Event | None = None
+
+    # ------------------------------------------------------------ device transport
+    @property
+    def device_slots_bound(self) -> bool:
+        """Whether the large fields are served from CUDA-IPC device slots."""
+        return self._device_obs is not None
+
+    def init_device_slots(self, device: torch.device) -> tuple[list, list]:
+        """Collector: allocate device-side slots for obs/critic_obs.
+
+        Returns the slot tensor lists so the caller can ship them to the
+        learner through a multiprocessing queue (reduction turns them into
+        cudaIpcMemHandles, so both processes alias the same device memory).
+        The exporter (this process) must keep the ring alive for the process
+        lifetime — it owns the allocation.
+        """
+        if device.type != "cuda":
+            raise ValueError(f"device ring slots require a CUDA device, got {device}")
+        self._device_obs = [torch.empty_like(self.obs[0], device=device) for _ in range(self.capacity)]
+        self._device_critic_obs = [torch.empty_like(self.critic_obs[0], device=device) for _ in range(self.capacity)]
+        self._push_event = torch.cuda.Event()
+        return self._device_obs, self._device_critic_obs
+
+    def bind_device_slots(self, device_obs: list, device_critic_obs: list) -> None:
+        """Learner: bind the collector's device slots received via IPC handles."""
+        self._device_obs = device_obs
+        self._device_critic_obs = device_critic_obs
 
     @property
     def write_idx(self) -> int:
@@ -99,14 +151,29 @@ class SharedTransitionRing:
     def push(self, obs, critic_obs, actions, rewards, dones, truncations) -> bool:
         """Copy one env-step batch into the next slot. Returns False if full.
 
-        Inputs are CPU tensors shaped ``(num_envs, dim)``; ``dones``/``truncations``
-        are int64 to match ``SimpleReplayBuffer.extend`` semantics.
+        ``obs``/``critic_obs`` are either CPU tensors (host transport: every
+        field is memcpy'd into host shared memory) or CUDA tensors on the
+        ring's device (device transport: the two large fields are copied
+        device-side and only the small fields touch host shared memory).
+        ``dones``/``truncations`` are int64 to match
+        ``SimpleReplayBuffer.extend`` semantics.
         """
         if self.is_full():
             return False
         slot = self.write_idx % self.capacity
-        self.obs[slot].copy_(obs)
-        self.critic_obs[slot].copy_(critic_obs)
+        if obs.is_cuda:
+            assert self._device_obs is not None, "device tensors pushed but no device slots initialized"
+            self._device_obs[slot].copy_(obs)
+            self._device_critic_obs[slot].copy_(critic_obs)
+            # The cursor bump below is a CPU store, but the slot writes above
+            # are asynchronous GPU copies: complete (and thus device-globally
+            # visible to the learner's alias of this memory) before publishing
+            # the slot.
+            self._push_event.record()
+            self._push_event.synchronize()
+        else:
+            self.obs[slot].copy_(obs)
+            self.critic_obs[slot].copy_(critic_obs)
         self.actions[slot].copy_(actions)
         self.rewards[slot].copy_(rewards)
         self.dones[slot].copy_(dones)
@@ -118,17 +185,24 @@ class SharedTransitionRing:
         return True
 
     def read_slot(self):
-        """Return CPU views of the oldest unread slot, or ``None`` if empty.
+        """Return views of the oldest unread slot, or ``None`` if empty.
 
-        Does NOT advance the read cursor; call :meth:`commit_read` after the
-        consumer has finished copying the data elsewhere.
+        The obs/critic_obs views alias device memory when device slots are
+        bound (learner side) and host shared memory otherwise. Does NOT
+        advance the read cursor; call :meth:`commit_read` after the consumer
+        has finished copying the data elsewhere — with device slots that means
+        after the enqueued reads have *completed*, not merely been enqueued.
         """
         if self.size() <= 0:
             return None
         slot = self.read_idx % self.capacity
+        obs = self._device_obs[slot] if self._device_obs is not None else self.obs[slot]
+        critic_obs = (
+            self._device_critic_obs[slot] if self._device_critic_obs is not None else self.critic_obs[slot]
+        )
         return (
-            self.obs[slot],
-            self.critic_obs[slot],
+            obs,
+            critic_obs,
             self.actions[slot],
             self.rewards[slot],
             self.dones[slot],
@@ -140,7 +214,8 @@ class SharedTransitionRing:
         return self.size() > 0
 
     def commit_read(self) -> None:
-        # Free the slot. On x86/TSO our reads above complete before this cursor
-        # bump, so the producer's is_full() cannot reuse a slot we are still
-        # copying out (x86-only; ARM would need a release here).
+        # Free the slot. With host slots our reads above complete before this
+        # cursor bump on x86/TSO, so the producer's is_full() cannot reuse a
+        # slot we are still copying out. With device slots the caller is
+        # responsible for proving its async reads retired first.
         self._read[0] += 1

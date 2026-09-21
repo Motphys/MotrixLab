@@ -161,6 +161,11 @@ class Trainer(TrainerBase):
         # the weight_ipc mode and size threshold — decided inside the learner)
         # and ships the tensors to the collector-side endpoint.
         slot_queue = ctx.Queue(maxsize=1)
+        # Mirror handshake for the transition ring's large fields: the
+        # collector-side endpoint allocates the slots (host shm, or CUDA-IPC
+        # device slots per the ring_ipc mode — decided inside the collector)
+        # and ships the tensors to the learner-side endpoint.
+        ring_slot_queue = ctx.Queue(maxsize=1)
         reported_errors: set[tuple[str, str]] = set()
         seed = self._context.seed
 
@@ -214,6 +219,7 @@ class Trainer(TrainerBase):
                 self._resume_from,
                 seed,
                 slot_queue,
+                ring_slot_queue,
             ),
             name="fastsac-async-learner",
         )
@@ -236,6 +242,7 @@ class Trainer(TrainerBase):
                 is_resume,
                 seed,
                 slot_queue,
+                ring_slot_queue,
             ),
             name="fastsac-async-collector",
         )

@@ -227,6 +227,7 @@ def _async_cfg():
     return SimpleNamespace(
         policy_variant="default",
         variant={},
+        device="cpu",
         agent=SimpleNamespace(
             actor_hidden_dim=16,
             log_std_max=2.0,
@@ -244,6 +245,7 @@ def _async_cfg():
                 collector_compile=False,
                 collector_amp=False,
                 collector_amp_dtype="fp16",
+                ring_ipc="off",
                 learner_cpu_cores=None,
                 collector_cpu_cores=None,
             )
@@ -263,6 +265,7 @@ def _collect_in_spawn(sim_backend: str) -> tuple[torch.Tensor, ...]:
     stats_queue = ctx.Queue(maxsize=2)
     error_queue = ctx.Queue(maxsize=2)
     slot_queue = ctx.Queue(maxsize=1)
+    ring_slot_queue = ctx.Queue(maxsize=1)
     weight_tx = HostWeightSender(weights, actor_param_numel(cfg, dims, action_scale, action_bias))
     slot_queue.put(weight_tx.params)  # ship before the collector process starts
     env_cls = _AsyncNpEnv if sim_backend == "np" else _AsyncTorchEnv
@@ -270,7 +273,21 @@ def _collect_in_spawn(sim_backend: str) -> tuple[torch.Tensor, ...]:
     ipc_resources = (ring, weights, control, stats_queue, error_queue)
     process = ctx.Process(
         target=run_collector_process,
-        args=(env_spec, cfg, _NUM_ENVS, dims, action_scale, action_bias, *ipc_resources, 1, 1, False, 7, slot_queue),
+        args=(
+            env_spec,
+            cfg,
+            _NUM_ENVS,
+            dims,
+            action_scale,
+            action_bias,
+            *ipc_resources,
+            1,
+            1,
+            False,
+            7,
+            slot_queue,
+            ring_slot_queue,
+        ),
     )
 
     process.start()

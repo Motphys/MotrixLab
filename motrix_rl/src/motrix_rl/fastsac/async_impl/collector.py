@@ -14,6 +14,7 @@ the sync ``act()`` path — only the learner ever updates normalizer stats.
 
 from __future__ import annotations
 
+import threading
 import time
 
 import numpy as np
@@ -126,10 +127,27 @@ class Collector:
         self._obs_host = None
         self._obs_device = None
         self._actions_host = None
+        # Device-side staging for the ring's large fields (device transport):
+        # ``_obs_device`` doubles as the inference input, so the ring push
+        # reuses it instead of uploading the observation batch twice.
+        # ``_obs_device_valid`` tracks whether it currently mirrors
+        # ``self.obs`` (``_infer`` refreshes it; each push consumes it).
+        self._critic_obs_host = None
+        self._critic_obs_device = None
+        self._obs_device_valid = False
+        # Background critic_obs upload state (device transport; see
+        # _prefetch_critic_obs).
+        self._critic_prefetch_thread: threading.Thread | None = None
+        self._critic_prefetched = False
+        self._critic_prefetch_error: BaseException | None = None
         if self.device.type == "cuda":
             self._obs_host = torch.empty((self.num_envs, obs_dim), dtype=torch.float32, pin_memory=True)
             self._obs_device = torch.empty_like(self._obs_host, device=self.device)
             self._actions_host = torch.empty((self.num_envs, act_dim), dtype=torch.float32, pin_memory=True)
+            self._critic_obs_host = torch.empty(
+                (self.num_envs, critic_obs_dim), dtype=torch.float32, pin_memory=True
+            )
+            self._critic_obs_device = torch.empty_like(self._critic_obs_host, device=self.device)
             if bool(self.async_options.collector_compile):
                 import torch._inductor.config as inductor_config
 
@@ -182,6 +200,7 @@ class Collector:
 
         self._obs_host.copy_(obs)
         self._obs_device.copy_(self._obs_host, non_blocking=True)
+        self._obs_device_valid = True
         with self._autocast():
             device_actions = self._policy_runtime(self._obs_device)
         self._actions_host.copy_(device_actions, non_blocking=True)
@@ -189,6 +208,81 @@ class Collector:
         # before returning so the next replay cannot overwrite env actions.
         torch.cuda.current_stream(self.device).synchronize()
         return self._actions_host
+
+    def _prefetch_critic_obs(self) -> None:
+        """Kick off the pre-step critic_obs upload in the background (device transport).
+
+        ``critic_obs`` is fully materialized before ``env.step`` runs, and that
+        step is ~60ms of pure-CPU simulation during which the PCIe bus sits
+        idle — the pinned memcpy + H2D (~40MB, ~7ms) can hide entirely inside
+        it on a side thread. The push later only waits for the thread (a no-op
+        when the upload already finished) and copies into the ring's device
+        slots. ``torch.Tensor.copy_`` releases the GIL for the memcpy, so the
+        thread does not block the simulation's Python/numpy work.
+        """
+        self._critic_prefetched = False
+        self._critic_prefetch_error = None
+
+        def _upload() -> None:
+            try:
+                self._critic_obs_host.copy_(self.critic_obs)
+                self._critic_obs_device.copy_(self._critic_obs_host, non_blocking=True)
+                self._critic_prefetched = True
+            except BaseException as exc:  # surfaced at join time in the main thread
+                self._critic_prefetch_error = exc
+
+        self._critic_prefetch_thread = threading.Thread(target=_upload, daemon=True)
+        self._critic_prefetch_thread.start()
+
+    def _await_critic_prefetch(self) -> None:
+        """Join the background upload; fall back to an inline upload if absent."""
+        thread = self._critic_prefetch_thread
+        if thread is not None:
+            thread.join()
+            self._critic_prefetch_thread = None
+            if self._critic_prefetch_error is not None:
+                raise self._critic_prefetch_error
+        if not self._critic_prefetched:
+            # No (or failed) prefetch — e.g. the very first step or a resume
+            # before any prefetch was launched. Upload inline.
+            self._critic_obs_host.copy_(self.critic_obs)
+            self._critic_obs_device.copy_(self._critic_obs_host, non_blocking=True)
+
+    def _push_transition(self, actions, rewards, terminated, truncated) -> bool:
+        """Push the current transition, picking the ring transport.
+
+        Device transport: obs reuses the inference upload, critic_obs reuses
+        the background prefetch (see :meth:`_prefetch_critic_obs`), and the
+        ring copies both into its CUDA-IPC slots (D2D). Host transport:
+        unchanged CPU memcpys of the env buffers.
+        """
+        if self.ring.device_slots_bound:
+            if not self._obs_device_valid:
+                # Warming steps skip inference; upload the observation here.
+                self._obs_host.copy_(self.obs)
+                self._obs_device.copy_(self._obs_host, non_blocking=True)
+            self._await_critic_prefetch()
+            pushed = self.ring.push(
+                self._obs_device,
+                self._critic_obs_device,
+                actions.detach(),
+                rewards.detach(),
+                terminated.detach().long(),
+                truncated.detach().long(),
+            )
+            # The ring's event sync proved the slot copy landed; the staging
+            # buffers are reusable and the device obs no longer mirrors
+            # ``self.obs`` after the env's next step.
+            self._obs_device_valid = False
+            return pushed
+        return self.ring.push(
+            self.obs.detach(),
+            self.critic_obs.detach(),
+            actions.detach(),
+            rewards.detach(),
+            terminated.detach().long(),
+            truncated.detach().long(),
+        )
 
     def warmup_inference(self) -> None:
         """Compile/warm the fixed collector batch shape before the first env step."""
@@ -242,6 +336,11 @@ class Collector:
         warming = self.control.collector_steps < self._learning_starts
         t_sample_actions = time.perf_counter()
         actions = self._sample_actions(warming)
+        if not torch.isfinite(actions).all():
+            raise RuntimeError("collector policy produced non-finite actions")
+        if self.ring.device_slots_bound and self.critic_obs is not None:
+            # Hide the critic_obs upload inside the CPU-bound env step below.
+            self._prefetch_critic_obs()
         t_env = time.perf_counter()
         next_obs, next_critic_obs, rewards, terminated, truncated = self.env.step(actions)
         t_push = time.perf_counter()
@@ -252,14 +351,7 @@ class Collector:
         # batch only becomes ingestible after the next push; the final batch
         # pushed before training stops is intentionally dropped (one batch of
         # num_envs transitions out of a full training run).
-        pushed = self.ring.push(
-            self.obs.detach(),
-            self.critic_obs.detach(),
-            actions.detach(),
-            rewards.detach(),
-            terminated.detach().long(),
-            truncated.detach().long(),
-        )
+        pushed = self._push_transition(actions, rewards, terminated, truncated)
         assert pushed, "ring became full after is_full() check — single-producer invariant violated"
         t_bookkeep = time.perf_counter()
 

@@ -109,3 +109,7 @@ trainer:
     weight_ipc: auto
     # Minimum flattened parameter bytes for the CUDA-IPC path under "auto".
     weight_ipc_min_bytes: 16777216
+    # Transition-ring transport for obs/critic_obs: auto (default) enables
+    # CUDA-IPC device slots when learner and collector share one GPU;
+    # on/off force the device/host path.
+    ring_ipc: auto

@@ -291,6 +291,50 @@ def _build_weight_sender(
     return HostWeightSender(shared, param_numel)
 
 
+def _init_ring_transport(
+    ring: SharedTransitionRing, cfg: FastSacCfg, collector_device: torch.device, ring_slot_queue: Queue
+) -> None:
+    """Collector: enable the CUDA-IPC ring transport when both ends share one GPU.
+
+    The ring's big fields (obs/critic_obs) move into device-memory slots the
+    collector allocates here; the slot tensors are shipped to the learner
+    through ``ring_slot_queue`` (reduction turns them into cudaIpcMemHandles).
+    Always sends a decision message so the learner never blocks past startup.
+    """
+    opts = cfg.trainer.async_options
+    mode = opts.ring_ipc
+    if mode not in ("auto", "on", "off"):
+        raise ValueError(f"async_options.ring_ipc must be auto, on or off, got {mode!r}")
+    learner_device = torch.device(cfg.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    learner_index = (
+        learner_device.index
+        if learner_device.index is not None
+        else (torch.cuda.current_device() if learner_device.type == "cuda" else None)
+    )
+    same_gpu = (
+        learner_device.type == "cuda"
+        and collector_device.type == "cuda"
+        and learner_index == collector_device.index
+    )
+    if mode == "on" and not same_gpu:
+        raise ValueError("async_options.ring_ipc=on requires learner and collector inference on the same GPU")
+    if not same_gpu or mode == "off":
+        ring_slot_queue.put(("host",))
+        return
+    device_obs, device_critic_obs = ring.init_device_slots(collector_device)
+    ring_slot_queue.put(("gpu", device_obs, device_critic_obs))
+
+
+def _bind_ring_transport(ring: SharedTransitionRing, ring_slot_queue: Queue, timeout: float = 300.0) -> None:
+    """Learner: bind the transport the collector decided on (blocking handshake)."""
+    message = ring_slot_queue.get(timeout=timeout)
+    kind = message[0]
+    if kind == "gpu":
+        ring.bind_device_slots(message[1], message[2])
+    elif kind != "host":
+        raise RuntimeError(f"unexpected ring transport message {kind!r}")
+
+
 def run_collector_process(
     env_spec: EnvBuildSpec,
     cfg: FastSacCfg,
@@ -308,6 +352,7 @@ def run_collector_process(
     is_resume: bool,
     seed: int | None,
     slot_queue: Queue,
+    ring_slot_queue: Queue,
 ) -> None:
     try:
         _configure_process_logging()
@@ -342,6 +387,9 @@ def run_collector_process(
             control,
             is_resume=is_resume,
         )
+        # Decide the ring transport now that the inference device is known and
+        # unblock the learner's handshake before the (slow) env warmup below.
+        _init_ring_transport(ring, cfg, collector.device, ring_slot_queue)
         collector.reset()
         collector.sync_weights()
         collector.warmup_inference()
@@ -387,6 +435,7 @@ def run_learner_process(
     resume_from: str | None,
     seed: int | None,
     slot_queue: Queue,
+    ring_slot_queue: Queue,
 ) -> None:
     _configure_process_logging()
     console, live = open_training_live()
@@ -414,6 +463,12 @@ def run_learner_process(
         # matching receiver and takes the agreed transport from step one.
         weight_tx = _build_weight_sender(weights, cfg, dims, action_scale, action_bias, device)
         slot_queue.put(weight_tx.params)
+        # Bind the ring transport the collector decided on (host shm or
+        # CUDA-IPC device slots) before the first drain. Ordered after the
+        # weight handshake above: the collector only decides the ring
+        # transport once it has the weight slots, so binding any earlier
+        # would deadlock both startups against each other.
+        _bind_ring_transport(ring, ring_slot_queue)
         learner = Learner(agent, cfg, ring, weight_tx, control)
         learner.publish_weights()  # give the collector an initial policy before it warms up
 

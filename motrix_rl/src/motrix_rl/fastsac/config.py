@@ -89,6 +89,13 @@ class FastSacAsyncOptionsCfg:
     # host transfer they avoid.
     weight_ipc: str = "auto"
     weight_ipc_min_bytes: int = 16 * 1024 * 1024
+    # Transition-ring transport for the large fields (obs/critic_obs): "auto"
+    # picks CUDA-IPC device slots when learner and collector inference share
+    # one GPU — the collector already uploads observations for inference, so
+    # pushes become D2D copies and the learner drains without crossing the
+    # host — and host shared memory otherwise; "on"/"off" force the device/
+    # host path. The small scalar fields stay on the host path either way.
+    ring_ipc: str = "auto"
 
 
 @dataclass
