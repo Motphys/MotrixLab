@@ -5,7 +5,7 @@
 
 Holds its own :class:`~motrix_rl.fastsac.networks.Actor` and read-only
 :class:`~motrix_rl.fastsac.buffer.EmpiricalNormalization`, both refreshed from
-the learner via :class:`~motrix_rl.fastsac.async_impl.shm.WeightSnapshot`. Each step
+the learner via its :class:`~motrix_rl.fastsac.async_impl.shm.WeightReceiver` endpoint. Each step
 mirrors the sync collector phase (``agent.py`` collect phase) exactly: decide
 action -> ``env.step`` -> push the transition batch to the shared ring -> update
 episode bookkeeping. The normalizer is used read-only (``update=False``), matching
@@ -20,7 +20,8 @@ import numpy as np
 import torch
 from torch import nn
 
-from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing, WeightSnapshot, bind_flat_params
+from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing, bind_flat_params
+from motrix_rl.fastsac.async_impl.shm.weight_channel import WeightReceiver
 from motrix_rl.fastsac.buffer import EmpiricalNormalization
 from motrix_rl.fastsac.config import FastSacAgentCfg, FastSacCfg
 from motrix_rl.fastsac.networks import Actor
@@ -76,7 +77,7 @@ class Collector:
         action_scale: torch.Tensor,
         action_bias: torch.Tensor,
         ring: SharedTransitionRing,
-        weights: WeightSnapshot,
+        weights: WeightReceiver,
         control: Control,
         is_resume: bool = False,
     ):
@@ -95,7 +96,6 @@ class Collector:
         self.control = control
         self.is_resume = is_resume
         self._learning_starts = acfg.learning_starts
-        self._local_version = 0
 
         self.actor = Actor(
             n_obs=obs_dim,
@@ -125,25 +125,6 @@ class Collector:
             raise ValueError("collector_amp_dtype must be 'fp16' or 'bf16'") from exc
 
         self._flat_params = bind_flat_params(self.actor) if self.device.type == "cuda" else None
-        param_numel = (
-            self._flat_params.numel()
-            if self._flat_params is not None
-            else sum(param.numel() for param in self.actor.parameters())
-        )
-        pin_weight_staging = self.device.type == "cuda"
-        self._weight_param_staging = torch.empty(
-            param_numel,
-            dtype=torch.float32,
-            pin_memory=pin_weight_staging,
-        )
-        self._weight_normalizer_staging = tuple(
-            torch.empty(
-                (1, obs_dim),
-                dtype=torch.float32,
-                pin_memory=pin_weight_staging,
-            )
-            for _ in range(3)
-        )
         self._obs_host = None
         self._obs_device = None
         self._actions_host = None
@@ -228,12 +209,8 @@ class Collector:
         version, wait_writer_s, host_snapshot_s, actor_load_s = self.weights.maybe_load(
             self.actor,
             self.obs_normalizer,
-            self._local_version,
-            param_staging=self._weight_param_staging,
-            normalizer_staging=self._weight_normalizer_staging,
             flat_params=self._flat_params,
         )
-        self._local_version = version
         if record_timing:
             self._sync_wait_writer_t += wait_writer_s
             self._sync_host_snapshot_t += host_snapshot_s
@@ -242,7 +219,7 @@ class Collector:
     @property
     def policy_lag(self) -> int:
         """How many published versions behind the collector's local policy is."""
-        return max(0, self.weights.version - self._local_version)
+        return self.weights.lag
 
     # ------------------------------------------------------------------ ring handoff
     # ------------------------------------------------------------------ step
@@ -292,12 +269,15 @@ class Collector:
         self.ep_return += rewards
         self.ep_len += 1
         done_idx = torch.nonzero(terminated | truncated, as_tuple=False).flatten()
-        for j in done_idx.tolist():
-            self.recent_returns.append(float(self.ep_return[j]))
-            self.recent_lengths.append(float(self.ep_len[j]))
-            self.ep_return[j] = 0.0
-            self.ep_len[j] = 0.0
-            self.n_episodes += 1
+        if done_idx.numel():
+            # Vectorized: one batched gather + clear instead of per-episode
+            # Python-level scalar indexing — early in training hundreds of
+            # dones per step make the scalar loop dominate bookkeeping.
+            self.recent_returns.extend(self.ep_return[done_idx].tolist())
+            self.recent_lengths.extend(self.ep_len[done_idx].tolist())
+            self.ep_return[done_idx] = 0.0
+            self.ep_len[done_idx] = 0.0
+            self.n_episodes += int(done_idx.numel())
         self.recent_returns = self.recent_returns[-100:]
         self.recent_lengths = self.recent_lengths[-100:]
 

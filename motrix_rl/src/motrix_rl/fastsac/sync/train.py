@@ -258,12 +258,14 @@ class Trainer(TrainerBase):
                 ep_return += rewards
                 ep_len += 1
                 done_idx = torch.nonzero(terminated | truncated, as_tuple=False).flatten()
-                for j in done_idx.tolist():
-                    recent_returns.append(float(ep_return[j]))
-                    recent_lengths.append(float(ep_len[j]))
-                    ep_return[j] = 0.0
-                    ep_len[j] = 0.0
-                    n_episodes += 1
+                if done_idx.numel():
+                    # Vectorized: one batched gather + clear instead of
+                    # per-episode Python-level scalar indexing.
+                    recent_returns.extend(ep_return[done_idx].tolist())
+                    recent_lengths.extend(ep_len[done_idx].tolist())
+                    ep_return[done_idx] = 0.0
+                    ep_len[done_idx] = 0.0
+                    n_episodes += int(done_idx.numel())
                 recent_returns = recent_returns[-100:]
                 recent_lengths = recent_lengths[-100:]
 

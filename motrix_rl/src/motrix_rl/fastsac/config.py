@@ -77,6 +77,17 @@ class FastSacAsyncOptionsCfg:
     # collector.
     learner_cpu_cores: str | None = None
     collector_cpu_cores: str | None = None
+    # Weight-snapshot transport between the async learner and collector:
+    # "auto" picks CUDA-IPC device slots when both sides share one GPU and the
+    # actor parameters are large enough (>= weight_ipc_min_bytes) for the
+    # device path to pay off, and host shared memory otherwise; "on"/"off"
+    # force the device/host path ("on" logs a warning and falls back to the
+    # host path when learner and collector are not on the same GPU). Small
+    # actors are faster on the host path —
+    # the IPC path's stream synchronizations cost more than the sub-millisecond
+    # host transfer they avoid.
+    weight_ipc: str = "auto"
+    weight_ipc_min_bytes: int = 16 * 1024 * 1024
 
 
 @dataclass

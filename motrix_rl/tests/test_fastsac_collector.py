@@ -1,14 +1,16 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+import sys
+import time
 from types import SimpleNamespace
 
 import pytest
 import torch
 
-import motrix_rl.fastsac.async_impl.shm as shm_module
 from motrix_rl.fastsac.async_impl.collector import Collector, resolve_collector_inference_device
-from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing, WeightSnapshot
+from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing
+from motrix_rl.fastsac.async_impl.shm.weight_channel import HostWeightReceiver, HostWeightSender, WeightChannelShared
 from motrix_rl.fastsac.buffer import EmpiricalNormalization
 from motrix_rl.fastsac.networks import Actor
 
@@ -92,8 +94,10 @@ def _collector(device: str, *, compile: bool = False, amp: bool = False):
     cfg = _cfg(device, compile=compile, amp=amp)
     ring = SharedTransitionRing(2, _NUM_ENVS, _OBS_DIM, _CRITIC_OBS_DIM, _ACT_DIM)
     source_actor, source_normalizer = _source_policy()
-    weights = WeightSnapshot(sum(p.numel() for p in source_actor.parameters()), _OBS_DIM)
-    weights.publish(source_actor, source_normalizer)
+    shared = WeightChannelShared(_OBS_DIM)
+    weight_tx = HostWeightSender(shared, sum(p.numel() for p in source_actor.parameters()))
+    weight_rx = HostWeightReceiver(shared, weight_tx.params)
+    weight_tx.publish(source_actor, source_normalizer)
     collector = Collector(
         env,
         cfg,
@@ -103,30 +107,62 @@ def _collector(device: str, *, compile: bool = False, amp: bool = False):
         source_actor.action_scale,
         source_actor.action_bias,
         ring,
-        weights,
+        weight_rx,
         Control(),
     )
     collector.reset()
     collector.sync_weights()
-    return collector, source_actor, source_normalizer, weights
+    return collector, source_actor, source_normalizer, weight_tx
 
 
-def test_weight_snapshot_prepares_params_before_opening_seqlock_write(monkeypatch) -> None:
+def test_weight_publish_prepares_params_before_opening_seqlock_write(monkeypatch) -> None:
     actor, normalizer = _source_policy()
-    weights = WeightSnapshot(sum(param.numel() for param in actor.parameters()), _OBS_DIM)
-    original_flatten = shm_module.flatten_params
+    shared = WeightChannelShared(_OBS_DIM)
+    weight_tx = HostWeightSender(shared, sum(param.numel() for param in actor.parameters()))
+    weight_rx = HostWeightReceiver(shared, weight_tx.params)
+    weight_channel_module = sys.modules[WeightChannelShared.__module__]
+    original_flatten = weight_channel_module.flatten_params
     observed_sequences = []
 
     def observe_flatten(module):
-        observed_sequences.append(int(weights._seq[0]))
+        observed_sequences.append(int(weight_tx.shared.seq[0]))
         return original_flatten(module)
 
-    monkeypatch.setattr(shm_module, "flatten_params", observe_flatten)
-    weights.publish(actor, normalizer)
-    weights.publish(actor, normalizer)
+    monkeypatch.setattr(weight_channel_module, "flatten_params", observe_flatten)
+    weight_tx.publish(actor, normalizer)
+    weight_tx.publish(actor, normalizer)
 
     assert observed_sequences == [0, 2]
-    assert weights.version == 2
+    assert weight_tx.version == 2
+    assert weight_rx.version == 2
+    assert weight_rx.lag == 2
+
+
+def test_seqlock_read_is_nonblocking_during_publish() -> None:
+    """A mid-publish (odd seq) poll returns the current version immediately.
+
+    Contract: the collector never busy-waits for the learner's publish window
+    (it spans the learner's in-flight gradient kernels); weights are
+    eventually consistent and the next poll picks up the new version.
+    """
+    actor, normalizer = _source_policy()
+    shared = WeightChannelShared(_OBS_DIM)
+    weight_tx = HostWeightSender(shared, sum(param.numel() for param in actor.parameters()))
+    weight_rx = HostWeightReceiver(shared, weight_tx.params)
+    weight_tx.publish(actor, normalizer)
+
+    shared.seq[0] = 3  # simulate a publish in progress (odd)
+    start = time.perf_counter()
+    version, wait_writer_s, _, _ = weight_rx.maybe_load(actor, normalizer)
+    elapsed = time.perf_counter() - start
+
+    assert version == 0  # keeps the receiver's current version (nothing loaded yet)
+    assert wait_writer_s == 0.0
+    assert elapsed < 1.0  # returned immediately, did not spin until seq closes
+
+    shared.seq[0] = 4  # publish completed
+    version, _, _, _ = weight_rx.maybe_load(actor, normalizer)
+    assert version == 2  # picked up on the next poll
 
 
 def test_collector_explicit_cpu_placement_and_timing() -> None:
@@ -135,8 +171,8 @@ def test_collector_explicit_cpu_placement_and_timing() -> None:
     assert collector.device.type == "cpu"
     assert collector.obs.device.type == "cpu"
     assert all(param.device.type == "cpu" for param in collector.actor.parameters())
-    assert not collector._weight_param_staging.is_pinned()
-    assert all(not buffer.is_pinned() for buffer in collector._weight_normalizer_staging)
+    assert not collector.weights._param_staging.is_pinned()
+    assert all(not buffer.is_pinned() for buffer in collector.weights._norm_staging)
     torch.testing.assert_close(
         torch.cat([p.detach().flatten() for p in collector.actor.parameters()]),
         torch.cat([p.detach().flatten() for p in source_actor.parameters()]),
@@ -176,7 +212,7 @@ def test_collector_rejects_unavailable_cuda_index() -> None:
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA collector test requires a GPU")
 def test_cuda_collector_uses_flat_weight_copy_and_reuses_staging() -> None:
-    collector, source_actor, source_normalizer, weights = _collector("cuda")
+    collector, source_actor, source_normalizer, weight_tx = _collector("cuda")
 
     assert collector.device.type == "cuda"
     assert collector.obs.device.type == "cpu"
@@ -196,7 +232,7 @@ def test_cuda_collector_uses_flat_weight_copy_and_reuses_staging() -> None:
     with torch.no_grad():
         source_actor.fc_mu.bias.add_(0.25)
         source_normalizer._mean.add_(0.5)
-    weights.publish(source_actor, source_normalizer)
+    weight_tx.publish(source_actor, source_normalizer)
     assert collector.policy_lag == 1
     collector.sync_weights()
     assert collector.policy_lag == 0
@@ -209,8 +245,8 @@ def test_cuda_collector_uses_flat_weight_copy_and_reuses_staging() -> None:
         collector._obs_host.data_ptr(),
         collector._obs_device.data_ptr(),
         collector._actions_host.data_ptr(),
-        collector._weight_param_staging.data_ptr(),
-        *(buffer.data_ptr() for buffer in collector._weight_normalizer_staging),
+        collector.weights._param_staging.data_ptr(),
+        *(buffer.data_ptr() for buffer in collector.weights._norm_staging),
         collector._flat_params.data_ptr(),
     )
     first = collector._infer(torch.randn(_NUM_ENVS, _OBS_DIM))
@@ -220,8 +256,8 @@ def test_cuda_collector_uses_flat_weight_copy_and_reuses_staging() -> None:
         collector._obs_host.data_ptr(),
         collector._obs_device.data_ptr(),
         collector._actions_host.data_ptr(),
-        collector._weight_param_staging.data_ptr(),
-        *(buffer.data_ptr() for buffer in collector._weight_normalizer_staging),
+        collector.weights._param_staging.data_ptr(),
+        *(buffer.data_ptr() for buffer in collector.weights._norm_staging),
         collector._flat_params.data_ptr(),
     )
 

@@ -19,7 +19,8 @@ from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.registry import EnvBuildSpec
 from motrix_env_motrixsim.torch_env import TorchEnv, TorchEnvState, TorchObs
-from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing, WeightSnapshot
+from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing
+from motrix_rl.fastsac.async_impl.shm.weight_channel import HostWeightSender, WeightChannelShared
 from motrix_rl.fastsac.async_impl.worker import actor_param_numel, run_collector_process
 from motrix_rl.fastsac.wrap import FastSacEnvWrap
 
@@ -254,17 +255,20 @@ def _collect_in_spawn(sim_backend: str) -> tuple[torch.Tensor, ...]:
     action_scale = torch.ones(_ACT_DIM)
     action_bias = torch.zeros(_ACT_DIM)
     ring = SharedTransitionRing(2, _NUM_ENVS, *dims)
-    weights = WeightSnapshot(actor_param_numel(cfg, dims, action_scale, action_bias), _OBS_DIM)
+    weights = WeightChannelShared(_OBS_DIM)
     control = Control()
     ctx = mp.get_context("spawn")
     stats_queue = ctx.Queue(maxsize=2)
     error_queue = ctx.Queue(maxsize=2)
+    slot_queue = ctx.Queue(maxsize=1)
+    weight_tx = HostWeightSender(weights, actor_param_numel(cfg, dims, action_scale, action_bias))
+    slot_queue.put(weight_tx.params)  # ship before the collector process starts
     env_cls = _AsyncNpEnv if sim_backend == "np" else _AsyncTorchEnv
     env_spec = EnvBuildSpec(env_cls, EnvCfg(scene=SceneCfg()))
     ipc_resources = (ring, weights, control, stats_queue, error_queue)
     process = ctx.Process(
         target=run_collector_process,
-        args=(env_spec, cfg, _NUM_ENVS, dims, action_scale, action_bias, *ipc_resources, 1, 1, False, 7),
+        args=(env_spec, cfg, _NUM_ENVS, dims, action_scale, action_bias, *ipc_resources, 1, 1, False, 7, slot_queue),
     )
 
     process.start()

@@ -21,6 +21,7 @@ import random
 import sys
 import time
 import traceback
+from multiprocessing.queues import Queue
 from pathlib import Path
 from queue import Empty
 from typing import Any
@@ -35,9 +36,16 @@ from motrix_env_motrixsim.torch_env import TorchEnv
 from motrix_rl import checkpoints
 from motrix_rl.console import TrainingPanelStats, emit_training_panel, open_training_live
 from motrix_rl.fastsac.agent import FastSacAgent
-from motrix_rl.fastsac.async_impl.collector import Collector
+from motrix_rl.fastsac.async_impl.collector import Collector, resolve_collector_inference_device
 from motrix_rl.fastsac.async_impl.learner import Learner
-from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing, WeightSnapshot
+from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing
+from motrix_rl.fastsac.async_impl.shm.weight_channel import (
+    GpuIpcWeightSender,
+    HostWeightSender,
+    WeightChannelShared,
+    WeightSender,
+    weight_receiver_for,
+)
 from motrix_rl.fastsac.config import FastSacCfg
 from motrix_rl.fastsac.wrap import FastSacEnvWrap
 from motrix_rl.fastsac.wrap_np import FastSacNpEnvWrap
@@ -223,22 +231,74 @@ def _configure_process_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
+def _build_weight_sender(
+    shared: WeightChannelShared,
+    cfg: FastSacCfg,
+    dims: tuple[int, int, int],
+    action_scale: torch.Tensor,
+    action_bias: torch.Tensor,
+    device: torch.device,
+) -> WeightSender:
+    """Construct the sender-side weight endpoint per the configured transport.
+
+    CUDA-IPC device slots only when learner and collector inference share one
+    GPU and the actor parameters reach the configured size threshold; host
+    shared-memory slots otherwise. The learner process is the only place both
+    transports' requirements can be met (the IPC-handle exporter needs the
+    CUDA context and must keep the tensors alive).
+    """
+    opts = cfg.trainer.async_options
+    mode = opts.weight_ipc
+    # YAML 1.1 parses unquoted ``on``/``off`` scalars as booleans; accept that
+    # form so ``weight_ipc: on`` in a config behaves like the documented string.
+    if isinstance(mode, bool):
+        mode = "on" if mode else "off"
+    if mode not in ("auto", "on", "off"):
+        raise ValueError(f"async_options.weight_ipc must be auto, on or off, got {mode!r}")
+    collector_device = resolve_collector_inference_device(opts.collector_inference_device)
+    same_gpu = device.type == "cuda" and collector_device.type == "cuda"
+    if same_gpu:
+        # ``learner=`` without an index means the current device; resolve it so
+        # the comparison never treats "cuda" as matching an explicit different
+        # index. Only resolve under the cuda branch: a CPU learner has no CUDA
+        # context and torch.cuda.current_device() would raise.
+        learner_index = device.index if device.index is not None else torch.cuda.current_device()
+        same_gpu = learner_index == collector_device.index
+    if mode == "on" and not same_gpu:
+        reason = (
+            "collector inference device is not CUDA"
+            if collector_device.type != "cuda"
+            else f"learner device {device} and collector device {collector_device} are different GPUs"
+        )
+        logging.getLogger(__name__).warning(
+            "async_options.weight_ipc=on requires learner and collector inference on the same GPU, "
+            "but %s; falling back to host shared-memory transport",
+            reason,
+        )
+    param_numel = actor_param_numel(cfg, dims, action_scale, action_bias)
+    use_gpu = same_gpu and (mode == "on" or (mode == "auto" and param_numel * 4 >= opts.weight_ipc_min_bytes))
+    if use_gpu:
+        return GpuIpcWeightSender(shared, param_numel, device)
+    return HostWeightSender(shared, param_numel)
+
+
 def run_collector_process(
     env_spec: EnvBuildSpec,
     cfg: FastSacCfg,
     num_envs: int,
-    dims,
+    dims: tuple[int, int, int],
     action_scale: torch.Tensor,
     action_bias: torch.Tensor,
     ring: SharedTransitionRing,
-    weights: WeightSnapshot,
+    weights: WeightChannelShared,
     control: Control,
-    stats_queue,
-    error_queue,
+    stats_queue: Queue,
+    error_queue: Queue,
     num_iterations: int,
     logging_interval: int,
     is_resume: bool,
-    seed,
+    seed: int | None,
+    slot_queue: Queue,
 ) -> None:
     try:
         _configure_process_logging()
@@ -249,6 +309,17 @@ def run_collector_process(
         obs_dim, critic_obs_dim, act_dim = dims
         device = torch.device("cpu")
         env = build_env(env_spec, num_envs, device, seed=seed)
+        # Handshake: build the receiver from the slot tensors the learner
+        # shipped (host shm or CUDA-IPC), before the collector is wired up.
+        try:
+            slots = slot_queue.get(timeout=60.0)
+        except Empty as exc:
+            raise RuntimeError(
+                "timed out waiting for the learner to ship the weight-slot tensors "
+                "(learner startup — agent build / checkpoint load / CUDA warmup — "
+                "likely failed or took over 60s; check the learner process's error queue/log)"
+            ) from exc
+        weight_rx = weight_receiver_for(weights, slots)
         collector = Collector(
             env,
             cfg,
@@ -258,7 +329,7 @@ def run_collector_process(
             action_scale,
             action_bias,
             ring,
-            weights,
+            weight_rx,
             control,
             is_resume=is_resume,
         )
@@ -289,14 +360,14 @@ def run_collector_process(
 def run_learner_process(
     cfg: FastSacCfg,
     num_envs: int,
-    dims,
+    dims: tuple[int, int, int],
     action_scale: torch.Tensor,
     action_bias: torch.Tensor,
     ring: SharedTransitionRing,
-    weights: WeightSnapshot,
+    weights: WeightChannelShared,
     control: Control,
-    stats_queue,
-    error_queue,
+    stats_queue: Queue,
+    error_queue: Queue,
     num_iterations: int,
     logging_interval: int,
     save_interval: int,
@@ -305,7 +376,8 @@ def run_learner_process(
     checkpoint_dir: str,
     checkpoint_format: str,
     resume_from: str | None,
-    seed,
+    seed: int | None,
+    slot_queue: Queue,
 ) -> None:
     _configure_process_logging()
     console, live = open_training_live()
@@ -328,7 +400,12 @@ def run_learner_process(
             ckpt = torch.load(resume_from, map_location=device, weights_only=False)
             agent.load_state_dict(ckpt, load_optimizers=True)
 
-        learner = Learner(agent, cfg, ring, weights, control)
+        # Build the sender endpoint and ship its slot tensors BEFORE the first
+        # publish so the collector (blocking on the handshake queue) builds the
+        # matching receiver and takes the agreed transport from step one.
+        weight_tx = _build_weight_sender(weights, cfg, dims, action_scale, action_bias, device)
+        slot_queue.put(weight_tx.params)
+        learner = Learner(agent, cfg, ring, weight_tx, control)
         learner.publish_weights()  # give the collector an initial policy before it warms up
 
         start_time = time.time()
@@ -493,7 +570,7 @@ def run_learner_process(
                     )
                     writer.add_scalar("async/policy_lag", last_stats["policy_lag"], step)
                     writer.add_scalar("async/ring_fill", ring.size(), step)
-                    writer.add_scalar("async/weight_version", weights.version, step)
+                    writer.add_scalar("async/weight_version", weight_tx.version, step)
                     writer.add_scalar("async/utd", utd, step)
                     writer.add_scalar("perf/collect_ms_per_batch", collector_timing_ms.get("collect", 0.0), step)
                     for k, v in collector_timing_detail_ms.items():

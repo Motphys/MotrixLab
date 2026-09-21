@@ -7,7 +7,7 @@ Unlike the sync trainer it does NOT step the env. It drains raw transitions from
 :class:`~motrix_rl.fastsac.async_impl.shm.SharedTransitionRing` into the agent's GPU
 replay buffer, runs gradient updates governed by ``utd_mode`` (§6 of the
 design), and periodically publishes actor weights + obs-normalizer stats to the
-collector via :class:`~motrix_rl.fastsac.async_impl.shm.WeightSnapshot`.
+collector via its :class:`~motrix_rl.fastsac.async_impl.shm.WeightSender` endpoint.
 
 The update math is reused unchanged from the sync agent: this module delegates
 the per-step gradient work to ``agent.update(n)`` and only owns the
@@ -19,7 +19,8 @@ from __future__ import annotations
 import time
 
 from motrix_rl.fastsac.agent import FastSacAgent
-from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing, WeightSnapshot
+from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing
+from motrix_rl.fastsac.async_impl.shm.weight_channel import WeightSender
 from motrix_rl.fastsac.config import FastSacCfg
 
 
@@ -29,7 +30,7 @@ class Learner:
         agent: FastSacAgent,
         cfg: FastSacCfg,
         ring: SharedTransitionRing,
-        weights: WeightSnapshot,
+        weights: WeightSender,
         control: Control,
     ):
         self.agent = agent

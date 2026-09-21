@@ -28,9 +28,9 @@ from motrix_env_core import registry as env_registry
 from motrix_env_core.renderer import RenderConfig
 from motrix_rl.fastsac.agent import FastSacAgent
 from motrix_rl.fastsac.async_impl.collector import resolve_collector_inference_device
-from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing, WeightSnapshot
+from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing
+from motrix_rl.fastsac.async_impl.shm.weight_channel import WeightChannelShared
 from motrix_rl.fastsac.async_impl.worker import (
-    actor_param_numel,
     build_env,
     run_collector_process,
     run_learner_process,
@@ -129,12 +129,11 @@ class Trainer(TrainerBase):
 
         learner_device = self._device()
         collector_device = resolve_collector_inference_device(async_options.collector_inference_device)
-        param_numel = actor_param_numel(cfg, dims, action_scale, action_bias)
 
         # shared-memory primitives allocated in the parent, inherited by children.
         num_envs = self._context.num_envs
         ring = SharedTransitionRing(async_options.ring_capacity, num_envs, obs_dim, critic_obs_dim, act_dim)
-        weights = WeightSnapshot(param_numel=param_numel, obs_dim=obs_dim)
+        weights = WeightChannelShared(obs_dim=obs_dim)
         control = Control()
 
         resume_step = 0
@@ -148,9 +147,18 @@ class Trainer(TrainerBase):
             control.collector_steps = resume_step
             control.global_step = resume_step
 
+        # Learner -> collector handoff of the CUDA-IPC weight slots (one message).
+        # ``learner=`` without an index resolves to the current CUDA device and
+        # is compared against the explicit collector index; only a conflicting
+        # explicit index (or a CPU collector) disables the IPC path.
         ctx = mp.get_context("spawn")
         stats_queue = ctx.Queue(maxsize=8)
         error_queue = ctx.Queue(maxsize=8)
+        # One-shot handshake queue for the weight slot pair: the learner-side
+        # endpoint allocates the slots (host shm, or CUDA-IPC device slots per
+        # the weight_ipc mode and size threshold — decided inside the learner)
+        # and ships the tensors to the collector-side endpoint.
+        slot_queue = ctx.Queue(maxsize=1)
         reported_errors: set[tuple[str, str]] = set()
         seed = self._context.seed
 
@@ -203,6 +211,7 @@ class Trainer(TrainerBase):
                 self._context.checkpoint_format,
                 self._resume_from,
                 seed,
+                slot_queue,
             ),
             name="fastsac-async-learner",
         )
@@ -224,6 +233,7 @@ class Trainer(TrainerBase):
                 logging_interval,
                 is_resume,
                 seed,
+                slot_queue,
             ),
             name="fastsac-async-collector",
         )
