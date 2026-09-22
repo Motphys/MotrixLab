@@ -5,7 +5,7 @@
 
 Holds its own :class:`~motrix_rl.fastsac.networks.Actor` and read-only
 :class:`~motrix_rl.fastsac.buffer.EmpiricalNormalization`, both refreshed from
-the learner via its :class:`~motrix_rl.fastsac.async_impl.shm.WeightReceiver` endpoint. Each step
+the learner via its :class:`~motrix_rl.fastsac.async_impl.transport.WeightReceiver` endpoint. Each step
 mirrors the sync collector phase (``agent.py`` collect phase) exactly: decide
 action -> ``env.step`` -> push the transition batch to the shared ring -> update
 episode bookkeeping. The normalizer is used read-only (``update=False``), matching
@@ -20,8 +20,8 @@ import numpy as np
 import torch
 from torch import nn
 
-from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing, bind_flat_params
-from motrix_rl.fastsac.async_impl.shm.weight_channel import WeightReceiver
+from motrix_rl.fastsac.async_impl.transport import Control, IpcTransitionRing, SharedTransitionRing, bind_flat_params
+from motrix_rl.fastsac.async_impl.transport.weight_channel import WeightReceiver
 from motrix_rl.fastsac.buffer import EmpiricalNormalization
 from motrix_rl.fastsac.config import FastSacAgentCfg, FastSacCfg
 from motrix_rl.fastsac.networks import Actor
@@ -76,7 +76,7 @@ class Collector:
         act_dim: int,
         action_scale: torch.Tensor,
         action_bias: torch.Tensor,
-        ring: SharedTransitionRing,
+        ring: SharedTransitionRing | IpcTransitionRing,
         weights: WeightReceiver,
         control: Control,
         is_resume: bool = False,
@@ -350,6 +350,11 @@ class Collector:
         env_perf = self._env_perf
         if env_perf is not None:
             for path, mean_ms in env_perf.stage_mean_ms("step").items():
+                if "." in path:
+                    # Only the first sub-stage level is reported: a parent's
+                    # total already includes its children, so deeper paths
+                    # would duplicate time without adding actionable signal.
+                    continue
                 stats["timing_ms"][f"env_step.{path}"] = mean_ms
             env_perf.reset()
         self.term_accum, self.term_count = {}, 0

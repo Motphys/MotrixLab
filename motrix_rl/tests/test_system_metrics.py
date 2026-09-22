@@ -8,10 +8,12 @@ import types
 import motrix_rl.system_metrics as system_metrics
 from motrix_rl.system_metrics import (
     CpuLoadSampler,
+    GpuDeviceUsage,
     GpuMemoryUsageSampler,
     GpuUtilizationSampler,
     MemoryUsage,
     MemoryUsageSampler,
+    sample_gpu_devices,
 )
 
 
@@ -20,7 +22,10 @@ def test_cpu_load_sampler_uses_counter_deltas_for_available_cpus(tmp_path) -> No
     stat_path.write_text(
         "cpu  200 0 0 1800 0 0 0 0\ncpu0 100 0 0 900 0 0 0 0\ncpu1 100 0 0 900 0 0 0 0\ncpu2 100 0 0 900 0 0 0 0\n"
     )
-    sampler = CpuLoadSampler(stat_path=stat_path, topology_root=tmp_path, cpu_ids={0, 1})
+    (tmp_path / "cpuinfo").write_text("processor\t: 0\nmodel name\t: AMD EPYC 9654 96-Core Processor\nflags\t: fpu\n")
+    sampler = CpuLoadSampler(
+        stat_path=stat_path, topology_root=tmp_path, cpuinfo_path=tmp_path / "cpuinfo", cpu_ids={0, 1}
+    )
 
     stat_path.write_text(
         "cpu  330 0 0 1850 20 0 0 0\ncpu0 150 0 0 950 0 0 0 0\ncpu1 180 0 0 900 20 0 0 0\ncpu2 300 0 0 900 0 0 0 0\n"
@@ -35,6 +40,10 @@ def test_cpu_load_sampler_uses_counter_deltas_for_available_cpus(tmp_path) -> No
     assert load.physical_core_count is None
     assert load.iowait_percent == 10.0
     assert load.steal_percent == 0.0
+    # per-core breakdown comes from the same counter deltas, sorted by cpu id
+    assert load.per_core_percent == (50.0, 80.0)
+    # the static model name read once from cpuinfo rides along on every sample
+    assert load.model_name == "AMD EPYC 9654 96-Core Processor"
 
 
 def test_cpu_load_sampler_returns_none_without_elapsed_cpu_time(tmp_path) -> None:
@@ -82,6 +91,55 @@ def test_gpu_samplers_aggregate_utilization_mean_and_memory_sum(monkeypatch) -> 
 
     assert GpuUtilizationSampler().sample() == 20.0
     assert GpuMemoryUsageSampler().sample() == MemoryUsage(used_bytes=400 * 1024**2, total_bytes=600 * 1024**2)
+
+
+def test_gpu_samplers_report_per_device_utilization_and_memory(monkeypatch) -> None:
+    handles = ["gpu0", "gpu1"]
+    _fake_nvml(
+        monkeypatch,
+        handles,
+        utilization={"gpu0": 10, "gpu1": 30},
+        memory={"gpu0": (100 * 1024**2, 200 * 1024**2), "gpu1": (300 * 1024**2, 400 * 1024**2)},
+    )
+
+    assert GpuUtilizationSampler().sample_per_device() == [10.0, 30.0]
+    assert GpuMemoryUsageSampler().sample_per_device() == [
+        MemoryUsage(used_bytes=100 * 1024**2, total_bytes=200 * 1024**2),
+        MemoryUsage(used_bytes=300 * 1024**2, total_bytes=400 * 1024**2),
+    ]
+    assert sample_gpu_devices(GpuUtilizationSampler(), GpuMemoryUsageSampler()) == [
+        GpuDeviceUsage(
+            index=0,
+            utilization_percent=10.0,
+            memory=MemoryUsage(used_bytes=100 * 1024**2, total_bytes=200 * 1024**2),
+        ),
+        GpuDeviceUsage(
+            index=1,
+            utilization_percent=30.0,
+            memory=MemoryUsage(used_bytes=300 * 1024**2, total_bytes=400 * 1024**2),
+        ),
+    ]
+
+
+def test_sample_gpu_devices_degrades_to_utilization_only(monkeypatch) -> None:
+    handles = ["gpu0"]
+    _fake_nvml(monkeypatch, handles, utilization={"gpu0": 55}, memory={})
+
+    class _BrokenMemorySampler(GpuMemoryUsageSampler):
+        def sample_per_device(self):
+            return None
+
+    assert sample_gpu_devices(GpuUtilizationSampler(), _BrokenMemorySampler()) == [
+        GpuDeviceUsage(index=0, utilization_percent=55.0, memory=None)
+    ]
+
+
+def test_sample_gpu_devices_is_none_without_a_per_device_source(monkeypatch) -> None:
+    # no backend session at all
+    monkeypatch.setattr(system_metrics, "_amd_smi_state", ())
+    monkeypatch.setattr(system_metrics, "_nvml_state", ())
+
+    assert sample_gpu_devices(GpuUtilizationSampler(), GpuMemoryUsageSampler()) is None
 
 
 def test_gpu_samplers_return_none_on_nvml_error(monkeypatch) -> None:

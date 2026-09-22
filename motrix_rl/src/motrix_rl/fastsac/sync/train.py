@@ -20,7 +20,13 @@ from motrix_rl.fastsac.wrap import FastSacEnvWrap
 from motrix_rl.fastsac.wrap_np import FastSacNpEnvWrap
 from motrix_rl.fastsac.wrap_torch import FastSacTorchEnvWrap
 from motrix_rl.frameworks import TrainerBase, TrainerContext
-from motrix_rl.system_metrics import CpuLoadSampler, GpuMemoryUsageSampler, GpuUtilizationSampler, MemoryUsageSampler
+from motrix_rl.system_metrics import (
+    CpuLoadSampler,
+    GpuMemoryUsageSampler,
+    GpuUtilizationSampler,
+    MemoryUsageSampler,
+    sample_gpu_devices,
+)
 
 # Enable TF32 matmul on Ampere+ GPUs. SAC training has no precision concern with
 # TF32 (10 mantissa bits), and the speedup is meaningful when AMP is off.
@@ -328,6 +334,7 @@ class Trainer(TrainerBase):
                         gpu_utilization_percent=gpu_sampler.sample(),
                         memory_usage=memory_sampler.sample(),
                         gpu_memory_usage=gpu_memory_sampler.sample(),
+                        gpu_devices=sample_gpu_devices(gpu_sampler, gpu_memory_sampler),
                         checkpoint_path=last_checkpoint_path,
                     )
                     emit_training_panel(live, stats, title=f"{self._env_name}/motrix.fastsac")

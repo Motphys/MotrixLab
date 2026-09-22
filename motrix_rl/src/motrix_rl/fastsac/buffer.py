@@ -90,6 +90,36 @@ class SimpleReplayBuffer(nn.Module):
         self.truncations[:, slot] = truncations
         self.ptr += 1
 
+    def extend_batch(self, obs, critic_obs, actions, rewards, dones, truncations) -> None:
+        """Append ``k`` transitions per environment from slot-major tensors.
+
+        Inputs are shaped ``(k, n_env, dim)`` for obs / critic_obs / actions
+        and ``(k, n_env)`` for the scalar fields — the contiguous multi-slot
+        layout produced by the async transition ring's :meth:`read_span`.
+        Writes go directly into the strided buffer slices (one copy per field
+        per contiguous chunk instead of one per slot) on the caller's current
+        stream, so an async ingest can issue non-blocking pinned H2D copies on
+        a side stream.
+        """
+        k = obs.shape[0]
+        start = self.ptr % self._cap
+        n = min(k, self._cap - start)
+        self._write_span(start, (t[:n] for t in (obs, critic_obs, actions, rewards, dones, truncations)))
+        if k > n:
+            self._write_span(0, (t[n:] for t in (obs, critic_obs, actions, rewards, dones, truncations)))
+        self.ptr += k
+
+    def _write_span(self, slot: int, fields) -> None:
+        obs, critic_obs, actions, rewards, dones, truncations = fields
+        n = obs.shape[0]
+        end = slot + n
+        self.observations[:, slot:end].copy_(obs.permute(1, 0, 2), non_blocking=True)
+        self.critic_observations[:, slot:end].copy_(critic_obs.permute(1, 0, 2), non_blocking=True)
+        self.actions[:, slot:end].copy_(actions.permute(1, 0, 2), non_blocking=True)
+        self.rewards[:, slot:end].copy_(rewards.permute(1, 0), non_blocking=True)
+        self.dones[:, slot:end].copy_(dones.permute(1, 0), non_blocking=True)
+        self.truncations[:, slot:end].copy_(truncations.permute(1, 0), non_blocking=True)
+
     @torch.no_grad()
     def sample(self, batch_size: int) -> dict:
         if self.num_stored == 0:

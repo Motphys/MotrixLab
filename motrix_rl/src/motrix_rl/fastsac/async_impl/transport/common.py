@@ -12,7 +12,7 @@ Three primitives:
 
 * :class:`SharedTransitionRing` — single-producer / single-consumer ring of raw
   transition batches (collector -> learner) with bounded backpressure.
-* the weight channel (see :mod:`motrix_rl.fastsac.async_impl.shm.weight_channel`)
+* the weight channel (see :mod:`motrix_rl.fastsac.async_impl.transport.weight_channel`)
   — double-buffered actor weights + obs-normalizer stats (learner ->
   collector) guarded by a seqlock so readers always see a complete,
   consistent snapshot even when the writer publishes twice during a read.

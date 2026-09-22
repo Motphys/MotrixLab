@@ -168,10 +168,10 @@ def _panel_stats(**overrides: Any) -> TrainingPanelStats:
     return TrainingPanelStats(**values)
 
 
-def _render_panel(stats: TrainingPanelStats, *, detail: bool = False, width: int = 200) -> str:
+def _render_panel(stats: TrainingPanelStats, *, view: str = "overview", width: int = 200) -> str:
     console = Console(width=width)
     with console.capture() as capture:
-        console.print(render_training_panel(stats, detail=detail))
+        console.print(render_training_panel(stats, view=view))
     return capture.get()
 
 
@@ -218,7 +218,7 @@ def test_render_training_panel_detail_view_shows_timing_tree_with_shares() -> No
     )
 
     overview = _render_panel(stats)
-    detail = _render_panel(stats, detail=True)
+    detail = _render_panel(stats, view="timing")
 
     assert "STAGE" not in overview
     assert "STAGE" in detail
@@ -258,6 +258,107 @@ def test_render_training_panel_reports_system_health() -> None:
     assert "VRAM n/a" in panel
 
 
+def test_overview_aggregates_gpu_devices_and_system_view_shows_per_gpu() -> None:
+    from motrix_rl.system_metrics import GpuDeviceUsage
+
+    stats = _panel_stats(
+        gpu_devices=[
+            GpuDeviceUsage(
+                index=0,
+                utilization_percent=85.0,
+                memory=MemoryUsage(used_bytes=1024**3, total_bytes=2 * 1024**3),
+                name="NVIDIA GeForce RTX 4090",
+            ),
+            GpuDeviceUsage(index=1, utilization_percent=40.0, memory=None),
+        ]
+    )
+
+    overview = _render_panel(stats, view="overview")
+
+    # Overview/timing cards stay aggregate-only (mean util, summed VRAM)
+    assert "GPU 62%" in overview
+    assert "VRAM 1.0/2.0 GiB" in overview
+    assert "GPU0" not in overview
+    assert "GPU1" not in overview
+
+    from motrix_rl.system_metrics import CpuLoad
+
+    stats = _panel_stats(
+        gpu_devices=stats.gpu_devices,
+        cpu_load=CpuLoad(
+            utilization_percent=62.5,
+            used_logical_cpus=125.0,
+            logical_cpu_count=200,
+            physical_core_count=100,
+            iowait_percent=0.0,
+            steal_percent=0.0,
+            per_core_percent=tuple(100.0 if i % 50 == 0 else 0.0 for i in range(200)),
+            model_name="AMD EPYC 9654 96-Core Processor",
+        ),
+    )
+
+    system = _render_panel(stats, view="system")
+
+    # The CPU card leads with the host's model name
+    assert "EPYC 9654" in system
+
+    # The dedicated system view lists every device, with its model name
+    assert "GPU0" in system and "85%" in system
+    assert "RTX 4090" in system
+    assert "GPU1" in system and "40%" in system
+    assert "n/a" in system
+    assert "1.0/2.0 GiB" in system
+    # per-core spectrum: one glyph per logical core, wrapped at 48 per row
+    # (48 glyphs + 47 inter-core gaps span the same width as the old 96-glyph row)
+    assert system.count("cores 0-47") == 1
+    assert system.count("cores 48-95") == 1
+    assert system.count("cores 192-199") == 1
+    # default style is the partial-height glyph spectrum: idle cores show the
+    # lowest glyph, busy ones the full block, and no bitmap rows appear
+    assert "▁" in system
+    assert "▄" not in system
+    # a dim ceiling line marks each column's 100% reference: lower-eighth
+    # blocks on the row above, touching full-height columns below
+    assert "▔" not in system
+    # overview shows none of the per-core detail
+    assert "cores" not in _render_panel(stats, view="overview")
+
+
+def test_render_training_panel_falls_back_to_aggregate_gpu_without_device_stats() -> None:
+    stats = _panel_stats(gpu_utilization_percent=85.0)
+
+    panel = _render_panel(stats)
+
+    assert "GPU 85%" in panel
+    assert "VRAM n/a" in panel
+
+
+def test_cpu_spectrum_style_env_override(monkeypatch) -> None:
+    from motrix_rl.system_metrics import CpuLoad
+
+    stats = _panel_stats(
+        cpu_load=CpuLoad(
+            utilization_percent=50.0,
+            used_logical_cpus=1.0,
+            logical_cpu_count=2,
+            physical_core_count=1,
+            iowait_percent=0.0,
+            steal_percent=0.0,
+            per_core_percent=(100.0, 25.0),
+        )
+    )
+
+    monkeypatch.setenv("MOTRIX_PANEL_CPU_SPECTRUM", "bitmap")
+    bitmap = _render_panel(stats, view="system")
+    assert "▄" not in bitmap
+    assert bitmap.count("cores 0-1") == 1
+    # bitmap mode: 4 stacked rows for one chunk
+    assert sum(1 for line in bitmap.splitlines() if "█" in line and "cores" not in line) >= 3
+
+    monkeypatch.setenv("MOTRIX_PANEL_CPU_SPECTRUM", "bogus")
+    assert "▂" in _render_panel(stats, view="system")  # unknown value falls back to height
+
+
 def test_format_memory_renders_gib_and_missing_values() -> None:
     assert _format_memory(None) == "n/a"
     assert _format_memory(MemoryUsage(used_bytes=1024**3, total_bytes=4 * 1024**3)) == "1.0/4.0 GiB"
@@ -292,7 +393,7 @@ def test_render_training_panel_only_advertises_keyboard_on_posix_tty(monkeypatch
     # 1/2 key handling needs a POSIX TTY; other platforms get a plain Live
     stats = _panel_stats()
     monkeypatch.setattr(console_module, "_POSIX_TTY", True)
-    assert "keyboard: 1/2 switch tabs" in _render_panel(stats)
+    assert "keyboard: 1/2/3 switch tabs" in _render_panel(stats)
     monkeypatch.setattr(console_module, "_POSIX_TTY", False)
     assert "keyboard" not in _render_panel(stats)
 

@@ -25,7 +25,10 @@ class CpuLoad:
 
     Utilization excludes idle, I/O-wait, and stolen virtual-CPU time. The
     equivalent logical CPU count makes the normalized percentage unambiguous
-    on SMT systems.
+    on SMT systems. ``per_core_percent`` carries the same utilization broken
+    down per logical CPU (sorted by cpu id) for the system view's per-core
+    display; it comes free — the sampler already reads per-CPU counters to
+    compute the aggregate.
     """
 
     utilization_percent: float
@@ -34,6 +37,9 @@ class CpuLoad:
     physical_core_count: int | None
     iowait_percent: float
     steal_percent: float
+    per_core_percent: tuple[float, ...] | None = None
+    # Static "model name" from /proc/cpuinfo (Linux); None where unavailable.
+    model_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -52,12 +58,14 @@ class CpuLoadSampler:
         *,
         stat_path: str | Path = "/proc/stat",
         topology_root: str | Path = "/sys/devices/system/cpu",
+        cpuinfo_path: str | Path = "/proc/cpuinfo",
         cpu_ids: set[int] | None = None,
     ) -> None:
         self._stat_path = Path(stat_path)
         self._topology_root = Path(topology_root)
         self._cpu_ids = cpu_ids if cpu_ids is not None else self._available_cpu_ids()
         self._physical_core_count = self._read_physical_core_count()
+        self._model_name = self._read_model_name(Path(cpuinfo_path))
         self._previous = self._read_times()
 
     def sample(self) -> CpuLoad | None:
@@ -68,16 +76,23 @@ class CpuLoadSampler:
             self._previous = current
             return None
 
-        total = sum(current[cpu].total - self._previous[cpu].total for cpu in common_ids)
-        executing = sum(current[cpu].executing - self._previous[cpu].executing for cpu in common_ids)
-        iowait = sum(current[cpu].iowait - self._previous[cpu].iowait for cpu in common_ids)
-        steal = sum(current[cpu].steal - self._previous[cpu].steal for cpu in common_ids)
+        previous = self._previous
+        total = sum(current[cpu].total - previous[cpu].total for cpu in common_ids)
+        executing = sum(current[cpu].executing - previous[cpu].executing for cpu in common_ids)
+        iowait = sum(current[cpu].iowait - previous[cpu].iowait for cpu in common_ids)
+        steal = sum(current[cpu].steal - previous[cpu].steal for cpu in common_ids)
         self._previous = current
         if total <= 0:
             return None
 
         logical_cpu_count = len(common_ids)
         utilization_percent = 100.0 * executing / total
+        per_core = tuple(
+            100.0
+            * (current[cpu].executing - previous[cpu].executing)
+            / max(current[cpu].total - previous[cpu].total, 1)
+            for cpu in sorted(common_ids)
+        )
         return CpuLoad(
             utilization_percent=utilization_percent,
             used_logical_cpus=logical_cpu_count * utilization_percent / 100.0,
@@ -85,6 +100,8 @@ class CpuLoadSampler:
             physical_core_count=self._physical_core_count,
             iowait_percent=100.0 * iowait / total,
             steal_percent=100.0 * steal / total,
+            per_core_percent=per_core,
+            model_name=self._model_name,
         )
 
     @staticmethod
@@ -119,6 +136,17 @@ class CpuLoadSampler:
             )
         return times
 
+    def _read_model_name(self, cpuinfo_path: Path) -> str | None:
+        """First ``model name`` entry from /proc/cpuinfo; None off-Linux or unreadable."""
+        try:
+            for line in cpuinfo_path.read_text().splitlines():
+                if line.startswith("model name"):
+                    _, _, value = line.partition(":")
+                    return value.strip() or None
+        except OSError:
+            return None
+        return None
+
     def _read_physical_core_count(self) -> int | None:
         cores: set[tuple[int, int]] = set()
         try:
@@ -138,6 +166,18 @@ class MemoryUsage:
 
     used_bytes: int
     total_bytes: int
+
+
+@dataclass(frozen=True)
+class GpuDeviceUsage:
+    """One accelerator's utilization and memory, identified by device index."""
+
+    index: int
+    utilization_percent: float | None
+    memory: MemoryUsage | None
+    # Marketing/model name from NVML or AMD SMI; None when the backend or
+    # driver does not expose one.
+    name: str | None = None
 
 
 class _MemoryStatusEx(ctypes.Structure):
@@ -226,72 +266,153 @@ def _nvml() -> tuple[Any, list[Any]] | None:
 
 
 class GpuMemoryUsageSampler:
-    """Read aggregate accelerator memory via AMD SMI or NVML."""
+    """Read accelerator memory via AMD SMI or NVML, per device or summed."""
 
-    def sample(self) -> MemoryUsage | None:
+    def sample_per_device(self) -> list[MemoryUsage] | None:
+        """One :class:`MemoryUsage` per device (backend enumeration order)."""
         session = _amd_smi()
         if session is not None:
             amdsmi, devices = session
-            used = total = 0
+            usages: list[MemoryUsage] = []
             try:
                 for device in devices:
-                    used += int(amdsmi.amdsmi_get_gpu_memory_usage(device, amdsmi.AmdSmiMemoryType.VRAM))
-                    total += int(amdsmi.amdsmi_get_gpu_memory_total(device, amdsmi.AmdSmiMemoryType.VRAM))
+                    used = int(amdsmi.amdsmi_get_gpu_memory_usage(device, amdsmi.AmdSmiMemoryType.VRAM))
+                    total = int(amdsmi.amdsmi_get_gpu_memory_total(device, amdsmi.AmdSmiMemoryType.VRAM))
+                    usages.append(MemoryUsage(used_bytes=used, total_bytes=total))
             except Exception:
                 return None
-            return MemoryUsage(used_bytes=used, total_bytes=total) if total > 0 else None
+            return usages
         session = _nvml()
         if session is None:
             return None
         pynvml, devices = session
-        used = total = 0
         try:
-            for device in devices:
-                info = pynvml.nvmlDeviceGetMemoryInfo(device)
-                used += info.used
-                total += info.total
+            return [
+                MemoryUsage(used_bytes=info.used, total_bytes=info.total)
+                for info in (pynvml.nvmlDeviceGetMemoryInfo(device) for device in devices)
+            ]
         except pynvml.NVMLError:
             return None
+
+    def sample(self) -> MemoryUsage | None:
+        usages = self.sample_per_device()
+        if not usages:
+            return None
+        used = sum(usage.used_bytes for usage in usages)
+        total = sum(usage.total_bytes for usage in usages)
         return MemoryUsage(used_bytes=used, total_bytes=total) if total > 0 else None
 
 
 class GpuUtilizationSampler:
-    """Read aggregate accelerator utilization via AMD SMI or NVML."""
+    """Read accelerator utilization via AMD SMI or NVML, per device or averaged."""
 
-    def sample(self) -> float | None:
+    def sample_per_device(self) -> list[float | None] | None:
+        """One utilization percentage per device, or ``None`` per unavailable device.
+
+        Returns ``None`` when no per-device source exists (e.g. the AMD sysfs
+        fallback reports unlabeled cards); callers fall back to the aggregate.
+        """
         global _amd_activity_supported
         session = _amd_smi()
         if session is not None:
             amdsmi, devices = session
-            values: list[float] = []
-            if _amd_activity_supported is not False:
-                try:
-                    for device in devices:
-                        activity = amdsmi.amdsmi_get_gpu_activity(device)
-                        value = activity.get("gfx_activity", activity.get("gpu_busy_percent"))
-                        if value is not None:
-                            values.append(float(value))
-                except Exception:
-                    _amd_activity_supported = False
             if _amd_activity_supported is False:
-                # Some integrated AMD GPUs (including Radeon 890M) expose
-                # VRAM through AMD SMI but return AMDSMI_STATUS_UNEXPECTED_DATA
-                # for ``amdsmi_get_gpu_activity``.  The kernel's DRM sysfs
-                # counter is available on those devices and reports the same
-                # busy percentage used by rocm-smi.
-                values = _sysfs_gpu_busy_percent()
-            return sum(values) / len(values) if values else None
+                return None
+            values: list[float | None] = []
+            try:
+                for device in devices:
+                    activity = amdsmi.amdsmi_get_gpu_activity(device)
+                    value = activity.get("gfx_activity", activity.get("gpu_busy_percent"))
+                    values.append(float(value) if value is not None else None)
+            except Exception:
+                _amd_activity_supported = False
+                return None
+            return values
         session = _nvml()
         if session is None:
             return None
         pynvml, devices = session
-        values: list[int] = []
         try:
-            for device in devices:
-                values.append(pynvml.nvmlDeviceGetUtilizationRates(device).gpu)
+            return [float(pynvml.nvmlDeviceGetUtilizationRates(device).gpu) for device in devices]
         except pynvml.NVMLError:
             return None
-        return sum(values) / len(values) if values else None
+
+    def sample(self) -> float | None:
+        amd_session = _amd_smi() is not None
+        values = self.sample_per_device()
+        if values is None:
+            if not amd_session:
+                return None
+            # Some integrated AMD GPUs (including Radeon 890M) expose VRAM
+            # through AMD SMI but return AMDSMI_STATUS_UNEXPECTED_DATA for
+            # ``amdsmi_get_gpu_activity``. The kernel's DRM sysfs counter is
+            # available on those devices and reports the same busy percentage
+            # used by rocm-smi (per-card but unlabeled, hence aggregate-only).
+            sysfs = _sysfs_gpu_busy_percent()
+            return sum(sysfs) / len(sysfs) if sysfs else None
+        known = [value for value in values if value is not None]
+        return sum(known) / len(known) if known else None
+
+
+def _gpu_device_names() -> list[str | None] | None:
+    """One name per device (backend enumeration order), or ``None``.
+
+    Names are static, so the query result is cached alongside the backend
+    session state. AMD SMI product info varies by driver; unrecognized
+    shapes degrade to a ``None`` entry rather than failing the whole list.
+    """
+    session = _amd_smi()
+    if session is not None:
+        amdsmi, devices = session
+        names: list[str | None] = []
+        try:
+            for device in devices:
+                info = amdsmi.amdsmi_get_processor_info(device)
+                # Parenthesized: the isinstance guard selects the whole `or`
+                # chain (conditional expressions bind loosest), so a non-dict
+                # info degrades to None instead of touching .get().
+                name = (info.get("market_name") or info.get("product_name")) if isinstance(info, dict) else None
+                names.append(str(name) if name else None)
+        except Exception:
+            return None
+        return names
+    session = _nvml()
+    if session is None:
+        return None
+    pynvml, devices = session
+    try:
+        # Older pynvml returns bytes; modern versions return str. Any failure
+        # (unsupported handle, driver quirk) degrades to unnamed rows.
+        names = [pynvml.nvmlDeviceGetName(device) for device in devices]
+        return [name.decode() if isinstance(name, bytes) else name for name in names]
+    except Exception:
+        return None
+
+
+def sample_gpu_devices(
+    utilization: GpuUtilizationSampler,
+    memory: GpuMemoryUsageSampler,
+) -> list[GpuDeviceUsage] | None:
+    """Combine the two samplers into one per-device usage list, or ``None``.
+
+    Devices come from the same backend enumeration in both samplers, so
+    indices pair up. A failing memory source degrades to utilization-only;
+    a failing name source degrades to unnamed rows.
+    """
+    utils = utilization.sample_per_device()
+    if utils is None:
+        return None
+    memories = memory.sample_per_device()
+    names = _gpu_device_names()
+    return [
+        GpuDeviceUsage(
+            index=index,
+            utilization_percent=value,
+            memory=memories[index] if memories is not None and index < len(memories) else None,
+            name=names[index] if names is not None and index < len(names) else None,
+        )
+        for index, value in enumerate(utils)
+    ]
 
 
 def _sysfs_gpu_busy_percent() -> list[float]:

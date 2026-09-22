@@ -28,12 +28,13 @@ from motrix_env_core import registry as env_registry
 from motrix_env_core.renderer import RenderConfig
 from motrix_rl.fastsac.agent import FastSacAgent
 from motrix_rl.fastsac.async_impl.collector import resolve_collector_inference_device
-from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing
-from motrix_rl.fastsac.async_impl.shm.weight_channel import WeightChannelShared
+from motrix_rl.fastsac.async_impl.transport import Control, RingCursors, SharedTransitionRing
+from motrix_rl.fastsac.async_impl.transport.weight_channel import WeightChannelShared
 from motrix_rl.fastsac.async_impl.worker import (
     build_env,
     run_collector_process,
     run_learner_process,
+    use_ipc_transition_ring,
 )
 from motrix_rl.fastsac.config import FastSacCfg
 from motrix_rl.fastsac.wrap import FastSacEnvWrap
@@ -131,8 +132,15 @@ class Trainer(TrainerBase):
         collector_device = resolve_collector_inference_device(async_options.collector_inference_device)
 
         # shared-memory primitives allocated in the parent, inherited by children.
+        # The transition ring's transport is decided here: host shared-memory
+        # fields, or (same-GPU collector/learner) bare cursors — the learner
+        # then allocates the CUDA-IPC device slots and ships them to the
+        # collector through the one-shot slot_queue handshake.
         num_envs = self._context.num_envs
-        ring = SharedTransitionRing(async_options.ring_capacity, num_envs, obs_dim, critic_obs_dim, act_dim)
+        if use_ipc_transition_ring(async_options, learner_device, collector_device):
+            ring: SharedTransitionRing | RingCursors = RingCursors()
+        else:
+            ring = SharedTransitionRing(async_options.ring_capacity, num_envs, obs_dim, critic_obs_dim, act_dim)
         weights = WeightChannelShared(obs_dim=obs_dim)
         control = Control()
 

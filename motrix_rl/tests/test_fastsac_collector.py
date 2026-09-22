@@ -10,8 +10,12 @@ import torch
 
 from motrix_env_core.perf import Perf
 from motrix_rl.fastsac.async_impl.collector import Collector, resolve_collector_inference_device
-from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing
-from motrix_rl.fastsac.async_impl.shm.weight_channel import HostWeightReceiver, HostWeightSender, WeightChannelShared
+from motrix_rl.fastsac.async_impl.transport import Control, SharedTransitionRing
+from motrix_rl.fastsac.async_impl.transport.weight_channel import (
+    HostWeightReceiver,
+    HostWeightSender,
+    WeightChannelShared,
+)
 from motrix_rl.fastsac.buffer import EmpiricalNormalization
 from motrix_rl.fastsac.networks import Actor
 
@@ -245,9 +249,10 @@ def test_collector_reports_env_step_substage_timing() -> None:
     assert "env_step" in stats["timing_ms"]
     assert "env_step.apply_action" in stats["timing_ms"]
     assert "env_step.physics" in stats["timing_ms"]
-    # nested sub-stages arrive as dotted paths for the panel's tree rebuild
-    assert "env_step.physics.read" in stats["timing_ms"]
     assert stats["timing_ms"]["env_step.apply_action"] >= 0.0
+    # only the first sub-stage level is reported — a parent's total already
+    # includes its children, deeper dotted paths are dropped at the stats layer
+    assert not any(key.count(".") > 1 for key in stats["timing_ms"])
     # sub-stage aggregation is windowed like the other timings
     assert env.perf.snapshot() == ()
 

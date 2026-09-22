@@ -49,15 +49,19 @@
 - **Collector（进程 A）**：拥有唯一的 CPU `DirectEnv` 与一个**推理专用**的 `Actor` + `obs_normalizer` 副本（CUDA 默认，也可显式选择 CPU；两者均 `eval`）。只做前向、`env.step`、把 transition 批推入共享环、读权重快照、维护 episode 记账。不持有 optimizer、qnet、replay buffer。
 - **Learner（进程 B，GPU）**：就是现有的 `FastSacAgent`，但**不驱动 env**。它从共享环把 transition 灌进自己的 GPU replay buffer，照常调用 `agent.update(n)`；周期性把 actor 权重 + normalizer 快照发布到共享内存；并独占日志与 checkpoint。
 
-**为什么 transition 走「CPU 共享环 + learner 端 ingest」，而不是两进程直接共享 GPU replay buffer？**
+**为什么 transition 走「共享环 + learner 端 ingest」，而不是两进程直接共享 GPU replay buffer？**
 
 - `SimpleReplayBuffer.sample()` 含大量 gather / n-step 计算，是 learner 独占的读路径；让 collector 也触碰会引入跨进程锁与 GPU 上下文共享。
-- CUDA IPC 共享 GPU tensor 复杂且脆弱（context、stream、生命周期）；而 CPU 共享内存 tensor（`Tensor.share_memory_()` / `torch.multiprocessing`）成熟稳定。
-- collector 本就是 CPU 负载，transition 先落 CPU 共享内存零成本；learner ingest 时一次性 `.to(device)` 批量上 GPU，比同步版「每 env-step 一次小拷贝」更 GPU 友好。
+- 环与 buffer 解耦：环只做无锁搬运，buffer 的环形索引、n-step 语义完全归属 learner。
 
-**collector 的环境固定在 CPU，Actor 的设备独立配置**：基于 2048/4096 环境的服务器端到端吞吐结果，默认把 actor 与只读 observation normalizer 放到 CUDA；CPU 保留为显式兼容配置。CUDA 路径不改变 env wrapper 的 device，也不移动 critic observation、reward/done、bookkeeping 或共享 transition ring。learner 与 collector 同卡时仍需结合具体任务确认资源竞争边界。
+环本身有两种物理传输，由 `transition_ipc` 选择（见 §4.1）：
 
-CUDA 推理的数据边界为：CPU policy observation 先复制到预分配 pinned host buffer，再异步 H2D 到固定 shape device buffer；actor 输出立即异步 D2H 到预分配 pinned action buffer，并在返回 CPU env 前同步。若 `torch.compile(mode="reduce-overhead")` 复用 CUDA Graph output storage，D2H 已在下一次 replay 前完成，因此环境不会持有随后被覆盖的 device output 引用。权重仍由 learner 发布到 CPU `WeightSnapshot`；collector actor 参数绑定到一个 contiguous device flat buffer，每个新版本只做一次 pinned H2D，而不是逐参数传输。
+- **host 共享内存环**（默认回退路径）：CPU `share_memory_()` tensor，任何设备组合都可用。
+- **CUDA-IPC 设备环**：collector 与 learner 推理/训练在同一 GPU 时，slot 直接放在显存里。env 的 CPU 输出在 collector 侧一次融合 H2D 直写 slot，learner 的 ingest 变为纯 D2D——env 产生的字节只过一次 PCIe，且被 collector 的 env step 时间掩盖；learner 关键路径上不再有任何 H2D/staging memcpy。
+
+**collector 的环境固定在 CPU，Actor 的设备独立配置**：基于 2048/4096 环境的服务器端到端吞吐结果，默认把 actor 与只读 observation normalizer 放到 CUDA；CPU 保留为显式兼容配置。CUDA 路径不改变 env wrapper 的 device，也不移动 critic observation、reward/done、bookkeeping；transition 环的物理位置由 `transition_ipc` 决定，与推理设备解耦。learner 与 collector 同卡时仍需结合具体任务确认资源竞争边界。
+
+CUDA 推理的数据边界为：CPU policy observation 先复制到预分配 pinned host buffer，再异步 H2D 到固定 shape device buffer；actor 输出立即异步 D2H 到预分配 pinned action buffer，并在返回 CPU env 前同步。若 `torch.compile(mode="reduce-overhead")` 复用 CUDA Graph output storage，D2H 已在下一次 replay 前完成，因此环境不会持有随后被覆盖的 device output 引用。权重由 learner 发布到权重通道（seqlock 双 buffer），物理位置由 `weight_ipc` 选择：`auto`（默认）在 learner 与 collector 推理同卡且 actor 参数达到 `weight_ipc_min_bytes` 时使用 CUDA-IPC 设备槽（publish 是一次 D2D 拷贝），否则使用 host 共享内存槽（一次融合 pinned D2H + shm 写入）。collector actor 参数绑定到一个 contiguous device flat buffer：host 路径每个新版本只做一次 pinned H2D，而不是逐参数传输；device 路径则完全不经 host。
 
 ---
 
@@ -115,9 +119,23 @@ uv run scripts/train.py task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
 两个共享游标 `_write` / `_read` 实现无锁环：
 
 - **生产**：`push()` 满环（`write - read >= C`）时返回 `False`，**不 step env、不丢数据**；写入 slot 各字段后再 `_write += 1`（x86/TSO 下字段写保证先于游标 bump 可见）。
-- **消费**：`read_slot()` 返回最旧未读 slot 的零拷贝 CPU 视图但**不推进** `_read`；learner 把数据 `.to(device)` 后再 `commit_read()`（`_read += 1`）。读游标只在拷贝完成后前进，故生产者永不覆盖仍在 ingest 的 slot。
+- **消费**：`read_span()` 返回最长连续未读 run 的长度与六个字段的 `(count, num_envs, dim)` 视图但**不推进** `_read`；learner 拷入 replay buffer 后再 `commit_reads(count)`（`_read += count`，同様由 event 定序，见 IPC 环）。读游标只在拷贝完成后前进，故生产者永不覆盖仍在 ingest 的 slot。
+- 游标（`RingCursors`）是独立于字段存储的 host 共享 tensor，由父进程创建——host 环与 IPC 环复用同一游标协议。
 
 **背压方向是核心旋钮**：环满（collector 快）→ collector 阻塞采样，天然把采样速率压到 learner 消费速率，防止无界内存增长、防止 replay buffer 被过新数据刷爆而 off-policy 失真；环空（learner 快）→ learner 无新数据可 ingest，由 §5 的 UTD 治理决定「等数据」还是「在已有 buffer 上继续更新」。`C` 需足够吸收两进程抖动（一次 GC、一次 CUDA sync），但不宜过大以免抬高在途 staleness。
+
+#### CUDA-IPC 设备环（`transition_ipc`）
+
+host 环下 learner 的 drain 承担全部搬运：ring→pinned 的 CPU memcpy 与 H2D 都在 learner 关键路径上。设备环把这段搬运整体移到 collector 侧并隐藏：
+
+- **融合 slot 布局**：全部字段放进一块 `(C, num_envs, obs_dim + critic_obs_dim + act_dim + 3)` 的 f32 设备 tensor（reward/done/truncation 以 0/1 float 存储，learner 拷入 i64 buffer 时由 `copy_` 顺手完成数值恒等的类型转换）。collector 每步把六个 CPU 字段拼进一块 pinned staging，**一次 H2D** 写入整个 slot；learner 侧按最后一维 offset 切出六个 strided 视图直接喂 `extend_batch`（纯 D2D）。
+- **归属与交接**：设备字段由 learner 进程分配（IPC handle 导出方需要 CUDA context 且必须保活），经既有的 `slot_queue` 握手随权重 slot 一起 ship 给 collector（`torch.multiprocessing` 已注册 CUDA tensor 的跨进程 reducer）；collector 侧从到达的 tensor 建立接收端。游标沿用父进程创建的 host `RingCursors`，两进程可见。
+- **发布定序（正确性核心）**：GPU 写入不受 x86/TSO 保障，游标 bump 前必须让设备写入落定——生产者在 H2D 入队后对该 slot record 一个 CUDA event，`_write` 只推进到「event 已完成的最旧 slot + 1」（惰性 flush：`is_full`/`push` 前查询队首 event，完成即推进）。消费侧对称：`commit_reads` 在 D2D 读取入队后 record event，`_read` 只推进到「event 已完成」的边界。staging 复用同样由 event 守护：覆写前确认上一次 H2D 已完成（正常节奏下 env.step 的毫秒级间隔使其成为 no-op）。
+- **采样无竞争**：learner 的 D2D ingest 与 `sample()` 在同一条默认流上，流内天然有序，不需要额外 event；event 只服务于跨进程游标推进。
+- **传输选择**：`transition_ipc: auto/on/off`。`auto` 要求 learner 设备与 `collector_inference_device` 解析后同为 CUDA（未显式给 index 时视为同卡；显式 index 不同则回退）；`on` 在不满足时告警回退 host 环。host 环是永久保留的回退路径，覆盖 CPU collector、异卡与 IPC 建立失败的边界。
+- **代价**：显存增加约 `C × num_envs × feat × 4` 字节（microduck-walk-flat 量级约 130MB），高维 critic_obs 任务需把 `ring_capacity` 纳入显存预算。
+
+
 
 **语义一致性**：collector 只是把同步版 collect 相位原样搬到另一进程，transition 的构造代码相同——调用顺序、dtype（dones/truncations 用 long）、auto-reset 后的 next_obs 语义与同步版逐字节一致。这是「算法未变、只变执行拓扑」的基础。
 
@@ -231,6 +249,8 @@ class FastSacAsyncOptionsCfg:
     collector_compile: bool = True  # CUDA 固定 batch 推理使用 reduce-overhead
     collector_amp: bool = True  # 默认使用实测吞吐最优的 FP16 collector autocast
     collector_amp_dtype: str = "fp16"  # fp16 / bf16
+    transition_ipc: str = "auto"  # 设备 transition 环：auto/on/off（见 §4.1）
+    weight_ipc: str = "auto"  # 权重快照 CUDA-IPC 传输：auto/on/off + 大小门控
 
 
 @dataclass

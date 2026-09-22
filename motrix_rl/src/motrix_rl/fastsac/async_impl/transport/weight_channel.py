@@ -29,7 +29,7 @@ shared counter that the writer bumps to *odd* while writing and back to
 *even* when done; readers retry on any inconsistency. Single writer + single
 reader means plain aligned int64 stores suffice and no atomic RMW is needed.
 On x86/TSO the data-before-counter ordering is free; ARM would need real
-release/acquire (see the shm module's "Memory ordering" note).
+release/acquire (see transport.common's "Memory ordering" note).
 
 Transport choice
 ----------------
@@ -50,7 +50,7 @@ import torch
 import torch.multiprocessing  # noqa: F401  registers CUDA-IPC reducers in every importing process
 from torch import nn
 
-from motrix_rl.fastsac.async_impl.shm.common import _NORM_KEYS, _shared, flatten_params, load_flat_params
+from motrix_rl.fastsac.async_impl.transport.common import _NORM_KEYS, _shared, flatten_params, load_flat_params
 
 # obs-normalizer stat buffers that the collector needs (read-only) to reproduce
 # the sync ``act()`` path (normalize with update=False, see agent.act).

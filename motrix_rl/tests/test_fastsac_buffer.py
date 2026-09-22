@@ -163,3 +163,89 @@ def test_partial_buffer_n_step_only_full_windows():
         t0 = int(batch["obs"][row, 0])
         assert t0 <= total - 3
         assert int(batch["effective_n_steps"][row]) == 3
+
+
+def test_extend_batch_matches_extend_across_wrap():
+    """Batched multi-slot ingest must be indistinguishable from per-slot extend.
+
+    Covers chunk sizes that split the (k, n_env, ·) span across the buffer's
+    physical wrap and spans longer than the capacity.
+    """
+    for total, chunk in (
+        (BUFFER_SIZE * 3, 2),
+        (BUFFER_SIZE * 3, BUFFER_SIZE - 1),
+        (BUFFER_SIZE * 4 + 3, BUFFER_SIZE + 2),
+    ):
+        per_slot = SimpleReplayBuffer(N_ENV, BUFFER_SIZE, N_OBS, N_ACT, N_CRITIC_OBS, device="cpu")
+        batched = SimpleReplayBuffer(N_ENV, BUFFER_SIZE, N_OBS, N_ACT, N_CRITIC_OBS, device="cpu")
+        dones = [1 if t % 4 == 3 else 0 for t in range(total)]
+        truncs = [1 if t % 5 == 4 else 0 for t in range(total)]
+        _fill(per_slot, total, dones, truncs)
+        for start in range(0, total, chunk):
+            n = min(chunk, total - start)
+            fields = (
+                torch.full((n, N_ENV, N_OBS), float(0)),
+                torch.full((n, N_ENV, N_CRITIC_OBS), float(0)),
+                torch.full((n, N_ENV, N_ACT), float(0)),
+                torch.full((n, N_ENV), float(0)),
+                torch.zeros(n, N_ENV, dtype=torch.long),
+                torch.zeros(n, N_ENV, dtype=torch.long),
+            )
+            for i, t in enumerate(range(start, start + n)):
+                fields[0][i] = float(t)
+                fields[1][i] = float(100 + t)
+                fields[2][i] = float(t)
+                fields[3][i] = float(t)
+                fields[4][i] = dones[t]
+                fields[5][i] = truncs[t]
+            batched.extend_batch(*fields)
+        assert batched.ptr == per_slot.ptr
+        for name in ("observations", "critic_observations", "actions", "rewards", "dones", "truncations"):
+            assert torch.equal(getattr(batched, name), getattr(per_slot, name))
+
+
+def test_ring_read_span_fifo_and_no_wrap():
+    """Contiguous-run consumption is FIFO, in-order, and never crosses the wrap."""
+    from motrix_rl.fastsac.async_impl.transport import SharedTransitionRing
+
+    capacity, num_envs, obs_dim, act_dim = 5, 3, 4, 2
+
+    def push(ring, t):
+        return ring.push(
+            torch.full((num_envs, obs_dim), float(t)),
+            torch.full((num_envs, obs_dim), float(t)),
+            torch.full((num_envs, act_dim), float(t)),
+            torch.full((num_envs,), float(t)),
+            torch.full((num_envs,), t % 2, dtype=torch.long),
+            torch.full((num_envs,), t % 3 == 0, dtype=torch.long),
+        )
+
+    ring = SharedTransitionRing(capacity, num_envs, obs_dim, obs_dim, act_dim)
+    next_expected = 0
+    for t in range(capacity * 4):
+        assert push(ring, t)
+        # consume at varying granularity; each run's views must carry the
+        # oldest unread values in push order
+        k = min((t % 3) + 1, ring.size())
+        if k:
+            count, views = ring.read_span()
+            assert count >= k
+            assert 1 <= count <= capacity - (ring.read_idx % capacity)  # no wrap
+            for i in range(k):
+                assert torch.all(views[0][i] == next_expected + i)
+                assert torch.all(views[1][i] == next_expected + i)  # critic dim reuse ok
+                assert torch.all(views[2][i] == next_expected + i)
+                assert torch.all(views[3][i] == next_expected + i)
+                assert torch.all(views[4][i] == (next_expected + i) % 2)
+                assert torch.all(views[5][i] == ((next_expected + i) % 3 == 0))
+            ring.commit_reads(k)
+            next_expected += k
+    # drain the remainder
+    while ring.has_next():
+        count, views = ring.read_span()
+        for i in range(count):
+            assert torch.all(views[0][i] == next_expected + i)
+        ring.commit_reads(count)
+        next_expected += count
+    assert next_expected == capacity * 4
+    assert ring.size() == 0

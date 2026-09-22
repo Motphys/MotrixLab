@@ -10,11 +10,11 @@ import os
 import re
 import shutil
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from motrix_rl.system_metrics import CpuLoad, MemoryUsage
+from motrix_rl.system_metrics import CpuLoad, GpuDeviceUsage, MemoryUsage
 
 try:  # cbreak keyboard input needs a POSIX terminal; other platforms keep a plain Live
     import select
@@ -69,6 +69,9 @@ class TrainingPanelStats:
     gpu_utilization_percent: float | None = None
     memory_usage: MemoryUsage | None = None
     gpu_memory_usage: MemoryUsage | None = None
+    # Per-device GPU utilization/memory; when present the system card renders
+    # one line per accelerator instead of the aggregate GPU/VRAM fields.
+    gpu_devices: Sequence[GpuDeviceUsage] | None = None
     checkpoint_path: str | None = None
 
 
@@ -131,9 +134,9 @@ def open_training_live():
 
 
 def emit_training_panel(live, stats: TrainingPanelStats, *, title: str = "rl") -> None:
-    """Render one training panel; 1/2 switch overview and timing views."""
+    """Render one training panel; 1/2/3 switch overview, timing and system views."""
     if live is not None:
-        detail = bool(getattr(live, "_motrix_detail", False))
+        view = getattr(live, "_motrix_view", "overview")
         input_fd = getattr(live, "_input_fd", None)
         if input_fd is not None:
             ready, _, _ = select.select([input_fd], [], [], 0)
@@ -142,12 +145,10 @@ def emit_training_panel(live, stats: TrainingPanelStats, *, title: str = "rl") -
                     command = os.read(input_fd, 1).decode("utf-8", errors="ignore").lower()
                 except OSError:
                     command = ""
-                if command == "2":
-                    detail = True
-                elif command == "1":
-                    detail = False
-                live._motrix_detail = detail
-        panel = render_training_panel(stats, title=title, detail=detail)
+                if command in ("1", "2", "3"):
+                    view = {"1": "overview", "2": "timing", "3": "system"}[command]
+        live._motrix_view = view
+        panel = render_training_panel(stats, title=title, view=view)
         live.update(panel, refresh=True)
     else:
         print(format_training_panel(stats, title=title))
@@ -221,6 +222,16 @@ def format_training_panel(stats: TrainingPanelStats, *, title: str = "rl") -> st
             f"({load.used_logical_cpus:.1f}/{load.logical_cpu_count}T{cores})   "
             f"iowait {load.iowait_percent:.1f}%   steal {load.steal_percent:.1f}%"
         )
+    # Plain-text fallback mirrors the overview card: aggregate GPU stats only
+    # (per-device detail is the interactive System view's job).
+    devices = stats.gpu_devices or ()
+    if devices:
+        gpu_util, gpu_mem = _aggregate_gpu_devices(devices)
+    else:
+        gpu_util, gpu_mem = stats.gpu_utilization_percent, stats.gpu_memory_usage
+    if gpu_util is not None or gpu_mem is not None:
+        parts = [f"{gpu_util:.0f}%" if gpu_util is not None else "n/a", _format_memory(gpu_mem)]
+        lines.append(" system      gpu " + "  ".join(parts))
     metrics = stats.training_metrics
     buf = f"{si(stats.buffer_size)}/{si(stats.buffer_capacity)}"
     if metrics is None:
@@ -466,23 +477,165 @@ def _prototype_bar(fraction: float, *, width: int = 22, style: str = "cyan"):
     return result
 
 
-def _prototype_tabs(stats: TrainingPanelStats, detail: bool):
+def _cpu_spectrum_rows(per_core: Sequence[float], load_style, per_row: int = 48) -> list:
+    """Per-core CPU utilization spectrum rows for the System view.
+
+    Style is selected by ``MOTRIX_PANEL_CPU_SPECTRUM`` (height | shade |
+    bitmap; default height). The code cannot probe the terminal font, so the
+    override exists for fonts that render partial-height or shade block
+    glyphs as indistinguishable equal blocks:
+
+    * ``height`` — one ``▁▂▃▄▅▆▇█`` glyph per core (prettiest; needs a font
+      with correct block-element metrics, e.g. Cascadia Mono, Sarasa Term,
+      any Nerd Font);
+    * ``shade`` — density glyphs ``░▒▓█``, same height by design;
+    * ``bitmap`` — btop-style columns of ``█``/spaces on 4 rows, only two
+      distinct characters so it survives every font.
+
+    One space separates adjacent cores so same-height neighbours don't fuse
+    into a solid bar; the default row of 48 cores + 47 gaps spans the same
+    ~95 columns as the previous unspaced 96-core row.
+    """
+    from rich.text import Text
+
+    style = os.environ.get("MOTRIX_PANEL_CPU_SPECTRUM", "height").lower()
+    if style not in ("height", "shade", "bitmap"):
+        style = "height"
+    rows: list = []
+    label_width = 14  # "cores 192-199  "
+    for start in range(0, len(per_core), per_row):
+        chunk = per_core[start : start + per_row]
+        label = f"cores {start}-{start + len(chunk) - 1}".ljust(label_width)
+        if style in ("height", "shade"):
+            # Leading space: idle cores render blank so the dim ▁ ceiling caps
+            # are the ONLY ▁ on screen (otherwise an idle column would look
+            # like it touches the 100% reference).
+            levels = " ▁▂▃▄▅▆▇█" if style == "height" else "░▒▓█"
+            spectrum = Text()
+            for i, value in enumerate(chunk):
+                if i:
+                    spectrum.append(" ")
+                glyph = levels[min(int(value / 100.0 * (len(levels) - 1)), len(levels) - 1)]
+                spectrum.append(glyph, style=load_style(value))
+            if style == "height":
+                # Ceiling line above the skyline: marks each column's 100%
+                # reference. The lower-one-eighth block is used because it sits
+                # at the BOTTOM of its own cell — a full-height column below
+                # touches it, forming one connected bar (▔ would leave a 7/8-row
+                # gap between the cap and the skyline).
+                rows.append(Text.assemble((" " * label_width, "dim"), (" ".join("▁" for _ in chunk), "dim")))
+            rows.append(Text.assemble((label, "dim"), (spectrum,)))
+        else:
+            height = 4
+            for level in range(height, 0, -1):  # top row first
+                threshold = 100.0 * (level - 1) / height
+                row = Text()
+                for i, value in enumerate(chunk):
+                    if i:
+                        row.append(" ")
+                    row.append(
+                        "█" if value > threshold else " ", style=load_style(value) if value > threshold else "dim"
+                    )
+                rows.append(Text.assemble((label if level == height else " " * label_width, "dim"), (row,)))
+    return rows
+
+
+def _prototype_system_page(stats: TrainingPanelStats, load_style, memory_style):
+    """Dedicated per-device system view: host summary + one row per GPU.
+
+    The overview/timing cards stay aggregate-only, so 8-GPU hosts get their
+    per-device detail here instead of an overflowing System health card. CPU
+    load is shown as a compact per-core spectrum (one block glyph per logical
+    core, height and color by utilization) — readable at 192 cores without a
+    per-core table.
+    """
+    from rich.table import Table
+    from rich.text import Text
+
+    load = stats.cpu_load
+    cpu_parts: list[Any] = []
+    if load is not None and load.model_name:
+        cpu_parts.append(Text(load.model_name, style="dim"))
+    if load is not None and load.per_core_percent:
+        cpu_parts.extend(_cpu_spectrum_rows(load.per_core_percent, load_style))
+    else:
+        # RAM is not repeated here — the always-visible System health card in
+        # the summary row already carries it.
+        cpu_parts.append(Text("no per-core samples", style="dim"))
+
+    devices = stats.gpu_devices or ()
+    columns = Table(header_style="dim", expand=True, show_edge=False, box=None)
+    columns.add_column("Device", no_wrap=True)
+    columns.add_column("Utilization", justify="right", no_wrap=True)
+    columns.add_column("VRAM", justify="right", no_wrap=True)
+    columns.add_column("VRAM load", ratio=1)
+    if not devices:
+        columns.add_row(
+            Text("no per-device GPU samples", style="dim"),
+            Text(
+                f"{stats.gpu_utilization_percent:.0f}%" if stats.gpu_utilization_percent is not None else "n/a",
+                style=load_style(stats.gpu_utilization_percent),
+            ),
+            Text(_format_memory(stats.gpu_memory_usage), style=memory_style(stats.gpu_memory_usage)),
+            "",
+        )
+    for device in devices:
+        util = device.utilization_percent
+        bar = ""
+        if device.memory is not None and device.memory.total_bytes > 0:
+            width = 16
+            filled = round(width * device.memory.used_bytes / device.memory.total_bytes)
+            bar = "█" * filled + "░" * (width - filled)
+        device_cell = Text(f"GPU{device.index}", style="white")
+        if device.name:
+            device_cell.append(f"  {device.name}", style="dim")
+        columns.add_row(
+            device_cell,
+            Text(f"{util:.0f}%" if util is not None else "n/a", style=load_style(util)),
+            Text(_format_memory(device.memory), style=memory_style(device.memory)),
+            Text(bar, style=memory_style(device.memory)),
+        )
+
+    # CPU and GPU are separate blocks: the aggregate CPU summary sits in the
+    # CPU card's title (top-right corner), RAM heads the body next to the
+    # per-core spectrum, and the device table fills the GPU card.
+    if load is not None:
+        summary = (
+            f"CPU {load.utilization_percent:.0f}% "
+            f"({load.used_logical_cpus:.1f}/{load.logical_cpu_count}T"
+            + (f", {load.physical_core_count}C" if load.physical_core_count is not None else "")
+            + ")"
+        )
+        cpu_title = Text(summary, justify="right", style=f"bold {load_style(load.utilization_percent)}")
+    else:
+        cpu_title = Text("CPU n/a", justify="right", style="dim")
+    cpu_card = Panel(
+        Group(*cpu_parts),
+        title=cpu_title,
+        border_style="grey37",
+        padding=(0, 1),
+    )
+    gpu_card = Panel(
+        columns,
+        title=f"GPU ({len(devices)} devices)" if devices else "GPU",
+        border_style="grey37",
+        padding=(0, 1),
+    )
+    return Group(cpu_card, gpu_card)
+
+
+def _prototype_tabs(stats: TrainingPanelStats, view: str):
     from rich.text import Text
 
     tabs = Table.grid(expand=True, padding=(0, 2))
     tabs.add_column()
     tabs.add_column()
+    tabs.add_column()
     tabs.add_column(ratio=1, justify="right")
-    active = "Timing" if detail else "Overview"
-    labels = (("Overview", ""), ("Timing", ""))
-    row = []
-    for label, count in labels:
-        item = Text(label, style="bold cyan" if label == active else "dim")
-        if count:
-            item.append(f" {count}", style="grey50")
-        row.append(item)
+    labels = ("Overview", "Timing", "System")
+    row = [Text(label, style="bold cyan" if label.lower() == view else "dim") for label in labels]
     if _POSIX_TTY:  # key handling is POSIX-only; don't advertise it elsewhere
-        row.append(Text("keyboard: 1/2 switch tabs", style="dim"))
+        row.append(Text("keyboard: 1/2/3 switch tabs", style="dim"))
     tabs.add_row(*row)
     return tabs
 
@@ -492,6 +645,19 @@ def _format_memory(memory: MemoryUsage | None) -> str:
         return "n/a"
     gib = 1024**3
     return f"{memory.used_bytes / gib:.1f}/{memory.total_bytes / gib:.1f} GiB"
+
+
+def _aggregate_gpu_devices(devices: Sequence[GpuDeviceUsage]) -> tuple[float | None, MemoryUsage | None]:
+    """Mean utilization and summed memory across the reported devices."""
+    utils = [d.utilization_percent for d in devices if d.utilization_percent is not None]
+    mean_util = sum(utils) / len(utils) if utils else None
+    known = [d.memory for d in devices if d.memory is not None and d.memory.total_bytes > 0]
+    total_mem = (
+        MemoryUsage(used_bytes=sum(m.used_bytes for m in known), total_bytes=sum(m.total_bytes for m in known))
+        if known
+        else None
+    )
+    return mean_util, total_mem
 
 
 def _run_progress_time_text(stats: TrainingPanelStats):
@@ -506,11 +672,13 @@ def _run_progress_time_text(stats: TrainingPanelStats):
     return line
 
 
-def render_training_panel(stats: TrainingPanelStats, *, title: str = "rl", detail: bool = False):
+def render_training_panel(stats: TrainingPanelStats, *, title: str = "rl", view: str = "overview"):
     if not _RICH:
         raise RuntimeError("rich is not available")
     from rich.text import Text
 
+    if view not in ("overview", "timing", "system"):
+        raise ValueError(f"unknown panel view {view!r}")
     progress = max(0.0, min(1.0, stats.iteration / max(stats.total_iterations, 1)))
     collect, learn = _timing_totals(stats)
 
@@ -546,22 +714,25 @@ def render_training_panel(stats: TrainingPanelStats, *, title: str = "rl", detai
     progress_row = Table.grid(expand=True, padding=(0, 1))
     progress_row.add_column(ratio=1)
     progress_row.add_row(_prototype_bar(progress, width=18))
+    # The overview/timing cards stay aggregate-only; per-device detail lives on
+    # the dedicated System view so 8-GPU hosts don't blow up the card layout.
+    devices = stats.gpu_devices or ()
+    if devices:
+        gpu_util, gpu_mem = _aggregate_gpu_devices(devices)
+    else:
+        gpu_util, gpu_mem = stats.gpu_utilization_percent, stats.gpu_memory_usage
+    left_group = Group(
+        Text(cpu_text, style=f"bold {load_style(load.utilization_percent if load else None)}"),
+        Text(f"GPU {gpu_util:.0f}%" if gpu_util is not None else "GPU n/a", style=f"{load_style(gpu_util)}"),
+    )
+    right_group = Group(
+        Text(f"RAM {_format_memory(stats.memory_usage)}", style=memory_style(stats.memory_usage)),
+        Text(f"VRAM {_format_memory(gpu_mem)}", style=memory_style(gpu_mem)),
+    )
     system_health = Table.grid(expand=True, padding=(0, 1))
     system_health.add_column(ratio=1)
     system_health.add_column(ratio=1)
-    system_health.add_row(
-        Group(
-            Text(cpu_text, style=f"bold {load_style(load.utilization_percent if load else None)}"),
-            Text(
-                f"GPU {stats.gpu_utilization_percent:.0f}%" if stats.gpu_utilization_percent is not None else "GPU n/a",
-                style=f"{load_style(stats.gpu_utilization_percent)}",
-            ),
-        ),
-        Group(
-            Text(f"RAM {_format_memory(stats.memory_usage)}", style=memory_style(stats.memory_usage)),
-            Text(f"VRAM {_format_memory(stats.gpu_memory_usage)}", style=memory_style(stats.gpu_memory_usage)),
-        ),
-    )
+    system_health.add_row(left_group, right_group)
     summary.add_row(
         card(
             f"Run progress ({progress * 100:.1f}%)",
@@ -635,7 +806,9 @@ def render_training_panel(stats: TrainingPanelStats, *, title: str = "rl", detai
         Group(*env_parts), title=f"Environment metrics ({len(env_items)})", border_style="grey37", padding=(0, 1)
     )
 
-    if detail:
+    if view == "system":
+        lower = Group(_prototype_system_page(stats, load_style, memory_style))
+    elif view == "timing":
         timing_blocks: list[Any] = []
         columns = Table.grid(expand=True, padding=(0, 1))
         columns.add_column(ratio=1)
@@ -681,7 +854,7 @@ def render_training_panel(stats: TrainingPanelStats, *, title: str = "rl", detai
         lower = Group(*timing_blocks) if timing_blocks else Text("timing details unavailable", style="grey70")
     else:
         lower = Group(*left_blocks, environment)
-    blocks = [summary, lower, _prototype_tabs(stats, detail)]
+    blocks = [summary, lower, _prototype_tabs(stats, view)]
     if stats.checkpoint_path:
         blocks.insert(-1, Text(f"✓ saved checkpoint  {stats.checkpoint_path}", style="green"))
     # Let Rich use the actual terminal width.  The card bodies are intentionally

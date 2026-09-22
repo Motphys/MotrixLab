@@ -171,7 +171,12 @@ class FastSacAgent:
             inductor_config.compile_threads = 1
             # B3 experiment: reduce-overhead wraps each compiled update in a
             # CUDA graph (trees), removing per-kernel launch and region-gap CPU
-            # time inside the hot learner loop.
+            # time inside the hot learner loop. (Coarser units were measured at
+            # microduck scale and do NOT help: torch.compile splits regions
+            # containing backward()/optimizer.step() regardless of the outer
+            # boundary, and module-only/default-mode compilation is ~50% slower
+            # or crashes on cudagraph output pools. The per-step boundary is
+            # the measured optimum.)
             self._update_main_runtime = torch.compile(self._update_main, mode="reduce-overhead")
             self._update_pol_runtime = torch.compile(self._update_pol, mode="reduce-overhead")
 
@@ -226,6 +231,19 @@ class FastSacAgent:
             torch.nn.utils.clip_grad_norm_(self.qnet.parameters(), cfg.max_grad_norm)
         self.q_optimizer.step()
 
+        # Target-network soft update, fused into the compiled region: the
+        # foreach ops write the same kind of param storage the optimizer step
+        # above already mutates in place, so the whole thing replays as one
+        # CUDA graph instead of two eager kernel launches per step. Ordering
+        # constraints: after the target read at the top of this function and
+        # after q_optimizer.step() (both satisfied here); _update_pol reads
+        # neither qnet_target nor writes qnet, so it stays order-independent.
+        with torch.no_grad():
+            tau = cfg.tau
+            tgt = [p.data for p in self.qnet_target.parameters()]
+            torch._foreach_mul_(tgt, 1.0 - tau)
+            torch._foreach_add_(tgt, [p.data for p in self.qnet.parameters()], alpha=tau)
+
         alpha_loss = torch.zeros((), device=self.device)
         if cfg.use_autotune:
             alpha_loss = (-self.log_alpha.exp() * (next_logp.detach() + self.target_entropy)).mean()
@@ -255,14 +273,6 @@ class FastSacAgent:
         self.actor_optimizer.step()
         return actor_loss.detach().float(), (-log_probs.mean()).detach().float()
 
-    @torch.no_grad()
-    def _soft_update(self):
-        tau = self.cfg.tau
-        src = [p.data for p in self.qnet.parameters()]
-        tgt = [p.data for p in self.qnet_target.parameters()]
-        torch._foreach_mul_(tgt, 1.0 - tau)
-        torch._foreach_add_(tgt, src, alpha=tau)
-
     def update(self, num_updates: int):
         """Run ``num_updates`` gradient steps, each on a fresh batch.
 
@@ -288,7 +298,7 @@ class FastSacAgent:
             return None
         batch_per_env = max(cfg.batch_size // self.num_envs, 1)
         last = (torch.zeros((), device=self.device),) * 5
-        timing_s = {key: 0.0 for key in ("sample_normalize", "critic_alpha", "actor", "soft_update")}
+        timing_s = {key: 0.0 for key in ("sample_normalize", "critic_alpha", "actor")}
         update_started = time.perf_counter()
         # Batched data preparation (Holosoma-style): sample once and normalize
         # once per update() call, then slice views into per-gradient-step
@@ -319,22 +329,28 @@ class FastSacAgent:
             # Required with reduce-overhead (CUDA graph trees): open a new graph
             # generation for this update. NOTE it does not preserve anything --
             # it *invalidates* the previous generation's outputs, which is why
-            # every output that outlives its own iteration goes through `_own`.
+            # any output that outlives its own iteration goes through `_own`.
             torch.compiler.cudagraph_mark_step_begin()
             stage_started = time.perf_counter()
-            qf_loss, alpha_loss, qf_max, qf_min = _own(self._update_main_runtime(b))
+            outputs = self._update_main_runtime(b)
             timing_s["critic_alpha"] += time.perf_counter() - stage_started
 
-            actor_loss, entropy = last[3], last[4]
+            actor_pair = (last[3], last[4])
             if (self.update_idx + i) % cfg.policy_frequency == 0:
                 stage_started = time.perf_counter()
-                actor_loss, entropy = _own(self._update_pol_runtime(b))
+                pol_outputs = self._update_pol_runtime(b)
                 timing_s["actor"] += time.perf_counter() - stage_started
+                # Always own: the pair is carried across later generations
+                # within this call AND the returned metrics must stay readable
+                # after future update() calls replay the pol graph.
+                actor_pair = _own(pol_outputs)
 
-            stage_started = time.perf_counter()
-            self._soft_update()
-            timing_s["soft_update"] += time.perf_counter() - stage_started
-            last = (qf_loss, alpha_loss, qf_max, actor_loss, entropy)
+            # Only the final step's main outputs feed the returned metrics; own
+            # them so they survive future update() calls' replays. Earlier
+            # steps' outputs are never read — only replaced below.
+            main_outputs = _own(outputs) if i == num_updates - 1 else outputs
+            last = (*main_outputs, *actor_pair)
+
         self.update_idx += num_updates
         timing_s["total"] = time.perf_counter() - update_started
         self._last_update_timing_ms = {key: value * 1000.0 for key, value in timing_s.items()}

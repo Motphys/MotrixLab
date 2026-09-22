@@ -4,10 +4,11 @@
 """Learner: owns a full ``FastSacAgent`` and drives training off the shared ring.
 
 Unlike the sync trainer it does NOT step the env. It drains raw transitions from
-:class:`~motrix_rl.fastsac.async_impl.shm.SharedTransitionRing` into the agent's GPU
-replay buffer, runs gradient updates governed by ``utd_mode`` (§6 of the
-design), and periodically publishes actor weights + obs-normalizer stats to the
-collector via its :class:`~motrix_rl.fastsac.async_impl.shm.WeightSender` endpoint.
+the shared transition ring (host fields or CUDA-IPC device fields, see
+``transport/ring.py`` / ``transport/ipc_ring.py``) into the agent's GPU replay buffer, runs
+gradient updates governed by ``utd_mode`` (§6 of the design), and periodically
+publishes actor weights + obs-normalizer stats to the collector via its
+:class:`~motrix_rl.fastsac.async_impl.transport.WeightSender` endpoint.
 
 The update math is reused unchanged from the sync agent: this module delegates
 the per-step gradient work to ``agent.update(n)`` and only owns the
@@ -18,9 +19,11 @@ from __future__ import annotations
 
 import time
 
+import torch
+
 from motrix_rl.fastsac.agent import FastSacAgent
-from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing
-from motrix_rl.fastsac.async_impl.shm.weight_channel import WeightSender
+from motrix_rl.fastsac.async_impl.transport import Control, IpcTransitionRing, SharedTransitionRing
+from motrix_rl.fastsac.async_impl.transport.weight_channel import WeightSender
 from motrix_rl.fastsac.config import FastSacCfg
 
 
@@ -29,7 +32,7 @@ class Learner:
         self,
         agent: FastSacAgent,
         cfg: FastSacCfg,
-        ring: SharedTransitionRing,
+        ring: SharedTransitionRing | IpcTransitionRing,
         weights: WeightSender,
         control: Control,
     ):
@@ -41,6 +44,31 @@ class Learner:
         self.control = control
         self._learning_starts = agent.cfg.learning_starts
         self._last_publish_ms = 0.0
+
+        # Host-ring async-ingest plumbing (CUDA only): contiguous runs are
+        # staged through pinned buffers and moved to the GPU with non-blocking
+        # H2D copies on a dedicated stream, so ingestion overlaps gradient
+        # updates. The CUDA-IPC device ring needs none of this — its slots are
+        # already on the device and ingest is a same-stream D2D copy.
+        self._device_ring = isinstance(ring, IpcTransitionRing)
+        self._copy_stream = None
+        self._copy_event = None
+        self._pending_copy = False
+        self._staging = None
+        if agent.device.type == "cuda" and not self._device_ring:
+            self._copy_stream = torch.cuda.Stream(device=agent.device)
+            self._copy_event = torch.cuda.Event()
+            rb = agent.rb
+            chunk = max(self.async_options.max_ingest_per_iter, 1)
+            pin = lambda *shape: torch.empty(*shape, pin_memory=True)  # noqa: E731
+            self._staging = (
+                pin(chunk, rb.n_env, rb.n_obs),
+                pin(chunk, rb.n_env, rb.n_critic_obs),
+                pin(chunk, rb.n_env, rb.n_act),
+                pin(chunk, rb.n_env),
+                torch.empty(chunk, rb.n_env, dtype=torch.int64, pin_memory=True),
+                torch.empty(chunk, rb.n_env, dtype=torch.int64, pin_memory=True),
+            )
 
         # keep normalizers/actor in train mode: the learner is the update side.
         self.agent.set_train_mode()
@@ -56,33 +84,62 @@ class Learner:
     def drain(self) -> int:
         """Move up to ``max_ingest_per_iter`` ring slots into the replay buffer.
 
-        Returns the number of slots ingested. Read cursor advances only after the
-        GPU copy, so the collector cannot clobber an in-flight slot. The replay
-        buffer derives each transition's ``next_obs`` from the following slot's
-        stored observation, so no successor peek is needed and a slot is
-        ingested as soon as it is committed.
+        Returns the number of slots ingested. Slots are consumed in contiguous
+        runs (``ring.read_span()``):
+
+        * CUDA-IPC device ring: the strided device views go straight into the
+          replay buffer with D2D copies on the current stream (ordered before
+          any subsequent sample by stream order); the read cursor is released
+          behind an event once those copies complete.
+        * host ring on CUDA: each run is memcpy'd into pinned staging and moved
+          to the GPU as one non-blocking H2D copy per field on the copy stream
+          (overlapping the next gradient update), then the read cursor
+          advances — the producer cannot clobber in-flight data because the
+          ring slot was already fully copied to staging.
+        * host ring on CPU: the views copy directly into the buffer.
+
+        The replay buffer derives each transition's ``next_obs`` from the
+        following slot's stored observation, so no successor peek is needed and
+        a slot is ingested as soon as it is committed.
         """
-        device = self.agent.device
+        budget = max(self.async_options.max_ingest_per_iter, 1)
+        if self._staging is not None:
+            # Staging may still be the source of the previous drain's in-flight
+            # H2D copies; wait before overwriting it. Any pending copy was
+            # already joined by the intervening maybe_train(), so this is
+            # normally a no-op sync.
+            self._copy_stream.synchronize()
         ingested = 0
-        for _ in range(max(self.async_options.max_ingest_per_iter, 1)):
-            if not self.ring.has_next():
-                break
-            slot = self.ring.read_slot()
-            assert slot is not None  # has_next implies a readable slot
-            obs, critic_obs, actions, rewards, dones, truncations = slot
-            self.agent.rb.extend(
-                obs.to(device),
-                critic_obs.to(device),
-                actions.to(device),
-                rewards.to(device),
-                dones.to(device),
-                truncations.to(device),
-            )
-            self.ring.commit_read()
-            ingested += 1
+        while ingested < budget and self.ring.has_next():
+            k, views = self.ring.read_span()
+            k = min(k, budget - ingested)
+            if k < views[0].shape[0]:
+                views = tuple(v[:k] for v in views)
+            if self._staging is not None:
+                for stage, view in zip(self._staging, views):
+                    stage[:k].copy_(view)  # ring -> pinned (plain CPU memcpy)
+                with torch.cuda.stream(self._copy_stream):
+                    self.agent.rb.extend_batch(*(stage[:k] for stage in self._staging))
+                self._pending_copy = True
+            else:
+                # CUDA-IPC device ring or CPU host ring: consume the views
+                # directly (D2D strided copy, or plain CPU copy).
+                self.agent.rb.extend_batch(*views)
+            self.ring.commit_reads(k)
+            ingested += k
+        if self._pending_copy:
+            self._copy_event.record(self._copy_stream)
         return ingested
 
     # ------------------------------------------------------------------ update
+    def wait_ingest(self) -> None:
+        """Block until every issued ingest copy has landed in the buffer."""
+        if self._copy_stream is not None:
+            self._copy_stream.synchronize()
+        elif self._device_ring:
+            torch.cuda.synchronize(self.agent.device)
+        self._pending_copy = False
+
     def _ready(self) -> bool:
         return self.control.collector_steps >= self._learning_starts and self.agent.rb.num_stored > 0
 
@@ -101,6 +158,13 @@ class Learner:
         """Run ratio-governed updates. Returns last metrics dict or ``None``."""
         if not self._ready():
             return None
+        if self._pending_copy:
+            # Sampling reads slots the copy stream may still be filling; make
+            # the compute stream wait for the in-flight H2D ingest copies.
+            # (The device-ring path needs no event: its D2D copies are on the
+            # same stream as sampling.)
+            self._copy_event.wait()
+            self._pending_copy = False
         n = self._num_updates_for(ingested)
         # Delegate the per-step work to the agent; this module no longer keeps
         # its own update-loop / update_idx / _last_actor — the agent's

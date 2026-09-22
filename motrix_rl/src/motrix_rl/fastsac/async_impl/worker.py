@@ -38,8 +38,13 @@ from motrix_rl.console import TrainingPanelStats, emit_training_panel, open_trai
 from motrix_rl.fastsac.agent import FastSacAgent
 from motrix_rl.fastsac.async_impl.collector import Collector, resolve_collector_inference_device
 from motrix_rl.fastsac.async_impl.learner import Learner
-from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing
-from motrix_rl.fastsac.async_impl.shm.weight_channel import (
+from motrix_rl.fastsac.async_impl.transport import (
+    Control,
+    IpcTransitionRing,
+    RingCursors,
+    SharedTransitionRing,
+)
+from motrix_rl.fastsac.async_impl.transport.weight_channel import (
     GpuIpcWeightSender,
     HostWeightSender,
     WeightChannelShared,
@@ -50,7 +55,13 @@ from motrix_rl.fastsac.config import FastSacCfg
 from motrix_rl.fastsac.wrap import FastSacEnvWrap
 from motrix_rl.fastsac.wrap_np import FastSacNpEnvWrap
 from motrix_rl.fastsac.wrap_torch import FastSacTorchEnvWrap
-from motrix_rl.system_metrics import CpuLoadSampler, GpuMemoryUsageSampler, GpuUtilizationSampler, MemoryUsageSampler
+from motrix_rl.system_metrics import (
+    CpuLoadSampler,
+    GpuMemoryUsageSampler,
+    GpuUtilizationSampler,
+    MemoryUsageSampler,
+    sample_gpu_devices,
+)
 
 
 def _timing_mean(values: list[float]) -> float:
@@ -144,6 +155,59 @@ def build_agent(cfg: FastSacCfg, dims, num_envs, device, action_scale, action_bi
         action_bias=action_bias,
         writer=writer,
     )
+
+
+def same_cuda_device(learner_device: torch.device, collector_device: torch.device) -> bool:
+    """Whether the learner and the collector's inference device share one GPU.
+
+    An index-less ``cuda`` means the default current device (index 0 — nothing
+    in the trainer ever calls ``torch.cuda.set_device``), so it is resolved
+    with 0 rather than treated as a wildcard matching any explicit index:
+    ``learner=cuda`` (effectively cuda:0) with ``collector_inference_device:
+    cuda:1`` is a cross-GPU setup and must NOT enable the device transports.
+    Pure device arithmetic — no CUDA context is created, so the pre-spawn
+    parent can call it as safely as the workers.
+    """
+    if learner_device.type != "cuda" or collector_device.type != "cuda":
+        return False
+    learner_index = learner_device.index if learner_device.index is not None else 0
+    collector_index = collector_device.index if collector_device.index is not None else 0
+    return learner_index == collector_index
+
+
+def use_ipc_transition_ring(opts, learner_device: torch.device, collector_device: torch.device) -> bool:
+    """Whether the transition ring should use CUDA-IPC device slots.
+
+    Requires learner and collector inference on the same GPU (see
+    :func:`same_cuda_device`); otherwise the host shared-memory ring is used.
+    Purely device-object arithmetic — no CUDA context is created here, so the
+    parent can call it safely.
+    """
+    mode = opts.transition_ipc
+    # YAML 1.1 parses unquoted ``on``/``off`` scalars as booleans; accept that
+    # form so ``transition_ipc: on`` in a config behaves like the documented
+    # string.
+    if isinstance(mode, bool):
+        mode = "on" if mode else "off"
+    if mode not in ("auto", "on", "off"):
+        raise ValueError(f"async_options.transition_ipc must be auto, on or off, got {mode!r}")
+    same_gpu = same_cuda_device(learner_device, collector_device)
+    if mode == "off":
+        return False
+    if mode == "on" and not same_gpu:
+        reason = (
+            "collector inference device is not CUDA"
+            if collector_device.type != "cuda"
+            else f"learner device {learner_device} and collector device {collector_device} are different GPUs"
+            if learner_device.type == "cuda"
+            else "learner device is not CUDA"
+        )
+        logging.getLogger(__name__).warning(
+            "async_options.transition_ipc=on requires learner and collector inference on the same GPU, "
+            "but %s; falling back to the host shared-memory transition ring",
+            reason,
+        )
+    return same_gpu
 
 
 # ------------------------------------------------------------------ collector process
@@ -277,14 +341,7 @@ def _build_weight_sender(
     if mode not in ("auto", "on", "off"):
         raise ValueError(f"async_options.weight_ipc must be auto, on or off, got {mode!r}")
     collector_device = resolve_collector_inference_device(opts.collector_inference_device)
-    same_gpu = device.type == "cuda" and collector_device.type == "cuda"
-    if same_gpu:
-        # ``learner=`` without an index means the current device; resolve it so
-        # the comparison never treats "cuda" as matching an explicit different
-        # index. Only resolve under the cuda branch: a CPU learner has no CUDA
-        # context and torch.cuda.current_device() would raise.
-        learner_index = device.index if device.index is not None else torch.cuda.current_device()
-        same_gpu = learner_index == collector_device.index
+    same_gpu = same_cuda_device(device, collector_device)
     if mode == "on" and not same_gpu:
         reason = (
             "collector inference device is not CUDA"
@@ -310,7 +367,7 @@ def run_collector_process(
     dims: tuple[int, int, int],
     action_scale: torch.Tensor,
     action_bias: torch.Tensor,
-    ring: SharedTransitionRing,
+    ring: SharedTransitionRing | RingCursors,
     weights: WeightChannelShared,
     control: Control,
     stats_queue: Queue,
@@ -330,17 +387,24 @@ def run_collector_process(
         obs_dim, critic_obs_dim, act_dim = dims
         device = torch.device("cpu")
         env = build_env(env_spec, num_envs, device, seed=seed)
-        # Handshake: build the receiver from the slot tensors the learner
-        # shipped (host shm or CUDA-IPC), before the collector is wired up.
+        # Handshake: build the endpoints from the slot tensors the learner
+        # shipped (weight slots, plus the CUDA-IPC transition-ring slots when
+        # that transport was selected), before the collector is wired up.
         try:
-            slots = slot_queue.get(timeout=60.0)
+            weight_slots, ring_slots = slot_queue.get(timeout=60.0)
         except Empty as exc:
             raise RuntimeError(
-                "timed out waiting for the learner to ship the weight-slot tensors "
+                "timed out waiting for the learner to ship the slot tensors "
                 "(learner startup — agent build / checkpoint load / CUDA warmup — "
                 "likely failed or took over 60s; check the learner process's error queue/log)"
             ) from exc
-        weight_rx = weight_receiver_for(weights, slots)
+        weight_rx = weight_receiver_for(weights, weight_slots)
+        if isinstance(ring, RingCursors):
+            if ring_slots is None:
+                raise RuntimeError("the learner shipped no transition-ring slots for the IPC ring handshake")
+            ring = IpcTransitionRing(
+                ring, ring_slots, async_options.ring_capacity, num_envs, obs_dim, critic_obs_dim, act_dim
+            )
         collector = Collector(
             env,
             cfg,
@@ -384,7 +448,7 @@ def run_learner_process(
     dims: tuple[int, int, int],
     action_scale: torch.Tensor,
     action_bias: torch.Tensor,
-    ring: SharedTransitionRing,
+    ring: SharedTransitionRing | RingCursors,
     weights: WeightChannelShared,
     control: Control,
     stats_queue: Queue,
@@ -423,9 +487,23 @@ def run_learner_process(
 
         # Build the sender endpoint and ship its slot tensors BEFORE the first
         # publish so the collector (blocking on the handshake queue) builds the
-        # matching receiver and takes the agreed transport from step one.
+        # matching receiver and takes the agreed transport from step one. The
+        # IPC transition-ring slots ship in the same one-shot message: this
+        # process is the owner (it allocated the device tensor and must keep it
+        # alive), the collector maps it through the queue's CUDA-IPC reducers.
         weight_tx = _build_weight_sender(weights, cfg, dims, action_scale, action_bias, device)
-        slot_queue.put(weight_tx.params)
+        if isinstance(ring, RingCursors):
+            if device.type != "cuda":
+                raise RuntimeError("the IPC transition ring was selected but the learner device is not CUDA")
+            obs_dim, critic_obs_dim, act_dim = dims
+            feat = obs_dim + critic_obs_dim + act_dim + 3
+            ring_slots = torch.zeros(async_options.ring_capacity, num_envs, feat, dtype=torch.float32, device=device)
+            ring = IpcTransitionRing(
+                ring, ring_slots, async_options.ring_capacity, num_envs, obs_dim, critic_obs_dim, act_dim
+            )
+            slot_queue.put((weight_tx.params, ring_slots))
+        else:
+            slot_queue.put((weight_tx.params, None))
         learner = Learner(agent, cfg, ring, weight_tx, control)
         learner.publish_weights()  # give the collector an initial policy before it warms up
 
@@ -536,8 +614,9 @@ def run_learner_process(
                 # Panel tree is per-process; the headline collect/learn means
                 # live on TrainingPanelStats. Every timing key is either a flat
                 # stage name or a dotted path (``sync.wait_writer``,
-                # ``env_step.physics.read``); nesting is rebuilt with one rule,
-                # and a stage's own total folds into its node.
+                # ``env_step.physics``); nesting is rebuilt with one rule, and
+                # a stage's own total folds into its node. (The collector
+                # already reports at most one sub-stage level per stage.)
                 collector_items: dict[str, Any] = {}
                 for key, value in collector_timing_detail_ms.items():
                     _nest_timing_path(collector_items, tuple(key.split(".")), value)
@@ -585,6 +664,7 @@ def run_learner_process(
                     gpu_utilization_percent=gpu_sampler.sample(),
                     memory_usage=memory_sampler.sample(),
                     gpu_memory_usage=gpu_memory_sampler.sample(),
+                    gpu_devices=sample_gpu_devices(gpu_sampler, gpu_memory_sampler),
                     checkpoint_path=last_checkpoint_path,
                 )
                 emit_training_panel(live, stats, title=f"{env_name}/motrix.fastsac")
@@ -622,6 +702,7 @@ def run_learner_process(
 
             if save_interval > 0 and step >= next_save and step > 0:
                 agent.global_step = step
+                learner.wait_ingest()  # checkpoint reads the rb tensors
                 path = Path(checkpoint_dir) / f"model_{step:07d}.pt"
                 torch.save(agent.state_dict(), path)
                 checkpoints.record_checkpoint_artifact(
@@ -639,6 +720,7 @@ def run_learner_process(
 
         # final checkpoint (identical structure to sync fastsac)
         agent.global_step = control.collector_steps
+        learner.wait_ingest()  # checkpoint reads the rb tensors
         ckpt_path = checkpoints.final_checkpoint_path(checkpoint_format, Path(run_dir))
         ckpt_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(agent.state_dict(), ckpt_path)

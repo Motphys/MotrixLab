@@ -19,8 +19,8 @@ from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.registry import EnvBuildSpec
 from motrix_env_motrixsim.torch_env import TorchEnv, TorchEnvState, TorchObs
-from motrix_rl.fastsac.async_impl.shm import Control, SharedTransitionRing
-from motrix_rl.fastsac.async_impl.shm.weight_channel import HostWeightSender, WeightChannelShared
+from motrix_rl.fastsac.async_impl.transport import Control, SharedTransitionRing
+from motrix_rl.fastsac.async_impl.transport.weight_channel import HostWeightSender, WeightChannelShared
 from motrix_rl.fastsac.async_impl.worker import actor_param_numel, run_collector_process
 from motrix_rl.fastsac.wrap import FastSacEnvWrap
 
@@ -262,7 +262,9 @@ def _collect_in_spawn(sim_backend: str) -> tuple[torch.Tensor, ...]:
     error_queue = ctx.Queue(maxsize=2)
     slot_queue = ctx.Queue(maxsize=1)
     weight_tx = HostWeightSender(weights, actor_param_numel(cfg, dims, action_scale, action_bias))
-    slot_queue.put(weight_tx.params)  # ship before the collector process starts
+    # Ship the real handshake message shape: (weight slots, ring slots). The
+    # host SharedTransitionRing needs no ring slots, so the ring field is None.
+    slot_queue.put((weight_tx.params, None))  # ship before the collector process starts
     env_cls = _AsyncNpEnv if sim_backend == "np" else _AsyncTorchEnv
     env_spec = EnvBuildSpec(env_cls, EnvCfg(scene=SceneCfg()))
     ipc_resources = (ring, weights, control, stats_queue, error_queue)
@@ -289,9 +291,9 @@ def _collect_in_spawn(sim_backend: str) -> tuple[torch.Tensor, ...]:
     assert child_error is None
     assert process.exitcode == 0
     assert control.collector_steps == 1
-    slot = ring.read_slot()
-    assert slot is not None
-    return tuple(tensor.clone() for tensor in slot)
+    count, views = ring.read_span()
+    assert count >= 1
+    return tuple(tensor.clone() for tensor in views)
 
 
 @pytest.mark.skipif(
