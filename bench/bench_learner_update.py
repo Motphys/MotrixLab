@@ -4,6 +4,7 @@
 # wall time into CUDA kernel time vs host-side gaps.
 import os
 import sys
+import time
 from types import SimpleNamespace
 
 os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
@@ -12,6 +13,7 @@ os.environ.setdefault("GOMP_SPINCOUNT", "0")
 import numpy as np  # noqa: E402  (env vars above must be set first)
 import torch  # noqa: E402
 from omegaconf import OmegaConf  # noqa: E402
+from torch.profiler import ProfilerActivity, profile  # noqa: E402
 
 import motrix_envs  # noqa: F401  (unused; keeps import parity with training)
 from motrix_env_core import registry  # noqa: E402
@@ -34,8 +36,12 @@ cfg = SimpleNamespace(agent=agent_cfg)
 
 device = torch.device("cuda")
 agent = build_agent(
-    cfg, (obs_dim, critic_dim, act_dim), num_envs, device,
-    torch.ones(act_dim), torch.zeros(act_dim),
+    cfg,
+    (obs_dim, critic_dim, act_dim),
+    num_envs,
+    device,
+    torch.ones(act_dim),
+    torch.zeros(act_dim),
 )
 rng = np.random.default_rng(0)
 cap = agent.rb.buffer_size
@@ -54,16 +60,12 @@ for _ in range(3):
     agent.update(n_updates)
 torch.cuda.synchronize()
 
-import time
-
 for trial in range(3):
     t0 = time.perf_counter()
     agent.update(n_updates)
     torch.cuda.synchronize()
     wall_ms = (time.perf_counter() - t0) * 1e3
-    print(f"update({n_updates}) wall: {wall_ms:8.2f} ms  ({wall_ms/n_updates:.2f} ms/update)")
-
-from torch.profiler import ProfilerActivity, profile
+    print(f"update({n_updates}) wall: {wall_ms:8.2f} ms  ({wall_ms / n_updates:.2f} ms/update)")
 
 with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
     agent.update(n_updates)
@@ -84,4 +86,4 @@ print("\ntop ops by host (self) time:")
 events.sort(key=lambda e: e.self_cpu_time_total, reverse=True)
 for e in events[:12]:
     if e.self_cpu_time_total / 1e3 > 0.05:
-        print(f"  {e.key[:64]:<64} {e.self_cpu_time_total/1e3:8.2f} ms  x{e.count}")
+        print(f"  {e.key[:64]:<64} {e.self_cpu_time_total / 1e3:8.2f} ms  x{e.count}")
