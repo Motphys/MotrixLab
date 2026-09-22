@@ -534,29 +534,13 @@ def run_learner_process(
                     key: value for key, value in collector_timing_ms.items() if key != "collect"
                 }
                 # Panel tree is per-process; the headline collect/learn means
-                # live on TrainingPanelStats, sub-stages nest under "env_step" /
-                # "sync" / "update" branches while keeping their flat position.
-                # env_step children arrive as dotted paths (``stage.sub``) and
-                # rebuild into a nested mapping (e.g. transition -> read).
+                # live on TrainingPanelStats. Every timing key is either a flat
+                # stage name or a dotted path (``sync.wait_writer``,
+                # ``env_step.physics.read``); nesting is rebuilt with one rule,
+                # and a stage's own total folds into its node.
                 collector_items: dict[str, Any] = {}
-                env_step_children: dict[str, Any] = {}
                 for key, value in collector_timing_detail_ms.items():
-                    if key.startswith("env_step_"):
-                        _nest_timing_path(env_step_children, tuple(key[len("env_step_") :].split(".")), value)
-                sync_children = {
-                    key[len("sync_") :]: value
-                    for key, value in collector_timing_detail_ms.items()
-                    if key.startswith("sync_")
-                }
-                for key, value in collector_timing_detail_ms.items():
-                    if key == "env_step":
-                        collector_items["env_step"] = {"total": value, **env_step_children}
-                    elif key == "sync":
-                        collector_items["sync"] = {"total": value, **sync_children}
-                    elif key.startswith("env_step_") or key.startswith("sync_"):
-                        continue
-                    else:
-                        collector_items[key] = value
+                    _nest_timing_path(collector_items, tuple(key.split(".")), value)
                 timing_groups = {"collector": collector_items}
                 learner_items: dict[str, Any] = {}
                 drain_ms = _timing_mean(learner_drain_samples_ms) if learner_drain_samples_ms else 0.0

@@ -208,9 +208,9 @@ def test_collector_explicit_cpu_placement_and_timing() -> None:
     assert "collect" in stats["timing_ms"]
     assert "sample_actions" in stats["timing_ms"]
     assert "sync" in stats["timing_ms"]
-    assert "sync_wait_writer" in stats["timing_ms"]
-    assert "sync_host_snapshot" in stats["timing_ms"]
-    assert "sync_actor_load" in stats["timing_ms"]
+    assert "sync.wait_writer" in stats["timing_ms"]
+    assert "sync.host_snapshot" in stats["timing_ms"]
+    assert "sync.actor_load" in stats["timing_ms"]
     assert collector.ring.obs.device.type == "cpu"
     assert collector.ring.critic_obs.device.type == "cpu"
 
@@ -243,11 +243,11 @@ def test_collector_reports_env_step_substage_timing() -> None:
     stats = collector.snapshot_stats()
 
     assert "env_step" in stats["timing_ms"]
-    assert "env_step_apply_action" in stats["timing_ms"]
-    assert "env_step_physics" in stats["timing_ms"]
+    assert "env_step.apply_action" in stats["timing_ms"]
+    assert "env_step.physics" in stats["timing_ms"]
     # nested sub-stages arrive as dotted paths for the panel's tree rebuild
-    assert "env_step_physics.read" in stats["timing_ms"]
-    assert stats["timing_ms"]["env_step_apply_action"] >= 0.0
+    assert "env_step.physics.read" in stats["timing_ms"]
+    assert stats["timing_ms"]["env_step.apply_action"] >= 0.0
     # sub-stage aggregation is windowed like the other timings
     assert env.perf.snapshot() == ()
 
