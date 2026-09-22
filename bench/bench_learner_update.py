@@ -9,14 +9,14 @@ from types import SimpleNamespace
 os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
 os.environ.setdefault("GOMP_SPINCOUNT", "0")
 
-import numpy as np
-import torch
-from omegaconf import OmegaConf
+import numpy as np  # noqa: E402  (env vars above must be set first)
+import torch  # noqa: E402
+from omegaconf import OmegaConf  # noqa: E402
 
 import motrix_envs  # noqa: F401  (unused; keeps import parity with training)
-from motrix_env_core import registry
-from motrix_rl.fastsac.async_impl.worker import build_agent
-from motrix_rl.fastsac.config import FastSacAgentCfg
+from motrix_env_core import registry  # noqa: E402
+from motrix_rl.fastsac.async_impl.worker import build_agent  # noqa: E402
+from motrix_rl.fastsac.config import FastSacAgentCfg  # noqa: E402
 
 num_envs = int(sys.argv[1]) if len(sys.argv) > 1 else 2048
 n_updates = int(sys.argv[2]) if len(sys.argv) > 2 else 4
@@ -73,14 +73,14 @@ events = prof.key_averages()
 total_cuda_ms = sum(getattr(e, "device_time_total", 0) for e in events) / 1e3
 total_cpu_ms = sum(getattr(e, "self_cpu_time_total", 0) for e in events) / 1e3
 print(f"\nprofiled update: cuda kernel time ~{total_cuda_ms:.2f} ms, host self time ~{total_cpu_ms:.2f} ms")
-print(f"\ntop ops by CUDA time:")
+print("\ntop ops by CUDA time:")
 events.sort(key=lambda e: getattr(e, "device_time_total", 0), reverse=True)
 for e in events[:12]:
     d = getattr(e, "device_time_total", 0) / 1e3
     c = e.count
     if d > 0.01:
         print(f"  {e.key[:64]:<64} {d:8.2f} ms  x{c}")
-print(f"\ntop ops by host (self) time:")
+print("\ntop ops by host (self) time:")
 events.sort(key=lambda e: e.self_cpu_time_total, reverse=True)
 for e in events[:12]:
     if e.self_cpu_time_total / 1e3 > 0.05:
