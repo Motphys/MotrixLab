@@ -1,3 +1,6 @@
+# Copyright Motphys Technology Co., Ltd. 2025, 2026
+# SPDX-License-Identifier: Apache-2.0
+
 # Profile the FastSAC learner update: where does wall time go?
 # Builds a real FastSacAgent, fills the replay buffer with random transitions,
 # then times agent.update(n) and profiles it with torch.profiler to split
