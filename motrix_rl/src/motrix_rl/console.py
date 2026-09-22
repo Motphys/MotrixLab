@@ -170,8 +170,8 @@ def _format_metric_items(items: Mapping[str, Any], *, precision: int = 3, signed
 
 
 def _format_duration(seconds: float) -> str:
-    """Compact elapsed/remaining time: ``3h05m``, ``12m07s`` or ``45s``."""
-    t = int(seconds)
+    """Compact elapsed/remaining time: ``3h05m``, ``12m07s`` or ``0m45s``."""
+    t = max(0, int(seconds))
     h, m, sec = t // 3600, (t % 3600) // 60, t % 60
     return f"{h}h{m:02d}m" if h else f"{m}m{sec:02d}s"
 

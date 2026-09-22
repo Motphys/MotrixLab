@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 _TBB_SONAME = "libtbb.so.12"
+_tbb_preload_result: bool | None = None
 
 
 def preload_tbb() -> bool:
@@ -32,8 +33,17 @@ def preload_tbb() -> bool:
     Returns ``True`` when the library was loaded (or was already loaded), which
     lets numba select the TBB threading layer for parallel kernels. Returns
     ``False`` when the ``tbb`` extra is not installed — callers keep the numba
-    default layer in that case.
+    default layer in that case. The probe runs once and is cached: every
+    ``ManagerEnv`` construction calls this, and the glob + CDLL work should
+    not repeat per instance.
     """
+    global _tbb_preload_result
+    if _tbb_preload_result is None:
+        _tbb_preload_result = _probe_tbb()
+    return _tbb_preload_result
+
+
+def _probe_tbb() -> bool:
     if not sys.platform.startswith("linux"):
         return False
     candidates = sorted(glob.glob(str(Path(sys.prefix) / "lib" / f"{_TBB_SONAME}*")), reverse=True)

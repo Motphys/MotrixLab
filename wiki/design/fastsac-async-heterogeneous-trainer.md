@@ -194,7 +194,7 @@ producer lifetime 和 compiled collector 固定参数地址，不能只把 H2D �
 
 episode return / length、reward 分项、env metrics、collector timing 都发生在 collector（它才有 reward/done）。collector 按根级 `logging.interval` 把一份紧凑 `snapshot_stats()` 放进 `StatsQueue`（先清掉旧快照，保证 learner 总见最新）；learner 在日志相位 drain 出来，喂给与同步版**完全复用**的 rich 训练面板。
 
-TensorBoard scalar 与同步版同名（`rollout/mean_return`、`rollout/mean_ep_len`、`perf/env_steps_per_s` 等），并新增异构专属：`async/policy_lag`、`async/ring_fill`、`async/weight_version`、`async/utd`，以及 collector 细分 timing `perf/collector_{sample_actions,env_step,env_step.*,push,bookkeep,sync,sync.*}_ms（嵌套阶段为点分路径，如 `collector_env_step.physics.read_ms`）`、整体 `perf/collect_ms_per_batch`，learner 侧 `perf/learn_ms_per_update`、`perf/learn_pct`、`perf/updates_per_s`。
+TensorBoard scalar 与同步版同名（`rollout/mean_return`、`rollout/mean_ep_len`、`perf/env_steps_per_s` 等），并新增异构专属：`async/policy_lag`、`async/ring_fill`、`async/weight_version`、`async/utd`，以及 collector 细分 timing `perf/collector_{sample_actions,env_step,env_step.*,push,bookkeep,sync,sync.*}_ms`（嵌套阶段为点分路径，如 `collector_env_step.physics.read_ms`）、整体 `perf/collect_ms_per_batch`，learner 侧 `perf/learn_ms_per_update`、`perf/learn_pct`、`perf/updates_per_s`。
 
 > 面板中 `collect_ms` / `learn_ms` / `learn_pct` 因两进程并发，**不像同步版那样相加为 100%**：`learn_pct` 表示 learner wall-clock 中真正用于更新（vs 空转/欠数据）的比例，≈100% 表示 GPU-bound，偏低表示 collector 喂不满 buffer。
 
