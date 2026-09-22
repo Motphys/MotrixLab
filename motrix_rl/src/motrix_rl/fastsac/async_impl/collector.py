@@ -95,6 +95,12 @@ class Collector:
         self.weights = weights
         self.control = control
         self.is_resume = is_resume
+        # Env-internal step profiling (Perf on the wrapped env, when present)
+        # feeds the panel's env_step sub-stage tree.
+        inner_env = getattr(env, "env", env)
+        self._env_perf = getattr(inner_env, "perf", None)
+        if self._env_perf is not None:
+            self._env_perf.enable()
         self._learning_starts = acfg.learning_starts
 
         self.actor = Actor(
@@ -338,6 +344,23 @@ class Collector:
                 "sync_actor_load": self._sync_actor_load_t * 1000.0 / max(self._collect_n, 1),
             },
         }
+        env_perf = self._env_perf
+        if env_perf is not None:
+            # Per-call mean of each env-internal step sub-stage (ms). Keys are
+            # dotted paths (``env_step_<stage>[.<sub>]``) so nested stages stay
+            # unambiguous; the panel rebuilds the tree under env_step.
+            def emit(node, path: tuple[str, ...]) -> None:
+                for child in node.children:
+                    stats["timing_ms"]["env_step_" + ".".join((*path, child.name))] = (
+                        child.total_ns / 1e6 / max(child.count, 1)
+                    )
+                    emit(child, (*path, child.name))
+
+            for root in env_perf.snapshot():
+                if root.name == "step":
+                    emit(root, ())
+                    break
+            env_perf.reset()
         self.term_accum, self.term_count = {}, 0
         self._collect_t = 0.0
         self._sample_actions_t = 0.0

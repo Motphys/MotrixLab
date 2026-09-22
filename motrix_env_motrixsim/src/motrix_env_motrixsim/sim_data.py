@@ -11,6 +11,7 @@ import motrixsim as mtx
 import numpy as np
 import numpy.typing as npt
 
+from motrix_env_core.perf import active_perf_scope
 from motrix_env_core.sim import PhysicsReadProgram, SimDataQuery, SimDataQueryCompiler
 
 FloatArray: TypeAlias = npt.NDArray[np.float32]
@@ -370,8 +371,10 @@ class _MotrixSimReadProgram(PhysicsReadProgram):
         if env_ids is not None and (env_ids.dtype != np.int64 or env_ids.ndim != 1):
             raise TypeError("Partial simulator read env_ids must be a one-dimensional int64 ndarray.")
         # One native call writes the authoritative arena — the full batch, or
-        # only the rows selected by env_ids.
-        self._read.program.execute(self._source, env_ids=env_ids)
+        # only the rows selected by env_ids. The perf scope nests under the
+        # caller's stage (e.g. transition/reset in the console timing tree).
+        with active_perf_scope("read"):
+            self._read.program.execute(self._source, env_ids=env_ids)
 
 
 def compile_read_program(

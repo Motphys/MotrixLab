@@ -199,7 +199,15 @@ def test_render_training_panel_overview_keeps_timing_tree_hidden() -> None:
 def test_render_training_panel_detail_view_shows_timing_tree_with_shares() -> None:
     stats = _panel_stats(
         timing_groups={
-            "collector": {"env_step": 1.0, "sync": {"total": 0.5, "weights": 0.25}},
+            "collector": {
+                "env_step": {
+                    "total": 18.0,
+                    "apply_action": 1.0,
+                    "physics": {"total": 15.0, "read": 12.0},
+                    "reset": 2.0,
+                },
+                "sync": {"total": 0.5, "weights": 0.25},
+            },
             "learner": {"update": {"total": 3.0, "critic": 2.0}},
         },
         timing_metrics={"queue_depth": 1.0},
@@ -216,6 +224,12 @@ def test_render_training_panel_detail_view_shows_timing_tree_with_shares() -> No
     assert "env_step" in detail
     assert "Timing detail" in detail
     assert "Diagnostics" in detail
+    # env_step sub-stages render as an indented subtree under their total,
+    # with second-level stages (physics -> read) nested one level deeper
+    assert "apply_action" in detail
+    assert "physics" in detail
+    assert "read" in detail
+    assert "reset" in detail
     # known group totals render a share column
     assert "%" in detail
 

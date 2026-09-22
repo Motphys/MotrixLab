@@ -52,6 +52,7 @@ from motrix_env_core.numba.manager.terminations import (
     TerminationTermCfg,
 )
 from motrix_env_core.numba.program import NumbaTaskProgram
+from motrix_env_core.numba.threading import preload_tbb
 from motrix_env_core.sim import (
     ModelQuery,
     PhysicsReadProgram,
@@ -343,6 +344,12 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         """Construct a manager environment using the selected simulator backend."""
         if not isinstance(cfg, ManagerBasedEnvCfg):
             raise TypeError(f"{type(cfg).__name__} must inherit ManagerBasedEnvCfg.")
+        # Prefer the TBB threading layer for the parallel step kernels when the
+        # tbb extra is installed: the default OpenMP layer pays a thread-wakeup
+        # storm per kernel call that dominates short kernels on many-core
+        # machines. Must happen before the first parallel kernel executes.
+        if preload_tbb():
+            logger.info("Manager env %r: numba TBB threading layer available", type(self).__name__)
         super().__init__(cfg, num_envs)
         self._rand_seed = 1 if seed is None else seed
         from motrix_env_core.sim.registry import create_sim_backend, default_sim_backend_name

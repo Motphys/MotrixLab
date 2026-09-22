@@ -41,6 +41,12 @@ cuda = [
     "torchvision==0.22.0; sys_platform == 'linux' or sys_platform == 'win32'",
     "torchaudio==2.7.0; sys_platform == 'linux' or sys_platform == 'win32'",
 ]
+# TBB threading layer for numba parallel manager kernels on many-core
+# machines (see motrix-env-core's tbb extra); optional, combines with any
+# GPU profile.
+tbb = [
+    "motrix-env-core[tbb]",
+]
 # ROCm wheels only exist for Linux x86_64; the markers keep other platforms
 # from resolving these requirements against the default (PyPI) index.
 rocm = [

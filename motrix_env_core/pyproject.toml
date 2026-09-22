@@ -21,3 +21,10 @@ dependencies = [
     "omegaconf>=2.3,<2.4",
     "typing-extensions>=4.1",
 ]
+
+[project.optional-dependencies]
+# TBB threading layer for numba parallel kernels: on many-core machines the
+# default OpenMP layer pays a per-region thread-wakeup storm that dominates
+# short kernels. The wheel drops libtbb.so.12 into <venv>/lib, so the runtime
+# preloads it by full path (see motrix_env_core.numba.threading).
+tbb = ["tbb==2021.13.0"]

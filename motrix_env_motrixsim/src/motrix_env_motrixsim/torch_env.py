@@ -12,6 +12,7 @@ import torch
 from gymnasium import Space, spaces
 
 from motrix_env_core.base import ABEnv, EnvCfg, ObsSpace
+from motrix_env_core.perf import Perf, perf_root
 from motrix_env_core.sim.backend import (
     RenderConfig,
     SimRenderer,
@@ -126,6 +127,7 @@ class TorchEnv(ABEnv, Generic[EnvCfgType]):
             raise ValueError("EnvCfg.scene must be configured")
         self._model = MotrixSimSceneCompiler().compile(cfg.scene, cfg.sim)
         self._render_spacing = cfg.render_spacing
+        self.perf = Perf()
 
     @property
     def model(self) -> mtx.SceneModel:
@@ -298,18 +300,29 @@ class TorchEnv(ABEnv, Generic[EnvCfgType]):
         state.terminated.zero_()
         state.truncated.zero_()
 
+    @perf_root("step")
     def step(self, actions: torch.Tensor) -> TorchEnvState:
+        """Advance one control step.
+
+        Timing: ``apply_action`` -> ``physics`` -> ``transition`` (state update)
+        -> ``reset(env_ids)`` for done rows, mirroring ArrayEnv's scope names so
+        the console panel renders the same env_step sub-stage tree.
+        """
         if self._state is None:
             self.init_state()
         assert self._state is not None
 
         self._prev_physics_step()
-        self._state = self.apply_action(actions, self._state)
-        assert self._state is not None, "apply_action must return a valid TorchEnvState"
-        self.physics_step()
-        self._state = self.update_state(self._state)
+        with self.perf.scope("apply_action"):
+            self._state = self.apply_action(actions, self._state)
+            assert self._state is not None, "apply_action must return a valid TorchEnvState"
+        with self.perf.scope("physics"):
+            self.physics_step()
+        with self.perf.scope("transition"):
+            self._state = self.update_state(self._state)
         self._state = self._state.replace(obs=_as_obs(self._state.obs))
         self._state.episode_steps += 1
         self._update_truncate()
-        self._reset_done_envs()
+        with self.perf.scope("reset"):
+            self._reset_done_envs()
         return self._state

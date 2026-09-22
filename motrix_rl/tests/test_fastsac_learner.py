@@ -71,3 +71,25 @@ def test_own_leaves_non_tensors_alone() -> None:
     from motrix_rl.fastsac.agent import _own
 
     assert _own((1, "a", None)) == (1, "a", None)
+
+
+def test_nest_timing_path_merges_scalar_total_with_children_in_any_order() -> None:
+    from motrix_rl.fastsac.async_impl.worker import _nest_timing_path
+
+    # the collector emits a stage's scalar before its dotted sub-stages; the
+    # rebuild must fold it into a "total" instead of nesting under a float
+    tree: dict = {}
+    _nest_timing_path(tree, ("physics",), 15.0)
+    _nest_timing_path(tree, ("physics", "read"), 12.0)
+    assert tree == {"physics": {"total": 15.0, "read": 12.0}}
+
+    # reverse order must converge to the same tree
+    tree = {}
+    _nest_timing_path(tree, ("physics", "read"), 12.0)
+    _nest_timing_path(tree, ("physics",), 15.0)
+    assert tree == {"physics": {"total": 15.0, "read": 12.0}}
+
+    # stages without sub-stages stay scalar
+    tree = {}
+    _nest_timing_path(tree, ("apply_action",), 1.5)
+    assert tree == {"apply_action": 1.5}

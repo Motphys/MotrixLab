@@ -997,6 +997,11 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 
+[package.optional-dependencies]
+tbb = [
+    { name = "tbb" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "array-api-compat", specifier = "==1.15.0" },
@@ -1007,8 +1012,10 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "omegaconf", specifier = ">=2.3,<2.4" },
     { name = "scipy", specifier = "==1.15.3" },
+    { name = "tbb", marker = "extra == 'tbb'", specifier = "==2021.13.0" },
     { name = "typing-extensions", specifier = ">=4.1" },
 ]
+provides-extras = ["tbb"]
 
 [[package]]
 name = "motrix-env-motrixsim"
@@ -1111,6 +1118,9 @@ rocm = [
     { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "triton-rocm", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
 ]
+tbb = [
+    { name = "motrix-env-core", extra = ["tbb"] },
+]
 unitree = [
     { name = "motrix-deploy-unitree" },
 ]
@@ -1139,6 +1149,7 @@ requires-dist = [
     { name = "motrix-deploy-mujoco", editable = "motrix_deploy_mujoco" },
     { name = "motrix-deploy-tasks", editable = "motrix_deploy_tasks" },
     { name = "motrix-deploy-unitree", marker = "extra == 'unitree'", editable = "motrix_deploy_unitree" },
+    { name = "motrix-env-core", extras = ["tbb"], marker = "extra == 'tbb'", editable = "motrix_env_core" },
     { name = "motrix-env-motrixsim", editable = "motrix_env_motrixsim" },
     { name = "motrix-env-mujoco", editable = "motrix_env_mujoco" },
     { name = "motrix-envs", editable = "motrix_envs" },
@@ -1158,7 +1169,7 @@ requires-dist = [
     { name = "torchvision", marker = "(sys_platform == 'linux' and extra == 'cuda') or (sys_platform == 'win32' and extra == 'cuda')", specifier = "==0.22.0", index = "https://download.pytorch.org/whl/cu128" },
     { name = "triton-rocm", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm'", specifier = "==3.6.0", index = "https://download.pytorch.org/whl/rocm7.2" },
 ]
-provides-extras = ["unitree", "docs", "cuda", "rocm"]
+provides-extras = ["unitree", "docs", "cuda", "tbb", "rocm"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2451,6 +2462,17 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/83/d3/803453b36afefb7c2bb238361cd4ae6125a569b4db67cd9e79846ba2d68c/sympy-1.14.0.tar.gz", hash = "sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517", size = 7793921, upload-time = "2025-04-27T18:05:01.611Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl", hash = "sha256:e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5", size = 6299353, upload-time = "2025-04-27T18:04:59.103Z" },
+]
+
+[[package]]
+name = "tbb"
+version = "2021.13.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/32/9c88009a9feb81f0525bf1c4729a7b39a4523d626a40682c792c6a53e323/tbb-2021.13.0-py2.py3-none-manylinux1_i686.whl", hash = "sha256:a2567725329639519d46d92a2634cf61e76601dac2f777a05686fea546c4fe4f", size = 5205096, upload-time = "2024-06-20T15:34:29.818Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/b8/994132d9f9493d7b220637f614f3f87727e405b851d96aaffc7d43c2b298/tbb-2021.13.0-py2.py3-none-manylinux1_x86_64.whl", hash = "sha256:aaf667e92849adb012b8874d6393282afc318aca4407fc62f912ee30a22da46a", size = 5386610, upload-time = "2024-06-20T15:35:11.596Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/ce/1dd6f2988d06d850374be2c56350d17399d4faaed53b489048f12a3d3474/tbb-2021.13.0-py3-none-win32.whl", hash = "sha256:6669d26703e9943f6164c6407bd4a237a45007e79b8d3832fe6999576eaaa9ef", size = 248996, upload-time = "2024-06-20T15:38:31.467Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/24/500811330b3b070e5995c3275181dbcd00c06cef26c6ebfe6ee1ca9b6223/tbb-2021.13.0-py3-none-win_amd64.whl", hash = "sha256:3528a53e4bbe64b07a6112b4c5a00ff3c61924ee46c9c68e004a1ac7ad1f09c3", size = 286910, upload-time = "2024-06-20T15:38:18.376Z" },
 ]
 
 [[package]]

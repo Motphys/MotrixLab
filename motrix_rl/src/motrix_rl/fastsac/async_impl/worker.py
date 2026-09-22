@@ -58,6 +58,27 @@ def _timing_mean(values: list[float]) -> float:
     return sum(values) / len(values)
 
 
+def _nest_timing_path(tree: dict[str, Any], parts: tuple[str, ...], value: float) -> None:
+    """Insert one dotted timing path into a nested mapping.
+
+    A stage's scalar total and its sub-stage paths may arrive in either order
+    (the collector emits parents before children); when both exist the scalar
+    becomes the node's ``total`` alongside its children.
+    """
+    head, rest = parts[0], parts[1:]
+    node = tree.get(head)
+    if not rest:
+        if isinstance(node, dict):
+            node["total"] = value
+        else:
+            tree[head] = value
+    else:
+        if not isinstance(node, dict):
+            node = {"total": node} if node is not None else {}
+            tree[head] = node
+        _nest_timing_path(node, rest, value)
+
+
 # ------------------------------------------------------------------ builders
 def set_seed(seed: int | None) -> None:
     if seed is None:
@@ -503,17 +524,29 @@ def run_learner_process(
                     key: value for key, value in collector_timing_ms.items() if key != "collect"
                 }
                 # Panel tree is per-process; the headline collect/learn means
-                # live on TrainingPanelStats, sub-stages nest under "sync" /
-                # "update" branches.
+                # live on TrainingPanelStats, sub-stages nest under "env_step" /
+                # "sync" / "update" branches while keeping their flat position.
+                # env_step children arrive as dotted paths (``stage.sub``) and
+                # rebuild into a nested mapping (e.g. transition -> read).
                 collector_items: dict[str, Any] = {}
-                sync_items: dict[str, float] = {}
+                env_step_children: dict[str, Any] = {}
                 for key, value in collector_timing_detail_ms.items():
-                    if key.startswith("sync_"):
-                        sync_items[key[len("sync_") :]] = value
+                    if key.startswith("env_step_"):
+                        _nest_timing_path(env_step_children, tuple(key[len("env_step_") :].split(".")), value)
+                sync_children = {
+                    key[len("sync_") :]: value
+                    for key, value in collector_timing_detail_ms.items()
+                    if key.startswith("sync_")
+                }
+                for key, value in collector_timing_detail_ms.items():
+                    if key == "env_step":
+                        collector_items["env_step"] = {"total": value, **env_step_children}
+                    elif key == "sync":
+                        collector_items["sync"] = {"total": value, **sync_children}
+                    elif key.startswith("env_step_") or key.startswith("sync_"):
+                        continue
                     else:
                         collector_items[key] = value
-                if sync_items:
-                    collector_items["sync"] = {"total": collector_items.pop("sync", 0.0), **sync_items}
                 timing_groups = {"collector": collector_items}
                 learner_items: dict[str, Any] = {}
                 drain_ms = _timing_mean(learner_drain_samples_ms) if learner_drain_samples_ms else 0.0
