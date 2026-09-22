@@ -114,24 +114,8 @@ sh install.sh --all
 | `--gpu` | `cuda`<br>`rocm` | 指定 torch wheel 来源，覆盖自动探测 |
 | `--skrl-jax` | — | SKRL（JAX）训练后端，仅 Linux |
 | `--rslrl` | — | RSL-RL（PyTorch）训练后端 |
-| `--tbb` | — | 为 numba 并行 kernel 安装 Intel TBB 线程层；多核服务器训练推荐启用（详见下方说明） |
+| `--tbb` | — | 为 numba 并行 kernel 安装 Intel TBB 线程层；多核服务器（64 核以上）训练推荐启用，安装后自动生效 |
 | `--docs` | — | 追加本地构建文档所需的工具链（Sphinx） |
 | `-h`、`--help` | — | 显示帮助 |
 
 完整参数说明见 `sh install.sh --help`。
-
-## 多核机器的 TBB 线程层（可选）
-
-在大核数服务器（如 64 核以上）上训练时，建议追加 `--tbb`：
-
-```bash
-sh install.sh --tbb
-```
-
-环境步进中的 manager kernel 由 numba 并行执行。默认的 OpenMP 线程层在每次 kernel
-调用前需要唤醒所有工作线程，核数越多、单次 kernel 越短，这部分调度开销越明显
-（在 192 核机器上实测可将 evaluate 阶段拖慢数倍）。TBB 线程层使用常驻的
-work-stealing 线程池，没有此问题；安装后由框架自动启用（日志中会出现
-`numba TBB threading layer available`），无需任何额外配置。
-
-小核数开发机（如 32 核以内）两种线程层性能相当，可不安装。

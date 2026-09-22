@@ -92,27 +92,8 @@ training backend extra on top of them, and each option only selects or appends t
 | `--gpu` | `cuda`<br>`rocm` | Select the torch wheel flavor explicitly, overriding auto-detection |
 | `--skrl-jax` | — | SKRL on JAX backend, Linux only |
 | `--rslrl` | — | RSL-RL on PyTorch backend |
-| `--tbb` | — | Install Intel TBB for the numba parallel kernels; recommended when training on many-core servers (see below) |
+| `--tbb` | — | Install Intel TBB for the numba parallel kernels; recommended for training on many-core servers (64+ cores), auto-activates once installed |
 | `--docs` | — | Add the toolchain (sphinx) needed to build the documentation locally |
 | `-h`, `--help` | — | Show the help message |
 
 Run `sh install.sh --help` for the full option reference.
-
-## TBB Threading Layer for Many-Core Machines (Optional)
-
-When training on servers with many cores (64+), add `--tbb`:
-
-```bash
-sh install.sh --tbb
-```
-
-The manager kernels inside each environment step run in parallel through numba. The default
-OpenMP threading layer must wake every worker thread before each kernel call; the more cores
-and the shorter the kernel, the more this scheduling overhead dominates (measured to slow the
-evaluate stage several-fold on a 192-core machine). The TBB layer keeps a resident
-work-stealing pool and does not have this problem. Once installed it is enabled automatically
-by the framework (look for `numba TBB threading layer available` in the logs) — no extra
-configuration is needed.
-
-On small development machines (up to ~32 cores) both layers perform equivalently, so the
-extra is optional there.
