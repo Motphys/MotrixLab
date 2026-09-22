@@ -139,3 +139,29 @@ def test_active_perf_scope_contributes_to_activated_profiler() -> None:
 def test_active_perf_scope_is_disabled_without_an_activated_profiler() -> None:
     with active_perf_scope("backend"):
         pass
+
+
+def test_stage_mean_ms_flattens_nested_scopes_to_dotted_paths() -> None:
+    # two step calls; each scope entry/exit consumes one clock tick (8 per
+    # iteration). physics runs 3ms per call, transition 9ms with a 2ms read.
+    base = (0, 2_000_000, 5_000_000, 6_000_000, 10_000_000, 12_000_000, 15_000_000, 26_000_000)
+    ticks = base + tuple(t + 26_000_000 for t in base)
+    perf = Perf(enabled=True, clock=_Clock(*ticks))
+    for _ in range(2):
+        with perf.scope("step"):
+            with perf.scope("physics"):
+                pass
+            with perf.scope("transition"):
+                with perf.scope("read"):
+                    pass
+
+    means = perf.stage_mean_ms("step")
+
+    assert means["physics"] == pytest.approx(3.0)
+    assert means["transition"] == pytest.approx(9.0)
+    assert means["transition.read"] == pytest.approx(2.0)
+    assert "step" not in means  # the root itself is not part of the paths
+
+
+def test_stage_mean_ms_returns_empty_for_unrun_root() -> None:
+    assert Perf(enabled=True).stage_mean_ms("step") == {}

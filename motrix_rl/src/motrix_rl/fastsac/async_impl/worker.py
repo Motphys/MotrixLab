@@ -429,7 +429,13 @@ def run_learner_process(
         learner = Learner(agent, cfg, ring, weight_tx, control)
         learner.publish_weights()  # give the collector an initial policy before it warms up
 
+        # Elapsed/ETA anchor. The collector's env build (scene compile, numba
+        # JIT) runs concurrently with the learner build and can outlast it by
+        # tens of seconds; timing from this point would bill that startup wait
+        # to elapsed and the first window's rates. The anchor moves to the
+        # first ingested collector batch below.
         start_time = time.time()
+        start_anchored = False
         last_log_time = start_time
         resume_step = control.collector_steps
         last_log_step = resume_step
@@ -470,6 +476,10 @@ def run_learner_process(
             t_drain = time.perf_counter()
             ingested = learner.drain()
             if ingested:
+                if not start_anchored:
+                    start_time = time.time()
+                    last_log_time = start_time
+                    start_anchored = True
                 learner_drain_samples_ms.append((time.perf_counter() - t_drain) * 1000.0)
             t_l = time.perf_counter()
             metrics = learner.maybe_train(ingested)

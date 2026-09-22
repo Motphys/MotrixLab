@@ -187,6 +187,27 @@ class Perf:
             raise RuntimeError("Cannot snapshot Perf while a scope is active.")
         return tuple(root.snapshot() for root in self._roots.values())
 
+    def stage_mean_ms(self, root: str) -> dict[str, float]:
+        """Per-call mean milliseconds of every sub-scope under ``root``.
+
+        Keys are dotted paths relative to the root's children (``stage`` or
+        ``stage.sub``), so nested scope names — which may themselves contain
+        underscores — stay unambiguously separable. Returns ``{}`` when the
+        root has not run.
+        """
+        for node in self._roots.values():
+            if node.name == root:
+                means: dict[str, float] = {}
+
+                def emit(subtree: _MutablePerfNode, path: tuple[str, ...]) -> None:
+                    for child in subtree.children.values():
+                        means[".".join((*path, child.name))] = child.total_ns / 1e6 / max(child.count, 1)
+                        emit(child, (*path, child.name))
+
+                emit(node, ())
+                return means
+        return {}
+
     def call(self, name: str, function: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
         """Call a function inside a named scope."""
         if not self._enabled:

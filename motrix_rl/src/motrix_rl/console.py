@@ -169,13 +169,27 @@ def _format_metric_items(items: Mapping[str, Any], *, precision: int = 3, signed
     return [f"{k} {_format_value(v, precision=precision, signed=signed)}" for k, v in items.items()]
 
 
+def _format_duration(seconds: float) -> str:
+    """Compact elapsed/remaining time: ``3h05m``, ``12m07s`` or ``45s``."""
+    t = int(seconds)
+    h, m, sec = t // 3600, (t % 3600) // 60, t % 60
+    return f"{h}h{m:02d}m" if h else f"{m}m{sec:02d}s"
+
+
+def _eta_seconds(stats: TrainingPanelStats) -> float | None:
+    """Remaining-time estimate from the cumulative iteration rate."""
+    if stats.iteration <= 0 or stats.elapsed_seconds <= 0.0:
+        return None
+    rate = stats.iteration / stats.elapsed_seconds
+    if rate <= 0.0:
+        return None
+    return (stats.total_iterations - stats.iteration) / rate
+
+
 def format_training_panel(stats: TrainingPanelStats, *, title: str = "rl") -> str:
     """Render a plain-text RL training panel from backend-provided scalar stats."""
 
-    def hms(t: float) -> str:
-        t = int(t)
-        h, m, sec = t // 3600, (t % 3600) // 60, t % 60
-        return f"{h}h{m:02d}m" if h else f"{m}m{sec:02d}s"
+    hms = _format_duration
 
     def si(n: float) -> str:
         for unit in ("", "k", "M"):
@@ -186,9 +200,11 @@ def format_training_panel(stats: TrainingPanelStats, *, title: str = "rl") -> st
 
     width = 84
     pct = 100.0 * stats.iteration / max(stats.total_iterations, 1)
+    eta = _eta_seconds(stats)
+    eta_text = f" - eta ~{hms(eta)}" if eta is not None else ""
     header = (
         f" {title} - iter {stats.iteration}/{stats.total_iterations} ({pct:.1f}%) - "
-        f"{stats.steps_per_second:.0f} env-steps/s - {hms(stats.elapsed_seconds)}"
+        f"{stats.steps_per_second:.0f} env-steps/s - {hms(stats.elapsed_seconds)}{eta_text}"
     )
     lines = [
         "-" * width,
@@ -478,6 +494,18 @@ def _format_memory(memory: MemoryUsage | None) -> str:
     return f"{memory.used_bytes / gib:.1f}/{memory.total_bytes / gib:.1f} GiB"
 
 
+def _run_progress_time_text(stats: TrainingPanelStats):
+    """One ``elapsed · ~remaining`` line for the Run progress card."""
+    from rich.text import Text
+
+    elapsed = _format_duration(stats.elapsed_seconds)
+    eta = _eta_seconds(stats)
+    line = Text(f"{elapsed} elapsed", style="dim")
+    if eta is not None:
+        line.append(f" · ~{_format_duration(eta)} left", style="cyan")
+    return line
+
+
 def render_training_panel(stats: TrainingPanelStats, *, title: str = "rl", detail: bool = False):
     if not _RICH:
         raise RuntimeError("rich is not available")
@@ -537,7 +565,11 @@ def render_training_panel(stats: TrainingPanelStats, *, title: str = "rl", detai
     summary.add_row(
         card(
             f"Run progress ({progress * 100:.1f}%)",
-            Group(Text(f"{stats.iteration:,}/{stats.total_iterations:,} iters", style="white"), progress_row),
+            Group(
+                Text(f"{stats.iteration:,}/{stats.total_iterations:,} iters", style="white"),
+                progress_row,
+                _run_progress_time_text(stats),
+            ),
         ),
         card(
             "Episode stats",

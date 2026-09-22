@@ -346,20 +346,10 @@ class Collector:
         }
         env_perf = self._env_perf
         if env_perf is not None:
-            # Per-call mean of each env-internal step sub-stage (ms). Keys are
-            # dotted paths (``env_step_<stage>[.<sub>]``) so nested stages stay
-            # unambiguous; the panel rebuilds the tree under env_step.
-            def emit(node, path: tuple[str, ...]) -> None:
-                for child in node.children:
-                    stats["timing_ms"]["env_step_" + ".".join((*path, child.name))] = (
-                        child.total_ns / 1e6 / max(child.count, 1)
-                    )
-                    emit(child, (*path, child.name))
-
-            for root in env_perf.snapshot():
-                if root.name == "step":
-                    emit(root, ())
-                    break
+            # Env-internal step sub-stages as per-call means; dotted paths keep
+            # nested stages unambiguous and the panel rebuilds the tree from them.
+            for path, mean_ms in env_perf.stage_mean_ms("step").items():
+                stats["timing_ms"][f"env_step_{path}"] = mean_ms
             env_perf.reset()
         self.term_accum, self.term_count = {}, 0
         self._collect_t = 0.0

@@ -188,6 +188,9 @@ def test_render_training_panel_overview_keeps_timing_tree_hidden() -> None:
     assert "Run progress" in panel
     assert "Episode stats" in panel
     assert "Throughput" in panel
+    # run-progress card carries elapsed and remaining-time estimate
+    assert "elapsed" in panel
+    assert "left" in panel
     assert "System health" in panel
     assert "Training (" in panel
     assert "Environment metrics (" in panel
