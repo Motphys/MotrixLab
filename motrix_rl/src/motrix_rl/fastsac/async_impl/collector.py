@@ -96,9 +96,9 @@ class Collector:
         self.control = control
         self.is_resume = is_resume
         # Env-internal step profiling (Perf on the wrapped env, when present)
-        # feeds the panel's env_step sub-stage tree.
-        inner_env = getattr(env, "env", env)
-        self._env_perf = getattr(inner_env, "perf", None)
+        # feeds the panel's env_step sub-stage tree. ``env.env`` is the
+        # FastSacEnvWrap contract for reaching the original environment.
+        self._env_perf = getattr(env.env, "perf", None)
         if self._env_perf is not None:
             self._env_perf.enable()
         self._learning_starts = acfg.learning_starts

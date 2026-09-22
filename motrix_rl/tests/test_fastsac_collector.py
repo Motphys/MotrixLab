@@ -22,10 +22,16 @@ _ACT_DIM = 3
 
 
 class _CpuEnv:
+    """Wrapper stand-in: the collector reads the original env via ``.env``."""
+
     def __init__(self):
         self.num_envs = _NUM_ENVS
         self.last_info = {}
         self.last_actions = None
+
+    @property
+    def env(self):
+        return self
 
     def reset(self):
         return torch.zeros(_NUM_ENVS, _OBS_DIM), torch.zeros(_NUM_ENVS, _CRITIC_OBS_DIM)
