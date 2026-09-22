@@ -11,6 +11,8 @@
 #
 # Training backends are enabled with --skrl-torch (default), --skrl-jax or
 # --rslrl, named after the extras that install them; multiple flags combine.
+# --tbb installs Intel TBB so numba parallel kernels use its threading layer
+# (avoids the OpenMP per-region thread-wakeup storm on many-core hosts).
 
 set -e
 
@@ -25,6 +27,7 @@ usage() {
     echo "  --skrl-torch           Training backend: SKRL on PyTorch (default)"
     echo "  --skrl-jax             Training backend: SKRL on JAX (Linux only)"
     echo "  --rslrl                Training backend: RSL-RL on PyTorch"
+    echo "  --tbb                  Install Intel TBB for numba parallel kernels (recommended on many-core hosts)"
     echo "  -h, --help             Show this help"
 }
 
@@ -34,6 +37,7 @@ SKRL_TORCH=""
 SKRL_JAX=""
 RSLRL=""
 DOCS=""
+TBB=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -56,6 +60,9 @@ while [ $# -gt 0 ]; do
             ;;
         --rslrl)
             RSLRL=1
+            ;;
+        --tbb)
+            TBB=1
             ;;
         -h|--help)
             usage
@@ -162,6 +169,7 @@ else
     [ -n "$SKRL_JAX" ] && EXTRAS="$EXTRAS --extra skrl-jax"
     [ -n "$RSLRL" ] && EXTRAS="$EXTRAS --extra rslrl"
     [ -n "$DOCS" ] && EXTRAS="$EXTRAS --extra docs"
+    [ -n "$TBB" ] && EXTRAS="$EXTRAS --extra tbb"
     set -x
     uv sync --all-packages --no-default-groups --extra "$GPU"$EXTRAS
 fi
