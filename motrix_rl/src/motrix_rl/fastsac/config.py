@@ -96,6 +96,18 @@ class FastSacAsyncOptionsCfg:
     # host transfer they avoid.
     weight_ipc: str = "auto"
     weight_ipc_min_bytes: int = 16 * 1024 * 1024
+    # Number of collector processes; num_envs is split evenly across them.
+    num_collectors: int = MISSING
+    # Restrict each collector to this many CPUs taken from its NUMA node /
+    # affinity set (nodes are assigned automatically); None uses all of them.
+    cpus_per_collector: int | None = MISSING
+    # DDP data-parallel learner replicas, one process per GPU (single node).
+    # Requires num_collectors % num_learners == 0; 1 keeps the single-learner
+    # behavior byte-identical (no process group, no DDP wrap).
+    num_learners: int = MISSING
+    # One device per learner (len == num_learners); None replicates `device`.
+    # Learners bind to their GPU's NUMA node automatically.
+    learner_devices: list[str] | None = MISSING
 
 
 @dataclass

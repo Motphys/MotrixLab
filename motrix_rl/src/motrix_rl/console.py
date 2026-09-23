@@ -46,7 +46,7 @@ class TrainingPanelStats:
 
     iteration: int
     total_iterations: int
-    steps_per_second: float
+    steps_per_second: float | None
     elapsed_seconds: float
     mean_return: float
     mean_episode_length: float
@@ -57,6 +57,9 @@ class TrainingPanelStats:
     learn_ms: float
     learn_percent: float
     warming: bool = False
+    # Rolling-window iteration rate; None = same "warming up" semantics as
+    # steps_per_second. Falls back to the cumulative average when absent.
+    iterations_per_second: float | None = None
     training_metrics: Mapping[str, Any] | None = None
     reward_terms: Mapping[str, Any] = field(default_factory=dict)
     env_metrics: Mapping[str, Any] = field(default_factory=dict)
@@ -187,6 +190,14 @@ def _eta_seconds(stats: TrainingPanelStats) -> float | None:
     return (stats.total_iterations - stats.iteration) / rate
 
 
+def _iter_rate_text(stats: TrainingPanelStats) -> str:
+    if stats.iterations_per_second is not None:
+        return f"{stats.iterations_per_second:,.0f} iter/s"
+    if stats.steps_per_second is None:
+        return "warming up"
+    return f"{stats.iteration / max(stats.elapsed_seconds, 1e-9):,.0f} iter/s"
+
+
 def format_training_panel(stats: TrainingPanelStats, *, title: str = "rl") -> str:
     """Render a plain-text RL training panel from backend-provided scalar stats."""
 
@@ -203,9 +214,10 @@ def format_training_panel(stats: TrainingPanelStats, *, title: str = "rl") -> st
     pct = 100.0 * stats.iteration / max(stats.total_iterations, 1)
     eta = _eta_seconds(stats)
     eta_text = f" - eta ~{hms(eta)}" if eta is not None else ""
+    sps_text = f"{stats.steps_per_second:.0f} env-steps/s" if stats.steps_per_second is not None else "warming up"
     header = (
         f" {title} - iter {stats.iteration}/{stats.total_iterations} ({pct:.1f}%) - "
-        f"{stats.steps_per_second:.0f} env-steps/s - {hms(stats.elapsed_seconds)}{eta_text}"
+        f"{sps_text} - {hms(stats.elapsed_seconds)}{eta_text}"
     )
     lines = [
         "-" * width,
@@ -477,7 +489,9 @@ def _prototype_bar(fraction: float, *, width: int = 22, style: str = "cyan"):
     return result
 
 
-def _cpu_spectrum_rows(per_core: Sequence[float], load_style, per_row: int = 48) -> list:
+def _cpu_spectrum_rows(
+    per_core: Sequence[float], load_style, core_ids: Sequence[int] | None = None, per_row: int = 48
+) -> list:
     """Per-core CPU utilization spectrum rows for the System view.
 
     Style is selected by ``MOTRIX_PANEL_CPU_SPECTRUM`` (height | shade |
@@ -505,7 +519,11 @@ def _cpu_spectrum_rows(per_core: Sequence[float], load_style, per_row: int = 48)
     label_width = 14  # "cores 192-199  "
     for start in range(0, len(per_core), per_row):
         chunk = per_core[start : start + per_row]
-        label = f"cores {start}-{start + len(chunk) - 1}".ljust(label_width)
+        if core_ids is not None:
+            ids = core_ids[start : start + per_row]
+            label = f"cores {ids[0]}-{ids[-1]}".ljust(label_width)
+        else:
+            label = f"cores {start}-{start + len(chunk) - 1}".ljust(label_width)
         if style in ("height", "shade"):
             # Leading space: idle cores render blank so the dim ▁ ceiling caps
             # are the ONLY ▁ on screen (otherwise an idle column would look
@@ -557,7 +575,7 @@ def _prototype_system_page(stats: TrainingPanelStats, load_style, memory_style):
     if load is not None and load.model_name:
         cpu_parts.append(Text(load.model_name, style="dim"))
     if load is not None and load.per_core_percent:
-        cpu_parts.extend(_cpu_spectrum_rows(load.per_core_percent, load_style))
+        cpu_parts.extend(_cpu_spectrum_rows(load.per_core_percent, load_style, load.per_core_ids))
     else:
         # RAM is not repeated here — the always-visible System health card in
         # the summary row already carries it.
@@ -752,8 +770,13 @@ def render_training_panel(stats: TrainingPanelStats, *, title: str = "rl", view:
         card(
             "Throughput",
             Group(
-                Text(f"{stats.steps_per_second:,.0f} env-steps/s", style="bold cyan"),
-                Text(f"{stats.iteration / max(stats.elapsed_seconds, 1e-9):,.0f} iter/s", style="white"),
+                Text(
+                    f"{stats.steps_per_second:,.0f} env-steps/s"
+                    if stats.steps_per_second is not None
+                    else "warming up",
+                    style="bold cyan",
+                ),
+                Text(_iter_rate_text(stats), style="white"),
             ),
         ),
         card(

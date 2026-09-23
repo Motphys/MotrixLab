@@ -176,7 +176,7 @@ def test_ipc_and_host_ring_produce_identical_replay_buffers():
 
 
 def test_use_ipc_transition_ring_gating():
-    from motrix_rl.fastsac.async_impl.worker import use_ipc_transition_ring
+    from motrix_rl.fastsac.async_impl.topology import use_ipc_transition_ring
 
     def opts(mode):
         return SimpleNamespace(transition_ipc=mode)
@@ -259,8 +259,12 @@ def test_learner_drains_ipc_ring_end_to_end():
             async_options=SimpleNamespace(max_ingest_per_iter=CAPACITY, utd_mode="strict", weight_publish_interval=1)
         )
     )
-    learner = Learner(agent, cfg, receiver, SimpleNamespace(publish=lambda *a, **k: None), SimpleNamespace())
-    assert learner._staging is None and learner._device_ring
+    from motrix_rl.fastsac.async_impl.learner import CollectorEndpoint
+
+    stub_sender = SimpleNamespace(publish=lambda *a, **k: None)
+    control = SimpleNamespace(num_collectors=1, stop=False)
+    learner = Learner(agent, cfg, [CollectorEndpoint(ring=receiver, weight_sender=stub_sender)], control)
+    assert learner._staging is None  # pure-IPC rank: no staging pipeline
 
     total = 40  # > rb cap 33 -> exercises the rb wrap
     batches = [_batch(t, seed=5) for t in range(total)]
@@ -285,3 +289,103 @@ def test_learner_drains_ipc_ring_end_to_end():
         torch.testing.assert_close(agent.rb.rewards[:, s].cpu(), batches[t][3])
         torch.testing.assert_close(agent.rb.dones[:, s].cpu(), batches[t][4])
         torch.testing.assert_close(agent.rb.truncations[:, s].cpu(), batches[t][5])
+
+
+@cuda_only
+def test_learner_drains_mixed_host_and_ipc_rings():
+    """A mixed rank (one host ring + one IPC ring) merges generations across both.
+
+    The rank's drain pipeline pulls the IPC shard to host at assembly, so the
+    merged batch is assembled on a single device: env block [0:N_ENV] comes
+    from the host ring, [N_ENV:] from the IPC ring.
+    """
+    from motrix_rl.fastsac.agent import FastSacAgent
+    from motrix_rl.fastsac.async_impl.learner import CollectorEndpoint, Learner
+
+    total, merged_envs = 10, 2 * N_ENV
+    agent = FastSacAgent(
+        obs_dim=OBS,
+        critic_obs_dim=CRI,
+        act_dim=ACT,
+        num_envs=merged_envs,
+        cfg=SimpleNamespace(
+            actor_hidden_dim=16,
+            critic_hidden_dim=16,
+            num_q_networks=2,
+            actor_learning_rate=1e-3,
+            critic_learning_rate=1e-3,
+            alpha_learning_rate=1e-3,
+            weight_decay=0.0,
+            max_grad_norm=0.0,
+            use_layer_norm=False,
+            use_tanh=True,
+            log_std_max=0.0,
+            log_std_min=-5.0,
+            num_atoms=5,
+            v_min=-20.0,
+            v_max=20.0,
+            gamma=0.97,
+            tau=0.125,
+            alpha_init=0.001,
+            use_autotune=False,
+            target_entropy_ratio=0.0,
+            buffer_size=64,
+            num_steps=1,
+            batch_size=4,
+            learning_starts=1,
+            policy_frequency=4,
+            num_updates=1,
+            obs_normalization=False,
+            compile=False,
+            amp=False,
+            amp_dtype="bf16",
+            device=None,
+        ),
+        device=torch.device("cuda"),
+    )
+    host_ring = SharedTransitionRing(CAPACITY, N_ENV, OBS, CRI, ACT)
+    owner, receiver = _owner_receiver()
+    stub = SimpleNamespace(publish=lambda *a, **k: None)
+    control = SimpleNamespace(num_collectors=2, stop=False)
+    cfg = SimpleNamespace(
+        trainer=SimpleNamespace(
+            async_options=SimpleNamespace(max_ingest_per_iter=CAPACITY, utd_mode="strict", weight_publish_interval=1)
+        )
+    )
+    learner = Learner(
+        agent,
+        cfg,
+        [CollectorEndpoint(ring=host_ring, weight_sender=stub), CollectorEndpoint(ring=receiver, weight_sender=stub)],
+        control,
+    )
+    # the mixed rank lifts host shards to the device at assembly, so the
+    # merge runs D2D — no staging pipeline involved
+    assert learner._staging is None  # mixed rank: device-side merge
+
+    batches = [(_batch(t, seed=9), _batch(t, seed=500 + t)) for t in range(total)]
+    for t, (host_fields, ipc_fields) in enumerate(batches):
+        while not host_ring.push(*host_fields):
+            learner.drain()
+        while not owner.push(*ipc_fields):
+            owner.size()
+            learner.drain()
+        owner.size()
+        learner.drain()
+
+    torch.cuda.synchronize()
+    while host_ring.has_next() or receiver.has_next():
+        learner.drain()
+    learner.wait_ingest()
+    torch.cuda.synchronize()
+
+    assert agent.rb.ptr == total
+    for t, (host_fields, ipc_fields) in enumerate(batches):
+        s = t % 64
+        torch.testing.assert_close(agent.rb.observations[:N_ENV, s].cpu(), host_fields[0])
+        torch.testing.assert_close(agent.rb.observations[N_ENV:, s].cpu(), ipc_fields[0])
+        torch.testing.assert_close(agent.rb.critic_observations[:N_ENV, s].cpu(), host_fields[1])
+        torch.testing.assert_close(agent.rb.critic_observations[N_ENV:, s].cpu(), ipc_fields[1])
+        torch.testing.assert_close(agent.rb.actions[:N_ENV, s].cpu(), host_fields[2])
+        torch.testing.assert_close(agent.rb.actions[N_ENV:, s].cpu(), ipc_fields[2])
+        torch.testing.assert_close(agent.rb.rewards[:N_ENV, s].cpu(), host_fields[3])
+        torch.testing.assert_close(agent.rb.rewards[N_ENV:, s].cpu(), ipc_fields[3])

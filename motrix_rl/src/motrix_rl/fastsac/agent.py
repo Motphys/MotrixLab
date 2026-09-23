@@ -16,6 +16,7 @@ import math
 import time
 
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn, optim
 
@@ -55,6 +56,7 @@ class FastSacAgent:
         action_scale: torch.Tensor | None = None,
         action_bias: torch.Tensor | None = None,
         writer=None,
+        world_size: int = 1,
     ):
         """Build the actor, twin distributional critics, optimizers and replay buffer.
 
@@ -63,10 +65,15 @@ class FastSacAgent:
         sizes the replay buffer's per-env rings. ``action_scale`` / ``action_bias``
         map the tanh-squashed policy output into the environment's action range
         (defaults to identity when ``None``). AMP autocast and ``torch.compile``
-        are enabled per ``cfg`` but auto-disabled on CPU.
+        are enabled per ``cfg`` but auto-disabled on CPU. ``world_size > 1``
+        (process group already initialized by the caller) averages gradients
+        across ranks manually after each backward and splits ``batch_size``
+        across ranks; the all-reduce stays in the eager orchestrator so the
+        compiled halves remain CUDA-graph capturable (see _update_main).
         """
         self.cfg = cfg
         self.device = device
+        self.world_size = world_size
         self.obs_dim = obs_dim
         self.critic_obs_dim = critic_obs_dim
         self.act_dim = act_dim
@@ -154,17 +161,26 @@ class FastSacAgent:
 
         # Runtime callables default to the canonical modules. Checkpointing,
         # optimizer ownership and inter-process weight publication always use
-        # the canonical modules so torch.compile remains a runtime-only detail.
+        # the canonical modules so torch.compile remains a runtime-only
+        # detail. Multi-learner uses the canonical modules too and averages
+        # gradients manually after each backward (see _allreduce_module_grads):
+        # the update boundary calls custom methods (get_actions_and_log_probs,
+        # projection, get_value) rather than module.forward, which DDP wrappers
+        # neither proxy nor synchronize.
         self._actor_runtime = self.actor
         self._qnet_runtime = self.qnet
         self._qnet_target_runtime = self.qnet_target
-        self._update_main_runtime = self._update_main
-        self._update_pol_runtime = self._update_pol
+        self._critic_backward_runtime = self._critic_backward
+        self._actor_backward_runtime = self._actor_backward
 
-        # Stage A compile boundary: compile the complete learner update rather
-        # than compiling individual network modules. This follows Holosoma's
-        # FastSAC structure and avoids nested eager/compiled boundaries around
-        # actor sampling, projection, loss, backward, and optimizers.
+        # Stage A compile boundary: compile the PURE-COMPUTE halves of the
+        # update (forward + backward, no cross-process sync, no optimizer
+        # step) rather than individual network modules. The eager orchestrator
+        # methods (_update_main / _update_pol) own gradient averaging, clipping
+        # and optimizer steps: CUDA graphs cannot capture NCCL collectives, so
+        # keeping the all-reduce outside the compiled region lets DDP ranks
+        # (world_size > 1) use the same reduce-overhead graphs as the
+        # single-learner path instead of falling back to eager.
         if bool(cfg.compile) and device.type == "cuda":
             import torch._inductor.config as inductor_config
 
@@ -177,8 +193,8 @@ class FastSacAgent:
             # boundary, and module-only/default-mode compilation is ~50% slower
             # or crashes on cudagraph output pools. The per-step boundary is
             # the measured optimum.)
-            self._update_main_runtime = torch.compile(self._update_main, mode="reduce-overhead")
-            self._update_pol_runtime = torch.compile(self._update_pol, mode="reduce-overhead")
+            self._critic_backward_runtime = torch.compile(self._critic_backward, mode="reduce-overhead")
+            self._actor_backward_runtime = torch.compile(self._actor_backward, mode="reduce-overhead")
 
     # --------------------------------------------------------------- normalize
     @staticmethod
@@ -186,6 +202,27 @@ class FastSacAgent:
         if isinstance(normalizer, EmpiricalNormalization):
             return normalizer(obs, update=update)
         return obs
+
+    def _allreduce_module_grads(self, modules) -> None:
+        """Average the gradients of the given modules across DDP ranks.
+
+        One fused all-reduce per call (all grads concatenated into a flat
+        buffer), replacing DDP's per-backward hook sync — the update boundary
+        calls custom module methods, which a DDP wrapper would neither proxy
+        nor synchronize. No-op at world_size 1.
+        """
+        if self.world_size <= 1:
+            return
+        params = [p for m in modules for p in m.parameters() if p.grad is not None]
+        if not params:
+            return
+        flat = torch.cat([p.grad.reshape(-1) for p in params])
+        dist.all_reduce(flat, op=dist.ReduceOp.AVG)
+        offset = 0
+        for p in params:
+            n = p.grad.numel()
+            p.grad.copy_(flat[offset : offset + n].view_as(p.grad))
+            offset += n
 
     def _autocast(self):
         """torch.autocast context manager, or a no-op when AMP is disabled.
@@ -200,7 +237,15 @@ class FastSacAgent:
         return contextlib.nullcontext()
 
     # --------------------------------------------------------------- updates
-    def _update_main(self, b: dict):
+    def _critic_backward(self, b: dict):
+        """Pure-compute half of the critic update: forward + backward only.
+
+        Everything here is capturable by a CUDA graph (no cross-process
+        collective, no optimizer mutation of parameters outside the graph's
+        static inputs). Returns owned scalar stats; ``next_logp_mean`` feeds
+        the eager alpha update — mean commutes with the constant
+        ``target_entropy``, so the scalar is exactly the alpha loss basis.
+        """
         cfg = self.cfg
         rewards = b["rewards"]
         dones = b["dones"].bool()
@@ -227,17 +272,25 @@ class FastSacAgent:
 
         self.q_optimizer.zero_grad(set_to_none=True)
         qf_loss.backward()
+        return (
+            qf_loss.detach().float().clone(),
+            next_logp.detach().float().mean().clone(),
+            target_values.max().detach().float().clone(),
+            target_values.min().detach().float().clone(),
+        )
+
+    def _update_main(self, b: dict):
+        cfg = self.cfg
+        qf_loss, next_logp_mean, tv_max, tv_min = self._critic_backward_runtime(b)
+        self._allreduce_module_grads([self.qnet])
         if cfg.max_grad_norm > 0:
             torch.nn.utils.clip_grad_norm_(self.qnet.parameters(), cfg.max_grad_norm)
         self.q_optimizer.step()
 
-        # Target-network soft update, fused into the compiled region: the
-        # foreach ops write the same kind of param storage the optimizer step
-        # above already mutates in place, so the whole thing replays as one
-        # CUDA graph instead of two eager kernel launches per step. Ordering
-        # constraints: after the target read at the top of this function and
-        # after q_optimizer.step() (both satisfied here); _update_pol reads
-        # neither qnet_target nor writes qnet, so it stays order-independent.
+        # Target-network soft update. Ordering constraints: after the target
+        # read at the top of _critic_backward and after q_optimizer.step()
+        # (both satisfied here); _update_pol reads neither qnet_target nor
+        # writes qnet, so it stays order-independent.
         with torch.no_grad():
             tau = cfg.tau
             tgt = [p.data for p in self.qnet_target.parameters()]
@@ -246,19 +299,19 @@ class FastSacAgent:
 
         alpha_loss = torch.zeros((), device=self.device)
         if cfg.use_autotune:
-            alpha_loss = (-self.log_alpha.exp() * (next_logp.detach() + self.target_entropy)).mean()
+            alpha_loss = -self.log_alpha.exp() * (next_logp_mean + self.target_entropy)
             self.alpha_optimizer.zero_grad(set_to_none=True)
             alpha_loss.backward()
+            if self.world_size > 1 and self.log_alpha.grad is not None:
+                # log_alpha is a bare tensor, not inside a module; average its
+                # gradient manually to keep every rank's temperature identical.
+                dist.all_reduce(self.log_alpha.grad, op=dist.ReduceOp.AVG)
             self.alpha_optimizer.step()
 
-        return (
-            qf_loss.detach().float(),
-            alpha_loss.detach().float(),
-            target_values.max().detach().float(),
-            target_values.min().detach().float(),
-        )
+        return (qf_loss, alpha_loss.detach().float(), tv_max, tv_min)
 
-    def _update_pol(self, b: dict):
+    def _actor_backward(self, b: dict):
+        """Pure-compute half of the actor update: forward + backward only."""
         with self._autocast():
             actions, log_probs = self._actor_runtime.get_actions_and_log_probs(b["obs"])
             q_outputs = self._qnet_runtime(b["critic_obs"], actions)
@@ -268,10 +321,18 @@ class FastSacAgent:
 
         self.actor_optimizer.zero_grad(set_to_none=True)
         actor_loss.backward()
+        return actor_loss.detach().float().clone(), (-log_probs.mean()).detach().float().clone()
+
+    def _update_pol(self, b: dict):
+        actor_loss, neg_logp = self._actor_backward_runtime(b)
+        # The policy loss backpropagates into BOTH the actor and the critic (the
+        # critic's q_values feed the objective); averaging both keeps every
+        # rank's parameters identical, matching what DDP would sync.
+        self._allreduce_module_grads([self.actor, self.qnet])
         if self.cfg.max_grad_norm > 0:
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.cfg.max_grad_norm)
         self.actor_optimizer.step()
-        return actor_loss.detach().float(), (-log_probs.mean()).detach().float()
+        return actor_loss, neg_logp
 
     def update(self, num_updates: int):
         """Run ``num_updates`` gradient steps, each on a fresh batch.
@@ -296,7 +357,10 @@ class FastSacAgent:
         cfg = self.cfg
         if num_updates <= 0:
             return None
-        batch_per_env = max(cfg.batch_size // self.num_envs, 1)
+        # Global batch split across DDP ranks (== batch_size when world_size 1);
+        # gradient averaging makes the update equivalent to the sync
+        # trainer's single global-batch step.
+        batch_per_env = max(cfg.batch_size // self.world_size // self.num_envs, 1)
         last = (torch.zeros((), device=self.device),) * 5
         timing_s = {key: 0.0 for key in ("sample_normalize", "critic_alpha", "actor")}
         update_started = time.perf_counter()
@@ -332,13 +396,13 @@ class FastSacAgent:
             # any output that outlives its own iteration goes through `_own`.
             torch.compiler.cudagraph_mark_step_begin()
             stage_started = time.perf_counter()
-            outputs = self._update_main_runtime(b)
+            outputs = self._update_main(b)
             timing_s["critic_alpha"] += time.perf_counter() - stage_started
 
             actor_pair = (last[3], last[4])
             if (self.update_idx + i) % cfg.policy_frequency == 0:
                 stage_started = time.perf_counter()
-                pol_outputs = self._update_pol_runtime(b)
+                pol_outputs = self._update_pol(b)
                 timing_s["actor"] += time.perf_counter() - stage_started
                 # Always own: the pair is carried across later generations
                 # within this call AND the returned metrics must stay readable

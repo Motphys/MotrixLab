@@ -72,7 +72,6 @@ class Collector:
         env: FastSacEnvWrap,
         cfg: FastSacCfg,
         obs_dim: int,
-        critic_obs_dim: int,
         act_dim: int,
         action_scale: torch.Tensor,
         action_bias: torch.Tensor,
@@ -80,6 +79,7 @@ class Collector:
         weights: WeightReceiver,
         control: Control,
         is_resume: bool = False,
+        collector_id: int = 0,
     ):
         self.env = env
         self.cfg = cfg
@@ -94,6 +94,7 @@ class Collector:
         self.ring = ring
         self.weights = weights
         self.control = control
+        self.collector_id = collector_id
         self.is_resume = is_resume
         # Env-internal step profiling (Perf on the wrapped env, when present)
         # feeds the panel's env_step sub-stage tree. ``env.env`` is the
@@ -227,7 +228,6 @@ class Collector:
         """How many published versions behind the collector's local policy is."""
         return self.weights.lag
 
-    # ------------------------------------------------------------------ ring handoff
     # ------------------------------------------------------------------ step
     def step_once(self) -> bool:
         """Run one env-step batch and push it to the ring.
@@ -247,7 +247,8 @@ class Collector:
             self._wait_started = None
 
         t0 = now
-        warming = self.control.collector_steps < self._learning_starts
+        steps = self.control.collector_steps_at(self.collector_id)
+        warming = steps < self._learning_starts
         t_sample_actions = time.perf_counter()
         actions = self._sample_actions(warming)
         t_env = time.perf_counter()
@@ -297,10 +298,10 @@ class Collector:
 
         self.obs = next_obs
         self.critic_obs = next_critic_obs
-        self.control.inc_collector_steps()
+        self.control.inc_collector_steps(self.collector_id)
         t_sync = time.perf_counter()
 
-        if self.control.collector_steps % max(self.async_options.weight_poll_interval, 1) == 0:
+        if self.control.collector_steps_at(self.collector_id) % max(self.async_options.weight_poll_interval, 1) == 0:
             self.sync_weights(record_timing=True)
         t_done = time.perf_counter()
 
@@ -324,6 +325,7 @@ class Collector:
         rr, rl = self.recent_returns, self.recent_lengths
         term_means = {k: v / max(self.term_count, 1) for k, v in self.term_accum.items()}
         stats = {
+            "collector_id": self.collector_id,
             "return": (sum(rr) / len(rr)) if rr else float("nan"),
             "ep_len": (sum(rl) / len(rl)) if rl else float("nan"),
             "episodes": self.n_episodes,

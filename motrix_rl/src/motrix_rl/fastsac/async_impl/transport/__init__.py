@@ -27,6 +27,7 @@ from motrix_rl.fastsac.async_impl.transport.common import (
     flatten_params,
     load_flat_params,
 )
+from motrix_rl.fastsac.async_impl.transport.handshake import StartupHandshake
 from motrix_rl.fastsac.async_impl.transport.ipc_ring import IpcTransitionRing
 from motrix_rl.fastsac.async_impl.transport.ring import RingCursors, SharedTransitionRing
 from motrix_rl.fastsac.async_impl.transport.weight_channel import (
@@ -42,6 +43,7 @@ from motrix_rl.fastsac.async_impl.transport.weight_channel import (
 
 __all__ = [
     "Control",
+    "StartupHandshake",
     "GpuIpcWeightReceiver",
     "GpuIpcWeightSender",
     "HostWeightReceiver",

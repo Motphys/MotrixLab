@@ -13,4 +13,4 @@
 
 ## 文档列表
 
-当前暂无进行中的计划。新的功能请先完成 `wiki/design/` 中的设计确认，再在此目录建立对应的实现计划。
+- [fastsac-async-multi-learner.md](fastsac-async-multi-learner.md) — FastSAC 单机多卡（多 learner × DDP）实施计划

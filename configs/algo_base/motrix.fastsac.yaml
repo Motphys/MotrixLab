@@ -117,3 +117,14 @@ trainer:
     weight_ipc: "auto"
     # Minimum flattened parameter bytes for the CUDA-IPC path under "auto".
     weight_ipc_min_bytes: 16777216
+    # Number of collector processes; num_envs is split evenly across them (must divide evenly).
+    num_collectors: 1
+    # NUMA nodes are assigned automatically: collectors spread round-robin over
+    # the host's nodes, learners bind to their GPU-local node.
+    # CPUs assigned to each collector from its node/affinity set; null uses all of them.
+    cpus_per_collector: null
+    # DDP data-parallel learner replicas (one process per GPU, single node);
+    # requires num_collectors to divide evenly; 1 keeps the single-learner behavior.
+    num_learners: 1
+    # One device per learner, e.g. [cuda:0, cuda:1]; null replicates the trainer device.
+    learner_devices: null

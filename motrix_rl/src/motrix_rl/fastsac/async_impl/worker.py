@@ -21,76 +21,49 @@ import random
 import sys
 import time
 import traceback
+from contextlib import contextmanager
 from multiprocessing.queues import Queue
 from pathlib import Path
-from queue import Empty
-from typing import Any
+from queue import Empty, Full
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
+
+if TYPE_CHECKING:
+    from torch.utils.tensorboard import SummaryWriter
 
 from motrix_env_core.array.env import ArrayEnv
 from motrix_env_core.registry import EnvBuildSpec
 from motrix_env_core.renderer import RenderConfig
 from motrix_env_motrixsim.torch_env import TorchEnv
 from motrix_rl import checkpoints
-from motrix_rl.console import TrainingPanelStats, emit_training_panel, open_training_live
 from motrix_rl.fastsac.agent import FastSacAgent
-from motrix_rl.fastsac.async_impl.collector import Collector, resolve_collector_inference_device
-from motrix_rl.fastsac.async_impl.learner import Learner
+from motrix_rl.fastsac.async_impl.collector import Collector
+from motrix_rl.fastsac.async_impl.learner import CollectorEndpoint, Learner
+from motrix_rl.fastsac.async_impl.numa import apply_binding
+from motrix_rl.fastsac.async_impl.stats import timing_mean
 from motrix_rl.fastsac.async_impl.transport import (
     Control,
     IpcTransitionRing,
     RingCursors,
     SharedTransitionRing,
 )
+from motrix_rl.fastsac.async_impl.transport.handshake import StartupHandshake
 from motrix_rl.fastsac.async_impl.transport.weight_channel import (
     GpuIpcWeightSender,
     HostWeightSender,
     WeightChannelShared,
-    WeightSender,
     weight_receiver_for,
 )
 from motrix_rl.fastsac.config import FastSacCfg
 from motrix_rl.fastsac.wrap import FastSacEnvWrap
 from motrix_rl.fastsac.wrap_np import FastSacNpEnvWrap
 from motrix_rl.fastsac.wrap_torch import FastSacTorchEnvWrap
-from motrix_rl.system_metrics import (
-    CpuLoadSampler,
-    GpuMemoryUsageSampler,
-    GpuUtilizationSampler,
-    MemoryUsageSampler,
-    sample_gpu_devices,
-)
+
+logger = logging.getLogger(__name__)
 
 
-def _timing_mean(values: list[float]) -> float:
-    """Mean of a non-empty timing sample list (ms)."""
-    return sum(values) / len(values)
-
-
-def _nest_timing_path(tree: dict[str, Any], parts: tuple[str, ...], value: float) -> None:
-    """Insert one dotted timing path into a nested mapping.
-
-    A stage's scalar total and its sub-stage paths may arrive in either order
-    (the collector emits parents before children); when both exist the scalar
-    becomes the node's ``total`` alongside its children.
-    """
-    head, rest = parts[0], parts[1:]
-    node = tree.get(head)
-    if not rest:
-        if isinstance(node, dict):
-            node["total"] = value
-        else:
-            tree[head] = value
-    else:
-        if not isinstance(node, dict):
-            node = {"total": node} if node is not None else {}
-            tree[head] = node
-        _nest_timing_path(node, rest, value)
-
-
-# ------------------------------------------------------------------ builders
 def set_seed(seed: int | None) -> None:
     if seed is None:
         return
@@ -142,7 +115,23 @@ def actor_param_numel(cfg: FastSacCfg, dims, action_scale, action_bias) -> int:
     return sum(p.numel() for p in actor.parameters())
 
 
-def build_agent(cfg: FastSacCfg, dims, num_envs, device, action_scale, action_bias, writer=None) -> FastSacAgent:
+def build_agent(
+    cfg: FastSacCfg,
+    dims: tuple[int, int, int],
+    num_envs: int,
+    device: torch.device,
+    action_scale: torch.Tensor | None,
+    action_bias: torch.Tensor | None,
+    writer: SummaryWriter | None = None,
+    world_size: int = 1,
+) -> FastSacAgent:
+    """Build the learner's ``FastSacAgent``.
+
+    ``dims`` is ``(obs_dim, critic_obs_dim, act_dim)``. ``action_scale`` /
+    ``action_bias`` map the tanh-squashed policy output to the env action
+    range (``None`` = identity). ``writer`` is the parent-created
+    TensorBoard writer; ``world_size`` is the DDP learner-rank count.
+    """
     obs_dim, critic_obs_dim, act_dim = dims
     return FastSacAgent(
         obs_dim=obs_dim,
@@ -154,60 +143,8 @@ def build_agent(cfg: FastSacCfg, dims, num_envs, device, action_scale, action_bi
         action_scale=action_scale,
         action_bias=action_bias,
         writer=writer,
+        world_size=world_size,
     )
-
-
-def same_cuda_device(learner_device: torch.device, collector_device: torch.device) -> bool:
-    """Whether the learner and the collector's inference device share one GPU.
-
-    An index-less ``cuda`` means the default current device (index 0 — nothing
-    in the trainer ever calls ``torch.cuda.set_device``), so it is resolved
-    with 0 rather than treated as a wildcard matching any explicit index:
-    ``learner=cuda`` (effectively cuda:0) with ``collector_inference_device:
-    cuda:1`` is a cross-GPU setup and must NOT enable the device transports.
-    Pure device arithmetic — no CUDA context is created, so the pre-spawn
-    parent can call it as safely as the workers.
-    """
-    if learner_device.type != "cuda" or collector_device.type != "cuda":
-        return False
-    learner_index = learner_device.index if learner_device.index is not None else 0
-    collector_index = collector_device.index if collector_device.index is not None else 0
-    return learner_index == collector_index
-
-
-def use_ipc_transition_ring(opts, learner_device: torch.device, collector_device: torch.device) -> bool:
-    """Whether the transition ring should use CUDA-IPC device slots.
-
-    Requires learner and collector inference on the same GPU (see
-    :func:`same_cuda_device`); otherwise the host shared-memory ring is used.
-    Purely device-object arithmetic — no CUDA context is created here, so the
-    parent can call it safely.
-    """
-    mode = opts.transition_ipc
-    # YAML 1.1 parses unquoted ``on``/``off`` scalars as booleans; accept that
-    # form so ``transition_ipc: on`` in a config behaves like the documented
-    # string.
-    if isinstance(mode, bool):
-        mode = "on" if mode else "off"
-    if mode not in ("auto", "on", "off"):
-        raise ValueError(f"async_options.transition_ipc must be auto, on or off, got {mode!r}")
-    same_gpu = same_cuda_device(learner_device, collector_device)
-    if mode == "off":
-        return False
-    if mode == "on" and not same_gpu:
-        reason = (
-            "collector inference device is not CUDA"
-            if collector_device.type != "cuda"
-            else f"learner device {learner_device} and collector device {collector_device} are different GPUs"
-            if learner_device.type == "cuda"
-            else "learner device is not CUDA"
-        )
-        logging.getLogger(__name__).warning(
-            "async_options.transition_ipc=on requires learner and collector inference on the same GPU, "
-            "but %s; falling back to the host shared-memory transition ring",
-            reason,
-        )
-    return same_gpu
 
 
 # ------------------------------------------------------------------ collector process
@@ -302,62 +239,74 @@ def _pin_worker_cpus(cpus: set[int]) -> None:
     torch.set_num_threads(max(len(cpus), 1))
 
 
-def _configure_process_logging() -> None:
-    """Surface INFO logs (e.g. manager env startup) from spawned worker processes.
+def _install_graceful_sigint(control: Control) -> None:
+    """Turn SIGINT (terminal Ctrl+C hits the whole process group) into the
+    shared stop flag so the worker unwinds at its next loop safe point instead
+    of dying mid-CUDA/queue operation with a traceback.
 
-    ``basicConfig`` only applies when the root logger has no handlers yet; when
-    a handler is already configured, raising the root level is enough for the
-    startup INFO records to be emitted through the existing setup.
+    A worker blocked inside a NCCL collective never returns to the interpreter,
+    so the handler cannot fire there — the parent's escalation ladder
+    (join -> terminate -> kill, see train.py) is the backstop for that case.
     """
-    root = logging.getLogger()
-    if root.handlers:
-        root.setLevel(logging.INFO)
-        return
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    import signal
+
+    def _handler(signum, frame):  # noqa: ARG001
+        control.set_stop()
+
+    try:
+        signal.signal(signal.SIGINT, _handler)
+    except ValueError:  # not on the main thread (defensive; workers are processes)
+        pass
 
 
-def _build_weight_sender(
-    shared: WeightChannelShared,
-    cfg: FastSacCfg,
-    dims: tuple[int, int, int],
-    action_scale: torch.Tensor,
-    action_bias: torch.Tensor,
-    device: torch.device,
-) -> WeightSender:
-    """Construct the sender-side weight endpoint per the configured transport.
+@contextmanager
+def inherit_log_stdio(log_file: Path):
+    """Parent-side spawn guard: point fd 1/2 at the worker's log file while starting it.
 
-    CUDA-IPC device slots only when learner and collector inference share one
-    GPU and the actor parameters reach the configured size threshold; host
-    shared-memory slots otherwise. The learner process is the only place both
-    transports' requirements can be met (the IPC-handle exporter needs the
-    CUDA context and must keep the tensors alive).
+    Spawn children inherit the parent's terminal fds and re-import
+    torch/simulator modules BEFORE their entry function runs
+    (``_configure_process_logging``), so import-time prints (library banners,
+    profiler messages, warnings) would land raw on the shared terminal and
+    jitter the parent's live panel. Holding the log file on fd 1/2 across
+    ``Process.start()`` makes the child inherit it from its first
+    instruction; the parent's own fds are restored immediately afterwards.
     """
-    opts = cfg.trainer.async_options
-    mode = opts.weight_ipc
-    # YAML 1.1 parses unquoted ``on``/``off`` scalars as booleans; accept that
-    # form so ``weight_ipc: on`` in a config behaves like the documented string.
-    if isinstance(mode, bool):
-        mode = "on" if mode else "off"
-    if mode not in ("auto", "on", "off"):
-        raise ValueError(f"async_options.weight_ipc must be auto, on or off, got {mode!r}")
-    collector_device = resolve_collector_inference_device(opts.collector_inference_device)
-    same_gpu = same_cuda_device(device, collector_device)
-    if mode == "on" and not same_gpu:
-        reason = (
-            "collector inference device is not CUDA"
-            if collector_device.type != "cuda"
-            else f"learner device {device} and collector device {collector_device} are different GPUs"
-        )
-        logging.getLogger(__name__).warning(
-            "async_options.weight_ipc=on requires learner and collector inference on the same GPU, "
-            "but %s; falling back to host shared-memory transport",
-            reason,
-        )
-    param_numel = actor_param_numel(cfg, dims, action_scale, action_bias)
-    use_gpu = same_gpu and (mode == "on" or (mode == "auto" and param_numel * 4 >= opts.weight_ipc_min_bytes))
-    if use_gpu:
-        return GpuIpcWeightSender(shared, param_numel, device)
-    return HostWeightSender(shared, param_numel)
+    log_fd = os.open(str(log_file), os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+    saved_stdout, saved_stderr = os.dup(1), os.dup(2)
+    try:
+        os.dup2(log_fd, 1)
+        os.dup2(log_fd, 2)
+        yield
+    finally:
+        os.dup2(saved_stdout, 1)
+        os.dup2(saved_stderr, 2)
+        os.close(saved_stdout)
+        os.close(saved_stderr)
+        os.close(log_fd)
+
+
+def _configure_process_logging(log_file: Path) -> None:
+    """Route worker logs (e.g. manager env startup) to a file, not the terminal.
+
+    The parent renders the live panel on the shared terminal; raw worker log
+    bytes would tear the rich Live frames apart. Startup records stay
+    inspectable under the run's ``logs/`` directory; errors additionally
+    travel the error-queue channel as before.
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        filename=str(log_file),
+        filemode="a",
+        force=True,
+    )
+    # Hard hat: dup the log file onto stdout/stderr so C-level output
+    # (third-party import banners, library warnings) can never reach the
+    # shared terminal and tear the parent's Rich panel.
+    log_fd = os.open(str(log_file), os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+    os.dup2(log_fd, 1)
+    os.dup2(log_fd, 2)
+    os.close(log_fd)
 
 
 def run_collector_process(
@@ -376,40 +325,54 @@ def run_collector_process(
     logging_interval: int,
     is_resume: bool,
     seed: int | None,
-    slot_queue: Queue,
+    run_dir: str,
+    handshake: StartupHandshake,
+    collector_id: int = 0,
+    numa_node: int | None = None,
+    cpus: list[int] | None = None,
+    collector_device: str | None = None,
 ) -> None:
+    role = f"collector[{collector_id}]"
+    _install_graceful_sigint(control)
     try:
-        _configure_process_logging()
+        log_dir = Path(run_dir) / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        _configure_process_logging(log_dir / f"collector{collector_id}.log")
+        # Bind before any env / staging allocation: the memory policy only
+        # affects future pages, so this must be the first thing the worker does.
+        # The binding itself was decided by the parent topology pass.
+        apply_binding(role, numa_node, cpus or [])
         set_seed(seed)
         opts = cfg.trainer.async_options
+        # Multi-learner: the parent resolves the generic "cuda" spec to the
+        # owning learner's GPU; an explicit spec passes through unchanged.
+        if collector_device is not None:
+            opts.collector_inference_device = collector_device
         _pin_worker_cpus(_resolve_cpu_set(opts.collector_cpu_cores, "collector_cpu_cores"))
-        async_options = cfg.trainer.async_options
         obs_dim, critic_obs_dim, act_dim = dims
         device = torch.device("cpu")
+        env_started = time.perf_counter()
         env = build_env(env_spec, num_envs, device, seed=seed)
-        # Handshake: build the endpoints from the slot tensors the learner
-        # shipped (weight slots, plus the CUDA-IPC transition-ring slots when
-        # that transport was selected), before the collector is wired up.
-        try:
-            weight_slots, ring_slots = slot_queue.get(timeout=60.0)
-        except Empty as exc:
-            raise RuntimeError(
-                "timed out waiting for the learner to ship the slot tensors "
-                "(learner startup — agent build / checkpoint load / CUDA warmup — "
-                "likely failed or took over 60s; check the learner process's error queue/log)"
-            ) from exc
+        logger.info(
+            "collector startup: env build (scene + manager kernels) finished in %.3fs",
+            time.perf_counter() - env_started,
+        )
+        # Handshake: build the endpoints from the slot tensors the learners
+        # shipped before the collector is wired up. Weight slots come from
+        # the publishing learner (rank 0), CUDA-IPC transition-ring slots
+        # from the learner that drains this collector's ring (its owner —
+        # always rank 0 in the single-learner topology).
+        weight_slots = handshake.await_weight_slots(collector_id)
+        ring_slots = handshake.await_ring_slots(collector_id)
         weight_rx = weight_receiver_for(weights, weight_slots)
         if isinstance(ring, RingCursors):
             if ring_slots is None:
                 raise RuntimeError("the learner shipped no transition-ring slots for the IPC ring handshake")
-            ring = IpcTransitionRing(
-                ring, ring_slots, async_options.ring_capacity, num_envs, obs_dim, critic_obs_dim, act_dim
-            )
+            ring = IpcTransitionRing(ring, ring_slots, opts.ring_capacity, num_envs, obs_dim, critic_obs_dim, act_dim)
         collector = Collector(
             env,
             cfg,
             obs_dim,
-            critic_obs_dim,
             act_dim,
             action_scale,
             action_bias,
@@ -417,16 +380,43 @@ def run_collector_process(
             weight_rx,
             control,
             is_resume=is_resume,
+            collector_id=collector_id,
         )
         collector.reset()
         collector.sync_weights()
+        warmup_started = time.perf_counter()
         collector.warmup_inference()
+        logger.info(
+            "collector startup: inference warmup (torch.compile + CUDA graphs) finished in %.3fs",
+            time.perf_counter() - warmup_started,
+        )
 
-        while not control.stop and control.collector_steps < num_iterations:
+        # Startup barrier: report readiness and hold until every worker (all
+        # collectors AND learners) has booted, so stepping starts in lockstep
+        # — warmup counters, weight generations and generation merge align
+        # from step one instead of converging mid-run.
+        handshake.report_ready("collector", collector_id)
+        handshake.wait_for_start(control)
+        if control.stop:
+            return
+
+        # First snapshot once a few steps have landed: the parent's panel
+        # quiescence gate opens early (not after a full logging window of
+        # silence) while the handoff progress view gets to show real steps,
+        # and the snapshot already carries a little real data. The
+        # per-interval send below then replaces it.
+        first_stats_steps = 10
+        first_stats_sent = False
+
+        while not control.stop and control.collector_steps_at(collector_id) < num_iterations:
             if not collector.step_once():
-                time.sleep(async_options.idle_sleep_s)  # ring full -> backpressure
+                time.sleep(opts.idle_sleep_s)  # ring full -> backpressure
                 continue
-            if collector.control.collector_steps % max(logging_interval, 1) == 0:
+            steps = control.collector_steps_at(collector_id)
+            if not first_stats_sent and steps >= first_stats_steps:
+                first_stats_sent = True
+                stats_queue.put(collector.snapshot_stats())
+            elif steps % max(logging_interval, 1) == 0:
                 # replace any stale snapshot so the learner always sees the latest.
                 try:
                     while True:
@@ -435,7 +425,10 @@ def run_collector_process(
                     pass
                 stats_queue.put(collector.snapshot_stats())
     except BaseException:
-        error_queue.put(("collector", traceback.format_exc()))
+        if not isinstance(sys.exc_info()[1], (KeyboardInterrupt, SystemExit)):
+            # Ctrl+C is an operator action, not a defect: the stop flag is
+            # already set by the SIGINT handler; don't spam async_errors.
+            error_queue.put((role, traceback.format_exc()))
         raise
     finally:
         control.set_stop()  # signal the learner if the collector exits for any reason
@@ -448,64 +441,164 @@ def run_learner_process(
     dims: tuple[int, int, int],
     action_scale: torch.Tensor,
     action_bias: torch.Tensor,
-    ring: SharedTransitionRing | RingCursors,
-    weights: WeightChannelShared,
+    rings: list[SharedTransitionRing | RingCursors],
+    weights: list[WeightChannelShared],
     control: Control,
-    stats_queue: Queue,
-    error_queue: Queue,
+    error_queue,
     num_iterations: int,
     logging_interval: int,
     save_interval: int,
     run_dir: str,
-    env_name: str,
     checkpoint_dir: str,
     checkpoint_format: str,
     resume_from: str | None,
     seed: int | None,
-    slot_queue: Queue,
+    handshake: StartupHandshake,
+    all_rings: list[SharedTransitionRing],
+    weight_ipc: list[bool],
+    panel_queue: Queue,
+    learner_cpus: list[int] | None = None,
+    learner_numa_node: int | None = None,
+    rank: int = 0,
+    num_learners: int = 1,
+    rendezvous_file: str | None = None,
+    learner_device: str | None = None,
 ) -> None:
-    _configure_process_logging()
-    console, live = open_training_live()
+    """One learner process; ``rank 0`` additionally owns stats aggregation,
+    logging and checkpointing.
+
+    Multi-learner (DDP) specifics: ``rings`` is this rank's slice (the parent
+    partitions by collector ownership) while ``all_rings`` is the full list
+    (rank-0 logging only); ``weights`` is this rank's slice of the weight
+    channels — every learner publishes to its OWN collectors only; update
+    counts are derived from the global progress basis (see
+    ``Learner.maybe_train``).
+    """
+    is_primary = num_learners == 1 or rank == 0
+    if num_learners > 1:
+        import torch.distributed as dist
+    else:
+        dist = None
+    _install_graceful_sigint(control)
+    _learner_log_dir = Path(run_dir) / "logs"
+    _learner_log_dir.mkdir(parents=True, exist_ok=True)
+    _configure_process_logging(_learner_log_dir / (f"learner{rank}.log" if num_learners > 1 else "learner.log"))
     try:
-        set_seed(seed)
+        apply_binding(f"learner[{rank}]" if num_learners > 1 else "learner", learner_numa_node, learner_cpus)
+        set_seed(None if seed is None else seed + rank)
         opts = cfg.trainer.async_options
         _pin_worker_cpus(_resolve_cpu_set(opts.learner_cpu_cores, "learner_cpu_cores"))
-        async_options = cfg.trainer.async_options
-        device = torch.device(cfg.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        writer = None
-        try:
-            from torch.utils.tensorboard import SummaryWriter
+        num_collectors = len(all_rings)
+        device = (
+            torch.device(learner_device)
+            if learner_device is not None
+            else torch.device(cfg.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        )
+        if num_learners > 1:
+            if device.type != "cuda" or device.index is None:
+                raise ValueError(f"multi-learner requires explicit indexed CUDA learner devices, got {device}")
+            torch.cuda.set_device(device)
+            # Bounded collective timeout: with the default 30-minute timeout a
+            # rank waiting on a crashed/blocked peer hangs until the parent's
+            # force-kill instead of unwinding through its own error path.
+            import datetime as _dt
 
-            writer = SummaryWriter(log_dir=run_dir)
-        except Exception:
-            writer = None
-
-        agent = build_agent(cfg, dims, num_envs, device, action_scale, action_bias, writer=writer)
+            dist.init_process_group(
+                "nccl",
+                init_method=f"file://{rendezvous_file}",
+                rank=rank,
+                world_size=num_learners,
+                timeout=_dt.timedelta(seconds=90),
+            )
+        # Replay buffer sized by THIS rank's env shard: each learner drains only
+        # its collectors' rings, so every ingested batch carries
+        # num_envs // num_learners envs (env-level sharding keeps each env's
+        # full trajectory — and n-step adjacency — inside one rank). The batch
+        # math still divides the GLOBAL batch_size by world_size, so per-rank
+        # sample rows == batch_size / num_learners, matching DDP averaging.
+        agent_started = time.perf_counter()
+        agent = build_agent(
+            cfg,
+            dims,
+            num_envs // num_learners,
+            device,
+            action_scale,
+            action_bias,
+            world_size=num_learners,
+        )
         if resume_from:
             ckpt = torch.load(resume_from, map_location=device, weights_only=False)
             agent.load_state_dict(ckpt, load_optimizers=True)
+        logger.info(
+            "learner startup: agent build%s finished in %.3fs",
+            " + checkpoint load" if resume_from else "",
+            time.perf_counter() - agent_started,
+        )
 
-        # Build the sender endpoint and ship its slot tensors BEFORE the first
-        # publish so the collector (blocking on the handshake queue) builds the
-        # matching receiver and takes the agreed transport from step one. The
-        # IPC transition-ring slots ship in the same one-shot message: this
-        # process is the owner (it allocated the device tensor and must keep it
-        # alive), the collector maps it through the queue's CUDA-IPC reducers.
-        weight_tx = _build_weight_sender(weights, cfg, dims, action_scale, action_bias, device)
-        if isinstance(ring, RingCursors):
-            if device.type != "cuda":
-                raise RuntimeError("the IPC transition ring was selected but the learner device is not CUDA")
-            obs_dim, critic_obs_dim, act_dim = dims
-            feat = obs_dim + critic_obs_dim + act_dim + 3
-            ring_slots = torch.zeros(async_options.ring_capacity, num_envs, feat, dtype=torch.float32, device=device)
-            ring = IpcTransitionRing(
-                ring, ring_slots, async_options.ring_capacity, num_envs, obs_dim, critic_obs_dim, act_dim
+        resume_step = control.collector_steps // num_collectors  # full-batch equivalents
+        per_collector_envs = num_envs // num_collectors
+        per_learner = num_collectors // num_learners
+        # Build one sender endpoint per collector OWNED by this rank (collector
+        # i belongs to rank i // per_learner) and ship the slot tensors BEFORE
+        # the first publish so each collector (blocking on its handshake queue)
+        # builds the matching receiver from step one. The IPC transition-ring
+        # slots ship in the same one-shot message: this process is the owner
+        # (it allocated the device tensor and must keep it alive), the
+        # collector maps it through the queue's CUDA-IPC reducers.
+        # Transport per channel was decided by the parent topology pass
+        # (TrainerTopology.weight_ipc, indexed per collector); this process
+        # only constructs the endpoints. One throwaway CPU actor counts the
+        # parameters that size both transports' buffers.
+        param_numel = actor_param_numel(cfg, dims, action_scale, action_bias)
+        weight_txs = []
+        for j, shared in enumerate(weights):
+            channel = rank * per_learner + j
+            # CUDA-IPC device slots when the topology resolved IPC for this
+            # channel (the collector infers on this rank's GPU), host
+            # shared-memory slots otherwise; this rank is the exporter (its
+            # CUDA context must keep the slot tensors alive).
+            tx = (
+                GpuIpcWeightSender(shared, param_numel, device)
+                if weight_ipc[j]
+                else HostWeightSender(shared, param_numel)
             )
-            slot_queue.put((weight_tx.params, ring_slots))
-        else:
-            slot_queue.put((weight_tx.params, None))
-        learner = Learner(agent, cfg, ring, weight_tx, control)
-        learner.publish_weights()  # give the collector an initial policy before it warms up
+            handshake.ship_weight_slots(channel, tx.params)
+            weight_txs.append(tx)
+        # Wrap RingCursors into IpcTransitionRing (allocating the device slots
+        # and shipping them to the collector) BEFORE building the endpoints —
+        # the endpoints must hold the FINAL ring objects the drain path uses.
+        for j, ring in enumerate(rings):
+            ring_slots = None
+            if isinstance(ring, RingCursors):
+                if device.type != "cuda":
+                    raise RuntimeError("the IPC transition ring was selected but the learner device is not CUDA")
+                obs_dim, critic_obs_dim, act_dim = dims
+                feat = obs_dim + critic_obs_dim + act_dim + 3
+                ring_slots = torch.zeros(
+                    opts.ring_capacity, per_collector_envs, feat, dtype=torch.float32, device=device
+                )
+                rings[j] = IpcTransitionRing(
+                    ring,
+                    ring_slots,
+                    opts.ring_capacity,
+                    per_collector_envs,
+                    obs_dim,
+                    critic_obs_dim,
+                    act_dim,
+                )
+            handshake.ship_ring_slots(rank * per_learner + j, ring_slots)
+
+        endpoints = [CollectorEndpoint(ring=rings[j], weight_sender=weight_txs[j]) for j in range(len(weight_txs))]
+
+        learner = Learner(
+            agent,
+            cfg,
+            endpoints,
+            control,
+            ddp_rank=rank if num_learners > 1 else None,
+        )
+        learner._last_train_gstep = resume_step  # lockstep basis continues from the checkpoint
+        learner.publish_weights()  # give every collector an initial policy before it warms up
 
         # Elapsed/ETA anchor. The collector's env build (scene compile, numba
         # JIT) runs concurrently with the learner build and can outlast it by
@@ -515,20 +608,16 @@ def run_learner_process(
         start_time = time.time()
         start_anchored = False
         last_log_time = start_time
-        resume_step = control.collector_steps
         last_log_step = resume_step
-        last_update_idx = 0
-        last_stats = {
-            "return": float("nan"),
-            "ep_len": float("nan"),
-            "episodes": 0,
-            "reward_terms": {},
-            "env_metrics": {},
-            "policy_lag": 0,
-            "timing_ms": {},
-        }
         last_metrics = None
-        next_log = ((resume_step // logging_interval) + 1) * logging_interval if logging_interval > 0 else 0
+        # First payload goes out immediately (step 0) so the parent's panel
+        # quiescence gate opens as soon as collectors take their first steps,
+        # instead of after a silent full log window; resume keeps window
+        # alignment.
+        if logging_interval > 0 and resume_step:
+            next_log = ((resume_step // logging_interval) + 1) * logging_interval
+        else:
+            next_log = 0
         next_save = ((resume_step // save_interval) + 1) * save_interval if save_interval > 0 else 0
         t_learn_win = 0.0  # wall-clock spent in learner train calls this log window
         learner_train_samples_ms: list[float] = []
@@ -536,21 +625,32 @@ def run_learner_process(
         learner_breakdown_samples_ms: dict[str, list[float]] = {}
         learner_ring_wait_samples_ms: list[float] = []
         learner_gate_wait_samples_ms: list[float] = []
-        cpu_sampler = CpuLoadSampler()
-        gpu_sampler = GpuUtilizationSampler()
-        memory_sampler = MemoryUsageSampler()
-        gpu_memory_sampler = GpuMemoryUsageSampler()
         last_checkpoint_path: str | None = None
+        # The parent process renders the panel and writes TensorBoard: this
+        # worker ships one compact payload per log window (all learner ranks
+        # send — workers are peers, the parent is the recorder).
 
-        def _drain_stats():
-            nonlocal last_stats
-            try:
-                while True:
-                    last_stats = stats_queue.get_nowait()
-            except Empty:
-                pass
+        # Startup barrier: report readiness and hold until every worker booted
+        # (see run_collector_process). Weight slots were already shipped and
+        # the initial weights published, so collectors blocking on their
+        # handshakes complete as soon as every learner reaches this point.
+        handshake.report_ready("learner", rank)
+        handshake.wait_for_start(control)
+        if control.stop:
+            return
 
-        while not control.stop and control.collector_steps < num_iterations:
+        # Each collector runs until its own counter reaches num_iterations; the
+        # aggregate (sum) therefore reaches num_iterations * num_collectors.
+        total_collector_steps = num_iterations * num_collectors
+        while not control.stop and control.collector_steps < total_collector_steps:
+            # Progress basis: full num_envs-batch equivalents — the aggregate
+            # counter counts per-collector batches of per_collector_envs
+            # transitions each, so dividing by num_collectors recovers the
+            # sync-trainer "iteration collects num_envs transitions" unit
+            # (identical to the raw counter when num_collectors == 1). All
+            # ranks read the same shared value.
+            step = control.collector_steps // num_collectors
+            control.global_step = step
             t_drain = time.perf_counter()
             ingested = learner.drain()
             if ingested:
@@ -560,7 +660,10 @@ def run_learner_process(
                     start_anchored = True
                 learner_drain_samples_ms.append((time.perf_counter() - t_drain) * 1000.0)
             t_l = time.perf_counter()
-            metrics = learner.maybe_train(ingested)
+            # One decision path for both topologies: updates are gated on the
+            # global progress basis (identical on every DDP rank; the single
+            # learner's own position when num_collectors == 1).
+            metrics = learner.maybe_train(step)
             if metrics is not None:
                 last_metrics = metrics
                 elapsed_learn_s = time.perf_counter() - t_l
@@ -575,7 +678,7 @@ def run_learner_process(
             else:
                 # warmup or starved: avoid a hot spin.
                 t_idle = time.perf_counter()
-                time.sleep(async_options.idle_sleep_s)
+                time.sleep(opts.idle_sleep_s)
                 idle_ms = (time.perf_counter() - t_idle) * 1000.0
                 if ingested == 0:
                     # No ring slot was available: learner is waiting for collector data.
@@ -583,124 +686,65 @@ def run_learner_process(
                 else:
                     # Data arrived, but replay/batch readiness still gated training.
                     learner_gate_wait_samples_ms.append(idle_ms)
-            step = control.collector_steps
-            control.global_step = step
-
             if step >= next_log:
-                _drain_stats()
+                # One compact payload per log window to the parent (panel +
+                # TensorBoard live there; see train.py). All ranks send.
                 now = time.time()
                 sps = (step - last_log_step) * num_envs / max(now - last_log_time, 1e-6)
                 warming = step < agent.cfg.learning_starts
                 metrics_log = {k: float(v) for k, v in last_metrics.items()} if (last_metrics and not warming) else None
-                updates = learner.update_idx
-                utd = updates / max(step, 1)
-                # Per-process timing (collector and learner run concurrently, so
-                # these do NOT sum to 100% like the sync panel):
-                #   timing_ms[collect] — collector's avg ms per env-step batch (from queue)
-                #   timing_ms[wait] — avg ring-backpressure wait per batch
-                #   learn_ms   — learner's avg ms per train call (one UTD
-                #                execution, which may run several gradient
-                #                updates); idle waits are not included
-                #   learn_pct  — fraction of learner wall-clock spent updating vs
-                #                idle/starved (≈100% when GPU-bound, lower if the
-                #                collector can't keep the buffer fed)
-                # Window means only: live-panel percentiles are noise at these
-                # sample counts (benchmarks own the tail statistics).
                 learn_pct = 100.0 * t_learn_win / max(now - last_log_time, 1e-9)
-                collector_timing_ms = last_stats.get("timing_ms", {})
-                collector_timing_detail_ms = {
-                    key: value for key, value in collector_timing_ms.items() if key != "collect"
-                }
-                # Panel tree is per-process; the headline collect/learn means
-                # live on TrainingPanelStats. Every timing key is either a flat
-                # stage name or a dotted path (``sync.wait_writer``,
-                # ``env_step.physics``); nesting is rebuilt with one rule, and
-                # a stage's own total folds into its node. (The collector
-                # already reports at most one sub-stage level per stage.)
-                collector_items: dict[str, Any] = {}
-                for key, value in collector_timing_detail_ms.items():
-                    _nest_timing_path(collector_items, tuple(key.split(".")), value)
-                timing_groups = {"collector": collector_items}
                 learner_items: dict[str, Any] = {}
-                drain_ms = _timing_mean(learner_drain_samples_ms) if learner_drain_samples_ms else 0.0
-                ring_wait_ms = _timing_mean(learner_ring_wait_samples_ms) if learner_ring_wait_samples_ms else 0.0
-                gate_wait_ms = _timing_mean(learner_gate_wait_samples_ms) if learner_gate_wait_samples_ms else 0.0
                 if learner_drain_samples_ms:
-                    learner_items["drain"] = drain_ms
+                    learner_items["drain"] = timing_mean(learner_drain_samples_ms)
                 if learner_ring_wait_samples_ms:
-                    learner_items["ring wait"] = ring_wait_ms
+                    learner_items["ring wait"] = timing_mean(learner_ring_wait_samples_ms)
                 if learner_gate_wait_samples_ms:
-                    learner_items["gate wait"] = gate_wait_ms
-                update_items = {key: _timing_mean(values) for key, values in learner_breakdown_samples_ms.items()}
+                    learner_items["gate wait"] = timing_mean(learner_gate_wait_samples_ms)
+                update_items = {key: timing_mean(values) for key, values in learner_breakdown_samples_ms.items()}
                 if update_items:
                     # publish is a child stage of the learner update in the
                     # panel, so include it in the displayed update total too.
                     if "publish" in update_items and "total" in update_items:
                         update_items["total"] += update_items["publish"]
                     learner_items["update"] = update_items
-                if learner_items:
-                    timing_groups["learner"] = learner_items
-                learn_ms = _timing_mean(learner_train_samples_ms) if learner_train_samples_ms else 0.0
-                stats = TrainingPanelStats(
-                    iteration=step,
-                    total_iterations=num_iterations,
-                    steps_per_second=sps,
-                    elapsed_seconds=now - start_time,
-                    mean_return=last_stats["return"],
-                    mean_episode_length=last_stats["ep_len"],
-                    episodes=last_stats["episodes"],
-                    buffer_size=agent.rb.num_stored * num_envs,
-                    buffer_capacity=agent.rb.buffer_size * num_envs,
-                    collect_ms=collector_timing_ms.get("collect", 0.0),
-                    learn_ms=learn_ms,
-                    learn_percent=learn_pct,
-                    warming=warming,
-                    training_metrics=metrics_log,
-                    reward_terms=last_stats["reward_terms"],
-                    env_metrics=last_stats["env_metrics"],
-                    timing_groups=timing_groups,
-                    diagnostics={"UTD": utd},
-                    cpu_load=cpu_sampler.sample(),
-                    gpu_utilization_percent=gpu_sampler.sample(),
-                    memory_usage=memory_sampler.sample(),
-                    gpu_memory_usage=gpu_memory_sampler.sample(),
-                    gpu_devices=sample_gpu_devices(gpu_sampler, gpu_memory_sampler),
-                    checkpoint_path=last_checkpoint_path,
-                )
-                emit_training_panel(live, stats, title=f"{env_name}/motrix.fastsac")
-                if writer is not None:
-                    writer.add_scalar("rollout/mean_return", last_stats["return"], step)
-                    writer.add_scalar("rollout/mean_ep_len", last_stats["ep_len"], step)
-                    writer.add_scalar("perf/env_steps_per_s", sps, step)
-                    writer.add_scalar(
-                        "perf/updates_per_s", (updates - last_update_idx) / max(now - last_log_time, 1e-6), step
-                    )
-                    writer.add_scalar("async/policy_lag", last_stats["policy_lag"], step)
-                    writer.add_scalar("async/ring_fill", ring.size(), step)
-                    writer.add_scalar("async/weight_version", weight_tx.version, step)
-                    writer.add_scalar("async/utd", utd, step)
-                    writer.add_scalar("perf/collect_ms_per_batch", collector_timing_ms.get("collect", 0.0), step)
-                    for k, v in collector_timing_detail_ms.items():
-                        writer.add_scalar(f"perf/collector_{k}_ms", v, step)
-                    writer.add_scalar("perf/learn_ms_total", learn_ms, step)
-                    writer.add_scalar("perf/learn_pct", learn_pct, step)
-                    for k, v in last_stats["env_metrics"].items():
-                        writer.add_scalar(f"metrics/{k}", v, step)
-                    for k, v in last_stats["reward_terms"].items():
-                        writer.add_scalar(f"reward/{k}", v, step)
-                    if metrics_log is not None:
-                        for k, v in metrics_log.items():
-                            writer.add_scalar(f"train/{k}", v, step)
-                last_log_time, last_log_step, last_update_idx = now, step, updates
+                payload = {
+                    "rank": rank,
+                    "step": step,
+                    "sps": sps,
+                    "updates": learner.update_idx,
+                    "metrics": metrics_log,
+                    "warming": warming,
+                    "learn_ms": timing_mean(learner_train_samples_ms) if learner_train_samples_ms else 0.0,
+                    "learn_pct": learn_pct,
+                    "learner_timing": learner_items,
+                    "buffer_size": agent.rb.num_stored * agent.num_envs,
+                    "buffer_capacity": agent.rb.buffer_size * agent.num_envs,
+                    # bare RingCursors (IPC transport) carry no size; the
+                    # wrapped IpcTransitionRing lives in this worker.
+                    "ring_fill": [None if isinstance(ring, RingCursors) else ring.size() for ring in all_rings],
+                    "weight_version": max((tx.version for tx in weight_txs), default=None),
+                    "checkpoint_path": last_checkpoint_path,
+                }
+                # Never block the training loop on a slow panel consumer:
+                # drop the window's payload if the queue is full (the next
+                # window's numbers supersede it anyway).
+                try:
+                    panel_queue.put_nowait(payload)
+                except Full:
+                    pass
+                last_log_time, last_log_step = now, step
                 t_learn_win = 0.0
                 learner_train_samples_ms = []
                 learner_drain_samples_ms = []
                 learner_breakdown_samples_ms = {}
                 learner_ring_wait_samples_ms = []
                 learner_gate_wait_samples_ms = []
-                next_log += logging_interval
+                # Recompute the window edge (not +=) so the immediate first
+                # payload cannot shift every later window off the interval.
+                next_log = ((step // logging_interval) + 1) * logging_interval if logging_interval > 0 else 0
 
-            if save_interval > 0 and step >= next_save and step > 0:
+            if is_primary and save_interval > 0 and step >= next_save and step > 0:
                 agent.global_step = step
                 learner.wait_ingest()  # checkpoint reads the rb tensors
                 path = Path(checkpoint_dir) / f"model_{step:07d}.pt"
@@ -712,39 +756,43 @@ def run_learner_process(
                     checkpoints.TRAINING_STATE,
                     checkpoint_format=checkpoint_format,
                 )
-                if console is not None:
-                    last_checkpoint_path = str(path)
-                else:
-                    print(f"[motrix.fastsac async] saved checkpoint {path}")
+                last_checkpoint_path = str(path)
+                logger.info("saved checkpoint %s", path)
                 next_save += save_interval
 
-        # final checkpoint (identical structure to sync fastsac)
-        agent.global_step = control.collector_steps
-        learner.wait_ingest()  # checkpoint reads the rb tensors
-        ckpt_path = checkpoints.final_checkpoint_path(checkpoint_format, Path(run_dir))
-        ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(agent.state_dict(), ckpt_path)
-        checkpoints.record_checkpoint_artifact(
-            Path(run_dir),
-            checkpoints.LATEST_TRAINING_STATE,
-            ckpt_path,
-            checkpoints.TRAINING_STATE,
-            checkpoint_format=checkpoint_format,
-        )
-        checkpoints.record_checkpoint_artifact(
-            Path(run_dir),
-            checkpoints.BEST_POLICY,
-            ckpt_path,
-            checkpoints.POLICY,
-            checkpoint_format=checkpoint_format,
-        )
-        (console.print if console else print)(f"[motrix.fastsac async] saved checkpoint to {ckpt_path}")
-        if writer is not None:
-            writer.close()
+        if num_learners > 1:
+            # All ranks have consumed the identical global step count, so the
+            # collectives inside update() are matched; this barrier aligns
+            # teardown so no rank destroys the process group while another is
+            # still inside a collective.
+            dist.barrier()
+        if is_primary:
+            # final checkpoint (identical structure to sync fastsac)
+            agent.global_step = control.collector_steps // num_collectors
+            learner.wait_ingest()  # checkpoint reads the rb tensors
+            ckpt_path = checkpoints.final_checkpoint_path(checkpoint_format, Path(run_dir))
+            ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(agent.state_dict(), ckpt_path)
+            checkpoints.record_checkpoint_artifact(
+                Path(run_dir),
+                checkpoints.LATEST_TRAINING_STATE,
+                ckpt_path,
+                checkpoints.TRAINING_STATE,
+                checkpoint_format=checkpoint_format,
+            )
+            checkpoints.record_checkpoint_artifact(
+                Path(run_dir),
+                checkpoints.BEST_POLICY,
+                ckpt_path,
+                checkpoints.POLICY,
+                checkpoint_format=checkpoint_format,
+            )
+            logger.info("saved checkpoint to %s", ckpt_path)
     except BaseException:
-        error_queue.put(("learner", traceback.format_exc()))
+        if not isinstance(sys.exc_info()[1], (KeyboardInterrupt, SystemExit)):
+            error_queue.put((f"learner[{rank}]" if num_learners > 1 else "learner", traceback.format_exc()))
         raise
     finally:
-        if live is not None:
-            live.stop()
-        control.set_stop()  # tell the collector to exit
+        if num_learners > 1:
+            dist.destroy_process_group()
+        control.set_stop()  # tell the collectors to exit

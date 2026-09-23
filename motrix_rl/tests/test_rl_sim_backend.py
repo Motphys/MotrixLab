@@ -19,7 +19,7 @@ from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.registry import EnvBuildSpec
 from motrix_env_motrixsim.torch_env import TorchEnv, TorchEnvState, TorchObs
-from motrix_rl.fastsac.async_impl.transport import Control, SharedTransitionRing
+from motrix_rl.fastsac.async_impl.transport import Control, SharedTransitionRing, StartupHandshake
 from motrix_rl.fastsac.async_impl.transport.weight_channel import HostWeightSender, WeightChannelShared
 from motrix_rl.fastsac.async_impl.worker import actor_param_numel, run_collector_process
 from motrix_rl.fastsac.wrap import FastSacEnvWrap
@@ -249,7 +249,7 @@ def _async_cfg():
     )
 
 
-def _collect_in_spawn(sim_backend: str) -> tuple[torch.Tensor, ...]:
+def _collect_in_spawn(sim_backend: str, tmp_path) -> tuple[torch.Tensor, ...]:
     cfg = _async_cfg()
     dims = (_OBS_DIM, _OBS_DIM, _ACT_DIM)
     action_scale = torch.ones(_ACT_DIM)
@@ -260,17 +260,36 @@ def _collect_in_spawn(sim_backend: str) -> tuple[torch.Tensor, ...]:
     ctx = mp.get_context("spawn")
     stats_queue = ctx.Queue(maxsize=2)
     error_queue = ctx.Queue(maxsize=2)
-    slot_queue = ctx.Queue(maxsize=1)
     weight_tx = HostWeightSender(weights, actor_param_numel(cfg, dims, action_scale, action_bias))
-    # Ship the real handshake message shape: (weight slots, ring slots). The
-    # host SharedTransitionRing needs no ring slots, so the ring field is None.
-    slot_queue.put((weight_tx.params, None))  # ship before the collector process starts
+    # Ship the real handshake messages: weight slots (publisher learner) and
+    # ring slots (draining learner; None for the host SharedTransitionRing).
+    handshake = StartupHandshake(ctx, num_collectors=1, barrier=False)
+    handshake.ship_weight_slots(0, weight_tx.params)
+    handshake.ship_ring_slots(0, None)
+
     env_cls = _AsyncNpEnv if sim_backend == "np" else _AsyncTorchEnv
     env_spec = EnvBuildSpec(env_cls, EnvCfg(scene=SceneCfg()))
-    ipc_resources = (ring, weights, control, stats_queue, error_queue)
     process = ctx.Process(
         target=run_collector_process,
-        args=(env_spec, cfg, _NUM_ENVS, dims, action_scale, action_bias, *ipc_resources, 1, 1, False, 7, slot_queue),
+        kwargs={
+            "env_spec": env_spec,
+            "cfg": cfg,
+            "num_envs": _NUM_ENVS,
+            "dims": dims,
+            "action_scale": action_scale,
+            "action_bias": action_bias,
+            "ring": ring,
+            "weights": weights,
+            "control": control,
+            "stats_queue": stats_queue,
+            "error_queue": error_queue,
+            "num_iterations": 1,
+            "logging_interval": 1,
+            "is_resume": False,
+            "seed": 7,
+            "run_dir": str(tmp_path),
+            "handshake": handshake,
+        },
     )
 
     process.start()
@@ -300,9 +319,9 @@ def _collect_in_spawn(sim_backend: str) -> tuple[torch.Tensor, ...]:
     platform.machine().lower() not in {"amd64", "x86_64"},
     reason="FastSAC async shared memory currently supports x86-64 only",
 )
-def test_fastsac_async_supports_sim_backends() -> None:
-    np_slot = _collect_in_spawn("np")
-    torch_slot = _collect_in_spawn("torch")
+def test_fastsac_async_supports_sim_backends(tmp_path) -> None:
+    np_slot = _collect_in_spawn("np", tmp_path)
+    torch_slot = _collect_in_spawn("torch", tmp_path)
 
     assert len(np_slot) == len(torch_slot)
     for np_tensor, torch_tensor in zip(np_slot, torch_slot):

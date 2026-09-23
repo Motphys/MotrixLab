@@ -58,12 +58,23 @@ def _shared(shape, dtype) -> torch.Tensor:
 
 # ---------------------------------------------------------------- control block
 class Control:
-    """A handful of shared scalar controls / counters."""
+    """A handful of shared scalar controls / counters.
 
-    def __init__(self):
+    ``collector_steps`` is a per-collector counter array: each collector
+    increments only its own entry (single writer), and the aggregate property
+    sums them. The learner uses the aggregate as the training-progress basis;
+    each collector compares its own entry against ``num_iterations`` /
+    ``learning_starts`` (one entry == one env-step batch of that collector's
+    env shard). With ``num_collectors=1`` this is byte-identical to the previous
+    single-counter behavior.
+    """
+
+    def __init__(self, num_collectors: int = 1):
+        self.num_collectors = num_collectors
         self._stop = _shared((1,), torch.int64)
         self._global_step = _shared((1,), torch.int64)  # learner iteration counter
-        self._collector_steps = _shared((1,), torch.int64)  # env-step batches produced
+        # one env-step-batch counter per collector, single-writer each
+        self._collector_steps = [_shared((1,), torch.int64) for _ in range(num_collectors)]
 
     @property
     def stop(self) -> bool:
@@ -82,14 +93,29 @@ class Control:
 
     @property
     def collector_steps(self) -> int:
-        return int(self._collector_steps[0])
+        """Aggregate env-step batches produced by all collectors."""
+        return sum(int(counter[0]) for counter in self._collector_steps)
 
-    @collector_steps.setter
-    def collector_steps(self, v: int) -> None:
-        self._collector_steps[0] = v
+    def resume_collector_steps(self, per_collector_v: int) -> None:
+        """Restart every collector's own counter at ``per_collector_v``.
 
-    def inc_collector_steps(self) -> None:
-        self._collector_steps[0] += 1
+        Resume entry point: ``per_collector_v`` is the checkpointed training
+        step in full ``num_envs``-batch equivalents (== the checkpoint's
+        ``global_step``); the aggregate becomes ``num_collectors *
+        per_collector_v``, matching the invariant that the learner's progress
+        basis is the aggregate while each collector terminates against its own
+        entry. Intentionally a named method, not a setter: the property reads
+        as the aggregate while this writes per-collector values — same units
+        under both directions would be a trap.
+        """
+        for counter in self._collector_steps:
+            counter[0] = per_collector_v
+
+    def collector_steps_at(self, collector_id: int) -> int:
+        return int(self._collector_steps[collector_id][0])
+
+    def inc_collector_steps(self, collector_id: int) -> None:
+        self._collector_steps[collector_id][0] += 1
 
 
 # ---------------------------------------------------------------- flat-param helpers

@@ -38,6 +38,10 @@ class CpuLoad:
     iowait_percent: float
     steal_percent: float
     per_core_percent: tuple[float, ...] | None = None
+    # The logical CPU ids aligned 1:1 with ``per_core_percent`` (sorted). Under
+    # NUMA binding the sampler only sees the process's affinity, so positional
+    # labels would misreport which physical cores are shown.
+    per_core_ids: tuple[int, ...] | None = None
     # Static "model name" from /proc/cpuinfo (Linux); None where unavailable.
     model_name: str | None = None
 
@@ -101,6 +105,7 @@ class CpuLoadSampler:
             iowait_percent=100.0 * iowait / total,
             steal_percent=100.0 * steal / total,
             per_core_percent=per_core,
+            per_core_ids=tuple(sorted(common_ids)),
             model_name=self._model_name,
         )
 

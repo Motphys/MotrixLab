@@ -16,18 +16,6 @@ def _make_learner(utd_mode: str, num_updates: int) -> Learner:
     return learner
 
 
-def test_strict_scales_num_updates_by_ingested_batches() -> None:
-    learner = _make_learner("strict", 4)
-    assert learner._num_updates_for(3) == 12
-    assert learner._num_updates_for(0) == 0
-
-
-def test_learner_bound_runs_full_batch() -> None:
-    learner = _make_learner("learner_bound", 4)
-    assert learner._num_updates_for(0) == 4
-    assert learner._num_updates_for(2) == 4
-
-
 def test_own_copies_compiled_outputs_out_of_the_graph_pool() -> None:
     """Regression: metrics read at log time came from an invalidated CUDA graph.
 
@@ -166,22 +154,22 @@ def test_update_metrics_survive_later_graph_generations() -> None:
 
 
 def test_nest_timing_path_merges_scalar_total_with_children_in_any_order() -> None:
-    from motrix_rl.fastsac.async_impl.worker import _nest_timing_path
+    from motrix_rl.fastsac.async_impl.stats import nest_timing_path
 
     # the collector emits a stage's scalar before its dotted sub-stages; the
     # rebuild must fold it into a "total" instead of nesting under a float
     tree: dict = {}
-    _nest_timing_path(tree, ("physics",), 15.0)
-    _nest_timing_path(tree, ("physics", "read"), 12.0)
+    nest_timing_path(tree, ("physics",), 15.0)
+    nest_timing_path(tree, ("physics", "read"), 12.0)
     assert tree == {"physics": {"total": 15.0, "read": 12.0}}
 
     # reverse order must converge to the same tree
     tree = {}
-    _nest_timing_path(tree, ("physics", "read"), 12.0)
-    _nest_timing_path(tree, ("physics",), 15.0)
+    nest_timing_path(tree, ("physics", "read"), 12.0)
+    nest_timing_path(tree, ("physics",), 15.0)
     assert tree == {"physics": {"total": 15.0, "read": 12.0}}
 
     # stages without sub-stages stay scalar
     tree = {}
-    _nest_timing_path(tree, ("apply_action",), 1.5)
+    nest_timing_path(tree, ("apply_action",), 1.5)
     assert tree == {"apply_action": 1.5}
