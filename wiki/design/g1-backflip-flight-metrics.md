@@ -2,12 +2,12 @@
 
 ## 摘要
 
-本文定义 `g1-wbt-backflip` 任务飞行技能指标（`flight_pitch_rotation` / `flight_max_pelvis_z` /
-`clip_ended`）在 mixed/RSI 采样下的正确口径：指出原实现把不可达判定点的 episode 计入均值
-造成的系统性低估，并给出条件指标 + 覆盖率、二值成功率、物理落地事件、checkpoint 选择解耦
-的修正设计。`landed_upright` 已删除（固定帧判定无法修复，落地质量评估归入物理落地事件
-设计与 play 口径）；其余修正尚未实施，实施前训练期均值只可用于趋势诊断，策略真实水平以
-play 口径（帧 0 起跑、零噪声）评估为准。
+本文定义 `g1-wbt-backflip` 任务飞行技能指标口径（`flight_max_pelvis_z` / `clip_ended`）：
+指出原实现把不可达判定点的 episode 计入均值造成的系统性低估，并给出条件指标 + 覆盖率、
+二值成功率、物理落地事件、checkpoint 选择解耦的修正设计。`landed_upright`（固定帧判定）
+与 `flight_pitch_rotation`（连续均值不可解读，且被起点分布操纵——均匀 vs adaptive 采样
+下同一策略均值差 3.7 倍）均已删除；其余修正尚未实施，实施前训练期均值只可用于趋势诊断，
+策略真实水平以 play 口径（帧 0 起跑、零噪声）评估为准。
 
 ## 问题定义
 

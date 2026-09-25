@@ -102,23 +102,21 @@ class WbtMotionCommand(CommandTerm):
     kernel_size: np.int64
     kernel_lambda: np.float32
 
-    # Aerial-phase ("flight window") honest-skill metrics. The window is
+    # Aerial-phase ("flight window") honest-skill metric. The window is
     # derived once from the clip's root-z profile; the kernel accumulates
-    # per-lane max pelvis height and unwrapped rotation about the clip's
-    # flight axis inside it. Static window bounds are baked in at compile
-    # time (never mutated at runtime).
+    # per-lane max pelvis height inside it. Static window bounds are baked
+    # in at compile time (never mutated at runtime).
     flight_metrics: bool
     flight_start: np.int64
     flight_end: np.int64
     # Unit flight rotation axis (world frame, signed to the reference's
     # rotation direction). The robot may face any heading in the clip, so its
     # pitch axis is NOT world y in general — projecting the pelvis angular
-    # velocity onto this axis is what makes the accumulated rotation read
+    # velocity onto this axis is what lets the flight-rotation reward read
     # ~2*pi for a complete flip.
     flight_axis: SharedArray
     # Static upper bound on sampled start frames (-1 = unlimited).
     flight_max_z: np.ndarray = metric(name="flight_max_pelvis_z", dtype=np.float32)
-    flight_pitch_acc: np.ndarray = metric(name="flight_pitch_rotation", dtype=np.float32)
 
     # Per-environment frame state exposed through the manager metrics system.
     # Kept as ``(num_envs, 1)`` per-env arrays: the kernel lowering hands each
@@ -179,21 +177,13 @@ class WbtMotionCommand(CommandTerm):
             quat_mul(out_quat, motion_tracked_bodies_quat_w[body_id], out_quat)
 
         if self.flight_metrics:
-            # Honest flip metrics, evaluated inside the aerial window only.
-            # Rotation progress integrates the pelvis angular velocity
-            # projected onto the clip's flight axis (world frame, signed to
-            # the reference direction): an asin-based euler pitch folds beyond
-            # ±90° and a fixed world-y projection measures the wrong axis
-            # whenever the robot's heading is not aligned with it — both
-            # returned ~0 for full flips. Integrating the projected rate
-            # accumulates exactly ~2π over a complete rotation.
+            # Honest flip metric, evaluated inside the aerial window only:
+            # per-episode max pelvis height. (The accumulated-rotation mean
+            # was removed: episode means over mixed sampling are not
+            # interpretable — see wiki/design/g1-backflip-flight-metrics.md.)
             pelvis_pos = ctx.sim["tracked_body_pos"][0]
-            pelvis_ang_vel = ctx.sim["tracked_body_angular_velocity"][0]
             step = self.steps[0]
             if self.flight_start <= step <= self.flight_end:
-                axis = self.flight_axis
-                rotation_rate = pelvis_ang_vel[0] * axis[0] + pelvis_ang_vel[1] * axis[1] + pelvis_ang_vel[2] * axis[2]
-                self.flight_pitch_acc[0] += rotation_rate * ctx.dt
                 if pelvis_pos[2] > self.flight_max_z[0]:
                     self.flight_max_z[0] = pelvis_pos[2]
 
@@ -202,7 +192,6 @@ class WbtMotionCommand(CommandTerm):
         env_ids = ctx.env_ids
         if self.flight_metrics:
             self.flight_max_z[env_ids, 0] = 0.0
-            self.flight_pitch_acc[env_ids, 0] = 0.0
         if self.sampling_cdf.size:
             episode_failed = ctx.terminated[env_ids]
             if np.any(episode_failed):
@@ -317,11 +306,9 @@ class WbtMotionCommandCfg(CommandCfg):
     alpha: float = 0.001
     kernel_size: int = 1
     kernel_lambda: float = 0.8
-    # Honest aerial-skill metrics: the flight window is derived from the clip
+    # Honest aerial-skill metric: the flight window is derived from the clip
     # root-z profile (frames above min + flight_z_fraction * (max - min)).
-    # Inside it the command accumulates per-env max pelvis height, unwrapped
-    # pelvis pitch rotation, and an upright-landing check half a second after
-    # touchdown.
+    # Inside it the command accumulates per-env max pelvis height.
     flight_metrics_enabled: bool = False
     flight_z_fraction: float = 0.5
 
@@ -368,8 +355,8 @@ class WbtMotionCommandCfg(CommandCfg):
             # Flight rotation axis: integrate the reference root angular
             # velocity across the window and normalize. The integral already
             # carries the rotation direction, so a full flip performed exactly
-            # on the reference accumulates ~+2*pi along this axis. Guards
-            # against near-degenerate windows (no net rotation).
+            # on the reference aligns ~+2*pi along this axis. Guards against
+            # near-degenerate windows (no net rotation).
             root_ang_vel_w = np.asarray(source.root_body_ang_vel_w, dtype=np.float64)[flight_start : flight_end + 1]
             flight_axis = root_ang_vel_w.sum(axis=0)
             axis_norm = float(np.linalg.norm(flight_axis))
@@ -402,11 +389,10 @@ class WbtMotionCommandCfg(CommandCfg):
             kernel_size=np.int64(self.kernel_size),
             kernel_lambda=np.float32(self.kernel_lambda),
             flight_metrics=self.flight_metrics_enabled,
-            flight_axis=flight_axis,
             flight_start=np.int64(flight_start),
             flight_end=np.int64(flight_end),
+            flight_axis=flight_axis,
             flight_max_z=np.zeros((env.num_envs, 1), dtype=np.float32),
-            flight_pitch_acc=np.zeros((env.num_envs, 1), dtype=np.float32),
         )
 
 

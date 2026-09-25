@@ -17,13 +17,11 @@
 - 每个消融只改一个因子，其余与 baseline 完全一致
 - 预算：40k iterations（沿用 v1–v7 历史消融的可比预算）
 - 判据（按优先级）：
-  1. `metrics/flight_pitch_rotation`（40k 时的峰值旋转角，能否 ≥ 2π 是成败线）
+  1. play 表现（帧 0 起跑、零噪声）：翻转完成度与落点稳定性，唯一公平判据
   2. `metrics/flight_max_pelvis_z`（起跳高度，apex 参考 1.19 m）
-  3. play 表现（帧 0 起跑、零噪声）：落地稳定性以录像为准
+  3. `metrics/ref_pos_abs_err`（全身参考位置误差；A6a 中 +0.03 m 即对应肉眼可见的落点变差）
   4. episode length（过早终止密度）
-- `metrics/landed_upright` 已删除：固定帧判定 + 全 episode 均值被瞬移 episode 稀释，
-  训练均值与 play 表现背离（A3 消融中均值 0.05 与 play 稳定落地并存），不可作为判据；
-  口径分析与替代设计见 [飞行指标口径设计](../design/g1-backflip-flight-metrics.md)
+- 已删除的不可用指标：`landed_upright`（固定帧判定 + 均值稀释）、`flight_pitch_rotation`（连续均值不可解读，且被起点分布操纵——adaptive 采样下同一策略均值差 3.7 倍）。口径分析与二值成功率替代设计见 [飞行指标口径设计](../design/g1-backflip-flight-metrics.md)
 - 结果记录到本文档 TODO 表格，40k 曲线与 play 视频存到 `runs/` 对应目录并在本页链接 run 路径
 
 ## 消融项（按预期承重程度排序）
