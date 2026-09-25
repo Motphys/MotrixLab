@@ -19,8 +19,11 @@
 - 判据（按优先级）：
   1. `metrics/flight_pitch_rotation`（40k 时的峰值旋转角，能否 ≥ 2π 是成败线）
   2. `metrics/flight_max_pelvis_z`（起跳高度，apex 参考 1.19 m）
-  3. `metrics/landed_upright` / frame-0-start episodes 的 play 表现（训练期均值被 mid-clip start 稀释，只能作参考）
+  3. play 表现（帧 0 起跑、零噪声）：落地稳定性以录像为准
   4. episode length（过早终止密度）
+- `metrics/landed_upright` 已删除：固定帧判定 + 全 episode 均值被瞬移 episode 稀释，
+  训练均值与 play 表现背离（A3 消融中均值 0.05 与 play 稳定落地并存），不可作为判据；
+  口径分析与替代设计见 [飞行指标口径设计](../design/g1-backflip-flight-metrics.md)
 - 结果记录到本文档 TODO 表格，40k 曲线与 play 视频存到 `runs/` 对应目录并在本页链接 run 路径
 
 ## 消融项（按预期承重程度排序）
@@ -29,7 +32,7 @@
 |---|---|---|---|---|
 | A1 | `bad_ref_z` phased 终止 | 窗外 0.5 / 窗内 0.25 | 固定 0.5（v5 对照） | 代码注释：站立 pelvis-z 误差 0.44 < 0.5 时站立可存活，策略会放弃起跳；预期差异最大 |
 | A2 | `flight_rotation_progress` | 0.3 | 0 | 唯一稠密旋转信号；exp ang-vel kernel 无法从局部尝试 bootstrap 旋转 |
-| A3 | `flight_tuck` | 4.0, σ=1.0 | 0（另跑一组 σ=2.5 对照） | v1 历史数据：episode 326 vs 138；收腿决定最后 1/3 旋转 |
+| A3 | `flight_tuck` | 4.0, σ=1.0 | **已删除** | A3 消融（40k）：旋转/高度与 A1 完全持平，play 帧 0 技能成立；v1 注释的承重结论不成立，term 及 kernel 已从代码移除 |
 | A4 | 混合采样 `start_at_timestep_zero_prob` | 0.2 | 0.0（纯 RSI）/ 1.0（纯 frame-0） | 代码注释：frame-0-only 饿死飞行窗口；uniform_ratio sweep 已否定 adaptive |
 | A5 | root 速度 reset 噪声 | 0（归零） | 恢复默认（lin ±0.5, ang ±0.52/0.78） | 空中瞬移需落在参考弹道；预期 mid-air start 质量下降 |
 | A6 | `motion_ee_body_pos` | 3.0, σ=0.3 | 0 / 或换 z-only（启用 `motion_ee_body_pos_z`） | 代码注释：z-only 留 0.12 m 落点 xy 误差；全 3D 是落点精度来源 |
@@ -54,7 +57,12 @@
   - 对比图：`a1_vs_baseline.png`（run 目录内）；配置改动已合入 `g1.py`
   - 保留项：单 seed 单预算，60k 长程行为未验证
 - [ ] A2：flight_rotation_progress=0
-- [ ] A3：flight_tuck=0（+ σ=2.5 对照）
+- [x] A3：flight_tuck=0 — **结论：无可测影响，term 已从代码删除**
+  - Run：`runs/g1-wbt-backflip/motrix/torch/fastsac/26-09-25_20-59-41-018089`（40k）
+  - 旋转 2.96 / 高度 0.68 m 与 A1 完全持平；play 帧 0 技能成立（起跳→半圈→站稳）
+  - 当时记录的 `landed_upright` 崩塌系指标口径缺陷（见判据说明），不构成承重证据
+  - `FlightTuckRewardCfg` / `flight_tuck_reward` kernel 仅此一处使用，已一并删除
+  - 对比图：`a3_vs_a1.png`（run 目录内）
 - [ ] A4：start_at_timestep_zero_prob 0.0 / 1.0 两组
 - [ ] A5：恢复 root 速度 reset 噪声
 - [ ] A6：motion_ee_body_pos=0 与 z-only 对照

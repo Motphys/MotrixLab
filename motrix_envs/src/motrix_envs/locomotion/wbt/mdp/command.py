@@ -105,13 +105,11 @@ class WbtMotionCommand(CommandTerm):
     # Aerial-phase ("flight window") honest-skill metrics. The window is
     # derived once from the clip's root-z profile; the kernel accumulates
     # per-lane max pelvis height and unwrapped rotation about the clip's
-    # flight axis inside it and stamps an upright-landing check right after
-    # it. Static window bounds are baked in at compile time (never mutated at
-    # runtime).
+    # flight axis inside it. Static window bounds are baked in at compile
+    # time (never mutated at runtime).
     flight_metrics: bool
     flight_start: np.int64
     flight_end: np.int64
-    land_check_step: np.int64
     # Unit flight rotation axis (world frame, signed to the reference's
     # rotation direction). The robot may face any heading in the clip, so its
     # pitch axis is NOT world y in general — projecting the pelvis angular
@@ -121,7 +119,6 @@ class WbtMotionCommand(CommandTerm):
     # Static upper bound on sampled start frames (-1 = unlimited).
     flight_max_z: np.ndarray = metric(name="flight_max_pelvis_z", dtype=np.float32)
     flight_pitch_acc: np.ndarray = metric(name="flight_pitch_rotation", dtype=np.float32)
-    landed_upright: np.ndarray = metric()
 
     # Per-environment frame state exposed through the manager metrics system.
     # Kept as ``(num_envs, 1)`` per-env arrays: the kernel lowering hands each
@@ -199,12 +196,6 @@ class WbtMotionCommand(CommandTerm):
                 self.flight_pitch_acc[0] += rotation_rate * ctx.dt
                 if pelvis_pos[2] > self.flight_max_z[0]:
                     self.flight_max_z[0] = pelvis_pos[2]
-            if step == self.land_check_step:
-                pelvis_quat = ctx.sim["tracked_body_quat"][0]
-                sin_pitch = 2.0 * (pelvis_quat[3] * pelvis_quat[1] - pelvis_quat[2] * pelvis_quat[0])
-                sin_pitch = min(max(sin_pitch, -1.0), 1.0)
-                pitch = math.asin(sin_pitch)
-                self.landed_upright[0] = abs(pitch) < 0.3
 
     def reset(self, ctx: ResetContext) -> None:
         """Update adaptive statistics and prepare sampling for selected environments."""
@@ -212,7 +203,6 @@ class WbtMotionCommand(CommandTerm):
         if self.flight_metrics:
             self.flight_max_z[env_ids, 0] = 0.0
             self.flight_pitch_acc[env_ids, 0] = 0.0
-            self.landed_upright[env_ids, 0] = False
         if self.sampling_cdf.size:
             episode_failed = ctx.terminated[env_ids]
             if np.any(episode_failed):
@@ -375,8 +365,6 @@ class WbtMotionCommandCfg(CommandCfg):
                 )
             flight_start = int(airborne[0])
             flight_end = int(airborne[-1])
-            env_fps = max(int(round(1.0 / env.cfg.ctrl_dt)), 1)
-            land_check_step = flight_end + env_fps // 2
             # Flight rotation axis: integrate the reference root angular
             # velocity across the window and normalize. The integral already
             # carries the rotation direction, so a full flip performed exactly
@@ -394,7 +382,6 @@ class WbtMotionCommandCfg(CommandCfg):
         else:
             flight_start = 0
             flight_end = -1
-            land_check_step = -1
             flight_axis = np.zeros((3,), dtype=np.float32)
         tracked_shape = (len(self.tracked_body_names), 3)
         return WbtMotionCommand(
@@ -418,10 +405,8 @@ class WbtMotionCommandCfg(CommandCfg):
             flight_axis=flight_axis,
             flight_start=np.int64(flight_start),
             flight_end=np.int64(flight_end),
-            land_check_step=np.int64(land_check_step),
             flight_max_z=np.zeros((env.num_envs, 1), dtype=np.float32),
             flight_pitch_acc=np.zeros((env.num_envs, 1), dtype=np.float32),
-            landed_upright=np.zeros((env.num_envs, 1), dtype=bool),
         )
 
 

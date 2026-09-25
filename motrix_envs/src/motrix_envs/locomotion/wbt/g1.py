@@ -22,7 +22,6 @@ from motrix_envs.locomotion.wbt.mdp.rewards import (
     EeBodyPosRewardCfg,
     EeBodyPosZRewardCfg,
     FlightRotationProgressRewardCfg,
-    FlightTuckRewardCfg,
     GlobalBodyAngularVelocityRewardCfg,
     GlobalRefOrientationRewardCfg,
     GlobalRefPositionRewardCfg,
@@ -125,17 +124,14 @@ registry.env("g1-29dof-wbt-largebox")(ManagerEnv)
 
 @configclass
 class G1BackflipRewardsCfg(RewardsCfg):
-    """Backflip rewards: v5 hybrid — v3's proven stack, holosoma-aligned base.
+    """Backflip rewards: holosoma-aligned base plus launch/rotation terms.
 
-    zh_CN: 后空翻奖励：v3 验证过的组合（tuck/EE 高度/轻动作率课程）保留。
+    zh_CN: 后空翻奖励：holosoma 对齐基础权重，外加起跳与旋转辅助项。
 
     The pure holosoma fastsac weights (v4) regressed the launch: the strict
     EE termination killed every takeoff attempt before the skill formed, and
-    without ``flight_tuck`` / ``motion_ee_body_pos_z`` / the light
-    curriculum-scaled ``action_rate_l2`` there was no remaining signal that
-    rewards the launch itself. This hybrid keeps those three launch-critical
-    terms (validated by the v1-v3 ablations) on top of the holosoma-aligned
-    base weights.
+    without ``flight_rotation_progress`` / the light ``action_rate_l2`` there
+    was no remaining signal that rewards the launch itself.
     """
 
     # Flat -0.01 (gating removed): the action-rate sweep established -0.01 as
@@ -147,38 +143,6 @@ class G1BackflipRewardsCfg(RewardsCfg):
     # pitch rate inside the flight window — the exp ang-vel kernel alone
     # cannot bootstrap rotation from partial attempts.
     flight_rotation_progress: FlightRotationProgressRewardCfg = FlightRotationProgressRewardCfg(weight=0.3)
-
-    # Load-bearing for the launch/landing breakthrough (v1 ablation: episode
-    # length ~326 with vs ~138 without). Tuck coverage extended to the leg
-    # ABDUCTION joints (hip roll/yaw): play inspection of the 80k runs showed
-    # the legs spreading apart mid-flight — the reference tuck holds hip_roll
-    # within ±2° while the policy flew with open legs, inflating the moment
-    # of inertia and stalling rotation at ~3 rad (half-turn plateau). Those
-    # joints were in no reward's coverage: the tuck term only tracked
-    # knee/hip_pitch and the all-body position mean dilutes ankle deviation
-    # to 1/13. Sigma tightened 2.5 -> 1.0: at 2.5 a 1 rad joint error only
-    # costs ~15% of the kernel — effectively unshaped; weight raised
-    # 2.5 -> 4.0 for the physical lever (tighter tuck, smaller inertia,
-    # the missing final third of the rotation).
-    flight_tuck: FlightTuckRewardCfg = FlightTuckRewardCfg(
-        weight=4.0,
-        sigma=1.0,
-        ground_z=0.15,
-        body_names=(
-            "left_ankle_roll_link",
-            "right_ankle_roll_link",
-        ),
-        joint_names=(
-            "left_knee_joint",
-            "right_knee_joint",
-            "left_hip_pitch_joint",
-            "right_hip_pitch_joint",
-            "left_hip_roll_joint",
-            "right_hip_roll_joint",
-            "left_hip_yaw_joint",
-            "right_hip_yaw_joint",
-        ),
-    )
 
     # Load-bearing for launch bootstrap (ablated 2026-09-20): with weight 0
     # and only the full-3D EE term left, launch formation stalls ~20k iters

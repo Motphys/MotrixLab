@@ -137,64 +137,6 @@ class EeBodyPosRewardCfg(RewardTermCfg):
 
 
 @dispatch
-def flight_tuck_reward(
-    ctx: ManagerContext,
-    dof_indices: tuple[int, ...],
-    ankle_body_ids: tuple[int, ...],
-    ground_z: np.float32,
-    sigma: np.float32,
-) -> float:
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    step = motion.steps[0]
-    ref_z = -1.0
-    for i in ankle_body_ids:
-        ref_z = max(ref_z, motion.clip.tracked_bodies_pos_w[step, i, 2])
-    if ref_z <= ground_z:
-        # Grounded frames carry no tuck signal; the all-body terms handle them.
-        return 0.0
-    dof_pos = ctx.sim["robot_dof_pos"]
-    clip_pos = motion.clip.joint_pos[step]
-    error_sq = 0.0
-    for j in dof_indices:
-        diff = clip_pos[j] - dof_pos[j]
-        error_sq += diff * diff
-    return math.exp(-(error_sq / len(dof_indices)) / (sigma * sigma))
-
-
-@configclass(kw_only=True)
-class FlightTuckRewardCfg(RewardTermCfg):
-    """Flight-window tuck reward on flexion joints (knees, hip pitch).
-
-    zh_CN: 腾空段团身奖励（膝、髋屈曲专项跟踪）。
-
-    Active only while the reference is airborne (both reference ankles above
-    ``ground_z``): a tighter tuck spins the flip faster, and the all-body mean
-    position reward dilutes exactly this signal. Empirically load-bearing: the
-    landing breakthrough regressed from length ~326 to ~138 without it.
-    Joints are resolved by name against the model body joint order, which the
-    clip loader enforces on the clip column order.
-    """
-
-    body_names: tuple[str, ...] = ()
-    joint_names: tuple[str, ...] = ()
-    ground_z: float
-    sigma: float
-
-    def __call__(self, ctx) -> RewardTerm:
-        tracked_body_names = ctx.cfg.commands.motion.tracked_body_names
-        ankle_body_ids = tuple(tracked_body_names.index(name) for name in self.body_names)
-        joint_names = ctx.model.bodies["robot"].joint_names
-        dof_indices = tuple(joint_names.index(name) for name in self.joint_names)
-        return RewardTerm(
-            flight_tuck_reward,
-            dof_indices,
-            ankle_body_ids,
-            np.float32(self.ground_z),
-            np.float32(self.sigma),
-        )
-
-
-@dispatch
 def flight_rotation_progress_reward(ctx: ManagerContext, cap: np.float32) -> float:
     motion: WbtMotionCommand = ctx.commands["motion"]
     step = motion.steps[0]
