@@ -20,7 +20,6 @@ from motrix_envs.locomotion.wbt.mdp.command import (
 )
 from motrix_envs.locomotion.wbt.mdp.rewards import (
     EeBodyPosRewardCfg,
-    FlightRotationProgressRewardCfg,
     GlobalBodyAngularVelocityRewardCfg,
     GlobalRefOrientationRewardCfg,
     GlobalRefPositionRewardCfg,
@@ -123,25 +122,20 @@ registry.env("g1-29dof-wbt-largebox")(ManagerEnv)
 
 @configclass
 class G1BackflipRewardsCfg(RewardsCfg):
-    """Backflip rewards: holosoma-aligned base plus launch/rotation terms.
+    """Backflip rewards: holosoma-aligned base plus a light action-rate term.
 
-    zh_CN: 后空翻奖励：holosoma 对齐基础权重，外加起跳与旋转辅助项。
+    zh_CN: 后空翻奖励：holosoma 对齐基础权重，外加轻量动作率项。
 
-    The pure holosoma fastsac weights (v4) regressed the launch: the strict
-    EE termination killed every takeoff attempt before the skill formed, and
-    without ``flight_rotation_progress`` / the light ``action_rate_l2`` there
-    was no remaining signal that rewards the launch itself.
+    The strict EE termination of the v4 experiment killed every takeoff
+    attempt before the skill formed; the light ``action_rate_l2`` keeps
+    per-step action churn from dominating while the position/orientation
+    terms drive the flip.
     """
 
     # Flat -0.01 (gating removed): the action-rate sweep established -0.01 as
     # the only weight that unlocks rotation within a 40k budget (pitch 1.04,
     # vs 0.04-0.25 for every heavier flat or gated variant tested).
     action_rate_l2: ActionRateRewardCfg = ActionRateRewardCfg(weight=-0.01)
-
-    # Dense rotation signal: linear pay per radian of reference-direction
-    # pitch rate inside the flight window — the exp ang-vel kernel alone
-    # cannot bootstrap rotation from partial attempts.
-    flight_rotation_progress: FlightRotationProgressRewardCfg = FlightRotationProgressRewardCfg(weight=0.3)
 
     # Full-3D EE tracking: the z-only variant left foot placement (xy) error
     # at ~0.12 m — diluted to 1/14 in the all-body mean, so landing accuracy

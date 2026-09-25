@@ -54,7 +54,11 @@
   - 两者均停在 ~3.1 rad 半圈平台，说明最后 1/3 旋转的限制不在 bad_ref_z → 支持 A3（flight_tuck）为下一优先
   - 对比图：`a1_vs_baseline.png`（run 目录内）；配置改动已合入 `g1.py`
   - 保留项：单 seed 单预算，60k 长程行为未验证
-- [ ] A2：flight_rotation_progress=0
+- [x] A2：flight_rotation_progress=0 — **两轮消融后确认冗余，term 已删除**
+  - 第一轮（基线含 flight_tuck，run `26-09-25_20-32-52-556148`）：旋转/高度与 A1 持平，末端 landed_upright 偏低（后确认系指标缺陷）
+  - 第二轮（当前配方 = 无 tuck，run `26-09-26_00-28-30-882828`）：高度 0.64、ep_len 446、return 81 与基线持平，play 目测旋转/落地正常
+  - `FlightRotationProgressRewardCfg` / kernel / `flight_axis`（已无其他使用方）一并从代码删除
+  - 顺带发现：`motion_global_body_ang_vel` 的 exp 核在所有 run（含 baseline）恒定贴地（~0.013 ≈ 6.5 rad/s 误差）——旋转监督实际由位置/姿态项间接承担 → 立项 A9（删除 ang_vel term）
 - [x] A3：flight_tuck=0 — **结论：无可测影响，term 已从代码删除**
   - Run：`runs/g1-wbt-backflip/motrix/torch/fastsac/26-09-25_20-59-41-018089`（40k）
   - 旋转 2.96 / 高度 0.68 m 与 A1 完全持平；play 帧 0 技能成立（起跳→半圈→站稳）

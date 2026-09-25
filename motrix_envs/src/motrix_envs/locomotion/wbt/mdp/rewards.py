@@ -106,37 +106,6 @@ class EeBodyPosRewardCfg(RewardTermCfg):
 
 
 @dispatch
-def flight_rotation_progress_reward(ctx: ManagerContext, cap: np.float32) -> float:
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    step = motion.steps[0]
-    if not (motion.flight_start <= step <= motion.flight_end):
-        return 0.0
-    pelvis_ang_vel = ctx.sim["tracked_body_angular_velocity"][0]
-    axis = motion.flight_axis
-    # Reward rotation speed along the clip's flight axis (world frame, signed
-    # to the reference direction), linear and capped: every radian earned pays
-    # immediately (exp kernels cannot do this — they saturate to zero exactly
-    # when rotation is still partial). A fixed world-y projection would reward
-    # the wrong component whenever the robot's heading is not axis-aligned.
-    progress = pelvis_ang_vel[0] * axis[0] + pelvis_ang_vel[1] * axis[1] + pelvis_ang_vel[2] * axis[2]
-    return min(max(progress, 0.0), cap)
-
-
-@configclass(kw_only=True)
-class FlightRotationProgressRewardCfg(RewardTermCfg):
-    """Dense, unsaturating rotation-progress reward inside the flight window.
-
-    zh_CN: 飞行窗口内沿参考翻转轴的转速线性计分（不饱和）的稠密奖励。
-    """
-
-    cap: float = 15.0
-
-    def __call__(self, ctx) -> RewardTerm:
-        del ctx
-        return RewardTerm(flight_rotation_progress_reward, np.float32(self.cap))
-
-
-@dispatch
 def relative_body_orientation_reward(ctx: ManagerContext, sigma: np.float32) -> float:
     tracked_body_quat = ctx.sim["tracked_body_quat"]
     motion: WbtMotionCommand = ctx.commands["motion"]

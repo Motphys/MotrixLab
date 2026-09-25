@@ -109,12 +109,6 @@ class WbtMotionCommand(CommandTerm):
     flight_metrics: bool
     flight_start: np.int64
     flight_end: np.int64
-    # Unit flight rotation axis (world frame, signed to the reference's
-    # rotation direction). The robot may face any heading in the clip, so its
-    # pitch axis is NOT world y in general — projecting the pelvis angular
-    # velocity onto this axis is what lets the flight-rotation reward read
-    # ~2*pi for a complete flip.
-    flight_axis: SharedArray
     # Static upper bound on sampled start frames (-1 = unlimited).
     flight_max_z: np.ndarray = metric(name="flight_max_pelvis_z", dtype=np.float32)
 
@@ -352,24 +346,9 @@ class WbtMotionCommandCfg(CommandCfg):
                 )
             flight_start = int(airborne[0])
             flight_end = int(airborne[-1])
-            # Flight rotation axis: integrate the reference root angular
-            # velocity across the window and normalize. The integral already
-            # carries the rotation direction, so a full flip performed exactly
-            # on the reference aligns ~+2*pi along this axis. Guards against
-            # near-degenerate windows (no net rotation).
-            root_ang_vel_w = np.asarray(source.root_body_ang_vel_w, dtype=np.float64)[flight_start : flight_end + 1]
-            flight_axis = root_ang_vel_w.sum(axis=0)
-            axis_norm = float(np.linalg.norm(flight_axis))
-            if axis_norm < 1e-3:
-                raise ValueError(
-                    f"WBT flight metrics found no net rotation across the flight window in "
-                    f"{self.motion_file!r} (axis norm {axis_norm:.5f}); adjust flight_z_fraction."
-                )
-            flight_axis = (flight_axis / axis_norm).astype(np.float32)
         else:
             flight_start = 0
             flight_end = -1
-            flight_axis = np.zeros((3,), dtype=np.float32)
         tracked_shape = (len(self.tracked_body_names), 3)
         return WbtMotionCommand(
             clip=source,
@@ -391,7 +370,6 @@ class WbtMotionCommandCfg(CommandCfg):
             flight_metrics=self.flight_metrics_enabled,
             flight_start=np.int64(flight_start),
             flight_end=np.int64(flight_end),
-            flight_axis=flight_axis,
             flight_max_z=np.zeros((env.num_envs, 1), dtype=np.float32),
         )
 
