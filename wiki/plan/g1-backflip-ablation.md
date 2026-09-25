@@ -63,7 +63,13 @@
   - 当时记录的 `landed_upright` 崩塌系指标口径缺陷（见判据说明），不构成承重证据
   - `FlightTuckRewardCfg` / `flight_tuck_reward` kernel 仅此一处使用，已一并删除
   - 对比图：`a3_vs_a1.png`（run 目录内）
-- [ ] A4：start_at_timestep_zero_prob 0.0 / 1.0 两组
+- [x] A4c：adaptive_sampling_enabled=True（20% frame-0 + 失败偏好，uniform_ratio=0.1 默认）— **结论：不采纳，保持 False**
+  - Run：`runs/g1-wbt-backflip/motrix/torch/fastsac/26-09-25_23-41-21-192557`（40k）
+  - play（frame-0 公平判据）：技能与 A1 无差异
+  - sampler 行为本身健康：failure_mass 40.3 → 1.5、热点稳定钉在起飞窗口（bin 0.60）、entropy 收敛至 0.65–0.73
+  - 注意：adaptive 下训练均值曲线（rotation 0.80 vs 2.95）不可与均匀采样直接对比——起点分布被刻意偏向困难帧
+  - 保留意见：单 seed 40k；更长更复杂的 clip 或"永远学不会的帧"场景下仍值得复测（诊断指标现成）
+- [ ] A4a：纯 RSI（start0=0.0）/ A4b：纯 frame-0（start0=1.0）— 未跑，优先级最低（A4b 已有明确反面证据）
 - [x] A5：恢复 root 速度 reset 噪声 — **结论：无可测影响，采纳删除归零逻辑**
   - Run：`runs/g1-wbt-backflip/motrix/torch/fastsac/26-09-25_22-38-36-458194`（40k）
   - 旋转 2.90 / 高度 0.65 m 与 A1 持平，return 84.2 vs 81.0；play 帧 0 技能成立
