@@ -74,37 +74,6 @@ class RelativeBodyPositionRewardCfg(RewardTermCfg):
 
 
 @dispatch
-def ee_body_pos_z_reward(ctx: ManagerContext, body_indices: tuple[int, ...], sigma: np.float32) -> float:
-    tracked_body_pos = ctx.sim["tracked_body_pos"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    error_sq = 0.0
-    for body_id in body_indices:
-        diff = motion.target_body_position_relative[body_id, 2] - tracked_body_pos[body_id, 2]
-        error_sq += diff * diff
-    return math.exp(-(error_sq / len(body_indices)) / (sigma * sigma))
-
-
-@configclass(kw_only=True)
-class EeBodyPosZRewardCfg(RewardTermCfg):
-    """Extra height-tracking reward on end-effector bodies (ankles, wrists).
-
-    zh_CN: 末端 body（踝、腕）的高度专项跟踪奖励。
-
-    Mirrors UniLab's ``motion_ee_body_pos_z``: during a flip the extremity
-    heights carry the launch/rotation signal that the all-body mean dilutes,
-    so this term tracks their z error separately.
-    """
-
-    body_names: tuple[str, ...] = ()
-    sigma: float
-
-    def __call__(self, ctx) -> RewardTerm:
-        tracked_body_names = ctx.cfg.commands.motion.tracked_body_names
-        body_indices = tuple(tracked_body_names.index(name) for name in self.body_names)
-        return RewardTerm(ee_body_pos_z_reward, body_indices, np.float32(self.sigma))
-
-
-@dispatch
 def ee_body_pos_reward(ctx: ManagerContext, body_indices: tuple[int, ...], sigma: np.float32) -> float:
     tracked_body_pos = ctx.sim["tracked_body_pos"]
     motion: WbtMotionCommand = ctx.commands["motion"]
@@ -121,10 +90,10 @@ class EeBodyPosRewardCfg(RewardTermCfg):
 
     zh_CN: 末端 body（踝、腕）的三维位置专项跟踪奖励。
 
-    ``motion_ee_body_pos_z`` only constrains height; foot placement error
-    lives mostly in the horizontal plane, and each foot is 1/14 of the
-    all-body relative-position mean — too diluted to shape landing accuracy.
-    This term tracks the full 3D end-effector error directly.
+    Foot placement error lives mostly in the horizontal plane, and each foot
+    is 1/14 of the all-body relative-position mean — too diluted to shape
+    landing accuracy. This term tracks the full 3D end-effector error
+    directly, including the height component.
     """
 
     body_names: tuple[str, ...] = ()

@@ -20,7 +20,6 @@ from motrix_envs.locomotion.wbt.mdp.command import (
 )
 from motrix_envs.locomotion.wbt.mdp.rewards import (
     EeBodyPosRewardCfg,
-    EeBodyPosZRewardCfg,
     FlightRotationProgressRewardCfg,
     GlobalBodyAngularVelocityRewardCfg,
     GlobalRefOrientationRewardCfg,
@@ -143,22 +142,6 @@ class G1BackflipRewardsCfg(RewardsCfg):
     # pitch rate inside the flight window — the exp ang-vel kernel alone
     # cannot bootstrap rotation from partial attempts.
     flight_rotation_progress: FlightRotationProgressRewardCfg = FlightRotationProgressRewardCfg(weight=0.3)
-
-    # Load-bearing for launch bootstrap (ablated 2026-09-20): with weight 0
-    # and only the full-3D EE term left, launch formation stalls ~20k iters
-    # (max_z 0.09 at 30k vs 0.43 with this term) — the 3D error is dominated
-    # by early xy drift and drowns the height signal. Endpoint at 40k nearly
-    # recovers, but the mid-training stall costs the budget.
-    motion_ee_body_pos_z: EeBodyPosZRewardCfg = EeBodyPosZRewardCfg(
-        weight=0.0,
-        sigma=0.3,
-        body_names=(
-            "left_ankle_roll_link",
-            "right_ankle_roll_link",
-            "left_wrist_yaw_link",
-            "right_wrist_yaw_link",
-        ),
-    )
 
     # Full-3D EE tracking: the z-only variant left foot placement (xy) error
     # at ~0.12 m — diluted to 1/14 in the all-body mean, so landing accuracy

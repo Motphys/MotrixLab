@@ -70,7 +70,13 @@
   - 注释预言的 "scattered launch ballistics" 未出现（多数 reset 帧为地面帧，参考速度近零）
   - `__post_init__` 归零 hack 已随消融从代码删除，恢复默认 holosoma 噪声
   - 对比图：`a5_vs_a1.png`（run 目录内）
-- [ ] A6：motion_ee_body_pos=0 与 z-only 对照
+- [x] A6：motion_ee_body_pos=0（A6a）— **结论：不采纳，term 保留**
+  - Run：`runs/g1-wbt-backflip/motrix/torch/fastsac/26-09-25_23-05-47-729161`（40k）
+  - 指标：旋转峰值 3.73 vs 3.17 rad（+22%）、高度持平，但 `ref_pos_abs_err` 0.27 vs 0.24 变差
+  - play 目测：落点准确性明显退化；旋转增益无意义（此前版本翻转已成功）
+  - 教训：`ref_pos_abs_err` 的微小退化即对应肉眼可见的落点变差，可作为落点质量的代理判据
+  - 对比图：`a6a_vs_a1.png`（run 目录内）
+  - 遗留：z-only 对照（A6b）未跑；`motion_ee_body_pos_z`（weight=0）死配置及其 kernel 已删除
 - [ ] A7：action_rate_l2=-0.5 / -1.0
 - [ ] A8：global_ref_position σ=0.3
 - [ ] 汇总 40k 结果表格，给出最终精简配方
