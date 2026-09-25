@@ -14,3 +14,4 @@
 ## 文档列表
 
 - [fastsac-async-multi-learner.md](fastsac-async-multi-learner.md) — FastSAC 单机多卡（多 learner × DDP）实施计划
+- [g1-backflip-ablation.md](g1-backflip-ablation.md) — G1 backflip 任务机制消融实验计划（baseline、统一协议、A1–A8 消融项与 TODO）

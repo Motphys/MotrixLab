@@ -35,7 +35,7 @@ from motrix_envs.locomotion.wbt.mdp.terminations import (
     BadRefFullOrientationTerminationCfg,
     BadRefOrientationTerminationCfg,
     BadRefPositionPhasedTerminationCfg,
-    BadRefZPhasedTerminationCfg,
+    BadRefZTerminationCfg,
 )
 from motrix_envs.robot import UnitreeG129Dof
 
@@ -310,12 +310,7 @@ class G1BackflipWbtEnvCfg(G1WbtEnvCfg):
         # standing survives (0.44 < 0.5) — the policy rationally unlearned the
         # launch. Strict contract terms stay as metrics-only here; enable them
         # (with real thresholds) only to fine-tune an already-flipping policy.
-        # Phased anchor-z: loose (0.5) outside the flight window so the early
-        # policy survives the crouch/run-up, tight (0.25) inside it — at the
-        # 1.19 m apex the pelvis must reach >= 0.94 m, beyond any grounded pose
-        # (tiptoe tops out ~0.9 m), so passing the window requires actually
-        # leaving the ground.
-        bad_ref_z=BadRefZPhasedTerminationCfg(threshold=0.5, threshold_in=0.25),
+        bad_ref_z=BadRefZTerminationCfg(threshold=0.5),
         bad_ref_ori=BadRefOrientationTerminationCfg(threshold=1.5),
         bad_body_z=BadBodyZTerminationCfg(
             threshold=0.5,
