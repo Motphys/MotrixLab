@@ -8,6 +8,7 @@ project {
 
   header_ignore = [
     ".venv/**",
+    "runs/**",
     "**/*.xml",
     "**/*.yaml",
     "**/*.yml",
