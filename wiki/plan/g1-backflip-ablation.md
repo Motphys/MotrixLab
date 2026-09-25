@@ -64,7 +64,12 @@
   - `FlightTuckRewardCfg` / `flight_tuck_reward` kernel 仅此一处使用，已一并删除
   - 对比图：`a3_vs_a1.png`（run 目录内）
 - [ ] A4：start_at_timestep_zero_prob 0.0 / 1.0 两组
-- [ ] A5：恢复 root 速度 reset 噪声
+- [x] A5：恢复 root 速度 reset 噪声 — **结论：无可测影响，采纳删除归零逻辑**
+  - Run：`runs/g1-wbt-backflip/motrix/torch/fastsac/26-09-25_22-38-36-458194`（40k）
+  - 旋转 2.90 / 高度 0.65 m 与 A1 持平，return 84.2 vs 81.0；play 帧 0 技能成立
+  - 注释预言的 "scattered launch ballistics" 未出现（多数 reset 帧为地面帧，参考速度近零）
+  - `__post_init__` 归零 hack 已随消融从代码删除，恢复默认 holosoma 噪声
+  - 对比图：`a5_vs_a1.png`（run 目录内）
 - [ ] A6：motion_ee_body_pos=0 与 z-only 对照
 - [ ] A7：action_rate_l2=-0.5 / -1.0
 - [ ] A8：global_ref_position σ=0.3

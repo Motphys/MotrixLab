@@ -305,20 +305,6 @@ class G1BackflipWbtEnvCfg(G1WbtEnvCfg):
 
     rewards: G1BackflipRewardsCfg = G1BackflipRewardsCfg()
 
-    def __post_init__(self, motion_file: str | None) -> None:
-        super().__post_init__(motion_file)
-        # Zero the root velocity reset noise for this task only. Most reset
-        # frames are grounded (reference velocities near zero), so the
-        # holosoma velocity noise (lin ±0.5 m/s, ang ±0.52/0.78 rad/s)
-        # degenerates into a random push on a standing robot: same start
-        # frame, scattered launch ballistics. UniLab's flip recipes use exact
-        # reference-state resets for exactly this reason, and mid-air RSI
-        # teleports must land on the reference ballistic trajectory.
-        # Position/rotation/dof noise stays — harmless robustness for
-        # grounded starts.
-        self.sim_reset.body_lin_vel.noise_scale = 0.0
-        self.sim_reset.body_rot_vel.noise_scale = 0.0
-
 
 @registry.envcfg("g1-wbt-backflip")
 def make_g129dof_wbt_backflip_cfg() -> EnvCfg:
