@@ -34,6 +34,7 @@ class MotrixSimRenderer(SimRenderer):
         num_envs: int,
         render_spacing: float,
         system_camera: SystemCameraCfg,
+        follow_link: str | None = None,
     ):
         self._data_source = data_source
         self._headless = config.headless
@@ -55,24 +56,64 @@ class MotrixSimRenderer(SimRenderer):
             render_settings=_render_settings(),
         )
         # The view is fixed at construction: config camera settings override
-        # the scene's system-camera defaults in both modes.
+        # the scene's system-camera defaults in both modes. A follow target
+        # replaces the lookat with the tracked link's live position on every
+        # rendered frame (env row 0 plus its render offset).
+        self._camera_distance = config.camera_distance if config.camera_distance is not None else system_camera.distance
+        self._camera_elevation = (
+            config.camera_elevation if config.camera_elevation is not None else system_camera.elevation
+        )
+        self._camera_azimuth = config.camera_azimuth if config.camera_azimuth is not None else system_camera.azimuth
         _set_system_camera_view(
             self._render,
             offsets,
             config.camera_lookat if config.camera_lookat is not None else system_camera.lookat,
-            config.camera_distance if config.camera_distance is not None else system_camera.distance,
-            config.camera_elevation if config.camera_elevation is not None else system_camera.elevation,
-            config.camera_azimuth if config.camera_azimuth is not None else system_camera.azimuth,
+            self._camera_distance,
+            self._camera_elevation,
+            self._camera_azimuth,
+        )
+        self._follow_offset = [float(v) for v in offsets[0]]
+        self._follow_program = (
+            model.compile_query({"follow": mtx.query.LinkPosition([follow_link])}).allocate(data_source())
+            if follow_link is not None
+            else None
         )
         self._sync_render_data = True
         self._render.system_camera.active = True
 
+    def set_camera_view(self, lookat: Sequence[float], distance: float, elevation: float, azimuth: float) -> None:
+        """Update the system camera view (windowed and headless)."""
+        lookat = np.asarray(lookat, dtype=np.float64).reshape(-1)
+        if lookat.shape != (3,):
+            raise ValueError(f"lookat must contain 3 values, got {lookat!r}")
+        self._render.system_camera.set_view(
+            [float(v) for v in lookat],
+            float(distance),
+            float(elevation),
+            float(azimuth),
+        )
+
+    def _update_follow_view(self, data: mtx.SceneData) -> None:
+        position = np.asarray(self._follow_program.execute(data).values()[0])[0, 0]
+        self._render.system_camera.set_view(
+            [float(position[i]) + self._follow_offset[i] for i in range(3)],
+            self._camera_distance,
+            self._camera_elevation,
+            self._camera_azimuth,
+        )
+
     def render(self) -> None:
         if self._headless:
-            self._render.sync(data=self._data_source())
+            data = self._data_source()
+            if self._follow_program is not None:
+                self._update_follow_view(data)
+            self._render.sync(data=data)
             return
         if self._sync_render_data:
-            self._render.sync(data=self._data_source())
+            data = self._data_source()
+            if self._follow_program is not None:
+                self._update_follow_view(data)
+            self._render.sync(data=data)
         else:
             self._render.sync(data=None)
         if self._render.input.is_key_just_pressed("space"):
@@ -84,6 +125,8 @@ class MotrixSimRenderer(SimRenderer):
             raise NotImplementedError(
                 "Windowed renderers set no system render target; pass headless=True to capture frames."
             )
+        if self._follow_program is not None:
+            self._update_follow_view(self._data_source())
         # The capture request rides this frame's sync to the renderer; its map
         # callback only fires on a *later* submit's maintenance (issue #37), so
         # a blocking sync drains the service and guarantees the pixels exist
