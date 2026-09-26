@@ -74,6 +74,38 @@ class RelativeBodyPositionRewardCfg(RewardTermCfg):
 
 
 @dispatch
+def ee_body_pos_reward(ctx: ManagerContext, body_indices: tuple[int, ...], sigma: np.float32) -> float:
+    tracked_body_pos = ctx.sim["tracked_body_pos"]
+    motion: WbtMotionCommand = ctx.commands["motion"]
+    error_sq = 0.0
+    for body_id in body_indices:
+        diff = motion.target_body_position_relative[body_id] - tracked_body_pos[body_id]
+        error_sq += float(np.dot(diff, diff))
+    return math.exp(-(error_sq / len(body_indices)) / (sigma * sigma))
+
+
+@configclass(kw_only=True)
+class EeBodyPosRewardCfg(RewardTermCfg):
+    """Full-3D end-effector position tracking (ankles, wrists).
+
+    zh_CN: 末端 body（踝、腕）的三维位置专项跟踪奖励。
+
+    Foot placement error lives mostly in the horizontal plane, and each foot
+    is 1/14 of the all-body relative-position mean — too diluted to shape
+    landing accuracy. This term tracks the full 3D end-effector error
+    directly, including the height component.
+    """
+
+    body_names: tuple[str, ...] = ()
+    sigma: float
+
+    def __call__(self, ctx) -> RewardTerm:
+        tracked_body_names = ctx.cfg.commands.motion.tracked_body_names
+        body_indices = tuple(tracked_body_names.index(name) for name in self.body_names)
+        return RewardTerm(ee_body_pos_reward, body_indices, np.float32(self.sigma))
+
+
+@dispatch
 def relative_body_orientation_reward(ctx: ManagerContext, sigma: np.float32) -> float:
     tracked_body_quat = ctx.sim["tracked_body_quat"]
     motion: WbtMotionCommand = ctx.commands["motion"]

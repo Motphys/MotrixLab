@@ -1,0 +1,27 @@
+# @package _global_
+# Task g1-wbt-backflip: manager-based G1 backflip tracking with Motrix FastSAC.
+defaults:
+  - /algo_base@algo: motrix.fastsac
+  - _self_
+task:
+  env: g1-wbt-backflip
+  rllib: motrix
+  algo: fastsac
+num_envs: 2048
+play_num_envs: 16
+seed: 1
+checkpoint:
+  interval: 1000
+algo:
+  agent:
+    num_updates: 4
+    policy_frequency: 2
+    gamma: 0.99
+    tau: 0.05
+    target_entropy_ratio: 0.5
+    num_atoms: 501
+  trainer:
+    num_learning_iterations: 40000
+    async_options:
+      # Keep the WBT training UTD fixed at four updates per ingested batch.
+      utd_mode: strict

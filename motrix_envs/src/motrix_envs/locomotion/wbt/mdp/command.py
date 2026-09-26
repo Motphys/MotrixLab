@@ -29,7 +29,12 @@ from motrix_envs.motion import MotrixMotion, WbtMotionClip
 
 
 @njit(inline="always")
-def _sample_motion_step(rand, sampling_cdf, num_frames: np.int64, start_at_timestep_zero_prob: np.float32):
+def _sample_motion_step(
+    rand,
+    sampling_cdf,
+    num_frames: np.int64,
+    start_at_timestep_zero_prob: np.float32,
+):
     """Draw one start frame from the adaptive-bin CDF (or uniformly when disabled)."""
     unit = (rand.next_uniform() + np.float32(1.0)) * np.float32(0.5)
     if sampling_cdf.size == 0:
@@ -97,6 +102,16 @@ class WbtMotionCommand(CommandTerm):
     kernel_size: np.int64
     kernel_lambda: np.float32
 
+    # Aerial-phase ("flight window") honest-skill metric. The window is
+    # derived once from the clip's root-z profile; the kernel accumulates
+    # per-lane max pelvis height inside it. Static window bounds are baked
+    # in at compile time (never mutated at runtime).
+    flight_metrics: bool
+    flight_start: np.int64
+    flight_end: np.int64
+    # Static upper bound on sampled start frames (-1 = unlimited).
+    flight_max_z: np.ndarray = metric(name="flight_max_pelvis_z", dtype=np.float32)
+
     # Per-environment frame state exposed through the manager metrics system.
     # Kept as ``(num_envs, 1)`` per-env arrays: the kernel lowering hands each
     # lane a writable row view, so advance/reset_env can update the lane's
@@ -155,9 +170,22 @@ class WbtMotionCommand(CommandTerm):
             out_pos[2] += robot_reference_body_pos_w[2] + height_delta
             quat_mul(out_quat, motion_tracked_bodies_quat_w[body_id], out_quat)
 
+        if self.flight_metrics:
+            # Honest flip metric, evaluated inside the aerial window only:
+            # per-episode max pelvis height. (The accumulated-rotation mean
+            # was removed: episode means over mixed sampling are not
+            # interpretable — see wiki/design/g1-backflip-flight-metrics.md.)
+            pelvis_pos = ctx.sim["tracked_body_pos"][0]
+            step = self.steps[0]
+            if self.flight_start <= step <= self.flight_end:
+                if pelvis_pos[2] > self.flight_max_z[0]:
+                    self.flight_max_z[0] = pelvis_pos[2]
+
     def reset(self, ctx: ResetContext) -> None:
         """Update adaptive statistics and prepare sampling for selected environments."""
         env_ids = ctx.env_ids
+        if self.flight_metrics:
+            self.flight_max_z[env_ids, 0] = 0.0
         if self.sampling_cdf.size:
             episode_failed = ctx.terminated[env_ids]
             if np.any(episode_failed):
@@ -203,7 +231,10 @@ class WbtMotionCommand(CommandTerm):
         """Sample the starting frame for one reset environment lane."""
         num_frames = self.clip.joint_pos.shape[0]
         self.steps[0] = _sample_motion_step(
-            ctx.rand, self.sampling_cdf, np.int64(num_frames), self.start_at_timestep_zero_prob
+            ctx.rand,
+            self.sampling_cdf,
+            np.int64(num_frames),
+            self.start_at_timestep_zero_prob,
         )
         # ``clip_ended`` is intentionally left untouched: advance recomputes it
         # every transition, so a lane that just wrapped keeps its flag for the
@@ -230,7 +261,10 @@ class WbtMotionCommand(CommandTerm):
             # resample keeps steps valid and consistently distributed between
             # this kernel and the reset pipeline.
             self.steps[0] = _sample_motion_step(
-                ctx.rand, self.sampling_cdf, np.int64(num_frames), self.start_at_timestep_zero_prob
+                ctx.rand,
+                self.sampling_cdf,
+                np.int64(num_frames),
+                self.start_at_timestep_zero_prob,
             )
             ctx.sim_reset_requested[0] = True
 
@@ -266,6 +300,11 @@ class WbtMotionCommandCfg(CommandCfg):
     alpha: float = 0.001
     kernel_size: int = 1
     kernel_lambda: float = 0.8
+    # Honest aerial-skill metric: the flight window is derived from the clip
+    # root-z profile (frames above min + flight_z_fraction * (max - min)).
+    # Inside it the command accumulates per-env max pelvis height.
+    flight_metrics_enabled: bool = False
+    flight_z_fraction: float = 0.5
 
     def __call__(self, env: ManagerEnv) -> CommandTerm:
         robot = env.cfg.scene.objs.robot
@@ -296,6 +335,20 @@ class WbtMotionCommandCfg(CommandCfg):
             num_bins = source.joint_pos.shape[0] // env_fps + 1
         else:
             num_bins = 0
+        if self.flight_metrics_enabled:
+            root_z = np.asarray(source.root_body_pos_w)[:, 2]
+            threshold = root_z.min() + self.flight_z_fraction * (root_z.max() - root_z.min())
+            airborne = np.flatnonzero(root_z > threshold)
+            if airborne.size < 2:
+                raise ValueError(
+                    f"WBT flight metrics found <2 airborne frames above z={threshold:.3f} "
+                    f"in {self.motion_file!r}; adjust flight_z_fraction."
+                )
+            flight_start = int(airborne[0])
+            flight_end = int(airborne[-1])
+        else:
+            flight_start = 0
+            flight_end = -1
         tracked_shape = (len(self.tracked_body_names), 3)
         return WbtMotionCommand(
             clip=source,
@@ -314,6 +367,10 @@ class WbtMotionCommandCfg(CommandCfg):
             alpha=np.float32(self.alpha),
             kernel_size=np.int64(self.kernel_size),
             kernel_lambda=np.float32(self.kernel_lambda),
+            flight_metrics=self.flight_metrics_enabled,
+            flight_start=np.int64(flight_start),
+            flight_end=np.int64(flight_end),
+            flight_max_z=np.zeros((env.num_envs, 1), dtype=np.float32),
         )
 
 
