@@ -28,6 +28,8 @@ class RunMetadata:
     checkpoint_format: str
     sim: str | None = None
     motrixlab_version: str | None = None
+    system: dict | None = None
+    performance: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +125,22 @@ def write_metadata(run_dir: str | Path, metadata: RunMetadata) -> Path:
     run_dir.mkdir(parents=True, exist_ok=True)
     metadata_path = run_dir / METADATA_FILENAME
     metadata_path.write_text(json.dumps(asdict(metadata), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return metadata_path
+
+
+def annotate_run(run_dir: str | Path, **fields: Any) -> Path:
+    """Merge annotation fields into an existing run's metadata.json.
+
+    Used by trainers to attach facts that only become known after run
+    creation (resolved device layout, end-of-training performance). The
+    merge is a raw top-level dict update so future annotation keys do not
+    require a RunMetadata field; ``read_metadata`` ignores unknown keys.
+    """
+    run_dir = Path(run_dir)
+    metadata_path = run_dir / METADATA_FILENAME
+    data = json.loads(metadata_path.read_text(encoding="utf-8"))
+    data.update(fields)
+    metadata_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return metadata_path
 
 

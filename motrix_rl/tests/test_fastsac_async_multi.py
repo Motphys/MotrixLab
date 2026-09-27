@@ -18,6 +18,7 @@ from motrix_rl.fastsac.async_impl.topology import (
     CollectorInfo,
     LearnerInfo,
     TrainerTopology,
+    resolve_collector_inference_devices,
     resolve_learner_devices,
     resolve_trainer_topology,
     ring_transport_is_ipc,
@@ -244,21 +245,25 @@ def test_topology_pairs_collectors_with_owning_learner(monkeypatch) -> None:
 
     monkeypatch.setattr(numa, "available_numa_nodes", lambda: [0, 1])
     monkeypatch.setattr(numa, "gpu_numa_node", lambda index: {0: 0, 1: 1}.get(index))
+    monkeypatch.setattr("torch.cuda.device_count", lambda: 2)
     cuda = lambda n: torch.device("cuda", n)  # noqa: E731
     opts = SimpleNamespace(transition_ipc="auto", weight_ipc="auto", weight_ipc_min_bytes=0)
 
-    # 2 learners x 2 collectors: each collector sits on its owner's GPU-local
-    # node — the pair never straddles a NUMA boundary
+    # 2 learners x 2 collectors: a generic "cuda" collector spec co-locates
+    # each collector with its owner's GPU — the pair never straddles a NUMA
+    # boundary
     topo = resolve_trainer_topology(
         8,
         4,
         2,
-        [cuda(0), cuda(1)],
-        [cuda(0), cuda(0), cuda(1), cuda(1)],
+        ["cuda:0", "cuda:1"],
+        "cuda",
         cuda(0),
         opts,
         actor_param_numel=0,
     )
+    assert [str(learner.device) for learner in topo.learners] == ["cuda:0", "cuda:1"]
+    assert [str(collector.device) for collector in topo.collectors] == ["cuda:0", "cuda:0", "cuda:1", "cuda:1"]
     assert [learner.numa_node for learner in topo.learners] == [0, 1]
     assert [collector.numa_node for collector in topo.collectors] == [0, 0, 1, 1]
     assert topo.env_shards == [2, 2, 2, 2]
@@ -266,7 +271,8 @@ def test_topology_pairs_collectors_with_owning_learner(monkeypatch) -> None:
     assert [collector.ring_ipc for collector in topo.collectors] == [True, True, True, True]
 
     # multi-collector single learner: every collector follows the one learner
-    topo = resolve_trainer_topology(8, 4, 1, [], [cuda(1)] * 4, cuda(1), opts, actor_param_numel=0)
+    topo = resolve_trainer_topology(8, 4, 1, None, "cuda", cuda(1), opts, actor_param_numel=0)
+    assert [str(collector.device) for collector in topo.collectors] == ["cuda:1"] * 4
     assert [learner.numa_node for learner in topo.learners] == [1]
     assert [collector.numa_node for collector in topo.collectors] == [1, 1, 1, 1]
 
@@ -284,6 +290,7 @@ def test_topology_chunks_cpus_by_node_local_ordinal(monkeypatch) -> None:
     monkeypatch.setattr(numa, "available_numa_nodes", lambda: [0, 1])
     monkeypatch.setattr(numa, "gpu_numa_node", lambda index: {0: 0, 1: 1}.get(index))
     monkeypatch.setattr(numa, "numa_node_cpus", lambda node: node_cpus[node])
+    monkeypatch.setattr("torch.cuda.device_count", lambda: 2)
     cuda = lambda n: torch.device("cuda", n)  # noqa: E731
     opts = SimpleNamespace(transition_ipc="auto", weight_ipc="auto", weight_ipc_min_bytes=0)
 
@@ -291,8 +298,8 @@ def test_topology_chunks_cpus_by_node_local_ordinal(monkeypatch) -> None:
         8,
         4,
         2,
-        [cuda(0), cuda(1)],
-        [cuda(0), cuda(0), cuda(1), cuda(1)],
+        ["cuda:0", "cuda:1"],
+        "cuda",
         cuda(0),
         opts,
         actor_param_numel=0,
@@ -316,38 +323,38 @@ def test_topology_unbound_without_gpu_locality(monkeypatch) -> None:
     cpu = torch.device("cpu")
     opts = SimpleNamespace(transition_ipc="auto", weight_ipc="auto", weight_ipc_min_bytes=0)
 
-    # single-node host: no binding anywhere
+    # single-node host, CPU collector inference: no binding anywhere
     monkeypatch.setattr(numa, "available_numa_nodes", lambda: [0])
-    topo = resolve_trainer_topology(2, 2, 1, [], [cuda, cpu], cuda, opts, actor_param_numel=0)
+    topo = resolve_trainer_topology(2, 2, 1, None, "cpu", cuda, opts, actor_param_numel=0)
     assert [learner.numa_node for learner in topo.learners] == [None]
     assert [collector.numa_node for collector in topo.collectors] == [None, None]
 
     # multi-node host, CPU learner: no binding anywhere
     monkeypatch.setattr(numa, "available_numa_nodes", lambda: [0, 1])
-    topo = resolve_trainer_topology(2, 2, 1, [], [cpu, cpu], cpu, opts, actor_param_numel=0)
+    topo = resolve_trainer_topology(2, 2, 1, None, "cpu", cpu, opts, actor_param_numel=0)
     assert [learner.numa_node for learner in topo.learners] == [None]
     assert [collector.numa_node for collector in topo.collectors] == [None, None]
 
     # multi-node host, unknown GPU locality: no binding anywhere
     monkeypatch.setattr(numa, "gpu_numa_node", lambda index: None)
-    topo = resolve_trainer_topology(2, 2, 1, [], [cuda, cuda], cuda, opts, actor_param_numel=0)
+    topo = resolve_trainer_topology(2, 2, 1, None, "cuda", cuda, opts, actor_param_numel=0)
     assert [learner.numa_node for learner in topo.learners] == [None]
     assert [collector.numa_node for collector in topo.collectors] == [None, None]
 
     # index-less cuda means device 0
     monkeypatch.setattr(numa, "gpu_numa_node", lambda index: {0: 0}.get(index))
-    topo = resolve_trainer_topology(2, 2, 1, [], [cuda, cuda], torch.device("cuda"), opts, actor_param_numel=0)
+    topo = resolve_trainer_topology(2, 2, 1, None, "cuda", torch.device("cuda"), opts, actor_param_numel=0)
     assert [learner.numa_node for learner in topo.learners] == [0]
 
 
 def test_topology_rejects_bad_counts() -> None:
     opts = SimpleNamespace(transition_ipc="auto", weight_ipc="auto", weight_ipc_min_bytes=0)
     with pytest.raises(ValueError, match="divide evenly"):
-        resolve_trainer_topology(3, 3, 2, [], [], torch.device("cpu"), opts, actor_param_numel=0)
+        resolve_trainer_topology(3, 3, 2, None, "cpu", torch.device("cpu"), opts, actor_param_numel=0)
     with pytest.raises(ValueError, match="invalid worker counts"):
-        resolve_trainer_topology(4, 0, 1, [], [], torch.device("cpu"), opts, actor_param_numel=0)
-    with pytest.raises(ValueError, match="collector devices"):
-        resolve_trainer_topology(4, 2, 1, [], [torch.device("cpu")], torch.device("cpu"), opts, actor_param_numel=0)
+        resolve_trainer_topology(4, 0, 1, None, "cpu", torch.device("cpu"), opts, actor_param_numel=0)
+    with pytest.raises(ValueError, match="collector_inference_device"):
+        resolve_trainer_topology(4, 2, 1, None, "meta", torch.device("cpu"), opts, actor_param_numel=0)
 
 
 def test_ring_slice_partitions_collectors_by_ownership() -> None:
@@ -439,6 +446,54 @@ def test_lockstep_gated_before_learning_starts(monkeypatch) -> None:
 
 def _ipc_opts(mode: str = "auto") -> SimpleNamespace:
     return SimpleNamespace(transition_ipc=mode)
+
+
+def test_resolve_collector_inference_devices_colocates_with_owner(monkeypatch) -> None:
+    """Generic "cuda" resolves to the owning learner's GPU for every learner count.
+
+    Regression: the single-learner path used to resolve the generic spec
+    in-process via torch.cuda.current_device(), which silently crossed GPUs
+    (and therefore disabled the IPC transports) when the current device
+    drifted from the learner's.
+    """
+    cuda = lambda n: torch.device("cuda", n)  # noqa: E731
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+
+    # single learner on an index-less cuda device: every collector gets the
+    # learner's GPU explicitly (index 0), never the ambient current device
+    devices = resolve_collector_inference_devices("cuda", [], 3, 1, torch.device("cuda"))
+    assert devices == [cuda(0)] * 3
+
+    # single learner on cuda:1: collectors follow it
+    devices = resolve_collector_inference_devices("cuda", [], 2, 1, cuda(1))
+    assert devices == [cuda(1)] * 2
+
+    # multi-learner: collectors chunk to their owning learner's GPU
+    devices = resolve_collector_inference_devices("cuda", [cuda(0), cuda(1)], 4, 2, cuda(0))
+    assert devices == [cuda(0), cuda(0), cuda(1), cuda(1)]
+
+    # explicit specs pass through unchanged (even cross-GPU)
+    devices = resolve_collector_inference_devices("cuda:1", [], 2, 1, cuda(0))
+    assert devices == [cuda(1)] * 2
+
+    # generic "cuda" with a non-CUDA owner resolves explicitly to the default
+    # device — no index-less spec ever reaches a worker
+    devices = resolve_collector_inference_devices("cuda", [], 2, 1, torch.device("cpu"))
+    assert devices == [cuda(0)] * 2
+    devices = resolve_collector_inference_devices("cpu", [cuda(0), cuda(1)], 4, 2, cuda(0))
+    assert devices == [torch.device("cpu")] * 4
+
+    # the resolved co-located layout keeps the IPC ring the default
+    flags = ring_transport_is_ipc(_ipc_opts(), [], [cuda(0)] * 4, 4, 1, torch.device("cuda"))
+    assert flags == [True] * 4
+
+    # invalid specs are rejected
+    with pytest.raises(ValueError, match="collector_inference_device"):
+        resolve_collector_inference_devices("meta", [], 1, 1, cuda(0))
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    with pytest.raises(RuntimeError, match="only 1 device"):
+        resolve_collector_inference_devices("cuda:1", [], 1, 1, cuda(0))
 
 
 def test_ring_transport_ipc_colocated_collectors() -> None:

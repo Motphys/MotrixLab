@@ -30,11 +30,10 @@ from motrix_env_core import registry as env_registry
 from motrix_env_core.renderer import RenderConfig
 from motrix_rl.console import TrainingPanelStats, emit_training_panel, open_training_live
 from motrix_rl.fastsac.agent import FastSacAgent
-from motrix_rl.fastsac.async_impl.collector import resolve_collector_inference_device
 from motrix_rl.fastsac.async_impl.numa import spawn_placement
 from motrix_rl.fastsac.async_impl.panels import BootPanel
 from motrix_rl.fastsac.async_impl.stats import aggregate_collector_stats, nest_timing_path, timing_mean
-from motrix_rl.fastsac.async_impl.topology import resolve_learner_devices, resolve_trainer_topology
+from motrix_rl.fastsac.async_impl.topology import resolve_trainer_topology
 from motrix_rl.fastsac.async_impl.transport import Control, RingCursors, SharedTransitionRing
 from motrix_rl.fastsac.async_impl.transport.handshake import StartupHandshake
 from motrix_rl.fastsac.async_impl.transport.weight_channel import WeightChannelShared
@@ -48,11 +47,13 @@ from motrix_rl.fastsac.async_impl.worker import (
 from motrix_rl.fastsac.config import FastSacCfg
 from motrix_rl.fastsac.wrap import FastSacEnvWrap
 from motrix_rl.frameworks import TrainerBase, TrainerContext
+from motrix_rl.runs import annotate_run
 from motrix_rl.system_metrics import (
     CpuLoadSampler,
     GpuMemoryUsageSampler,
     GpuUtilizationSampler,
     MemoryUsageSampler,
+    capture_system_info,
     sample_gpu_devices,
 )
 
@@ -133,6 +134,7 @@ class Trainer(TrainerBase):
         async_options = cfg.trainer.async_options
         logging_interval = self._context.logging.interval
         save_interval = self._context.checkpoint.interval
+        train_started_at = time.perf_counter()
 
         if self._context.logging.backend != "tensorboard":
             raise ValueError("FastSAC supports only the 'tensorboard' logging backend.")
@@ -145,7 +147,6 @@ class Trainer(TrainerBase):
         dims = (obs_dim, critic_obs_dim, act_dim)
 
         learner_device = self._device()
-        collector_device = resolve_collector_inference_device(async_options.collector_inference_device)
 
         num_collectors = async_options.num_collectors
         num_learners = async_options.num_learners
@@ -161,23 +162,8 @@ class Trainer(TrainerBase):
         # its GPU's PCIe-local node and every collector follows its owning
         # learner, so a collector/learner pair never straddles a NUMA node.
         # Falls back to the OS default placement on single-node hosts.
-        learner_devices = resolve_learner_devices(async_options.learner_devices, num_learners, self._device())
         cpus_per_collector = async_options.cpus_per_collector
         num_envs = self._context.num_envs
-        # Generic "cuda" collector inference resolves to the owning learner's
-        # GPU (num_collectors // num_learners collectors per learner); explicit
-        # specs pass through. The single-learner path keeps the in-process
-        # resolution (collector_device=None) byte-identical.
-        collector_device_specs = None
-        if num_learners > 1:
-            per_learner = num_collectors // num_learners
-            spec = async_options.collector_inference_device
-            collector_device_specs = [
-                spec
-                if not (spec == "cuda" and learner_devices[i // per_learner].type == "cuda")
-                else f"cuda:{learner_devices[i // per_learner].index}"
-                for i in range(num_collectors)
-            ]
         # Shared-memory primitives allocated in the parent, inherited by children.
         # One SPSC ring + one weight channel per collector: every shared quantity
         # keeps exactly one producer and one consumer, so the lock-free
@@ -192,28 +178,33 @@ class Trainer(TrainerBase):
         # Collectors are co-located with their owning learner's GPU by
         # default (collector_inference_device="cuda" resolves per owner), so
         # the IPC path is the default whenever both sides share that GPU.
-        if collector_device_specs is not None:
-            collector_devices = [torch.device(spec) for spec in collector_device_specs]
-        else:
-            collector_devices = [collector_device] * num_collectors
-        # One resolution pass derives the whole compute layout: env shards,
-        # NUMA placement, and per-collector transports (rings + weights).
+        # One resolution pass derives the whole compute layout — which GPU
+        # each worker runs on, env shards, NUMA placement, per-collector
+        # transports (rings + weights) — from the raw device specs; the
+        # workers read their explicit devices from the topology and never
+        # re-resolve a generic spec in-process.
         param_numel = actor_param_numel(cfg, dims, action_scale, action_bias)
         topology = resolve_trainer_topology(
             num_envs,
             num_collectors,
             num_learners,
-            learner_devices,
-            collector_devices,
+            async_options.learner_devices,
+            async_options.collector_inference_device,
             self._device(),
             async_options,
             param_numel,
             cpus_per_collector=cpus_per_collector,
         )
+        learner_devices = [learner.device for learner in topology.learners]
+        collector_devices = [collector.device for collector in topology.collectors]
         numa_nodes = [collector.numa_node for collector in topology.collectors]
         learner_numa_nodes = [learner.numa_node for learner in topology.learners]
         env_shards = topology.env_shards
         ring_ipc = [collector.ring_ipc for collector in topology.collectors]
+        # Provenance for performance snapshots: record the devices this run
+        # actually uses (topology is the single source of truth), not the
+        # host inventory.
+        annotate_run(self._context.run_dir, system=capture_system_info(topology=topology))
         rings: list[SharedTransitionRing | RingCursors] = [
             RingCursors()
             if ipc
@@ -274,11 +265,15 @@ class Trainer(TrainerBase):
                 print(traceback_text.rstrip())
             return errors
 
+        unique_collector_devices = list(dict.fromkeys(str(d) for d in collector_devices))
+        collector_banner = (
+            unique_collector_devices[0] if len(unique_collector_devices) == 1 else unique_collector_devices
+        )
         print(
             f"[motrix.fastsac async] collector/learner training '{self._env_name}' learner={learner_device} "
             f"learner_replicas={num_learners} "
             + (f"learner_devices={[str(d) for d in learner_devices]} " if num_learners > 1 else "")
-            + f"collector_env=cpu collector_inference={collector_device} num_collectors={num_collectors} "
+            + f"collector_env=cpu collector_inference={collector_banner} num_collectors={num_collectors} "
             f"numa_nodes={numa_nodes} learner_numa_nodes={learner_numa_nodes} "
             f"num_envs={num_envs} iters={num_iterations} "
             f"from={resume_step} utd_mode={async_options.utd_mode}"
@@ -324,7 +319,7 @@ class Trainer(TrainerBase):
                     "panel_queue": panel_queue,
                     "num_learners": num_learners,
                     "rendezvous_file": rendezvous_file,
-                    "learner_device": str(learner_devices[rank]) if learner_devices else None,
+                    "learner_device": str(topology.learners[rank].device),
                     "all_rings": rings,
                     "weight_ipc": [
                         c.weight_ipc for c in topology.collectors[rank * per_learner : (rank + 1) * per_learner]
@@ -358,7 +353,7 @@ class Trainer(TrainerBase):
                     "collector_id": i,
                     "numa_node": numa_nodes[i],
                     "cpus": topology.collectors[i].cpus,
-                    "collector_device": collector_device_specs[i] if collector_device_specs is not None else None,
+                    "collector_device": str(topology.collectors[i].device),
                     "run_dir": str(self._context.run_dir),
                     "handshake": handshake,
                 },
@@ -760,6 +755,24 @@ class Trainer(TrainerBase):
                     live.stop()
                 except Exception:
                     pass
+            wall_time_s = time.perf_counter() - train_started_at
+            # Env-step accounting follows the collector side: each collector
+            # step ingests one batch of its own env shard, so the aggregate
+            # counter times the shard size is the true transition count (the
+            # learner's global_step is an iteration counter that can drift
+            # from collection under non-strict UTD).
+            per_collector_envs = num_envs // num_collectors
+            total_env_steps = control.collector_steps * per_collector_envs
+            annotate_run(
+                self._context.run_dir,
+                performance={
+                    "num_envs": num_envs,
+                    "iterations": num_iterations,
+                    "total_env_steps": total_env_steps,
+                    "wall_time_s": round(wall_time_s, 1),
+                    "mean_env_steps_per_s": int(total_env_steps / max(wall_time_s, 1e-9)),
+                },
+            )
             if tb_writer is not None:
                 try:
                     tb_writer.close()

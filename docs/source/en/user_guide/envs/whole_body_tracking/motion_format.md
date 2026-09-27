@@ -52,7 +52,7 @@ Every quaternion in `body_quat_w` must be normalized. The loader's default norm 
 | `clip_name`           | Human-readable motion name                                               |
 | `ext_*`               | Extension arrays, exposed through `extensions` without the `ext_` prefix |
 
-WBT training treats `WbtManagerEnvCfg.tracked_body_names`, `reference_body_name`, and the robot `base_link_name` as authoritative;
+WBT training treats `WbtEnvCfg.tracked_body_names`, `reference_body_name`, and the robot `base_link_name` as authoritative;
 optional fields in the NPZ do not change task semantics. If `root_body_name` is absent, `replay.py` uses `body_names[0]`.
 
 ## Name binding and validation

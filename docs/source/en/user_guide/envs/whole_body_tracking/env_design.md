@@ -1,7 +1,7 @@
 # Task Environment Design
 
 `ManagerEnv` advances one reference-motion frame per control step and compares the robot state with that frame's targets.
-`WbtManagerEnvCfg` selects the motion, `tracked_body_names`, and `reference_body_name`; `scene.objs.robot` supplies the robot model,
+`WbtEnvCfg` selects the motion, `tracked_body_names`, and `reference_body_name`; `scene.objs.robot` supplies the robot model,
 default key pose, base link, and actuators. Reference joint states are policy commands in the observation, but the action is
 still a position residual around the robot's default pose, and rewards primarily compare body poses and velocities.
 

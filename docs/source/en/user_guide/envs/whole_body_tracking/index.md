@@ -3,14 +3,14 @@
 `ManagerEnv` is MotrixLab's generic whole-body tracking (WBT) environment for humanoid robots. A policy follows a
 frame-by-frame reference motion under physics simulation while the task compares the global reference-body pose, relative
 poses of multiple body parts, body velocities, and joint feasibility. The `RobotCfg` and its assets own the robot model and
-physical limits; `WbtManagerEnvCfg` selects the motion, tracked bodies, control scaling, rewards, and termination conditions. The
+physical limits; `WbtEnvCfg` selects the motion, tracked bodies, control scaling, rewards, and termination conditions. The
 same environment implementation can therefore support different robots and motion clips.
 
 ## Demos
 
-The following videos show Dex-EVT and Unitree G1 tracking dance motions, and Booster K1 tracking a free-kick motion.
+The following videos show Dex-EVT and Unitree G1 tracking dance motions, Unitree G1 performing a backflip, and Booster K1 tracking a free-kick motion.
 
-::::{grid} 1 1 2 3
+::::{grid} 1 1 2 2
 :gutter: 2 2 2 2
 
 :::{grid-item-card} Dex-EVT dance
@@ -35,6 +35,22 @@ The following videos show Dex-EVT and Unitree G1 tracking dance motions, and Boo
 :alt: Sixteen Unitree G1 humanoid robots tracking a dance motion
 :class: wbt-demo-video
 :poster: /_static/images/poster/g1-wbt-dance.jpg
+:nocontrols:
+:autoplay:
+:playsinline:
+:muted:
+:loop:
+:width: 100%
+```
+
+:::
+
+:::{grid-item-card} Unitree G1 backflip
+
+```{video} /_static/videos/g1-wbt-backflip.mp4
+:alt: 16 Unitree G1 humanoids performing backflips
+:class: wbt-demo-video
+:poster: /_static/images/poster/g1-wbt-backflip.jpg
 :nocontrols:
 :autoplay:
 :playsinline:
@@ -84,10 +100,17 @@ thumbnail to open the full-size SVG.
 | Environment ID | Robot | Reference motion | Duration | Available training configs | Training curve |
 | --- | --- | --- | ---: | --- | --- |
 | `g1-29dof-wbt-largebox` | Unitree G1 29-DoF | `sub3_largebox_003.npz` | 6.50&nbsp;s | `motrix.fastsac` | — |
+| `g1-wbt-backflip` | Unitree G1 29-DoF | `backflip.npz` | 4.00&nbsp;s | `motrix.fastsac` | <button type="button" class="training-curve-thumbnail" data-training-curve-dialog="g1-wbt-backflip-curve" aria-label="Enlarge Unitree G1 backflip WBT training curve"><img src="../../../_static/images/performance/g1-wbt-backflip.svg" alt="Unitree G1 backflip WBT training curve" width="180"></button> |
 | `g1-wbt-dance` | Unitree G1 29-DoF | `dance1_subject2.npz` | 19.98&nbsp;s | `motrix.fastsac` | <button type="button" class="training-curve-thumbnail" data-training-curve-dialog="g1-wbt-dance-curve" aria-label="Enlarge the Unitree G1 dance WBT training curve"><img src="../../../_static/images/performance/g1-wbt-dance.svg" alt="Unitree G1 dance WBT training curve" width="180"></button> |
 | `dex-evt-wbt-dance` | Dex-EVT | `dance1_easy.npz` | 39.72&nbsp;s | `motrix.fastsac` | <button type="button" class="training-curve-thumbnail" data-training-curve-dialog="dex-evt-wbt-dance-curve" aria-label="Enlarge the Dex-EVT dance WBT training curve"><img src="../../../_static/images/performance/dex-evt-wbt-dance.svg" alt="Dex-EVT dance WBT training curve" width="180"></button> |
 | `k1-wbt-freekick` | Booster K1 | `freekick_shoot_arc_02.npz` | 2.50&nbsp;s | `motrix.fastsac` | <button type="button" class="training-curve-thumbnail" data-training-curve-dialog="k1-wbt-freekick-curve" aria-label="Enlarge the Booster K1 free-kick WBT training curve"><img src="../../../_static/images/performance/k1-wbt-freekick.svg" alt="Booster K1 free-kick WBT training curve" width="180"></button> |
 :::
+
+<dialog id="g1-wbt-backflip-curve" class="training-curve-dialog" aria-labelledby="g1-wbt-backflip-curve-caption">
+  <button type="button" class="training-curve-dialog-close" data-training-curve-close aria-label="Close training curve">×</button>
+  <img src="../../../_static/images/performance/g1-wbt-backflip.svg" alt="Unitree G1 backflip WBT training curve">
+  <p id="g1-wbt-backflip-curve-caption">Unitree G1 (<code>g1-wbt-backflip</code>) training curve</p>
+</dialog>
 
 <dialog id="g1-wbt-dance-curve" class="training-curve-dialog" aria-labelledby="g1-wbt-dance-curve-caption">
   <button type="button" class="training-curve-dialog-close" data-training-curve-close aria-label="Close training curve">×</button>

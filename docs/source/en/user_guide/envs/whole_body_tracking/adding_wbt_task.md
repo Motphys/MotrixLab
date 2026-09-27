@@ -1,6 +1,6 @@
 # Adding a WBT Training Task
 
-The reusable unit of `ManagerEnv` is a complete `WbtManagerEnvCfg`. Adding a motion for an existing robot normally requires a motion
+The reusable unit of `ManagerEnv` is a complete `WbtEnvCfg`. Adding a motion for an existing robot normally requires a motion
 file, an environment-config factory, Env registration, and matching Hydra Training Tasks. It does not require a copy of the
 environment implementation. This chapter adds G1 motion `dance1_subject1.npz` as Env ID
 `g1-wbt-dance1-subject1`.
@@ -8,26 +8,21 @@ environment implementation. This chapter adds G1 motion `dance1_subject1.npz` as
 ## 1. Define the complete environment config
 
 Start from the existing WBT config subclass for the target robot. Edit
-`motrix_envs/src/motrix_envs/locomotion/wbt/g1.py`:
+`motrix_envs/src/motrix_envs/locomotion/wbt/g1/dance.py`:
 
 ```python
-from pathlib import Path
-
 from motrix_env_core import registry
 from motrix_env_core.manager import ManagerEnv
 
-from motrix_envs.locomotion.wbt.g1 import G1WbtManagerCfg
-
-
-_MOTION_DIR = Path(__file__).parent / "assets" / "motion" / "g1"
+from motrix_envs.locomotion.wbt.g1.common import G1WbtEnvCfg, MOTION_DIR
 
 
 @registry.envcfg("g1-wbt-dance1-subject1")
-def make_g129dof_wbt_dance1_subject1_cfg() -> G1WbtManagerCfg:
-    return G1WbtManagerCfg(motion_file=str(_MOTION_DIR / "dance1_subject1.npz"))
+def make_g129dof_wbt_dance1_subject1_cfg() -> G1WbtEnvCfg:
+    return G1WbtEnvCfg(motion_file=str(MOTION_DIR / "dance1_subject1.npz"))
 ```
 
-`G1WbtManagerCfg` inherits `WbtManagerEnvCfg` and provides the G1 scene, tracked bodies, reference body, control scaling,
+`G1WbtEnvCfg` inherits `WbtEnvCfg` and provides the G1 scene, tracked bodies, reference body, control scaling,
 rewards, and termination rules. When a new motion uses the same robot and tracking semantics, pass a different `motion_file`
 directly to the constructor. Do not copy `ManagerEnv` for each clip.
 
@@ -77,7 +72,7 @@ effort as the largest absolute endpoint and uses it for position-target scaling.
 
 Existing robot config classes provide starting points:
 
--   G1: `G1WbtManagerCfg(motion_file=...)`
+-   G1: `G1WbtEnvCfg(motion_file=...)`
 -   Dex-EVT: `DexEvtWbtManagerCfg()`
 -   K1: `K1WbtManagerCfg(commands=_k1_commands(...), rewards=...)`
 

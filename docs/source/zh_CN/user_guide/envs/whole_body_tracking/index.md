@@ -2,14 +2,14 @@
 
 `ManagerEnv` 是 MotrixLab 面向人形机器人的通用全身动作跟踪（Whole-Body Tracking，WBT）环境。策略在物理仿真中
 逐帧跟踪一段参考动作，任务同时约束参考身体的全局位姿、多个身体部位的相对位姿、身体速度和关节可行性。
-机器人模型与物理限制由 `RobotCfg` 及其资产提供；`WbtManagerEnvCfg` 选择 motion、跟踪身体、控制缩放、奖励和终止条件。
+机器人模型与物理限制由 `RobotCfg` 及其资产提供；`WbtEnvCfg` 选择 motion、跟踪身体、控制缩放、奖励和终止条件。
 同一套环境实现因此可以支持不同机器人和不同动作片段。
 
 ## 效果演示
 
-以下视频分别展示 Dex-EVT 和 Unitree G1 的舞蹈跟踪，以及 Booster K1 的任意球动作跟踪效果。
+以下视频分别展示 Dex-EVT 和 Unitree G1 的舞蹈跟踪、Unitree G1 的后空翻，以及 Booster K1 的任意球动作跟踪效果。
 
-::::{grid} 1 1 2 3
+::::{grid} 1 1 2 2
 :gutter: 2 2 2 2
 
 :::{grid-item-card} Dex-EVT 舞蹈
@@ -34,6 +34,22 @@
 :alt: 16 台 Unitree G1 人形机器人跟踪舞蹈动作
 :class: wbt-demo-video
 :poster: /_static/images/poster/g1-wbt-dance.jpg
+:nocontrols:
+:autoplay:
+:playsinline:
+:muted:
+:loop:
+:width: 100%
+```
+
+:::
+
+:::{grid-item-card} Unitree G1 后空翻
+
+```{video} /_static/videos/g1-wbt-backflip.mp4
+:alt: 16 台 Unitree G1 人形机器人完成后空翻动作
+:class: wbt-demo-video
+:poster: /_static/images/poster/g1-wbt-backflip.jpg
 :nocontrols:
 :autoplay:
 :playsinline:
@@ -82,10 +98,17 @@ adding_wbt_task
 | Env ID | 机器人 | 参考动作 | 时长 | 已提供的训练配置 | 训练曲线 |
 | --- | --- | --- | ---: | --- | --- |
 | `g1-29dof-wbt-largebox` | Unitree G1 29-DoF | `sub3_largebox_003.npz` | 6.50&nbsp;s | `motrix.fastsac` | — |
+| `g1-wbt-backflip` | Unitree G1 29-DoF | `backflip.npz` | 4.00&nbsp;s | `motrix.fastsac` | <button type="button" class="training-curve-thumbnail" data-training-curve-dialog="g1-wbt-backflip-curve" aria-label="放大 Unitree G1 后空翻 WBT 训练曲线"><img src="../../../_static/images/performance/g1-wbt-backflip.svg" alt="Unitree G1 后空翻 WBT 训练曲线" width="180"></button> |
 | `g1-wbt-dance` | Unitree G1 29-DoF | `dance1_subject2.npz` | 19.98&nbsp;s | `motrix.fastsac` | <button type="button" class="training-curve-thumbnail" data-training-curve-dialog="g1-wbt-dance-curve" aria-label="放大 Unitree G1 舞蹈 WBT 训练曲线"><img src="../../../_static/images/performance/g1-wbt-dance.svg" alt="Unitree G1 舞蹈 WBT 训练曲线" width="180"></button> |
 | `dex-evt-wbt-dance` | Dex-EVT | `dance1_easy.npz` | 39.72&nbsp;s | `motrix.fastsac` | <button type="button" class="training-curve-thumbnail" data-training-curve-dialog="dex-evt-wbt-dance-curve" aria-label="放大 Dex-EVT 舞蹈 WBT 训练曲线"><img src="../../../_static/images/performance/dex-evt-wbt-dance.svg" alt="Dex-EVT 舞蹈 WBT 训练曲线" width="180"></button> |
 | `k1-wbt-freekick` | Booster K1 | `freekick_shoot_arc_02.npz` | 2.50&nbsp;s | `motrix.fastsac` | <button type="button" class="training-curve-thumbnail" data-training-curve-dialog="k1-wbt-freekick-curve" aria-label="放大 Booster K1 任意球 WBT 训练曲线"><img src="../../../_static/images/performance/k1-wbt-freekick.svg" alt="Booster K1 任意球 WBT 训练曲线" width="180"></button> |
 :::
+
+<dialog id="g1-wbt-backflip-curve" class="training-curve-dialog" aria-labelledby="g1-wbt-backflip-curve-caption">
+  <button type="button" class="training-curve-dialog-close" data-training-curve-close aria-label="关闭训练曲线">×</button>
+  <img src="../../../_static/images/performance/g1-wbt-backflip.svg" alt="Unitree G1 后空翻 WBT 训练曲线">
+  <p id="g1-wbt-backflip-curve-caption">Unitree G1（<code>g1-wbt-backflip</code>）训练曲线</p>
+</dialog>
 
 <dialog id="g1-wbt-dance-curve" class="training-curve-dialog" aria-labelledby="g1-wbt-dance-curve-caption">
   <button type="button" class="training-curve-dialog-close" data-training-curve-close aria-label="关闭训练曲线">×</button>

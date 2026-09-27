@@ -1,6 +1,6 @@
 # 任务环境设计
 
-`ManagerEnv` 在每个控制周期推进一帧参考 motion，并将机器人状态与该帧目标进行比较。`WbtManagerEnvCfg` 指定 motion、
+`ManagerEnv` 在每个控制周期推进一帧参考 motion，并将机器人状态与该帧目标进行比较。`WbtEnvCfg` 指定 motion、
 `tracked_body_names` 和 `reference_body_name`；`scene.objs.robot` 提供机器人模型、默认 key pose、基座 link 与 actuator。
 参考关节状态是策略观察中的命令，但动作仍是相对于机器人默认姿态的位置残差，奖励主要根据 body 位姿和速度误差计算。
 

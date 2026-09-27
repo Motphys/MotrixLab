@@ -123,6 +123,62 @@ def _learner_node(device: torch.device, multi_node: bool) -> int | None:
     return numa.gpu_numa_node(index)
 
 
+def resolve_collector_inference_devices(
+    collector_inference_device: str,
+    learner_devices: list[torch.device],
+    num_collectors: int,
+    num_learners: int,
+    default_device: torch.device,
+) -> list[torch.device]:
+    """One explicit inference device per collector, co-located with its owner.
+
+    The device layout is owned here rather than split between the trainer and
+    the workers: a generic ``cuda`` spec resolves to the owning learner's GPU
+    for EVERY learner count (a single learner included), so the collector/learner
+    pair shares one GPU and the CUDA-IPC ring/weight transports stay the
+    default. Explicit ``cpu`` or ``cuda:N`` specs pass through. The returned
+    devices are always explicit (indexed for CUDA), so the collector workers
+    never re-resolve a generic spec in-process against
+    ``torch.cuda.current_device()`` — that fallback silently crossed GPUs when
+    the current device drifted from the learner's.
+
+    Pure device arithmetic (like :func:`same_cuda_device`): no CUDA context is
+    created, so the pre-spawn parent and CUDA-less unit tests can call it
+    freely. Runtime availability validation stays with the worker-side
+    :func:`motrix_rl.fastsac.async_impl.collector.resolve_collector_inference_device`.
+    """
+    device = torch.device(collector_inference_device)
+    if device.type not in ("cpu", "cuda"):
+        raise ValueError(f"collector_inference_device must be cpu or cuda, got '{collector_inference_device}'")
+    if (
+        device.type == "cuda"
+        and device.index is not None
+        and torch.cuda.is_available()
+        and device.index >= torch.cuda.device_count()
+    ):
+        raise RuntimeError(
+            f"collector_inference_device='{collector_inference_device}' selects CUDA device "
+            f"{device.index}, but only {torch.cuda.device_count()} device(s) are available"
+        )
+    per_learner = num_collectors // num_learners
+
+    def _owner(rank: int) -> torch.device:
+        return learner_devices[rank] if learner_devices else default_device
+
+    devices = []
+    for i in range(num_collectors):
+        owner = _owner(i // per_learner)
+        if device.type == "cuda" and device.index is None:
+            # Generic "cuda" resolves explicitly — to the owning learner's GPU
+            # when there is one, else to the default device — so no worker
+            # ever re-resolves an index-less spec in-process.
+            owner_index = owner.index if owner.type == "cuda" and owner.index is not None else 0
+            devices.append(torch.device("cuda", owner_index))
+        else:
+            devices.append(device)
+    return devices
+
+
 def resolve_learner_devices(
     learner_device_specs: list[str] | None,
     num_learners: int,
@@ -204,8 +260,8 @@ def resolve_trainer_topology(
     num_envs: int,
     num_collectors: int,
     num_learners: int,
-    learner_devices: list[torch.device],
-    collector_devices: list[torch.device],
+    learner_device_specs: list[str] | None,
+    collector_inference_device: str,
     default_device: torch.device,
     async_options: FastSacAsyncOptionsCfg,
     actor_param_numel: int,
@@ -213,24 +269,30 @@ def resolve_trainer_topology(
 ) -> TrainerTopology:
     """Single computation API: derive the full trainer topology in one pass.
 
-    Combines env sharding (:func:`split_num_envs`), NUMA placement, CPU
-    bindings, and the transport decisions for transition rings
-    (:func:`ring_transport_is_ipc`) and weight channels
-    (:func:`use_ipc_weight_channel`) into one :class:`TrainerTopology`.
+    Takes the RAW device specs and owns the whole layout: learner devices
+    (:func:`resolve_learner_devices`), collector inference devices with
+    owner co-location (:func:`resolve_collector_inference_devices`), env
+    sharding (:func:`split_num_envs`), NUMA placement, CPU bindings, and the
+    transport decisions for transition rings (:func:`ring_transport_is_ipc`)
+    and weight channels (:func:`use_ipc_weight_channel`). Callers read the
+    complete layout — which GPU each worker runs on, which transport each
+    ring uses — from the returned :class:`TrainerTopology` and never resolve
+    a device themselves. ``learner_device_specs`` is the configured list
+    (``None`` replicates ``default_device`` per rank); an index-less
+    ``cuda`` ``default_device`` means device 0.
     ``actor_param_numel`` is the parent-computed actor parameter count that
     sizes the weight-transport threshold; ``cpus_per_collector`` optionally
-    chunks each binding base into per-collector slices. ``learner_devices``
-    carries one indexed device per rank (empty for a single learner, whose
-    device comes from ``default_device`` — an index-less ``cuda`` means
-    device 0). ``collector_devices[i]`` is the inference device of collector
-    ``i``.
+    chunks each binding base into per-collector slices.
     """
     if num_learners < 1 or num_collectors < 1:
         raise ValueError(f"invalid worker counts: {num_collectors=} {num_learners=}")
     if num_collectors % num_learners != 0:
         raise ValueError(f"num_collectors={num_collectors} must divide evenly across num_learners={num_learners}")
-    if len(collector_devices) != num_collectors:
-        raise ValueError(f"expected {num_collectors} collector devices, got {len(collector_devices)}")
+
+    learner_devices = resolve_learner_devices(learner_device_specs, num_learners, default_device)
+    collector_devices = resolve_collector_inference_devices(
+        collector_inference_device, learner_devices, num_collectors, num_learners, default_device
+    )
 
     env_shards = split_num_envs(num_envs, num_collectors)
     multi_node = len(numa.available_numa_nodes()) >= 2

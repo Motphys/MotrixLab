@@ -64,6 +64,50 @@ class BadRefOrientationTerminationCfg(_WbtTerminationCfg):
 
 
 @dispatch
+def bad_motion_body_position_termination(
+    ctx: ManagerContext,
+    body_indices: tuple[int, ...],
+    threshold: np.float32,
+) -> bool:
+    """Holosoma-aligned tracked-body tracking termination.
+
+    Terminates when the mean position error of the configured tracked bodies
+    (any subset of ``tracked_body_names``, not just end effectors) against
+    their reference targets (the yaw/height-anchored body targets the
+    relative rewards track) exceeds ``threshold``.
+    """
+    tracked_body_pos = ctx.sim["tracked_body_pos"]
+    motion: WbtMotionCommand = ctx.commands["motion"]
+    count = len(body_indices)
+    if count == 0:
+        ctx.metrics["motion_body_pos_err"][0] = 0.0
+        return False
+    error_sq_sum = 0.0
+    for index in range(count):
+        body_id = body_indices[index]
+        diff = motion.target_body_position_relative[body_id] - tracked_body_pos[body_id]
+        error_sq_sum += float(np.dot(diff, diff))
+    mean_err = math.sqrt(error_sq_sum / count)
+    ctx.metrics["motion_body_pos_err"][0] = mean_err
+    return mean_err > threshold
+
+
+@configclass(kw_only=True)
+class BadMotionBodyPositionTerminationCfg(_WbtTerminationCfg):
+    body_names: tuple[str, ...] = ()
+
+    def __call__(self, ctx) -> TerminationTerm:
+        tracked_body_names = ctx.cfg.commands.motion.tracked_body_names
+        body_indices = tuple(tracked_body_names.index(name) for name in self.body_names)
+        return TerminationTerm(
+            bad_motion_body_position_termination,
+            body_indices,
+            np.float32(self.threshold),
+            metric_names=("motion_body_pos_err",),
+        )
+
+
+@dispatch
 def bad_body_z_termination(
     ctx: ManagerContext,
     body_indices: tuple[int, ...],

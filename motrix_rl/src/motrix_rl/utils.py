@@ -28,11 +28,14 @@ def _check_gpu_available_for_torch():
 
 def get_device_supports() -> DeviceSupports:
     supports = DeviceSupports()
+    torch_prior_device = None
     try:
         import torch  # noqa: F401
 
         supports.torch = True
         supports.torch_gpu = _check_gpu_available_for_torch()
+        if supports.torch_gpu:
+            torch_prior_device = torch.cuda.current_device()
     except ImportError:
         pass
 
@@ -47,6 +50,15 @@ def get_device_supports() -> DeviceSupports:
             supports.jax_gpu = True
     except ImportError:
         pass
+
+    # XLA's GPU probe enumerates every visible device and can leave the CUDA
+    # runtime's current device on the LAST probed GPU; torch lazily inherits
+    # that value, silently poisoning every later torch.cuda.current_device()
+    # consumer in this process. Restore the pre-probe device.
+    if torch_prior_device is not None:
+        import torch
+
+        torch.cuda.set_device(torch_prior_device)
 
     return supports
 

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from motrix_env_core.renderer import RenderConfig
-from motrix_envs.locomotion.wbt.g1 import G1WbtEnvCfg
+from motrix_envs.locomotion.wbt.g1.common import G1WbtEnvCfg
 from motrix_rl import checkpoints, runs
 
 GENERATE_VIDEO_SCRIPT = Path(__file__).resolve().parents[2] / "docs" / "scripts" / "generate_video.py"

@@ -1,32 +1,27 @@
 # 新增 WBT 训练任务
 
-`ManagerEnv` 的复用单元是一份完整的 `WbtManagerEnvCfg`。为现有机器人增加一段动作时，通常只需新增 motion 文件、环境配置
+`ManagerEnv` 的复用单元是一份完整的 `WbtEnvCfg`。为现有机器人增加一段动作时，通常只需新增 motion 文件、环境配置
 factory、Env 注册和对应的 Hydra Training Task，不需要复制环境实现。本章以 G1 的 `dance1_subject1.npz` 为例，
 使用 Env ID `g1-wbt-dance1-subject1`。
 
 ## 1. 定义完整环境配置
 
 从目标机器人的 WBT 配置子类构造顶层配置。编辑
-`motrix_envs/src/motrix_envs/locomotion/wbt/g1.py`：
+`motrix_envs/src/motrix_envs/locomotion/wbt/g1/dance.py`：
 
 ```python
-from pathlib import Path
-
 from motrix_env_core import registry
 from motrix_env_core.manager import ManagerEnv
 
-from motrix_envs.locomotion.wbt.g1 import G1WbtManagerCfg
-
-
-_MOTION_DIR = Path(__file__).parent / "assets" / "motion" / "g1"
+from motrix_envs.locomotion.wbt.g1.common import G1WbtEnvCfg, MOTION_DIR
 
 
 @registry.envcfg("g1-wbt-dance1-subject1")
-def make_g129dof_wbt_dance1_subject1_cfg() -> G1WbtManagerCfg:
-    return G1WbtManagerCfg(motion_file=str(_MOTION_DIR / "dance1_subject1.npz"))
+def make_g129dof_wbt_dance1_subject1_cfg() -> G1WbtEnvCfg:
+    return G1WbtEnvCfg(motion_file=str(MOTION_DIR / "dance1_subject1.npz"))
 ```
 
-`G1WbtManagerCfg` 通过继承 `WbtManagerEnvCfg`，提供 G1 的机器人场景、tracked bodies、参考身体、控制缩放、奖励和
+`G1WbtEnvCfg` 通过继承 `WbtEnvCfg`，提供 G1 的机器人场景、tracked bodies、参考身体、控制缩放、奖励和
 终止条件。新 motion 使用同一机器人和同一跟踪语义时，只需通过构造参数传入新的 `motion_file`。不要为每个 clip
 复制一份 `ManagerEnv`。
 
@@ -74,7 +69,7 @@ range。
 
 现有机器人配置类可作为起点：
 
--   G1：`G1WbtManagerCfg(motion_file=...)`
+-   G1：`G1WbtEnvCfg(motion_file=...)`
 -   Dex-EVT：`DexEvtWbtManagerCfg()`
 -   K1：`K1WbtManagerCfg(commands=_k1_commands(...), rewards=...)`
 

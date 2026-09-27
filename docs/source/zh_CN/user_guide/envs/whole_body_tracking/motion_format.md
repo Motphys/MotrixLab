@@ -51,7 +51,7 @@ $$
 | `clip_name`           | 人类可读的动作名称                                     |
 | `ext_*`               | 扩展数组；loader 以去掉 `ext_` 的名称放入 `extensions` |
 
-WBT 训练以 `WbtManagerEnvCfg.tracked_body_names`、`reference_body_name` 和机器人 `base_link_name` 为最终配置来源，不会
+WBT 训练以 `WbtEnvCfg.tracked_body_names`、`reference_body_name` 和机器人 `base_link_name` 为最终配置来源，不会
 因为 NPZ 中存在同名可选字段而修改任务语义。`replay.py` 在 `root_body_name` 缺失时使用 `body_names[0]`。
 
 ## 名称绑定与验证

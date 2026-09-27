@@ -98,6 +98,7 @@ class RunSeries:
     values: np.ndarray
     curriculum_values: np.ndarray | None = None
     survival_values: np.ndarray | None = None
+    provenance: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -429,6 +430,7 @@ def select_run_series(
                 values=scalar.values,
                 curriculum_values=curriculum_values,
                 survival_values=survival_values,
+                provenance=metadata,
             )
         ],
     )
@@ -555,6 +557,7 @@ def _render_svg(
     *,
     has_curriculum: bool,
     has_survival: bool = False,
+    annotation: str | None = None,
 ) -> str:
     """Render the shared SVG layout for the configured template."""
     if has_curriculum and has_survival:
@@ -659,6 +662,15 @@ def _render_svg(
         '<rect width="100%" height="100%" fill="#ffffff"/>',
         f"<style>{style}</style>",
     ]
+    if annotation:
+        # Header metadata line centered above the legend: the bottom rows are
+        # reserved for the axis titles, and the earlier bottom-right footer
+        # placement sat too close to the canvas edge (a top-right placement
+        # collided with the centered legend at this font size).
+        lines.append(
+            f'<text x="{width / 2:.2f}" y="18" text-anchor="middle" font-size="11" '
+            f'fill="#6b7280">{escape(annotation)}</text>'
+        )
     legend_entries = [("curve", spec.metric_label["en"])]
     if has_secondary:
         assert secondary_label is not None
@@ -669,8 +681,8 @@ def _render_svg(
     for (css_class, label), entry_width in zip(legend_entries, legend_widths):
         lines.extend(
             [
-                f'<line class="{css_class}" x1="{legend_x:.2f}" y1="30" x2="{legend_x + 28:.2f}" y2="30"/>',
-                f'<text x="{legend_x + 36:.2f}" y="34" font-size="13">{escape(label)}</text>',
+                f'<line class="{css_class}" x1="{legend_x:.2f}" y1="34" x2="{legend_x + 28:.2f}" y2="34"/>',
+                f'<text x="{legend_x + 36:.2f}" y="38" font-size="13">{escape(label)}</text>',
             ]
         )
         legend_x += entry_width + 28
@@ -753,23 +765,25 @@ def _render_svg(
     return "\n".join(lines) + "\n"
 
 
-def render_default_svg(spec: BenchmarkSpec, aggregate: Aggregate, run_count: int) -> str:
+def render_default_svg(spec: BenchmarkSpec, aggregate: Aggregate, run_count: int, annotation: str | None = None) -> str:
     """Render the standard single-axis performance template."""
-    return _render_svg(spec, aggregate, run_count, has_curriculum=False)
+    return _render_svg(spec, aggregate, run_count, has_curriculum=False, annotation=annotation)
 
 
-def render_curriculum_svg(spec: BenchmarkSpec, aggregate: Aggregate, run_count: int) -> str:
+def render_curriculum_svg(
+    spec: BenchmarkSpec, aggregate: Aggregate, run_count: int, annotation: str | None = None
+) -> str:
     """Render performance and curriculum progress on independent y axes."""
     if aggregate.curriculum_values is None or spec.curriculum_metric_label is None:
         raise RuntimeError(f"Curriculum template for {spec.benchmark_id!r} has no curriculum series")
-    return _render_svg(spec, aggregate, run_count, has_curriculum=True)
+    return _render_svg(spec, aggregate, run_count, has_curriculum=True, annotation=annotation)
 
 
-def render_wbt_svg(spec: BenchmarkSpec, aggregate: Aggregate, run_count: int) -> str:
+def render_wbt_svg(spec: BenchmarkSpec, aggregate: Aggregate, run_count: int, annotation: str | None = None) -> str:
     """Render WBT return and normalized episode survival on independent y axes."""
     if aggregate.survival_values is None or spec.survival_metric_label is None:
         raise RuntimeError(f"WBT template for {spec.benchmark_id!r} has no survival series")
-    return _render_svg(spec, aggregate, run_count, has_curriculum=False, has_survival=True)
+    return _render_svg(spec, aggregate, run_count, has_curriculum=False, has_survival=True, annotation=annotation)
 
 
 SVG_RENDERERS = {
@@ -779,18 +793,97 @@ SVG_RENDERERS = {
 }
 
 
-def render_svg(spec: BenchmarkSpec, aggregate: Aggregate, run_count: int) -> str:
+def render_svg(spec: BenchmarkSpec, aggregate: Aggregate, run_count: int, annotation: str | None = None) -> str:
     """Dispatch SVG rendering through the selected template."""
     try:
         renderer = SVG_RENDERERS[spec.template]
     except KeyError as exc:
         raise RuntimeError(f"Unsupported performance template: {spec.template!r}") from exc
-    return renderer(spec, aggregate, run_count)
+    return renderer(spec, aggregate, run_count, annotation=annotation)
 
 
-def render_data(spec: BenchmarkSpec, aggregate: Aggregate, series: list[RunSeries]) -> str:
-    """Render a stable JSON sidecar containing chart provenance and aggregate values."""
+def _hardware_annotation(series: list[RunSeries]) -> str | None:
+    """Concise used-hardware line for the chart, from the runs' provenance."""
+
+    for item in series:
+        provenance = item.provenance
+        if not (isinstance(provenance, dict) and isinstance(provenance.get("system"), dict)):
+            continue
+        system = provenance["system"]
+        parts = []
+        gpus = system.get("gpus_used") or []
+        if gpus:
+            model = str(gpus[0].get("model", "GPU")).replace("NVIDIA GeForce ", "")
+            parts.append(f"{len(gpus)}× {model}")
+        cpu_model = str(system.get("cpu", {}).get("model") or "")
+        if cpu_model:
+            parts.append(cpu_model)
+        performance = provenance.get("performance")
+        if isinstance(performance, dict):
+            wall_minutes = performance.get("wall_time_s")
+            if isinstance(wall_minutes, (int, float)) and wall_minutes > 0:
+                parts.append(f"{wall_minutes / 60.0:.0f} min")
+            rate = performance.get("mean_env_steps_per_s")
+            if isinstance(rate, (int, float)) and rate > 0:
+                parts.append(f"{rate / 1000.0:.0f}k env-steps/s")
+        return " · ".join(parts) if parts else None
+    return None
+
+
+def _profile_slug(series: list[RunSeries]) -> str | None:
+    """Hardware slug of a series' provenance, or None when unrecorded."""
+
+    for item in series:
+        provenance = item.provenance
+        if isinstance(provenance, dict) and isinstance(provenance.get("system"), dict):
+            from motrix_rl.system_metrics import hardware_profile_slug
+
+            return hardware_profile_slug(provenance["system"])
+    return None
+
+
+def render_data(
+    spec: BenchmarkSpec, aggregate: Aggregate, series: list[RunSeries], data_path: Path | None = None
+) -> str:
+    """Render a stable JSON sidecar containing chart provenance and aggregate values.
+
+    Schema v2 keeps the default profile inline at the top level (the shape
+    readers consume) and adds hardware provenance: ``default_profile`` names
+    the used-hardware slug of the inline points, ``provenance`` carries the
+    runs' system/performance records, and ``other_profiles`` preserves full
+    payloads generated on other machines so regenerating on one host never
+    drops another host's data.
+    """
+    slug = _profile_slug(series)
+    other_profiles: dict[str, dict] = {}
+    if data_path is not None and data_path.is_file():
+        try:
+            previous = json.loads(data_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            previous = None
+        if isinstance(previous, dict):
+            other_profiles.update(previous.get("other_profiles") or {})
+            previous_slug = previous.get("default_profile")
+            if isinstance(previous_slug, str) and previous_slug != slug:
+                other_profiles[previous_slug] = {
+                    key: previous[key]
+                    for key in ("benchmark", "task", "template", "metric", "metric_label", "points")
+                    if key in previous
+                }
+                if "provenance" in previous:
+                    other_profiles[previous_slug]["provenance"] = previous["provenance"]
+    provenance_runs = []
+    for item in series:
+        record = {}
+        if isinstance(item.provenance, dict):
+            for key in ("system", "performance"):
+                if item.provenance.get(key) is not None:
+                    record[key] = item.provenance[key]
+        provenance_runs.append(record)
     payload = {
+        "schema_version": 2,
+        **({"default_profile": slug} if slug is not None else {}),
+        **({"other_profiles": other_profiles} if other_profiles else {}),
         "benchmark": spec.benchmark_id,
         "task": spec.task,
         "template": spec.template,
@@ -806,6 +899,7 @@ def render_data(spec: BenchmarkSpec, aggregate: Aggregate, series: list[RunSerie
         **({"survival_metric_label": spec.survival_metric_label} if spec.survival_metric_label is not None else {}),
         **({"episode_length_max": spec.episode_length_max} if spec.episode_length_max is not None else {}),
         "runs": [item.run_dir.name for item in series],
+        **({"provenance": provenance_runs} if provenance_runs else {}),
         "points": [
             {
                 "environment_steps": float(environment_steps),
@@ -904,6 +998,9 @@ def read_snapshot(
         runs = payload["runs"]
         if not points or not runs:
             raise RuntimeError(f"Performance snapshot is incomplete: {path}")
+        provenance_runs = payload.get("provenance")
+        if provenance_runs is not None and (not isinstance(provenance_runs, list) or len(provenance_runs) != len(runs)):
+            raise RuntimeError(f"Performance snapshot provenance does not match its runs: {path}")
         if all("environment_steps" in point for point in points):
             environment_steps = [point["environment_steps"] for point in points]
         elif all("step" in point for point in points):
@@ -956,8 +1053,13 @@ def read_snapshot(
                 environment_steps=np.asarray([], dtype=np.float64),
                 elapsed_seconds=np.asarray([], dtype=np.float64),
                 values=np.asarray([], dtype=np.float64),
+                provenance=(
+                    {key: record[key] for key in ("system", "performance") if key in record}
+                    if isinstance((record := provenance_runs[index]), dict)
+                    else None
+                ),
             )
-            for run in runs
+            for index, run in enumerate(runs)
         ]
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Invalid performance snapshot: {path}") from exc
@@ -1005,9 +1107,11 @@ def generate(
         if spec is not None and aggregate is not None:
             svg_path = STATIC_DIR / "images" / "performance" / f"{env_id}.svg"
             data_path = STATIC_DIR / "data" / "performance" / f"{env_id}.json"
-            if _update_text(svg_path, render_svg(spec, aggregate, len(series)), check=check):
+            if _update_text(
+                svg_path, render_svg(spec, aggregate, len(series), annotation=_hardware_annotation(series)), check=check
+            ):
                 stale.append(svg_path)
-            data_stale = _update_text(data_path, render_data(spec, aggregate, series), check=check)
+            data_stale = _update_text(data_path, render_data(spec, aggregate, series, data_path=data_path), check=check)
             if data_stale:
                 stale.append(data_path)
     return stale

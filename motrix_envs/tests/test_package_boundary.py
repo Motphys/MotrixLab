@@ -10,7 +10,8 @@ from motrix_env_core import registry
 from motrix_env_core.base import EnvCfg
 from motrix_env_core.config.scene import SceneCfg
 from motrix_envs.locomotion.wbt.dex_evt import DexEvtWbtEnvCfg
-from motrix_envs.locomotion.wbt.g1 import G1WbtEnvCfg, make_g129dof_wbt_dance_cfg
+from motrix_envs.locomotion.wbt.g1.common import G1WbtEnvCfg
+from motrix_envs.locomotion.wbt.g1.dance import make_g129dof_wbt_dance_cfg
 from motrix_envs.locomotion.wbt.k1 import K1WbtEnvCfg
 
 

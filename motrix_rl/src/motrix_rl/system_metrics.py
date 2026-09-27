@@ -1,7 +1,9 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Low-overhead host metrics sampled at training-panel refresh boundaries.
+"""Host metrics and training-run hardware provenance.
+
+Low-overhead host metrics sampled at training-panel refresh boundaries.
 
 CPU samplers read Linux ``/proc`` interfaces and return ``None`` where they
 are unavailable, so panels degrade to ``n/a`` fields; memory sampling also
@@ -13,8 +15,11 @@ from __future__ import annotations
 
 import ctypes
 import os
+import platform
+import re
 import sys
 from dataclasses import dataclass
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
 
@@ -433,3 +438,115 @@ def _sysfs_gpu_busy_percent() -> list[float]:
         if 0.0 <= value <= 100.0:
             values.append(value)
     return values
+
+
+# ---------------------------------------------------------------- provenance
+
+
+def capture_system_info(topology: Any = None, fallback_device: Any = None) -> dict[str, Any]:
+    """Capture the system context of a training run.
+
+    Records what a run actually used — the devices in the resolved trainer
+    topology with their roles — rather than what the host machine has, so
+    performance snapshots stay comparable across machines and layouts.
+    ``topology`` is the resolved async trainer layout (single source of
+    truth for which devices each worker uses); ``fallback_device`` covers
+    trainers without a topology, recording that single device.
+    """
+
+    roles: dict[int, set[str]] = {}
+    if topology is not None:
+        for learner in topology.learners:
+            _add_device_role(roles, learner.device, "learner")
+        for collector in topology.collectors:
+            _add_device_role(roles, collector.device, "collector-inference")
+    elif fallback_device is not None:
+        _add_device_role(roles, fallback_device, "trainer")
+
+    gpus_used = []
+    for index in sorted(roles):
+        gpus_used.append({"index": index, "model": _cuda_device_name(index), "roles": sorted(roles[index])})
+
+    system: dict[str, Any] = {
+        "platform": platform.platform(),
+        "cpu": {
+            "model": _cpu_model(),
+            "machine_cores": os.cpu_count() or 0,
+        },
+        "gpus_used": gpus_used,
+        "software": _software_versions(),
+    }
+    if topology is not None:
+        system["cpu"]["bound_cores"] = _bound_cores(topology)
+    return system
+
+
+def hardware_profile_slug(system: dict[str, Any]) -> str:
+    """Stable slug identifying the used-hardware profile, e.g. ``epyc-9004-rtx-4090-x1``."""
+
+    cpu = _slugify(str(system.get("cpu", {}).get("model", "cpu")))
+    gpus = system.get("gpus_used") or []
+    models = sorted(str(gpu.get("model", "gpu")).lower() for gpu in gpus)
+    if not models:
+        return f"{cpu}-cpuonly"
+    gpu_part = _slugify(models[0]) if len(set(models)) == 1 else _slugify("-".join(models))
+    return f"{cpu}-{gpu_part}-x{len(models)}"
+
+
+def _add_device_role(roles: dict[int, set[str]], device: Any, role: str) -> None:
+    if getattr(device, "type", None) != "cuda":
+        return
+    index = device.index if device.index is not None else 0
+    roles.setdefault(index, set()).add(role)
+
+
+def _cuda_device_name(index: int) -> str:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return torch.cuda.get_device_name(index)
+    except Exception:
+        pass
+    return f"cuda:{index}"
+
+
+def _cpu_model() -> str:
+    try:
+        for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
+            if line.startswith("model name"):
+                return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor() or "unknown"
+
+
+def _bound_cores(topology: Any) -> dict[str, list[int]] | None:
+    bound: dict[str, list[int]] = {}
+    for rank, learner in enumerate(topology.learners):
+        if learner.cpus:
+            bound[f"learner{rank if len(topology.learners) > 1 else ''}"] = sorted(learner.cpus)
+    for collector in topology.collectors:
+        if collector.cpus:
+            bound[f"collector{collector.collector_id}"] = sorted(collector.cpus)
+    return bound or None
+
+
+def _software_versions() -> dict[str, str]:
+    def _pkg(name: str) -> str | None:
+        try:
+            return importlib_metadata.version(name)
+        except importlib_metadata.PackageNotFoundError:
+            return None
+
+    software = {"python": sys.version.split()[0]}
+    for package in ("torch", "motrix-lab", "motrixsim", "motrix-env-core"):
+        resolved = _pkg(package)
+        if resolved is not None:
+            software[package] = resolved
+    return software
+
+
+def _slugify(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return re.sub(r"-+", "-", slug)[:48] or "unknown"

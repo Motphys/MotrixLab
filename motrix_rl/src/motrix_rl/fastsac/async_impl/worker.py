@@ -344,8 +344,9 @@ def run_collector_process(
         apply_binding(role, numa_node, cpus or [])
         set_seed(seed)
         opts = cfg.trainer.async_options
-        # Multi-learner: the parent resolves the generic "cuda" spec to the
-        # owning learner's GPU; an explicit spec passes through unchanged.
+        # The parent's topology pass resolved every collector's inference
+        # device explicitly (generic "cuda" co-located with the owning
+        # learner's GPU), so no generic spec is re-resolved in-process here.
         if collector_device is not None:
             opts.collector_inference_device = collector_device
         _pin_worker_cpus(_resolve_cpu_set(opts.collector_cpu_cores, "collector_cpu_cores"))

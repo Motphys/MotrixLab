@@ -29,7 +29,7 @@ from motrix_envs.locomotion.wbt.cfg import (  # noqa: E402
     WbtEnvCfg,
 )
 from motrix_envs.locomotion.wbt.dex_evt import DexEvtWbtEnvCfg  # noqa: E402
-from motrix_envs.locomotion.wbt.g1 import G1WbtEnvCfg  # noqa: E402
+from motrix_envs.locomotion.wbt.g1.common import G1WbtEnvCfg  # noqa: E402
 from motrix_envs.locomotion.wbt.k1 import K1WbtEnvCfg  # noqa: E402
 from motrix_envs.locomotion.wbt.mdp.action import (  # noqa: E402
     WbtJointPositionAction,

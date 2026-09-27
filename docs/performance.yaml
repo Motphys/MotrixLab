@@ -47,6 +47,17 @@ benchmarks:
       zh_CN: 惩罚缩放
     default_seed: 1
     benchmark_seeds: [1]
+  g1-wbt-backflip:
+    task: g1-wbt-backflip/motrix.fastsac
+    template: wbt
+    metric: rollout/mean_return
+    survival_metric: rollout/mean_ep_len
+    survival_metric_label:
+      en: Episode survival (%)
+      zh_CN: Episode 存活率（%）
+    episode_length_max: 500
+    default_seed: 1
+    benchmark_seeds: [1]
   g1-wbt-dance:
     task: g1-wbt-dance/motrix.fastsac
     template: wbt

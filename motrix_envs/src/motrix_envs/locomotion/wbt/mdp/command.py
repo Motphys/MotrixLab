@@ -29,7 +29,12 @@ from motrix_envs.motion import MotrixMotion, WbtMotionClip
 
 
 @njit(inline="always")
-def _sample_motion_step(rand, sampling_cdf, num_frames: np.int64, start_at_timestep_zero_prob: np.float32):
+def _sample_motion_step(
+    rand,
+    sampling_cdf,
+    num_frames: np.int64,
+    start_at_timestep_zero_prob: np.float32,
+):
     """Draw one start frame from the adaptive-bin CDF (or uniformly when disabled)."""
     unit = (rand.next_uniform() + np.float32(1.0)) * np.float32(0.5)
     if sampling_cdf.size == 0:
@@ -203,7 +208,10 @@ class WbtMotionCommand(CommandTerm):
         """Sample the starting frame for one reset environment lane."""
         num_frames = self.clip.joint_pos.shape[0]
         self.steps[0] = _sample_motion_step(
-            ctx.rand, self.sampling_cdf, np.int64(num_frames), self.start_at_timestep_zero_prob
+            ctx.rand,
+            self.sampling_cdf,
+            np.int64(num_frames),
+            self.start_at_timestep_zero_prob,
         )
         # ``clip_ended`` is intentionally left untouched: advance recomputes it
         # every transition, so a lane that just wrapped keeps its flag for the
@@ -230,7 +238,10 @@ class WbtMotionCommand(CommandTerm):
             # resample keeps steps valid and consistently distributed between
             # this kernel and the reset pipeline.
             self.steps[0] = _sample_motion_step(
-                ctx.rand, self.sampling_cdf, np.int64(num_frames), self.start_at_timestep_zero_prob
+                ctx.rand,
+                self.sampling_cdf,
+                np.int64(num_frames),
+                self.start_at_timestep_zero_prob,
             )
             ctx.sim_reset_requested[0] = True
 
