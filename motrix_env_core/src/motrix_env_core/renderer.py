@@ -106,7 +106,13 @@ class VideoRecorder:
             # imageio is an optional dependency (``motrix-env-core[video]``):
             # importing it lazily keeps this module importable in installs
             # that only run headless training without video recording.
-            import imageio.v2 as imageio
+            try:
+                import imageio.v2 as imageio
+            except ImportError as e:
+                raise ImportError(
+                    "VideoRecorder requires the optional video dependencies; "
+                    "install them with `pip install motrix-env-core[video]`"
+                ) from e
 
             self._path.parent.mkdir(parents=True, exist_ok=True)
             # macro_block_size=None keeps the configured frame size untouched;
