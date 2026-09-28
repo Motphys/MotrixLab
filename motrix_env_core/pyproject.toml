@@ -10,19 +10,37 @@ authors = [{ name = "Motphys", email = "developers@motphys.com" }]
 requires-python = "==3.10.*"
 readme = "README.md"
 license = "Apache-2.0"
+# Heavy runtime deps (numba/scipy for manager kernel compilation, imageio for
+# video recording) are optional extras so deployment-side installs
+# (motrix-deploy and its backend plugins) only pull the lightweight config,
+# registry and input layers of this package. gymnasium stays in the base
+# dependencies because ``motrix_env_core.base`` (on the bare package import
+# path) types observation/action spaces with it, and it is a small
+# pure-Python distribution. array-api-compat is only used by the frontend
+# helper module and is likewise small.
 dependencies = [
     "array-api-compat==1.15.0",
     "gymnasium==1.1.1",
-    "imageio>=2.30",
-    "imageio-ffmpeg>=0.5",
-    "numba==0.61.2",
     "numpy>=1.26",
-    "scipy==1.15.3", # numba requires scipy at compile time for np.linalg in kernels
     "omegaconf>=2.3,<2.4",
     "typing-extensions>=4.1",
 ]
 
 [project.optional-dependencies]
+# Manager kernel compilation and numba-accelerated mdp terms.
+numba = [
+    "numba==0.61.2",
+    "scipy==1.15.3", # numba requires scipy at compile time for np.linalg in kernels
+]
+# Headless video recording via VideoRecorder.
+video = [
+    "imageio>=2.30",
+    "imageio-ffmpeg>=0.5",
+]
+# Everything the training-side workspace needs from this package.
+all = [
+    "motrix-env-core[numba,video]",
+]
 # TBB threading layer for numba parallel kernels: on many-core machines the
 # default OpenMP layer pays a per-region thread-wakeup storm that dominates
 # short kernels. The wheel drops libtbb.so.12 into <venv>/lib, so the runtime

@@ -11,7 +11,6 @@ encodes frames.
 from pathlib import Path
 from typing import Protocol
 
-import imageio.v2 as imageio
 import numpy as np
 
 from motrix_env_core.base import EnvCfg
@@ -104,6 +103,11 @@ class VideoRecorder:
 
     def _write_frame(self, frame: np.ndarray) -> None:
         if self._writer is None:
+            # imageio is an optional dependency (``motrix-env-core[video]``):
+            # importing it lazily keeps this module importable in installs
+            # that only run headless training without video recording.
+            import imageio.v2 as imageio
+
             self._path.parent.mkdir(parents=True, exist_ok=True)
             # macro_block_size=None keeps the configured frame size untouched;
             # the yuv420p pixel format still requires even dimensions, which
