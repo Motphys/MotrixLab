@@ -17,13 +17,16 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      # Redirect all Numba disk caches (manager fused kernels and term
-      # specializations) to a single path so they can be cached between runs.
-      # Kernel plan keys are content hashes, so stale cache entries are simply
-      # unused and never produce wrong results.
-      NUMBA_CACHE_DIR: ~/.cache/motrixlab/numba-manager
     steps:
+      - name: Resolve numba cache dir
+        run: |
+          # Redirect all Numba disk caches (manager fused kernels and term
+          # specializations) to a single path so they can be cached between
+          # runs. Kernel plan keys are content hashes, so stale cache entries
+          # are simply unused and never produce wrong results.
+          # Numba does not expand "~" in NUMBA_CACHE_DIR, so resolve the path
+          # via $HOME here; the cache action below reads the same variable.
+          echo "NUMBA_CACHE_DIR=$HOME/.cache/motrixlab/numba-manager" >> "$GITHUB_ENV"
       - name: Restore numba kernel cache
         uses: actions/cache@v4
         with:
