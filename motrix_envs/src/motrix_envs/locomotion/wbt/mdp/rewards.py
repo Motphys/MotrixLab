@@ -11,9 +11,9 @@ import numpy as np
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, RewardTerm, RewardTermCfg
 from motrix_env_core.manager.math.quaternion import rotation_distance
+from motrix_env_core.mdp.action import JointPositionActionState
 from motrix_env_core.numba.kernel_data import SharedArray, kernel_data
 from motrix_env_core.numba.manager.dispatch import dispatch
-from motrix_envs.locomotion.wbt.mdp.action import WbtJointPositionAction
 from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommand
 
 
@@ -190,7 +190,7 @@ class DofLimitRewardCfg(RewardTermCfg):
     cap: float
 
     def __call__(self, ctx) -> RewardTerm:
-        action = cast(WbtJointPositionAction, ctx.action_terms["joint_position"])
+        action = cast(JointPositionActionState, ctx.action_terms["joint_position"].state)
         params = DofLimitParams(
             midpoint=(action.joint_lower + action.joint_upper) * 0.5,
             half_range=(action.joint_upper - action.joint_lower) * 0.5,

@@ -22,6 +22,9 @@ from motrix_env_core.manager import (
     ManagerTerminationsCfg,
     SimQueriesCfg,
 )
+from motrix_env_core.mdp.action import (
+    JointPositionActionCfg,
+)
 from motrix_env_core.mdp.observations import (
     ActionsObsCfg,
     BodyAngularVelocityObsCfg,
@@ -67,10 +70,6 @@ from motrix_envs.locomotion.ball_balance.mdp.terminations import (
     BadOrientationTerminationCfg,
     BallEscapedTerminationCfg,
 )
-from motrix_envs.locomotion.wbt.mdp.action import (
-    WbtControlCfg,
-    WbtJointPositionActionCfg,
-)
 from motrix_envs.locomotion.wbt.mdp.observations import (
     DofPosRelObsCfg,
     DofVelObsCfg,
@@ -110,8 +109,9 @@ class BallBalanceSceneObjsCfg(StandardSceneObjsCfg):
 
 @configclass
 class ActionsCfg(ManagerActionsCfg):
-    joint_position: WbtJointPositionActionCfg = WbtJointPositionActionCfg(
-        control=WbtControlCfg(action_scale=0.5, action_scales_by_effort_limit_over_p_gain=False),
+    joint_position: JointPositionActionCfg = JointPositionActionCfg(
+        action_scale=0.5,
+        action_scales_by_effort_limit_over_p_gain=False,
     )
 
 

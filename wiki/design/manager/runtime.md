@@ -89,10 +89,18 @@ reset 只处理指定的原始 `env_ids`：
 Term 不要求继承统一实现基类，但必须遵循对应 protocol：
 
 ```python
+@kernel_data
+class BaseActionState:
+    action_queue: np.ndarray  # host (N, W, A), lane (W, A); W >= 2
+    action_ptr: SharedArray   # one shared cursor, advanced once per control step
+
+
+@dataclass(frozen=True)
 class ActionTerm:
-    def action_space(env, actuator_indices): ...
-    def process(actions): ...
-    def reset(env_ids): ...
+    action_space: gym.spaces.Box
+    state: BaseActionState
+    process: Callable  # process(state, actions_batch) -> controls_batch | None
+    reset: Callable    # reset(state, env_ids) -> None
 
 
 class ManagerContext:
@@ -143,8 +151,17 @@ buffer，每次 physics step 前清零）即可请求 sim-only reset：该 lane 
 该机制。host `reset(ResetContext)` 只在 episode reset 时准备跨 lane 的共享数据（如采样分布）；`on_transition()` 每步折叠
 统计。
 
-Action term 的 host `process()` 不直接写 simulator state；Manager 根据 actuator route 合并其输出。Term 不应调用其他 term 的行为方法，
-跨 term 依赖应通过 `ManagerContext` 的数据 store 表达。
+ActionTerm 是 host 侧描述对象：静态 action space、canonicalized state 和批量 process/reset callback。
+只有 `term.state` 进入 kernel ABI，`ctx.actions[name]` 直接取得 lane-scoped state；host 通过
+`env.action_terms[name].state` 访问同一份 backing。callback 不进入 kernel data，不要求 `@dispatch`。
+
+Manager 在调用 `process(state, actions)` 前推进共享 cursor 一次并写入 raw policy actions；处理回调只计算
+route-local controls，不重复推进 history，也不直接写 simulator state。每个 state 的 queue 至少保留两帧，
+当前和上一帧分别为 `queue[ptr]` 与 `queue[(ptr - 1) % W]`，observation 和 action-rate reward 均读取 raw history。
+延迟 action 可增加 queue 宽度。episode reset 时 Manager 先清空选中 lanes 的整个 queue，再调用
+`reset(state, env_ids)`；共享 cursor 和其他 lanes 的 history 不变，sim-only reset 不清 action history。
+Manager 根据 actuator route 合并 controls 后写入 backend。Term 不应调用其他 term 的行为方法，跨 term
+依赖通过 `ManagerContext` 的数据 store 表达。
 
 Observation terms use the host-side ``ObservationTerm(size, dispatch, *args)`` form. ``size`` is the fixed output width, and additional arguments are passed positionally; simple scalar/array arguments do not require a separate Args class. Reward terms use the analogous ``RewardTerm(dispatch, *args)`` form and return one numeric scalar per environment. Termination terms use ``TerminationTerm(dispatch, *args, metrics=...)``; metrics are optional per-environment outputs exposed to the dispatch as a static ``Map[np.ndarray]``. The compiler validates and lowers these values into the static kernel ABI, then emits ``dispatch(ctx, out, *args)`` for observations, ``dispatch(ctx, *args)`` for rewards, and ``dispatch(ctx, metrics, *args)`` when termination metrics are present.
 

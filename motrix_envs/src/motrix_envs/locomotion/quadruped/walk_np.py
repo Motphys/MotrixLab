@@ -9,6 +9,7 @@ import numpy as np
 from motrix_env_core.array.env import ArrayEnvState, NpObs
 from motrix_env_core.base import ObsSpace
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.mdp.action_space import asymmetric_residual_action_space
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     ActuatorKdQuery,
@@ -37,7 +38,6 @@ from motrix_env_core.sim.write import (
     CtrlTargetsWrite,
     GeomFrictionWrite,
 )
-from motrix_envs.locomotion.action_space import asymmetric_residual_action_space
 from motrix_envs.locomotion.quadruped.cfg import QuadrupedWalkEnvCfg
 from motrix_envs.locomotion.quadruped.velocity_command import RandomPlanarVelocityBinding
 from motrix_envs.robot import QuadrupedRobotCfg

@@ -38,7 +38,7 @@ class AliveRewardCfg(RewardTermCfg):
 def action_rate_reward(ctx: ManagerContext, action_name: str) -> float:
     action_name = literally(action_name)
     action = ctx.actions[action_name]
-    delta = action.current - action.previous
+    delta = action.current() - action.previous()
     return float(np.dot(delta, delta))
 
 

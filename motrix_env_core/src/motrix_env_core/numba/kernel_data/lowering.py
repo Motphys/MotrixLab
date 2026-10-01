@@ -11,10 +11,12 @@ from typing import Annotated, Any, NamedTuple, TypeAlias, get_args, get_origin
 
 import numpy as np
 
+from motrix_env_core.numba.fingerprint import function_fingerprint
 from motrix_env_core.numba.kernel_data.map import map_proxy
+from motrix_env_core.numba.kernel_data.methods import dispatch_methods, register_proxy_method
 from motrix_env_core.numba.kernel_data.tree import KernelMapDef, LeafDef, TreeClassDef
 
-_LOWERING_SCHEMA_VERSION = 1
+_LOWERING_SCHEMA_VERSION = 2
 _LAYOUT_CACHE: dict[
     tuple[str, bool],
     KernelRecordLayout,
@@ -191,6 +193,21 @@ def proxy_symbol(proxy: type[tuple[Any, ...]]) -> str:
     return proxy.__name__
 
 
+def _tree_method_fingerprint(tree_def: TreeClassDef | KernelMapDef | LeafDef) -> Any:
+    """Include nested records and map values before consulting the layout cache."""
+    if isinstance(tree_def, LeafDef):
+        return ()
+    if isinstance(tree_def, KernelMapDef):
+        return tuple((entry.key, _tree_method_fingerprint(entry.tree_def)) for entry in tree_def.entries)
+    return (
+        tuple(
+            (name, function_fingerprint(method))
+            for name, method in sorted(dispatch_methods(tree_def.logical_type).items())
+        ),
+        tuple((field.name, _tree_method_fingerprint(field.tree_def)) for field in tree_def.fields),
+    )
+
+
 class KernelDataLowering:
     """Lower one logical ``TreeClassDef`` into a fixed flat Numba ABI layout."""
 
@@ -201,7 +218,8 @@ class KernelDataLowering:
         context: str,
         force_shared: bool = False,
     ) -> KernelDataLayout:
-        cache_key = (tree_def.fingerprint, force_shared)
+        method_key = hashlib.sha256(repr(_tree_method_fingerprint(tree_def)).encode()).hexdigest()
+        cache_key = (f"{tree_def.fingerprint}:{method_key}", force_shared)
         cached = _LAYOUT_CACHE.get(cache_key)
         if cached is not None:
             return cached
@@ -254,7 +272,13 @@ class KernelDataLowering:
             field_layouts.append(KernelFieldLayout(field.name, child))
             fingerprint_fields.append((field.name, self._fingerprint_part(child)))
         identity = f"{tree_def.logical_type.__module__}.{tree_def.logical_type.__qualname__}"
-        raw_fingerprint = repr((_LOWERING_SCHEMA_VERSION, tree_def.fingerprint, identity, tuple(fingerprint_fields)))
+        method_fingerprints = tuple(
+            (name, function_fingerprint(method))
+            for name, method in sorted(dispatch_methods(tree_def.logical_type).items())
+        )
+        raw_fingerprint = repr(
+            (_LOWERING_SCHEMA_VERSION, tree_def.fingerprint, identity, tuple(fingerprint_fields), method_fingerprints)
+        )
         fingerprint = hashlib.sha256(raw_fingerprint.encode()).hexdigest()
         lowered_type = self._lowered_proxy(
             tree_def.logical_type,
@@ -331,12 +355,14 @@ class KernelDataLowering:
             return (
                 "map",
                 layout.tree_def.path,
+                layout.fingerprint,
                 tuple((entry.key, KernelDataLowering._fingerprint_part(entry.child)) for entry in layout.entries),
             )
         assert isinstance(layout, KernelRecordLayout)
         return (
             "record",
             f"{layout.logical_type.__module__}.{layout.logical_type.__qualname__}",
+            layout.fingerprint,
             tuple((field.name, KernelDataLowering._fingerprint_part(field.child)) for field in layout.fields),
         )
 
@@ -366,6 +392,8 @@ class KernelDataLowering:
         lowered.__module__ = logical_type.__module__
         lowered.__qualname__ = name
         setattr(module, name, lowered)
+        for method_name, method in dispatch_methods(logical_type).items():
+            register_proxy_method(lowered, method_name, method)
         return lowered
 
     @staticmethod

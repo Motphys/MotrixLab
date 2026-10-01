@@ -58,7 +58,7 @@ def body_joint_vel_obs(
 def actions_obs(ctx: ManagerContext, out: np.ndarray, action_name: str) -> None:
     action_name = literally(action_name)
     action = ctx.actions[action_name]
-    out[:] = action.current
+    out[:] = action.current()
 
 
 @configclass(kw_only=True)
@@ -68,8 +68,8 @@ class ActionsObsCfg(ObservationTermCfg):
     action_name: str = "joint_position"
 
     def __call__(self, ctx: BuildContext) -> ObsTerm:
-        action = ctx.action_terms[self.action_name]
-        return ObsTerm(action.current.shape[1], actions_obs, self.action_name)
+        action = ctx.action_terms[self.action_name].state
+        return ObsTerm(action.action_queue.shape[2], actions_obs, self.action_name)
 
 
 @dispatch

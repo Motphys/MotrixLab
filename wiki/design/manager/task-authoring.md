@@ -126,16 +126,24 @@ Term 不持有 backend handle，也不在运行期创建或执行 simulator quer
 
 `ActionCfg.actuator_names` 声明 simulator control route，空 tuple 表示所有 actuator。Manager 在构造期解析并校验未知、重复和重叠 route。
 
-Action term 提供：
+ActionCfg 在构造期返回冻结的 host 描述对象：
 
 ```python
-action_space(env, actuator_indices) -> gym.spaces.Box
-process(actions) -> np.ndarray
-reset(env_ids) -> None
+ActionTerm(
+    action_space=space,
+    state=state,  # @kernel_data BaseActionState 子类
+    process=process_action,  # process_action(state, actions_batch) -> controls | None
+    reset=reset_action,  # reset_action(state, env_ids) -> None
+)
 ```
 
-`process()` 只处理分配给自己的 policy action slice，更新自己的 history，并返回 route-local controls。Manager 负责将各 term 输出合并并写入
-simulator；compiled term 可以读取 action data，但不能调用 action term 的 host 方法。
+`BaseActionState` 声明 `action_queue` 和 `action_ptr`，配置为每个环境分配独立 history。
+Manager 在 process 回调之前推进共享 cursor 一次并写入 raw action slice；回调只处理该 slice，
+返回 route-local controls，不重复维护 history。episode reset 时 Manager 先清目标 lanes 的整个 queue，
+再调用 reset 回调，cursor 保持不变。Manager 将各 term 输出合并并写入 simulator。
+
+Host 通过 `env.action_terms[name].state` 访问状态；compiled term 通过 `ctx.actions[name]` 直接读取
+lane-scoped state，不能调用 process/reset callback。具体状态可增加 delay、目标缩放和模型参数字段。
 
 ## 6. Observation、Reward、Termination
 

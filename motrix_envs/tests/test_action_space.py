@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 
 from motrix_env_core import registry
+from motrix_env_core.mdp.action_space import joint_position_action_space
 from motrix_env_core.sim.model import ActuatorType
-from motrix_envs.locomotion.action_space import joint_position_action_space
 
 
 def test_joint_position_action_space_uses_symmetric_position_ranges():

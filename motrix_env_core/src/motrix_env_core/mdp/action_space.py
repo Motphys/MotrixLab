@@ -1,7 +1,7 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Action-space helpers shared by locomotion environments."""
+"""Action-space construction helpers for manager and direct environments."""
 
 import gymnasium as gym
 import numpy as np
@@ -19,6 +19,14 @@ def symmetric_residual_action_space(
     Bounds are divided by the per-actuator scale applied by the environment so
     the normalized action range maps exactly onto the control limits. Zero
     scales (inert actuators) get a zero bound instead of an infinite one.
+
+    Args:
+        control_ranges: ``(2, A)`` lower/upper position-control limits.
+        default_values: Default (center) values, ``(A,)``.
+        action_scales: Per-actuator scales ``(A,)`` or one scalar for all.
+
+    Returns:
+        Symmetric ``Box`` with bounds ``[-limit, +limit]`` per actuator.
     """
     lower, upper = control_ranges
     scales = np.asarray(action_scales, dtype=np.float32)
@@ -38,6 +46,14 @@ def asymmetric_residual_action_space(
     own lower/upper residual extent, so the action is not constrained to be
     zero-centered. This is useful when the default value sits far from the
     midpoint of the control range (e.g. heavily asymmetric joint limits).
+
+    Args:
+        control_ranges: ``(2, A)`` lower/upper position-control limits.
+        default_values: Default (center) values, ``(A,)``.
+        action_scales: Per-actuator scales ``(A,)`` or one scalar for all.
+
+    Returns:
+        Asymmetric ``Box`` with independent per-actuator low/high bounds.
     """
     lower, upper = control_ranges
     scales = np.asarray(action_scales, dtype=np.float32)
@@ -51,7 +67,7 @@ def asymmetric_residual_action_space(
 
 
 def joint_position_action_space(
-    actuators,
+    actuators: tuple,
     default_angles: np.ndarray,
     action_scales: float | np.ndarray,
     actuator_indices: np.ndarray | None = None,
@@ -63,6 +79,16 @@ def joint_position_action_space(
     by the environment. Pass a scalar for uniform scales. Position actuators
     must declare ``ctrl_range`` directly or inherit it from their target joint
     during model construction.
+
+    Args:
+        actuators: Actuator specs in canonical model order.
+        default_angles: Default angles for the selected actuators.
+        action_scales: Per-actuator scales or one scalar for all.
+        actuator_indices: Indices of the actuators to include; ``None``
+            selects every actuator.
+
+    Returns:
+        Symmetric ``Box`` with bounds ``[-limit, +limit]`` per actuator.
     """
     if actuator_indices is None:
         actuator_indices = np.arange(len(actuators), dtype=np.int64)
@@ -90,7 +116,19 @@ def joint_position_action_space_from_ctrl_ranges(
     action_scales: float | np.ndarray,
     actuator_indices: np.ndarray | None = None,
 ) -> gym.spaces.Box:
-    """Build symmetric joint-position action bounds from ``(num_actuators, 2)`` ctrl ranges."""
+    """Build symmetric joint-position action bounds from ctrl ranges.
+
+    Args:
+        ctrl_ranges: ``(num_actuators, 2)`` lower/upper control limits.
+        default_angles: Default angles, ``(num_actuators,)`` (after any
+            subsetting by ``actuator_indices``).
+        action_scales: Per-actuator scales or one scalar for all.
+        actuator_indices: Indices of the actuators to include; ``None``
+            selects every row.
+
+    Returns:
+        Symmetric ``Box`` with bounds ``[-limit, +limit]`` per actuator.
+    """
     if actuator_indices is None:
         actuator_indices = np.arange(ctrl_ranges.shape[0], dtype=np.int64)
     default_angles = np.asarray(default_angles, dtype=np.float32)

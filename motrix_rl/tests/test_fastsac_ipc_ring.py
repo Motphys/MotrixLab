@@ -120,6 +120,7 @@ def test_ipc_ring_backpressure_bounds_in_flight():
     while receiver.has_next():
         k, _ = receiver.read_span()
         receiver.commit_reads(k)
+    torch.cuda.synchronize()
     assert not owner.is_full()
     assert owner.push(*_batch(CAPACITY, seed=3))
 

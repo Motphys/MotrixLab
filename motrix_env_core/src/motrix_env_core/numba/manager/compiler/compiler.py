@@ -18,6 +18,7 @@ import numba
 import numpy as np
 from numba.extending import register_jitable
 
+from motrix_env_core.numba.fingerprint import function_fingerprint
 from motrix_env_core.numba.kernel import clone_kernel_value
 from motrix_env_core.numba.kernel_data import (
     KernelDataLayout,
@@ -44,7 +45,6 @@ from motrix_env_core.numba.manager.compiler.cache import (
 )
 from motrix_env_core.numba.manager.compiler.codegen import KernelSourceGenerator
 from motrix_env_core.numba.manager.compiler.fingerprint import (
-    function_fingerprint,
     plan_key,
     type_name,
 )
@@ -392,7 +392,7 @@ class NumbaKernelCompiler:
 
     def _resolve_runtime_terms(self) -> None:
         for name, action_term in self._env.action_terms.items():
-            _, tree_def = flatten_kernel_data(action_term)
+            _, tree_def = flatten_kernel_data(action_term.state)
             self._shared_parts.append(
                 (
                     "action",
@@ -422,7 +422,7 @@ class NumbaKernelCompiler:
         reward_terms: dict[str, RewardTerm],
         termination_terms: dict[str, TerminationTerm],
     ) -> ResolvedManagerContext:
-        actions = dict(self._env.action_terms)
+        actions = {name: term.state for name, term in self._env.action_terms.items()}
         sim = {key: binding.value for key, binding in self._sim_inputs.items()}
         commands = dict(self._env.command_terms)
         value = ManagerContext(

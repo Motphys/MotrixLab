@@ -13,7 +13,7 @@ import numpy as np
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.numba.kernel_data import kernel_data
-from motrix_env_core.numba.manager.actions import ActionCfg, ActionTerm, ManagerActionsCfg
+from motrix_env_core.numba.manager.actions import ActionCfg, ActionState, ActionTerm, ManagerActionsCfg
 from motrix_env_core.numba.manager.context import ManagerContext
 from motrix_env_core.numba.manager.dispatch import dispatch
 from motrix_env_core.numba.manager.env import ManagerBasedEnvCfg, ManagerEnv
@@ -200,19 +200,25 @@ class _FakeBackend(SimBackend):
 
 
 @kernel_data
-class _CtrlAction(ActionTerm):
+class _CtrlActionState(ActionState):
     source: np.ndarray
 
-    def action_space(self, env, actuator_indices) -> gym.spaces.Box:
-        del env, actuator_indices
-        return gym.spaces.Box(-1.0, 1.0, (1,), dtype=np.float32)
 
-    def process(self, actions: np.ndarray) -> np.ndarray:
-        self.source[...] = actions
+class _CtrlActionTerm(ActionTerm):
+    def __init__(self, action_space: gym.spaces.Box, state: _CtrlActionState) -> None:
+        super().__init__(action_space, state)
+
+    def _process(self, actions: np.ndarray) -> np.ndarray:
+        self.state.source[...] = actions
         return actions * np.float32(2.0)
 
-    def reset(self, env_ids: np.ndarray) -> None:
-        self.source[env_ids] = 0.0
+    def _reset(self, env_ids: np.ndarray) -> None:
+        self.state.source[env_ids] = 0.0
+
+
+def _ctrl_action_space(env, actuator_indices) -> gym.spaces.Box:
+    del env, actuator_indices
+    return gym.spaces.Box(-1.0, 1.0, (1,), dtype=np.float32)
 
 
 @configclass(kw_only=True)
@@ -220,8 +226,14 @@ class _CtrlActionCfg(ActionCfg):
     actuator_names: tuple[str, ...] | None = ("routed",)
 
     def __call__(self, env, actuator_indices):
-        del actuator_indices
-        return _CtrlAction(np.zeros((env.num_envs, 1), dtype=np.float32))
+        return _CtrlActionTerm(
+            _ctrl_action_space(env, actuator_indices),
+            _CtrlActionState(
+                np.zeros((env.num_envs, 2, 1), dtype=np.float32),
+                np.zeros(1, dtype=np.int64),
+                np.zeros((env.num_envs, 1), dtype=np.float32),
+            ),
+        )
 
 
 @dispatch

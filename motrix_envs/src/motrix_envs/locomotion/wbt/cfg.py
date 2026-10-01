@@ -22,6 +22,7 @@ from motrix_env_core.manager import (
     ManagerTerminationsCfg,
     SimQueriesCfg,
 )
+from motrix_env_core.mdp.action import JointPositionActionCfg
 from motrix_env_core.mdp.observations import (
     ActionsObsCfg,
     BodyAngularVelocityObsCfg,
@@ -38,9 +39,6 @@ from motrix_env_core.sim import (
     BodyJointPositionLimitsQuery,
     JointPositionQuery,
     JointVelocityQuery,
-)
-from motrix_envs.locomotion.wbt.mdp.action import (
-    WbtJointPositionActionCfg,
 )
 from motrix_envs.locomotion.wbt.mdp.command import (
     WbtMotionCommandCfg,
@@ -84,7 +82,9 @@ from motrix_envs.locomotion.wbt.mdp.terminations import (
 class ActionsCfg(ManagerActionsCfg):
     """Typed action terms for WBT."""
 
-    joint_position: WbtJointPositionActionCfg = WbtJointPositionActionCfg()
+    joint_position: JointPositionActionCfg = JointPositionActionCfg(
+        action_scales_by_effort_limit_over_p_gain=True,
+    )
 
 
 @configclass

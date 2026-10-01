@@ -80,7 +80,7 @@ class PenaltyOrientationRewardCfg(RewardTermCfg):
 @dispatch
 def penalty_action_rate_reward(ctx: ManagerContext) -> float:
     action = ctx.actions["joint_position"]
-    delta = action.current - action.previous
+    delta = action.current() - action.previous()
     walk: WalkCommand = ctx.commands["walk"]
     return float(np.dot(delta, delta)) * walk.penalty_scale[0]
 

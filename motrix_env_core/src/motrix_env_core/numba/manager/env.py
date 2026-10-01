@@ -381,18 +381,22 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         self._action_actuators = self._resolve_action_actuators()
         self._action_writes = self.sim.compile_writes(
             {
-                name: CtrlTargetsWrite(None if action_cfg.actuator_names == () else action_cfg.actuator_names)
+                name: CtrlTargetsWrite(action_cfg.actuator_names)
                 for name, action_cfg in self._action_cfgs.items()
-                if action_cfg.actuator_names is not None
+                if action_cfg.actuator_names != ()
             }
         )
         self._action_terms: dict[str, ActionTerm] = {
-            name: canonicalize_kernel_data(
-                action_cfg(self, self._action_actuators[name]),
-                context=f"Manager action {name!r} __call__()",
-            )
-            for name, action_cfg in self._action_cfgs.items()
+            name: action_cfg(self, self._action_actuators[name]) for name, action_cfg in self._action_cfgs.items()
         }
+        for name, term in self._action_terms.items():
+            if not isinstance(term, ActionTerm):
+                raise TypeError(f"Manager action {name!r} must return an ActionTerm.")
+            queue = term.state.action_queue
+            if queue.ndim != 3 or queue.shape[0] != self.num_envs or queue.shape[1] < 2:
+                raise ValueError(f"Manager action {name!r} state.action_queue must have shape (N, W, A), W >= 2.")
+            if queue.shape[2] != term.action_space.shape[0]:
+                raise ValueError(f"Manager action {name!r} action dimension must match action space.")
         self._command_cfgs = cfg.command_cfgs()
         self._command_terms: dict[str, CommandTerm] = {
             name: canonicalize_kernel_data(
@@ -554,7 +558,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         owners = {}
         by_name = {spec.name: spec for spec in self.model.actuators}
         for term_name, cfg in self._action_cfgs.items():
-            if cfg.actuator_names is None:
+            if cfg.actuator_names == ():
                 routes[term_name] = None
                 continue
             names = cfg.actuator_names or tuple(by_name)
@@ -586,7 +590,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         action_slices = {}
         offset = 0
         for name, term in self._action_terms.items():
-            space = term.action_space(self, self._action_actuators[name])
+            space = term.action_space
             if not isinstance(space, gym.spaces.Box):
                 raise TypeError(f"Manager action {name!r} must produce a gym.spaces.Box.")
             if len(space.shape) != 1 or space.shape[0] <= 0:

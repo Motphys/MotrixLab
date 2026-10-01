@@ -16,6 +16,10 @@ from motrix_env_core.manager import (  # noqa: E402
     ManagerEnv,
     ManagerResetCfg,
 )
+from motrix_env_core.mdp.action import (  # noqa: E402
+    JointPositionActionCfg,
+    JointPositionActionState,
+)
 from motrix_env_core.mdp.observations import (  # noqa: E402
     BodyAngularVelocityObsCfg,
     UniformNoiseCfg,
@@ -33,10 +37,6 @@ from motrix_envs.locomotion.wbt.dex_evt import DexEvtWbtEnvCfg  # noqa: E402
 from motrix_envs.locomotion.wbt.g1.common import MOTION_DIR as _G1_MOTION_DIR  # noqa: E402
 from motrix_envs.locomotion.wbt.g1.common import G1WbtEnvCfg  # noqa: E402
 from motrix_envs.locomotion.wbt.k1 import K1WbtEnvCfg  # noqa: E402
-from motrix_envs.locomotion.wbt.mdp.action import (  # noqa: E402
-    WbtJointPositionAction,
-    WbtJointPositionActionCfg,
-)
 from motrix_envs.locomotion.wbt.mdp.command import (  # noqa: E402
     WbtMotionCommand,
     WbtMotionCommandCfg,
@@ -196,7 +196,7 @@ def test_numba_wbt_read_plan_reuses_preallocated_arrays() -> None:
     for first_value, second_value in zip(first, second, strict=True):
         assert first_value is second_value or np.shares_memory(first_value, second_value) or first_value.size == 0
 
-    action = env.action_terms["joint_position"]
+    action = env.action_terms["joint_position"].state
     actions = np.full((env.num_envs, *env.action_space.shape), 0.25, dtype=np.float32)
     env.apply_action(actions, state)
     partial = env._compiled_manager_program.read_plan.read(
@@ -204,15 +204,15 @@ def test_numba_wbt_read_plan_reuses_preallocated_arrays() -> None:
         np.asarray([1, 3], dtype=np.int64),
     )
     assert partial is first
-    assert any(value is action.current for value in first)
-    np.testing.assert_array_equal(action.current, actions)
+    assert any(value is action.action_queue for value in first)
+    np.testing.assert_array_equal(action.action_queue[:, action.action_ptr[0]], actions)
 
     state.terminated[:] = [False, True, False, True]
     env._reset_done_envs()
     env._refresh_sim_reads()
     assert env._kernel_inputs is first
-    np.testing.assert_array_equal(action.current[[0, 2]], 0.25)
-    np.testing.assert_array_equal(action.current[[1, 3]], 0.0)
+    np.testing.assert_array_equal(action.action_queue[[0, 2], action.action_ptr[0]], 0.25)
+    np.testing.assert_array_equal(action.action_queue[[1, 3], action.action_ptr[0]], 0.0)
 
 
 def test_numba_wbt_step_preserves_previous_actor_and_critic_observations() -> None:
@@ -361,15 +361,15 @@ def test_numba_wbt_clip_wrap_rematerializes_sim_only() -> None:
     env = _make_numba_env(_single_file_cfg(start_at_timestep_zero_prob=1.0), num_envs=2, seed=11)
     env.init_state()
     motion = _motion_command(env)
-    action = env.action_terms["joint_position"]
-    assert isinstance(action, WbtJointPositionAction)
+    action = env.action_terms["joint_position"].state
+    assert isinstance(action, JointPositionActionState)
     num_frames = motion.clip.joint_pos.shape[0]
     # 0.25 is exactly representable in float32, so equality checks stay exact.
     actions = np.full((env.num_envs, *env.action_space.shape), 0.25, dtype=np.float32)
 
     # Prime persistent action state and the episode counter.
     env.step(actions)
-    np.testing.assert_array_equal(action.current, 0.25)
+    np.testing.assert_array_equal(action.action_queue[:, action.action_ptr[0]], 0.25)
     episode_steps_before_wrap = env.state.episode_steps.copy()
 
     # Force every lane to wrap the clip on the next transition.
@@ -384,9 +384,11 @@ def test_numba_wbt_clip_wrap_rematerializes_sim_only() -> None:
     np.testing.assert_array_equal(state.truncated, False)
     np.testing.assert_array_equal(state.episode_steps, episode_steps_before_wrap + 1)
     # Sim-only: the persistent action state (which an action reset would
-    # zero) keeps the processed values of this step.
-    np.testing.assert_array_equal(action.current, 0.25)
-    np.testing.assert_array_equal(action.previous, 0.25)
+    # zero) keeps the raw policy actions of this step.
+    np.testing.assert_array_equal(action.action_queue[:, action.action_ptr[0]], 0.25)
+    np.testing.assert_array_equal(
+        action.action_queue[:, (action.action_ptr[0] - 1) % action.action_queue.shape[1]], 0.25
+    )
 
     # The request flag is cleared before the next physics step: a follow-up
     # step neither rematerializes the lane nor rewinds its frame.
@@ -447,17 +449,17 @@ def test_numba_wbt_masked_reset_preserves_bound_buffer_identity() -> None:
     buffers = env._kernel_buffers
     assert buffers is not None
     env._refresh_sim_reads()
-    action_value = env.action_terms["joint_position"]
+    action_value = env.action_terms["joint_position"].state
     motion = _motion_command(env)
     identities = {
-        "current_actions": id(action_value.current),
-        "last_actions": id(action_value.previous),
+        "action_queue": id(action_value.action_queue),
+        "action_ptr": id(action_value.action_ptr),
         "reward_terms": id(buffers[0]),
         "termination_masks": id(buffers[2]),
         "target_body_position_relative": id(motion.target_body_position_relative),
         "sim_inputs": tuple(id(env.sim_data[key]) for key in env.sim_data.keys),
     }
-    env.apply_action(np.ones_like(action_value.current), state)
+    env.apply_action(np.ones_like(action_value.action_queue[:, 0]), state)
     motion.steps[:, 0] = [1, 2, 3]
     robot_dof_pos = env.sim_data["robot_dof_pos"]
     non_reset_dof_pos = robot_dof_pos[1].copy()
@@ -473,15 +475,17 @@ def test_numba_wbt_masked_reset_preserves_bound_buffer_identity() -> None:
 
     assert env._task_program is not None
     assert env._task_program.reset_kernel.nopython_signatures
-    assert id(action_value.current) == identities["current_actions"]
-    assert id(action_value.previous) == identities["last_actions"]
+    assert id(action_value.action_queue) == identities["action_queue"]
+    assert id(action_value.action_ptr) == identities["action_ptr"]
     assert id(buffers[0]) == identities["reward_terms"]
     assert id(buffers[2]) == identities["termination_masks"]
     assert id(motion.target_body_position_relative) == identities["target_body_position_relative"]
     assert tuple(id(env.sim_data[key]) for key in env.sim_data.keys) == identities["sim_inputs"]
-    np.testing.assert_array_equal(action_value.current[[0, 2]], 0.0)
-    np.testing.assert_array_equal(action_value.current[1], 1.0)
-    np.testing.assert_array_equal(action_value.previous[[0, 2]], 0.0)
+    ptr = int(action_value.action_ptr[0])
+    previous_ptr = (ptr - 1) % action_value.action_queue.shape[1]
+    np.testing.assert_array_equal(action_value.action_queue[[0, 2], ptr], 0.0)
+    np.testing.assert_array_equal(action_value.action_queue[1, ptr], 1.0)
+    np.testing.assert_array_equal(action_value.action_queue[[0, 2], previous_ptr], 0.0)
     np.testing.assert_array_equal(motion.steps[1, 0], 2)
     np.testing.assert_allclose(robot_dof_pos[[0, 2]], motion.clip.joint_pos[motion.steps[[0, 2], 0]])
     np.testing.assert_array_equal(robot_dof_pos[1], non_reset_dof_pos)
@@ -491,38 +495,48 @@ def test_numba_wbt_masked_reset_preserves_bound_buffer_identity() -> None:
     np.testing.assert_array_equal(state.terminated, terminated)
 
 
-def test_numba_wbt_action_term_owns_rolls_and_resets_action_buffers() -> None:
+def test_numba_wbt_manager_rolls_and_resets_action_buffers() -> None:
     env = _make_numba_env(_deterministic_manager_cfg(), num_envs=2)
     state = env.init_state()
-    value = env.action_terms["joint_position"]
-    assert value is env._action_terms["joint_position"]
+    term = env.action_terms["joint_position"]
+    assert term is env._action_terms["joint_position"]
+    value = term.state
 
-    env.apply_action(np.ones_like(value.current), state)
-    np.testing.assert_array_equal(value.current, 1.0)
-    np.testing.assert_array_equal(value.previous, 0.0)
+    actions = np.ones((env.num_envs, *env.action_space.shape), dtype=np.float32)
+    env.apply_action(actions, state)
+    ptr = int(value.action_ptr[0])
+    previous_ptr = (ptr - 1) % value.action_queue.shape[1]
+    np.testing.assert_array_equal(value.action_queue[:, ptr], 1.0)
+    np.testing.assert_array_equal(value.action_queue[:, previous_ptr], 0.0)
 
-    env.apply_action(np.full_like(value.current, 2.0), state)
-    np.testing.assert_array_equal(value.current, 2.0)
-    np.testing.assert_array_equal(value.previous, 1.0)
+    actions.fill(2.0)
+    env.apply_action(actions, state)
+    ptr = int(value.action_ptr[0])
+    previous_ptr = (ptr - 1) % value.action_queue.shape[1]
+    np.testing.assert_array_equal(value.action_queue[:, ptr], 2.0)
+    np.testing.assert_array_equal(value.action_queue[:, previous_ptr], 1.0)
 
     state.terminated[:] = True
+    ptr_before_reset = value.action_ptr.copy()
     env._reset_done_envs()
-    np.testing.assert_array_equal(value.current, 0.0)
-    np.testing.assert_array_equal(value.previous, 0.0)
+    np.testing.assert_array_equal(value.action_queue, 0.0)
+    np.testing.assert_array_equal(value.action_ptr, ptr_before_reset)
 
 
 def test_numba_wbt_action_owns_shared_writable_model_data() -> None:
     env = _make_numba_env(_deterministic_manager_cfg(), num_envs=1)
     state = SimpleNamespace()
     actions = np.full((1, *env.action_space.shape), 0.25, dtype=np.float32)
-    value = env.action_terms["joint_position"]
+    value = env.action_terms["joint_position"].state
 
     env.apply_action(actions, state)
 
-    np.testing.assert_array_equal(value.current, actions)
-    np.testing.assert_array_equal(value.previous, 0.0)
-    assert value.current.flags.writeable
-    assert value.previous.flags.writeable
+    ptr = int(value.action_ptr[0])
+    previous_ptr = (ptr - 1) % value.action_queue.shape[1]
+    np.testing.assert_array_equal(value.action_queue[:, ptr], actions)
+    np.testing.assert_array_equal(value.action_queue[:, previous_ptr], 0.0)
+    assert value.action_queue.flags.writeable
+    assert value.action_ptr.flags.writeable
     assert all(
         array.flags.writeable
         for array in (
@@ -566,7 +580,7 @@ def test_numba_wbt_registry_uses_generic_manager_env() -> None:
     assert motion_command_cfg.kernel_size == 1
     assert motion_command_cfg.kernel_lambda == pytest.approx(0.8)
     action_cfg = manager_cfg.actions.joint_position
-    assert isinstance(action_cfg, WbtJointPositionActionCfg)
+    assert isinstance(action_cfg, JointPositionActionCfg)
     assert not hasattr(manager_cfg, "values")
     assert motion_command_cfg.motion_files == (str(_G1_MOTION_DIR / "dance"),)
     tracked_body_pos = env.sim_data.query("tracked_body_pos")
@@ -578,7 +592,7 @@ def test_numba_wbt_registry_uses_generic_manager_env() -> None:
     assert not hasattr(motion_command_cfg, "robot")
     assert not hasattr(env, "value_manager")
     assert isinstance(manager_cfg.actions, ActionsCfg)
-    assert isinstance(manager_cfg.actions.joint_position, WbtJointPositionActionCfg)
+    assert isinstance(manager_cfg.actions.joint_position, JointPositionActionCfg)
     assert isinstance(manager_cfg.sim_reset, ManagerResetCfg)
     assert isinstance(manager_cfg.sim_reset.body_pos, BodyPosResetCfg)
     assert isinstance(manager_cfg.sim_reset.body_rot, BodyRotResetCfg)
@@ -702,8 +716,8 @@ def test_numba_wbt_manager_builds_for_all_wbt_presets(env_name: str) -> None:
     assert env.cfg.queries.data["robot_dof_pos"].joints == env.cfg.commands.motion.joint_names
     assert env.sim_data.query("robot_dof_pos").joints == env.cfg.commands.motion.joint_names
     env.init_state()
-    action = env.action_terms["joint_position"]
-    assert isinstance(action, WbtJointPositionAction)
+    action = env.action_terms["joint_position"].state
+    assert isinstance(action, JointPositionActionState)
     joint_lower, joint_upper = env.model.others["robot_joint_position_limits"]
     np.testing.assert_array_equal(action.joint_lower, joint_lower)
     np.testing.assert_array_equal(action.joint_upper, joint_upper)
@@ -888,8 +902,8 @@ def test_numba_wbt_multi_clip_wrap_rematerializes_sim_only(tmp_path) -> None:
     env = _make_numba_env(cfg, num_envs=2, seed=11)
     env.init_state()
     motion = _motion_command(env)
-    action = env.action_terms["joint_position"]
-    assert isinstance(action, WbtJointPositionAction)
+    action = env.action_terms["joint_position"].state
+    assert isinstance(action, JointPositionActionState)
     total = motion.clip.joint_pos.shape[0]
     actions = np.full((env.num_envs, *env.action_space.shape), 0.25, dtype=np.float32)
 
@@ -914,8 +928,10 @@ def test_numba_wbt_multi_clip_wrap_rematerializes_sim_only(tmp_path) -> None:
     np.testing.assert_array_equal(state.terminated, False)
     np.testing.assert_array_equal(state.truncated, False)
     np.testing.assert_array_equal(state.episode_steps, episode_steps_before_wrap + 2)
-    np.testing.assert_array_equal(action.current, 0.25)
-    np.testing.assert_array_equal(action.previous, 0.25)
+    np.testing.assert_array_equal(action.action_queue[:, action.action_ptr[0]], 0.25)
+    np.testing.assert_array_equal(
+        action.action_queue[:, (action.action_ptr[0] - 1) % action.action_queue.shape[1]], 0.25
+    )
 
     steps_after_wrap = motion.steps[:, 0].copy()
     env.step(actions)
@@ -951,8 +967,8 @@ def test_numba_wbt_multi_clip_sequential_crosses_boundaries_and_loops(tmp_path) 
     env = _make_numba_env(cfg, num_envs=2, seed=11)
     env.init_state()
     motion = _motion_command(env)
-    action = env.action_terms["joint_position"]
-    assert isinstance(action, WbtJointPositionAction)
+    action = env.action_terms["joint_position"].state
+    assert isinstance(action, JointPositionActionState)
     total = motion.clip.joint_pos.shape[0]
     actions = np.full((env.num_envs, *env.action_space.shape), 0.25, dtype=np.float32)
 
@@ -979,9 +995,11 @@ def test_numba_wbt_multi_clip_sequential_crosses_boundaries_and_loops(tmp_path) 
     np.testing.assert_array_equal(state.truncated, False)
     np.testing.assert_array_equal(state.episode_steps, episode_steps_before_boundary + 2)
     # Rematerialization is sim-only: the persistent action state keeps the
-    # processed values of this step.
-    np.testing.assert_array_equal(action.current, 0.25)
-    np.testing.assert_array_equal(action.previous, 0.25)
+    # raw policy actions of this step.
+    np.testing.assert_array_equal(action.action_queue[:, action.action_ptr[0]], 0.25)
+    np.testing.assert_array_equal(
+        action.action_queue[:, (action.action_ptr[0] - 1) % action.action_queue.shape[1]], 0.25
+    )
 
     # The corpus-final frame loops back to the corpus head frame.
     motion.steps[:, 0] = total - 1

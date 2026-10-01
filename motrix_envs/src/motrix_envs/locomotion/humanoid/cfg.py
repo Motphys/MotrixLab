@@ -31,6 +31,7 @@ from motrix_env_core.manager import (
     ManagerTerminationsCfg,
     SimQueriesCfg,
 )
+from motrix_env_core.mdp.action import JointPositionActionCfg
 from motrix_env_core.mdp.observations import (
     ActionsObsCfg,
     BodyAngularVelocityObsCfg,
@@ -66,7 +67,6 @@ from motrix_envs.locomotion.humanoid.walk_manager_mdp.rewards import (
     PenaltyOrientationRewardCfg,
     PoseRewardCfg,
 )
-from motrix_envs.locomotion.wbt.mdp.action import WbtControlCfg, WbtJointPositionActionCfg
 from motrix_envs.robot import HumanoidRobotCfg
 
 
@@ -94,9 +94,7 @@ class HumanoidWalkSceneCfg(StandardSceneCfg):
 class WalkActionsCfg(ManagerActionsCfg):
     """Position action term shared with the WBT task family."""
 
-    joint_position: WbtJointPositionActionCfg = WbtJointPositionActionCfg(
-        control=WbtControlCfg(action_scale=0.5, action_scales_by_effort_limit_over_p_gain=False)
-    )
+    joint_position: JointPositionActionCfg = JointPositionActionCfg(action_scale=0.5)
 
 
 @configclass

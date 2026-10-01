@@ -11,14 +11,13 @@ from motrix_env_core.base import EnvCfg, SimCfg
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SystemCameraCfg
 from motrix_env_core.manager import ManagerEnv
+from motrix_env_core.mdp.action import (
+    JointPositionActionCfg,
+)
 from motrix_env_core.mdp.rewards import ActionRateRewardCfg
 from motrix_env_core.sim import BodyLinkNetContactForceQuery
 from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
 from motrix_envs.locomotion.wbt.cfg import ActionsCfg, CommandsCfg, TerminationsCfg, WbtEnvCfg
-from motrix_envs.locomotion.wbt.mdp.action import (
-    WbtControlCfg,
-    WbtJointPositionActionCfg,
-)
 from motrix_envs.locomotion.wbt.mdp.command import (
     WbtMotionCommandCfg,
 )
@@ -52,11 +51,12 @@ class K1WbtEnvCfg(WbtEnvCfg):
     motion_files: InitVar[tuple[str, ...] | None] = None
     commands: CommandsCfg = CommandsCfg(motion=WbtMotionCommandCfg())
     actions: ActionsCfg = ActionsCfg(
-        joint_position=WbtJointPositionActionCfg(
+        joint_position=JointPositionActionCfg(
             # K1 motion clips span large arm/leg offsets from the walk handoff pose.
             # Direct position scaling keeps the full joint range reachable;
             # the MJCF actuator forceranges still enforce K1 torque limits.
-            control=WbtControlCfg(action_scale=1.0, action_scales_by_effort_limit_over_p_gain=False),
+            action_scale=1.0,
+            action_scales_by_effort_limit_over_p_gain=False,
         ),
     )
     sim: SimCfg = SimCfg(dt=0.005, solver_iterations=6, solver_tolerance=1e-4)

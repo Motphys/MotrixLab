@@ -10,6 +10,7 @@ from motrix_env_core.numba.kernel import ManagerWarmupResult
 from motrix_env_core.numba.kernel_data import SharedArray, kernel_data
 from motrix_env_core.numba.manager.actions import (
     ActionCfg,
+    ActionState,
     ActionTerm,
     ManagerActionsCfg,
 )
@@ -38,6 +39,7 @@ from motrix_env_core.sim import SimQueriesCfg
 __all__ = [
     "ActionCfg",
     "ActionTerm",
+    "ActionState",
     "CommandCfg",
     "CommandTerm",
     "ManagerActionsCfg",

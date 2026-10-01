@@ -15,6 +15,7 @@ from motrix_env_core.manager import (
     ResetTerm,
     ResetTermCfg,
 )
+from motrix_env_core.mdp.action import JointPositionActionState
 from motrix_env_core.numba.kernel_data import Map
 from motrix_env_core.numba.manager.dispatch import dispatch
 from motrix_env_core.numba.math import quaternion as numba_quaternion
@@ -26,7 +27,6 @@ from motrix_env_core.sim import (
     JointPositionWrite,
     JointVelocityWrite,
 )
-from motrix_envs.locomotion.wbt.mdp.action import WbtJointPositionAction
 from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommand
 
 
@@ -170,7 +170,7 @@ def _reset_body_dof_pos(ctx: ManagerContext, sim_writes: Map[np.ndarray], noise_
     position = sim_writes["position"]
     velocity = sim_writes["velocity"]
     motion: WbtMotionCommand = ctx.commands["motion"]
-    action: WbtJointPositionAction = ctx.actions["joint_position"]
+    action: JointPositionActionState = ctx.actions["joint_position"]
     step = motion.steps[0]
     position[:] = motion.clip.joint_pos[step]
     velocity[:] = motion.clip.joint_vel[step]

@@ -141,8 +141,8 @@ def test_sim_write_compiler_dispatches_each_write_to_its_typed_compiler() -> Non
     KinematicBodyRotationWrite(("body",)).compile_with(compiler, "write")
     ActuatorKpWrite(("actuator",)).compile_with(compiler, "write")
     ActuatorDampingWrite(("actuator",)).compile_with(compiler, "write")
-    BodyMassWrite(("link",)).compile_with(compiler, "write")
-    BodyComWrite(("link",)).compile_with(compiler, "write")
+    BodyMassWrite(("body",)).compile_with(compiler, "write")
+    BodyComWrite(("body",)).compile_with(compiler, "write")
     GeomFrictionWrite(("geom",)).compile_with(compiler, "write")
 
     assert compiler.dispatched == [

@@ -9,8 +9,8 @@ import numpy as np
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, TerminationTerm, TerminationTermCfg
+from motrix_env_core.mdp.action import JointPositionActionState
 from motrix_env_core.numba.manager.dispatch import dispatch
-from motrix_envs.locomotion.wbt.mdp.action import WbtJointPositionAction
 from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommand
 
 
@@ -143,7 +143,7 @@ class BadBodyZTerminationCfg(_WbtTerminationCfg):
 @dispatch
 def bad_dof_position_termination(ctx: ManagerContext, threshold: np.float32) -> bool:
     dof_pos = ctx.sim["robot_dof_pos"]
-    action: WbtJointPositionAction = ctx.actions["joint_position"]
+    action: JointPositionActionState = ctx.actions["joint_position"]
     error = 0.0
     finite = True
     for joint_id in range(dof_pos.shape[0]):

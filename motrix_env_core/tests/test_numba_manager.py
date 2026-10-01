@@ -19,6 +19,7 @@ from motrix_env_core.config import configclass  # noqa: E402
 from motrix_env_core.config.scene import SceneCfg  # noqa: E402
 from motrix_env_core.manager import (  # noqa: E402
     ActionCfg,
+    ActionState,
     ActionTerm,
     CommandCfg,
     CommandTerm,
@@ -54,40 +55,50 @@ from motrix_env_core.sim.write import CtrlTargetsWrite
 
 
 @kernel_data
-class _TestAction(ActionTerm):
+class _TestActionState(ActionState):
     reset_flags: np.ndarray
     source: np.ndarray
-
-    def action_space(self, env: ManagerEnv, actuator_indices: np.ndarray | None) -> gym.spaces.Box:
-        del env, actuator_indices
-        return gym.spaces.Box(-1.0, 1.0, (1,), dtype=np.float32)
-
-    def process(self, actions: np.ndarray) -> None:
-        self.source[...] = actions
-
-    def reset(self, env_ids: np.ndarray) -> None:
-        self.reset_flags.fill(False)
-        self.reset_flags[env_ids] = True
 
 
 @kernel_data
-class _SecondAction(ActionTerm):
+class _SecondActionState(ActionState):
     reset_flags: np.ndarray
     source: np.ndarray
 
-    def action_space(self, env: ManagerEnv, actuator_indices: np.ndarray | None) -> gym.spaces.Box:
-        del env, actuator_indices
-        return gym.spaces.Box(
-            np.asarray([-2.0, -3.0], dtype=np.float32),
-            np.asarray([2.0, 3.0], dtype=np.float32),
-        )
 
-    def process(self, actions: np.ndarray) -> None:
-        self.source[...] = actions
+class _TestActionTerm(ActionTerm):
+    def __init__(self, action_space: gym.spaces.Box, state: _TestActionState) -> None:
+        super().__init__(action_space, state)
 
-    def reset(self, env_ids: np.ndarray) -> None:
-        self.reset_flags.fill(False)
-        self.reset_flags[env_ids] = True
+    def _process(self, actions: np.ndarray) -> None:
+        self.state.source[...] = actions
+
+    def _reset(self, env_ids: np.ndarray) -> None:
+        self.state.reset_flags.fill(False)
+        self.state.reset_flags[env_ids] = True
+
+
+class _SecondActionTerm(ActionTerm):
+    def __init__(self, action_space: gym.spaces.Box, state: _SecondActionState) -> None:
+        super().__init__(action_space, state)
+
+    def _process(self, actions: np.ndarray) -> None:
+        self.state.source[...] = actions
+
+    def _reset(self, env_ids: np.ndarray) -> None:
+        self.state.reset_flags.fill(False)
+        self.state.reset_flags[env_ids] = True
+
+
+def _test_action_space(_: ManagerEnv, __: np.ndarray | None) -> gym.spaces.Box:
+    return gym.spaces.Box(-1.0, 1.0, (1,), dtype=np.float32)
+
+
+def _second_action_space(_: ManagerEnv, __: np.ndarray | None) -> gym.spaces.Box:
+    return gym.spaces.Box(
+        np.asarray([-2.0, -3.0], dtype=np.float32),
+        np.asarray([2.0, 3.0], dtype=np.float32),
+    )
 
 
 @kernel_data
@@ -98,7 +109,7 @@ class _ObservationParams:
 
 @dispatch
 def _injected_observation(ctx: ManagerContext, out: np.ndarray, params: _ObservationParams) -> None:
-    action: _TestAction = ctx.actions["test"]
+    action: _TestActionState = ctx.actions["test"]
     command: _CounterCommand = ctx.commands["counter"]
     out[0] = action.source[0] * params.scale + params.offset[0]
     out[1] = command.command[0]
@@ -136,7 +147,7 @@ class _DerivedObservationCfg(ObservationTermCfg):
 
 @dispatch
 def _lane_observation(ctx: ManagerContext, out: np.ndarray) -> None:
-    action: _TestAction = ctx.actions["test"]
+    action: _TestActionState = ctx.actions["test"]
     out[0] = ctx.env_id + np.float32(action.reset_flags[0]) * 0.0
 
 
@@ -163,7 +174,7 @@ class _LaneObservationsCfg(ManagerObservationsCfg):
 
 @dispatch
 def _injected_reward(ctx: ManagerContext) -> float:
-    action: _TestAction = ctx.actions["test"]
+    action: _TestActionState = ctx.actions["test"]
     return action.source[0]
 
 
@@ -179,7 +190,7 @@ def _injected_termination(
     ctx: ManagerContext,
     threshold: np.float32,
 ) -> bool:
-    action: _TestAction = ctx.actions["test"]
+    action: _TestActionState = ctx.actions["test"]
     ctx.metrics["source_at_termination"][0] = action.source[0]
     return action.source[0] >= threshold
 
@@ -199,21 +210,33 @@ class _InjectedTerminationCfg(TerminationTermCfg):
 
 @configclass(kw_only=True)
 class _TestActionCfg(ActionCfg):
-    def __call__(self, env: ManagerEnv, actuator_indices: np.ndarray | None) -> _TestAction:
-        del actuator_indices
-        return _TestAction(
-            np.zeros((env.num_envs, 1), dtype=bool),
-            np.zeros((env.num_envs, 1), dtype=np.float32),
+    actuator_names: tuple[str, ...] = ()
+
+    def __call__(self, env: ManagerEnv, actuator_indices: np.ndarray | None) -> ActionTerm:
+        return _TestActionTerm(
+            _test_action_space(env, actuator_indices),
+            _TestActionState(
+                np.zeros((env.num_envs, 2, 1), dtype=np.float32),
+                np.zeros(1, dtype=np.int64),
+                np.zeros((env.num_envs, 1), dtype=bool),
+                np.zeros((env.num_envs, 1), dtype=np.float32),
+            ),
         )
 
 
 @configclass(kw_only=True)
 class _SecondActionCfg(ActionCfg):
-    def __call__(self, env: ManagerEnv, actuator_indices: np.ndarray | None) -> _SecondAction:
-        del actuator_indices
-        return _SecondAction(
-            np.zeros((env.num_envs, 1), dtype=bool),
-            np.zeros((env.num_envs, 2), dtype=np.float32),
+    actuator_names: tuple[str, ...] = ()
+
+    def __call__(self, env: ManagerEnv, actuator_indices: np.ndarray | None) -> ActionTerm:
+        return _SecondActionTerm(
+            _second_action_space(env, actuator_indices),
+            _SecondActionState(
+                np.zeros((env.num_envs, 2, 2), dtype=np.float32),
+                np.zeros(1, dtype=np.int64),
+                np.zeros((env.num_envs, 1), dtype=bool),
+                np.zeros((env.num_envs, 2), dtype=np.float32),
+            ),
         )
 
 
@@ -233,7 +256,7 @@ class _CounterCommand(CommandTerm):
 
     @dispatch
     def update(self, ctx: ManagerContext) -> None:
-        action: _TestAction = ctx.actions["test"]
+        action: _TestActionState = ctx.actions["test"]
         self.double[0] = 2.0 * action.source[0]
 
     def reset(self, ctx) -> None:
@@ -396,9 +419,9 @@ def _counter_command(env: _ManagerEnv) -> _CounterCommand:
 def test_action_and_command_terms_are_environment_owned() -> None:
     env = _ManagerEnv(num_envs=3)
 
-    assert isinstance(env.action_terms["test"], _TestAction)
+    assert isinstance(env.action_terms["test"], ActionTerm)
     assert env.action_terms is env._action_terms
-    assert env.action_terms["test"].reset_flags.shape == (3, 1)
+    assert env.action_terms["test"].state.reset_flags.shape == (3, 1)
     assert _counter_command(env) is env.command_terms["counter"]
     assert not hasattr(env, "value_manager")
     assert not hasattr(env.cfg, "values")
@@ -528,8 +551,8 @@ def test_manager_cfg_accepts_dict_groups_and_empty_commands() -> None:
 def test_multiple_action_terms_concatenate_spaces_and_receive_ordered_slices() -> None:
     @dispatch
     def _multiple_action_observation(ctx: ManagerContext, out: np.ndarray) -> None:
-        first: _TestAction = ctx.actions["test"]
-        second: _SecondAction = ctx.actions["second"]
+        first: _TestActionState = ctx.actions["test"]
+        second: _SecondActionState = ctx.actions["second"]
         out[0] = first.source[0]
         out[1:] = second.source
 
@@ -568,8 +591,8 @@ def test_multiple_action_terms_concatenate_spaces_and_receive_ordered_slices() -
     assert env.action_space.shape == (3,)
     np.testing.assert_array_equal(env.action_space.low, [-1.0, -2.0, -3.0])
     np.testing.assert_array_equal(env.action_space.high, [1.0, 2.0, 3.0])
-    np.testing.assert_array_equal(env.action_terms["test"].source, actions[:, :1])
-    np.testing.assert_array_equal(env.action_terms["second"].source, actions[:, 1:])
+    np.testing.assert_array_equal(env.action_terms["test"].state.source, actions[:, :1])
+    np.testing.assert_array_equal(env.action_terms["second"].state.source, actions[:, 1:])
     env._refresh_sim_reads()
     env._execute_observe_kernel(env._kernel_inputs)
     np.testing.assert_array_equal(state.obs.policy, actions)
@@ -580,8 +603,8 @@ def test_multiple_action_terms_concatenate_spaces_and_receive_ordered_slices() -
 
     state.terminated[:] = [False, True]
     env._reset_done_envs()
-    np.testing.assert_array_equal(env.action_terms["test"].reset_flags[:, 0], [False, True])
-    np.testing.assert_array_equal(env.action_terms["second"].reset_flags[:, 0], [False, True])
+    np.testing.assert_array_equal(env.action_terms["test"].state.reset_flags[:, 0], [False, True])
+    np.testing.assert_array_equal(env.action_terms["second"].state.reset_flags[:, 0], [False, True])
 
 
 def test_multiple_action_terms_validate_total_action_shape() -> None:
@@ -659,18 +682,20 @@ def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> 
     state = env.init_state()
 
     action = env.action_terms["test"]
-    assert isinstance(action, _TestAction)
+    assert isinstance(action, ActionTerm)
     command = _counter_command(env)
     context_sources = [slot for slot in env.manager_layout.inputs if "manager_context" in slot.source]
-    assert len(context_sources) == 10
-    assert [slot.scope.value for slot in context_sources] == ["per_env"] * 8 + ["shared", "per_env"]
+    assert len(context_sources) == 12
+    scopes = {slot.source: slot.scope.value for slot in context_sources}
+    assert scopes["manager_context.actions.test.action_queue"] == "per_env"
+    assert scopes["manager_context.actions.test.action_ptr"] == "shared"
     assert [term.output_slice for term in env.manager_layout.observations["policy"].terms] == [
         slice(0, 2),
         slice(2, 3),
         slice(3, 4),
     ]
 
-    action.source[:, 0] = [0.25, 0.75]
+    action.state.source[:, 0] = [0.25, 0.75]
     env.compute_transition(state)
     env.compute_observation(state)
 
@@ -719,8 +744,8 @@ def test_command_evaluation_updates_state_only_in_evaluate_kernel() -> None:
     state = env.init_state()
     assert env._compiled_manager_program is not None
     action = env.action_terms["test"]
-    assert isinstance(action, _TestAction)
-    action.source[:, 0] = [1.0, 2.0]
+    assert isinstance(action, ActionTerm)
+    action.state.source[:, 0] = [1.0, 2.0]
     derived = _counter_command(env).double
     derived.fill(-1.0)
 
@@ -748,7 +773,7 @@ def test_command_term_updates_lifecycle_and_selected_reset_ids() -> None:
     env._reset_done_envs()
 
     np.testing.assert_array_equal(command[:, 0], [1.0, -1.0, 3.0])
-    np.testing.assert_array_equal(np.flatnonzero(action.reset_flags[:, 0]), [1])
+    np.testing.assert_array_equal(np.flatnonzero(action.state.reset_flags[:, 0]), [1])
     assert tuple(term_field.name for term_field in fields(env.cfg.commands)) == ("counter",)
 
 
@@ -781,8 +806,8 @@ def test_post_reset_observation_does_not_run_command_evaluation() -> None:
     state = env.init_state()
     assert env._compiled_manager_program is not None
     action = env.action_terms["test"]
-    assert isinstance(action, _TestAction)
-    action.source[:, 0] = [0.25, 0.5, 0.75]
+    assert isinstance(action, ActionTerm)
+    action.state.source[:, 0] = [0.25, 0.5, 0.75]
     state.terminated[:] = [False, True, False]
     env._refresh_sim_reads()
     env._reset_done_envs()
@@ -905,8 +930,8 @@ def test_numeric_values_reuse_compiled_plan_and_remain_environment_local() -> No
     assert compiled.task.evaluate_kernel is env._compiled_manager_program.task.evaluate_kernel
     np.testing.assert_allclose(compiled.task.reward_weights, [2.0])
     action = env.action_terms["test"]
-    assert isinstance(action, _TestAction)
-    action.source[:] = 0.25
+    assert isinstance(action, ActionTerm)
+    action.state.source[:] = 0.25
     assert env._kernel_outputs is not None
     inputs = compiled.read_plan.read(env)
     compiled.task.observe_kernel(inputs, env._kernel_outputs)
@@ -937,8 +962,8 @@ def test_scalar_term_args_and_ctrl_dt_share_one_compiled_plan() -> None:
 
     for env, scale, threshold in ((first, 3.0, 0.5), (second, 5.0, 0.1)):
         action = env.action_terms["test"]
-        assert isinstance(action, _TestAction)
-        action.source[:] = 0.25
+        assert isinstance(action, ActionTerm)
+        action.state.source[:] = 0.25
         state = env._state
         assert state is not None
         env.compute_observation(state)
@@ -952,8 +977,8 @@ def test_scalar_term_args_and_ctrl_dt_share_one_compiled_plan() -> None:
     third.init_state()
     assert third.manager_layout.plan_keys == first.manager_layout.plan_keys
     action = third.action_terms["test"]
-    assert isinstance(action, _TestAction)
-    action.source[:] = 0.5
+    assert isinstance(action, ActionTerm)
+    action.state.source[:] = 0.5
     third.compute_transition(third._state)
     np.testing.assert_allclose(third._state.reward, 2.0 * 0.5 * 0.02)
 
@@ -1064,7 +1089,7 @@ def test_reward_term_requires_dispatch_descriptor() -> None:
 def test_dispatch_term_parameter_names_are_not_constrained() -> None:
     @dispatch
     def _renamed_reward(context: ManagerContext) -> float:
-        action: _TestAction = context.actions["test"]
+        action: _TestActionState = context.actions["test"]
         return action.source[0] * 2.0
 
     @configclass(kw_only=True)

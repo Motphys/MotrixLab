@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from motrix_env_core.config.scene import KeyPoseCfg, ModelFileCfg, RobotCfg
+from motrix_env_core.mdp.action import JointPositionActionState
 from motrix_env_core.mdp.observations import (
     ActionsObsCfg,
     BodyAngularVelocityObsCfg,
@@ -25,7 +26,6 @@ from motrix_env_core.sim import (
     LinkLinearVelocityQuery,
     LinkQuaternionQuery,
 )
-from motrix_envs.locomotion.wbt.mdp.action import WbtJointPositionAction
 from motrix_envs.locomotion.wbt.mdp.observations import (
     DofPosRelObsCfg,
 )
@@ -102,22 +102,34 @@ def _env() -> SimpleNamespace:
 
 
 def test_actions_observation_reads_current_actions() -> None:
-    action = WbtJointPositionAction(
-        current=np.zeros((1, 3), dtype=np.float32),
-        previous=np.zeros((1, 3), dtype=np.float32),
+    action = JointPositionActionState(
+        action_queue=np.zeros((1, 2, 3), dtype=np.float32),
         default_angles=np.zeros(3, dtype=np.float32),
         joint_lower=np.zeros(3, dtype=np.float32),
         joint_upper=np.zeros(3, dtype=np.float32),
         action_scales=np.ones(3, dtype=np.float32),
+        delay_steps=np.zeros(1, dtype=np.int64),
+        action_ptr=np.zeros(1, dtype=np.int64),
+        delay_lo=0,
+        delay_hi=0,
     )
-    env = SimpleNamespace(action_terms={"joint_position": action})
+    # Host configuration sees an ActionTerm; kernel context sees its state.
+    env = SimpleNamespace(action_terms={"joint_position": SimpleNamespace(state=action)})
     cfg = ActionsObsCfg()
     term = cfg.__call__(env)
     current = np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
     out = np.empty(term.size, dtype=np.float32)
 
     assert term.size == 3
-    ctx = SimpleNamespace(actions={"joint_position": SimpleNamespace(current=current)})
+    # Manager kernels receive a lane view: queue shape is (W, A), not (N, W, A).
+    queue = np.zeros((2, 3), dtype=np.float32)
+    queue[1] = current
+    lane_state = SimpleNamespace(
+        current=lambda: queue[1],
+        action_queue=queue,
+        action_ptr=np.asarray([1], dtype=np.int64),
+    )
+    ctx = SimpleNamespace(actions={"joint_position": lane_state})
     term.dispatch(ctx, out, *term.args)
     np.testing.assert_array_equal(out, current)
 
