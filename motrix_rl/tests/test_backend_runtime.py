@@ -13,6 +13,7 @@ from motrix_rl.utils import DeviceSupports
 
 def test_frameworks_list_supported_train_backends(monkeypatch):
     monkeypatch.setattr(frameworks, "_frameworks", {})
+    monkeypatch.setattr("motrix_rl.plugins.load_plugins", lambda: None)
 
     _register_framework("runtime", _RuntimeProvider("torch", "ppo"), _RuntimeProvider("jax", "ppo"))
 
@@ -21,6 +22,7 @@ def test_frameworks_list_supported_train_backends(monkeypatch):
 
 def test_framework_lists_supported_train_backends_by_agent_name(monkeypatch):
     monkeypatch.setattr(frameworks, "_frameworks", {})
+    monkeypatch.setattr("motrix_rl.plugins.load_plugins", lambda: None)
     framework = _RuntimeFramework(
         "external",
         (
@@ -79,6 +81,7 @@ def test_resolve_train_backend_allows_external_backend(monkeypatch):
 
 def test_resolve_train_backend_rejects_missing_trainer(monkeypatch):
     monkeypatch.setattr(frameworks, "_frameworks", {})
+    monkeypatch.setattr("motrix_rl.plugins.load_plugins", lambda: None)
 
     with pytest.raises(ValueError, match="No trainer found"):
         backend_runtime.resolve_train_backend(
@@ -113,6 +116,7 @@ def _register_method(
     backends: tuple[str, ...],
 ) -> None:
     monkeypatch.setattr(frameworks, "_frameworks", {})
+    monkeypatch.setattr("motrix_rl.plugins.load_plugins", lambda: None)
     _register_framework(
         rllib,
         *(_RuntimeProvider(backend, algo) for backend in backends),

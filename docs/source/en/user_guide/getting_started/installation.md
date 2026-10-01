@@ -49,8 +49,7 @@ Install the runtime environment from the repository root (on Windows, run `insta
 sh install.sh
 ```
 
-This auto-detects your GPU vendor (NVIDIA → CUDA, AMD → ROCm) and installs all workspace packages,
-the matching PyTorch wheels, the SKRL training framework, and the built-in FastSAC algorithm.
+This auto-detects your GPU vendor (NVIDIA → CUDA, AMD → ROCm) and installs the runtime workspace packages, the matching PyTorch wheels, the required SKRL Torch provider, and the built-in FastSAC algorithm. Runtime installation is selective: development tools, docs, RSL-RL, SKRL JAX, and other optional extras are not installed unless requested.
 
 ### Activate the Environment
 
@@ -63,8 +62,10 @@ source .venv/bin/activate
 
 ```{note}
 Avoid bare `uv sync` / `uv run`: the CUDA and ROCm wheels are selected by mutually exclusive
-extras, so a bare command resolves the default PyPI fork and reinstalls the environment. Run
-commands from the activated environment, or pass `--no-sync` to one-off `uv run` calls.
+extras, so a bare command resolves the default PyPI fork and can replace the selected environment.
+The installer computes the requested dependency set rather than appending forever; re-running it
+with different options may remove packages no longer selected. Run commands from the activated
+environment, or pass `--no-sync` to one-off `uv run` calls.
 ```
 
 ## Development Environment
@@ -77,21 +78,24 @@ sh install.sh --all
 ```
 
 `--all` enables everything in one go: the dev toolchain, test dependencies, all training backends
-(`--skrl-jax` / `--rslrl`), and the docs tooling. You can also extend the runtime environment
-incrementally, e.g. `sh install.sh --docs` adds only the docs toolchain.
+(SKRL Torch is required; `--skrl-jax` and `--rslrl` add the optional backends), and the docs tooling.
+On ROCm, CUDA-only extras such as SKRL JAX are skipped. You can also select individual additions,
+e.g. `sh install.sh --docs` adds only the docs toolchain.
 
 ## Option Reference
 
-Every mode installs all workspace packages; the runtime environment enables one GPU extra plus the
-training backend extra on top of them, and each option only selects or appends to that combination:
+The runtime installs the packages required for training and deployment, including the required SKRL
+Torch and builtin providers; it does not install every optional workspace plugin. `--all` installs all
+workspace packages and supported development extras. Backend flags select or add to the requested set:
 
 | Option | Values | Description |
 | ------ | ------ | ----------- |
 | `--all` | — | Full development environment: everything below is enabled in one go (dev toolchain, test dependencies, all training backends, and docs tooling) |
 | *(none)* | — | Runtime environment; the GPU vendor is auto-detected (NVIDIA → CUDA, AMD → ROCm; CUDA as fallback when detection is impossible) |
 | `--gpu` | `cuda`<br>`rocm` | Select the torch wheel flavor explicitly, overriding auto-detection |
-| `--skrl-jax` | — | SKRL on JAX backend, Linux only |
-| `--rslrl` | — | RSL-RL on PyTorch backend |
+| `--skrl-torch` | — | Compatibility flag; SKRL Torch is already required by the root package |
+| `--skrl-jax` | — | Add SKRL on JAX backend, Linux only |
+| `--rslrl` | — | Add RSL-RL on PyTorch backend while retaining required SKRL |
 | `--tbb` | — | Install Intel TBB for the numba parallel kernels; recommended for training on many-core servers (64+ cores), auto-activates once installed |
 | `--docs` | — | Add the toolchain (sphinx) needed to build the documentation locally |
 | `-h`, `--help` | — | Show the help message |

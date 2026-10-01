@@ -16,6 +16,7 @@ class DemoCfg:
 
 def test_runner_train_creates_run_and_returns_result(monkeypatch, tmp_path):
     monkeypatch.setattr(frameworks, "_frameworks", {})
+    monkeypatch.setattr("motrix_rl.plugins.load_plugins", lambda: None)
     monkeypatch.setattr(env_registry, "contains", lambda env_name: env_name == "demo-env")
     monkeypatch.setattr(utils, "get_device_supports", lambda: utils.DeviceSupports(torch=True))
 

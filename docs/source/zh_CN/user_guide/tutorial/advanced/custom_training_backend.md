@@ -140,18 +140,26 @@ class MyPpoTrainer(TrainerBase):
 
 如果你的后端暂时不支持断点续训，建议在 `__init__()` 里检查 `context.resume_from`，并抛出清晰的 `ValueError`，不要静默忽略。
 
-## Step 4：让注册代码被导入
+## Step 4：通过 package metadata 注册和发现
 
-如果这是一个独立 Python 包，可以在包初始化时注册：
+后端 package 应通过 `motrix_rl.frameworks` entry-point group 暴露注册函数。发现由 package metadata 负责，而不是由 core package 直接导入：
 
-```python
-# myrl_backend/__init__.py
-from .framework import register_framework
-
-register_framework()
+```toml
+[project.entry-points."motrix_rl.frameworks"]
+myrl = "myrl_backend.plugin:register"
 ```
 
-当前训练脚本不会自动扫描外部 Python 包入口点。使用仓库外部的后端时，必须在调用 `runner.train()` 或命令行训练逻辑之前导入注册模块。
+```python
+# myrl_backend/plugin.py
+from motrix_rl import frameworks
+from .framework import MyRlFramework
+
+
+def register() -> None:
+    frameworks.register_framework(MyRlFramework())
+```
+
+MotrixLab 会在解析 framework 前，从这个 group 加载已安装的 entry point。provider package 应依赖 `motrix-rl`；core package 不会导入可选 plugin package。对于尚未安装的源码 checkout 或 package，请在调用 `runner.train()` 前显式导入 `myrl_backend.plugin`，并在后续运行前安装该 package，使其 metadata 可被发现。
 
 ## Step 5：添加 Hydra 训练配置
 
@@ -204,9 +212,9 @@ python scripts/train.py task=cartpole/myrl.ppo
 
 当前仓库里的实现也是这个结构：
 
--   `motrix_rl/skrl/framework.py`：`SkrlFramework` 注册两个 provider，分别对应 `ppo + jax` 和 `ppo + torch`。
--   `motrix_rl/rslrl/framework.py`：`RslrlFramework` 注册一个 `ppo + torch` provider。
--   `motrix_rl/fastsac/framework.py`：`MotrixFramework` 注册一个 `fastsac + torch` provider，并根据 `algo.asynchronous` 选择 trainer。
+-   `motrix_rl_skrl/src/motrix_rl_skrl/framework.py`：`SkrlFramework` 注册两个 provider，分别对应 `ppo + jax` 和 `ppo + torch`。
+-   `motrix_rl_rslrl/src/motrix_rl_rslrl/framework.py`：`RslrlFramework` 注册一个 `ppo + torch` provider。
+-   `motrix_rl_builtin/src/motrix_rl_builtin/fastsac/framework.py`：`MotrixFramework` 注册一个 `fastsac + torch` provider，并根据 `algo.asynchronous` 选择 trainer。
 -   SKRL、RSLRL、FastSAC 的 trainer 构造函数都只接收 `TrainerContext`。
 -   `render`、类型化的 `rl_cfg`、`resume_from` 都从 `TrainerContext` 读取。
 -   checkpoint 格式由 provider 声明，trainer 使用 `context.checkpoint_format`。
@@ -216,7 +224,8 @@ python scripts/train.py task=cartpole/myrl.ppo
 
 ## 常见错误
 
--   只写了 provider，但没有 `frameworks.register_framework()`：训练时会找不到框架。
+-   package 未安装，或没有暴露 `motrix_rl.frameworks` entry-point group：训练时无法发现 provider。
+-   entry point 已发现，但 `register()` 失败或没有调用 `frameworks.register_framework()`：训练时会找不到框架。
 -   provider 已注册，但缺少对应的 `configs/algo_base/` 或 `configs/task/` YAML：Hydra 无法组合出可用 Task。
 -   `rllib`、`algo`、`train_backend` 三个名字不一致：自动选择后端或创建 trainer 会失败。
 -   `train()` 保存了模型，但没有记录 `BEST_POLICY`：`TrainResult.play()` 无法自动找到策略文件。

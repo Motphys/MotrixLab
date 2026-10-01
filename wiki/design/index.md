@@ -18,7 +18,7 @@
 - [Deploy Runtime Command Input 分层设计](./deploy-command-input.md)
   面向 Go2 的最小 command input 抽象：batch-first `PlanarVelocityCommand` 统一表达 training 与 deploy；core 内置 keyboard/gamepad/constant bindings，带 standing probability 的 `RandomPlanarVelocityBinding` 作为 task-specific 训练策略留在四足环境模块。
 - [RL 多算法架构设计](./rl-multi-algorithm-architecture.md)
-  在 RL 集成层引入 `rllib/train_backend/algo` 正交维度的架构：配置注册表、`RlFramework`/`AgentProvider`、`TrainerContext` 与通用 runner、算法配置与模型/memory 工厂、run metadata、checkpoint manifest 与 play 自动发现，以及内置 framework 矩阵（skrl / rslrl / motrix）。
+  在 RL 集成层引入 `rllib/train_backend/algo` 正交维度的架构：配置注册表、`RlFramework`/`AgentProvider`、`TrainerContext` 与通用 runner、算法配置与模型/memory 工厂、run metadata、checkpoint manifest 与 play 自动发现，以及内置 framework 矩阵（skrl / rslrl / motrix）；明确 `motrix_rl` 控制平面与 `motrix_rl.contracts` 契约、三个 provider 插件包的单向依赖和 entry-point discovery 边界。
 - [FastSAC 异构（Collector/Learner 分进程）训练器设计](./fastsac-async-heterogeneous-trainer.md)
   把仿真采样与网络训练拆到两进程、经共享内存交换数据的异构 FastSAC 训练器：统一注册为 `motrix.fastsac`，由 `algo.asynchronous` 选择执行拓扑，并包含 SPSC 有界背压 replay 环、update-to-data 比例治理、seqlock 双缓冲权重/normalizer 快照，以及进程生命周期与 checkpoint 兼容。
 - [Framework / Task 配置分离设计](./framework-task-split.md)

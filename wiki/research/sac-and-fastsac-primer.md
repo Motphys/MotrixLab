@@ -344,7 +344,7 @@ alpha_loss = (-self.log_alpha.exp() * (next_logp.detach() + self.target_entropy)
 
 ## 为什么当前实现叫 FastSAC
 
-当前 `motrix_rl.fastsac` 不是最朴素的 SAC，而是一个偏工程化的高吞吐实现。它在 SAC 基础上加入了几个特征。
+当前 `motrix_rl_builtin.fastsac` 不是最朴素的 SAC，而是一个偏工程化的高吞吐实现。它在 SAC 基础上加入了几个特征。
 
 第一，使用 replay buffer。采样训练批次来自 `SimpleReplayBuffer.sample()`，所以 FastSAC 是 off-policy 算法。环境交互得到的数据可以被多次复用，样本效率比纯 on-policy 方法更高。
 

@@ -37,10 +37,8 @@ command resolves the default fork (PyPI torch) and reinstalls the environment. R
 commands from the activated environment (`source .venv/bin/activate`); the examples
 below assume it is active, or pass `--no-sync` to one-off `uv run` calls.
 
-The workspace contains nine packages. Package-local changes should use the
-smallest required extra; changes involving the simulator, built-in assets, or
-training integrations should be tested with the corresponding package and
-extra enabled.
+Run the tests relevant to your changes, with the required runtime dependencies
+installed. For cross-package changes, run the full test suite.
 
 ## Branch strategy
 

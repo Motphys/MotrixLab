@@ -86,7 +86,7 @@ Windows（PowerShell）：
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-脚本会自动探测 GPU 厂商（NVIDIA → CUDA，AMD → ROCm），安装全部 workspace package 及对应的 PyTorch wheel。可用 `--gpu cuda|rocm` 显式指定 GPU，`--skrl-jax` / `--rslrl` 追加训练后端——详见 `sh install.sh --help`。
+脚本会自动探测 GPU 厂商（NVIDIA → CUDA，AMD → ROCm），安装运行环境所需的 workspace package、对应的 PyTorch wheel、必需的 SKRL Torch 和内置 FastSAC。可用 `--gpu cuda|rocm` 显式指定 GPU；`--rslrl` 追加 RSL-RL，`--skrl-jax` 追加可选的 Linux-only SKRL JAX 后端。由于 SKRL Torch 已是必需依赖，`--skrl-torch` 仍作为兼容参数接受。参数可以组合；详见 `sh install.sh --help`。
 
 ### 3. 训练第一个策略
 
@@ -165,19 +165,22 @@ python scripts/view.py robot=go2
 
 ## 🏗️ 项目组成
 
-MotrixLab 是一个由九个 package 组成的 [uv](https://docs.astral.sh/uv/) workspace：
+MotrixLab 是一个由十二个 package 组成的 [uv](https://docs.astral.sh/uv/) workspace：
 
 | Package | PyPI 名称 | 说明 |
 | --- | --- | --- |
-| **motrix_deploy** | `motrix-deploy` | 独立于训练框架的 artifact、backend、policy、控制循环、registry 与 CLI |
+| **motrix_deploy** | `motrix-deploy` | 框架无关 artifact、运行时契约、部署 registry 与 CLI |
 | **motrix_deploy_mujoco** | `motrix-deploy-mujoco` | MuJoCo 部署 backend plugin |
 | **motrix_deploy_unitree** | `motrix-deploy-unitree` | Unitree SDK2 DDS 硬件 backend plugin |
-| **motrix_deploy_tasks** | `motrix-deploy-tasks` | 具体的带版本部署任务实现与可执行入口 bootstrap |
-| **motrix_env_core** | `motrix-env-core` | 环境基类、配置、registry、场景构建、NumPy runtime 与渲染能力，不包含任何内置任务和机器人资产 |
-| **motrix_env_motrixsim** | `motrix-env-motrixsim` | MotrixSim 实时仿真 backend、renderer 与 torch frontend |
+| **motrix_deploy_tasks** | `motrix-deploy-tasks` | 带版本的部署任务与可执行入口 bootstrap |
+| **motrix_env_core** | `motrix-env-core` | backend 无关的环境框架、配置、registry、生命周期与渲染 |
+| **motrix_env_motrixsim** | `motrix-env-motrixsim` | MotrixSim 实时仿真 backend、renderer 与 Torch frontend |
 | **motrix_env_mujoco** | `motrix-env-mujoco` | 仅负责编译场景的 MuJoCo backend |
-| **motrix_envs** | `motrix-envs` | 内置环境、模型、数据及环境到部署 profile 的编译实现 |
-| **motrix_rl** | `motrix-rl` | 基于 `motrix-env-core` 的 RL 框架集成，支持 SKRL、RSLRL 和 FastSAC |
+| **motrix_envs** | `motrix-envs` | 内置环境、机器人模型、数据及部署 profile 编译实现 |
+| **motrix_rl** | `motrix-rl` | RL 控制平面、provider/trainer contract、run/checkpoint 管理与 discovery |
+| **motrix_rl_builtin** | `motrix-rl-builtin` | 内置 Motrix FastSAC provider |
+| **motrix_rl_skrl** | `motrix-rl-skrl` | 必需的 SKRL PPO Torch provider；可选 JAX extra |
+| **motrix_rl_rslrl** | `motrix-rl-rslrl` | 可选的 RSL-RL PPO Torch provider |
 
 ## 🤝 参与贡献
 

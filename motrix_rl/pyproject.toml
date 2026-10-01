@@ -14,7 +14,6 @@ dependencies = [
     "gymnasium==1.1.1",
     "python-abc>=0.2.0",
     "motrix-env-core[numba,video]",
-    "motrix-env-motrixsim",
     "rich>=13",
     "hydra-core>=1.3,<1.4",
     "motrix-deploy",
@@ -27,21 +26,5 @@ dependencies = [
     # Default training backend; also required by scripts/view.py. The exact
     # version and wheel index are chosen by the workspace root `cuda`/`rocm`
     # extras (see the root pyproject.toml tool.uv.sources).
-    "torch>=2.7,<3",
-]
-
-[project.optional-dependencies]
-skrl-jax = [
-    "skrl>=2.1,<2.2; sys_platform == 'linux'",
-    "jax[cuda12]==0.4.34; sys_platform == 'linux'",
-    "flax==0.10.4; sys_platform == 'linux'",
-    "tensorflow==2.20.0; sys_platform == 'linux'",
-]
-skrl-torch = [
-    "skrl>=2.1,<2.2",
-    "torch>=2.7,<3",
-]
-rslrl = [
-    "rsl-rl-lib>=4.0,<5.0",
     "torch>=2.7,<3",
 ]

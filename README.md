@@ -86,7 +86,7 @@ Windows (PowerShell):
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-This auto-detects your GPU vendor (NVIDIA → CUDA, AMD → ROCm) and installs all workspace packages with the matching PyTorch wheels. Use `--gpu cuda|rocm` to override detection and `--skrl-jax` / `--rslrl` to add training backends — see `sh install.sh --help`.
+This auto-detects your GPU vendor (NVIDIA → CUDA, AMD → ROCm) and installs the runtime workspace packages with the matching PyTorch wheels, required SKRL Torch, and built-in FastSAC. Use `--gpu cuda|rocm` to override detection; `--rslrl` adds RSL-RL, while `--skrl-jax` adds the optional Linux-only SKRL JAX backend. `--skrl-torch` remains accepted as a compatibility flag because SKRL Torch is already required. Flags combine; see `sh install.sh --help`.
 
 ### 3. Train your first policy
 
@@ -165,19 +165,22 @@ See [Supported Robots](https://motrixlab.readthedocs.io/en/latest/user_guide/rob
 
 ## 🏗️ What's Inside
 
-MotrixLab is a [uv](https://docs.astral.sh/uv/) workspace of nine packages:
+MotrixLab is a [uv](https://docs.astral.sh/uv/) workspace of twelve packages:
 
 | Package | PyPI name | Description |
 | --- | --- | --- |
-| **motrix_deploy** | `motrix-deploy` | Framework-independent artifact, backend, policy, control-loop, registry, and CLI |
+| **motrix_deploy** | `motrix-deploy` | Framework-independent artifacts, runtime contracts, deployment registry, and CLI |
 | **motrix_deploy_mujoco** | `motrix-deploy-mujoco` | MuJoCo deployment backend plugin |
 | **motrix_deploy_unitree** | `motrix-deploy-unitree` | Unitree SDK2 DDS hardware backend plugin |
-| **motrix_deploy_tasks** | `motrix-deploy-tasks` | Concrete versioned deployment tasks and executable bootstrap |
-| **motrix_env_core** | `motrix-env-core` | Environment base classes, configuration, registry, scene construction, NumPy runtime, and rendering. It contains no built-in tasks or robot assets |
-| **motrix_env_motrixsim** | `motrix-env-motrixsim` | Live MotrixSim backend, renderer, and torch frontend |
+| **motrix_deploy_tasks** | `motrix-deploy-tasks` | Versioned deployment tasks and executable bootstrap |
+| **motrix_env_core** | `motrix-env-core` | Backend-agnostic environment framework, configuration, registry, lifecycle, and rendering |
+| **motrix_env_motrixsim** | `motrix-env-motrixsim` | Live MotrixSim backend, renderer, and Torch frontend |
 | **motrix_env_mujoco** | `motrix-env-mujoco` | Compile-only MuJoCo scene backend |
-| **motrix_envs** | `motrix-envs` | Built-in environments, models, data, and environment-to-deployment-profile compilers |
-| **motrix_rl** | `motrix-rl` | RL-framework integration built against `motrix-env-core`, with SKRL, RSLRL, and FastSAC support |
+| **motrix_envs** | `motrix-envs` | Built-in environments, robot models, data, and deployment-profile compilers |
+| **motrix_rl** | `motrix-rl` | RL control plane, provider/trainer contracts, run/checkpoint handling, and discovery |
+| **motrix_rl_builtin** | `motrix-rl-builtin` | Built-in Motrix FastSAC provider |
+| **motrix_rl_skrl** | `motrix-rl-skrl` | Required SKRL PPO Torch provider; optional JAX extra |
+| **motrix_rl_rslrl** | `motrix-rl-rslrl` | Optional RSL-RL PPO Torch provider |
 
 ## 🤝 Contributing
 

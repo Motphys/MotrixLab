@@ -254,17 +254,18 @@ obs
 
 ## 9. 用户接口
 
-安装 ONNX 导出依赖及所需训练 backend：
+ONNX 导出依赖已包含在运行环境中；FastSAC 与 SKRL Torch 必需安装，RSLRL 按需安装：
 
 ```bash
-uv sync --all-packages --extra onnx --extra rslrl
-uv sync --all-packages --extra onnx --extra skrl-torch
+sh install.sh
+sh install.sh --rslrl
+source .venv/bin/activate
 ```
 
 CLI 使用 run directory，不接受脱离 metadata 的裸 checkpoint：
 
 ```bash
-uv run scripts/export_onnx.py \
+python scripts/export_onnx.py \
   run_dir=runs/cartpole/skrl/torch/ppo/<run-id> \
   output=/tmp/cartpole.onnx
 ```
@@ -272,7 +273,7 @@ uv run scripts/export_onnx.py \
 可显式覆盖验证参数：
 
 ```bash
-uv run scripts/export_onnx.py \
+python scripts/export_onnx.py \
   run_dir=<run-dir> \
   parity.seed=7 \
   parity.samples=64 \

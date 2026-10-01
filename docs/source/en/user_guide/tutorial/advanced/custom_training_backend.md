@@ -139,18 +139,26 @@ class MyPpoTrainer(TrainerBase):
 
 If the backend does not support resume, check `context.resume_from` and raise a clear `ValueError` instead of silently starting a new run.
 
-## Step 4: Import the Registration Code
+## Step 4: Package and Discover the Registration Code
 
-An independent package can register itself during package initialization:
+A backend package should expose its registration function through the `motrix_rl.frameworks` entry-point group. Package metadata, not a core-package import, owns this discovery:
 
-```python
-# myrl_backend/__init__.py
-from .framework import register_framework
-
-register_framework()
+```toml
+[project.entry-points."motrix_rl.frameworks"]
+myrl = "myrl_backend.plugin:register"
 ```
 
-The built-in training script does not scan third-party Python entry points automatically. For an external backend, import its registration module before calling `runner.train()` or entering your command-line training path.
+```python
+# myrl_backend/plugin.py
+from motrix_rl import frameworks
+from .framework import MyRlFramework
+
+
+def register() -> None:
+    frameworks.register_framework(MyRlFramework())
+```
+
+MotrixLab loads installed entry points from this group before resolving a framework. Keep the provider package dependency on `motrix-rl`; the core package does not import optional plugin packages. For a source checkout or a package that is not installed yet, import `myrl_backend.plugin` explicitly before calling `runner.train()` and then install the package so its metadata is available on later runs.
 
 ## Step 5: Add Hydra Training Configuration
 
@@ -203,9 +211,9 @@ The run is written under `runs/{env}/{rllib}/{train_backend}/{algo}/{timestamp}`
 
 The built-in implementations follow the same structure:
 
--   `motrix_rl/skrl/framework.py`: `SkrlFramework` registers `ppo + jax` and `ppo + torch` providers.
--   `motrix_rl/rslrl/framework.py`: `RslrlFramework` registers one `ppo + torch` provider.
--   `motrix_rl/fastsac/framework.py`: `MotrixFramework` registers one `fastsac + torch` provider, which selects its trainer from `algo.asynchronous`.
+-   `motrix_rl_skrl/src/motrix_rl_skrl/framework.py`: `SkrlFramework` registers `ppo + jax` and `ppo + torch` providers.
+-   `motrix_rl_rslrl/src/motrix_rl_rslrl/framework.py`: `RslrlFramework` registers one `ppo + torch` provider.
+-   `motrix_rl_builtin/src/motrix_rl_builtin/fastsac/framework.py`: `MotrixFramework` registers one `fastsac + torch` provider, which selects its trainer from `algo.asynchronous`.
 -   SKRL, RSLRL, and FastSAC trainers receive only `TrainerContext`.
 -   Rendering, typed `rl_cfg`, and `resume_from` are read from `TrainerContext`.
 -   The provider declares the checkpoint format; the trainer reads `context.checkpoint_format`.
@@ -215,7 +223,8 @@ When adding an integration, follow this split: `framework.py` registers capabili
 
 ## Common Errors
 
--   The provider exists, but `frameworks.register_framework()` was never called: the framework cannot be resolved.
+-   The package is not installed or does not expose the `motrix_rl.frameworks` entry-point group: the provider cannot be discovered.
+-   The entry point is discovered, but its `register()` function fails or does not call `frameworks.register_framework()`: the framework cannot be resolved.
 -   The provider is registered, but the matching `configs/algo_base/` or `configs/task/` YAML is missing: Hydra cannot compose a usable Task.
 -   `rllib`, `algo`, and `train_backend` do not match across the Task and provider: backend resolution or trainer creation fails.
 -   `train()` saves a model but does not register `BEST_POLICY`: `TrainResult.play()` cannot auto-discover the policy.

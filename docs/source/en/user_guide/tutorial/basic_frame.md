@@ -34,15 +34,23 @@ With this loop in mind, every MotrixLab package has a place in the figure.
 
 ## Which part of the loop each package covers
 
-MotrixLab is a UV workspace made of nine packages, grouped by the loop above:
+MotrixLab is a UV workspace of twelve packages. The packages are grouped by ownership rather than treated as one monolithic runtime:
 
-| Package                 | Loop stage                     | Responsibility                                                       |
-| ----------------------- | ------------------------------ | -------------------------------------------------------------------- |
-| `motrix_env_core`       | Policy–environment interaction | Backend-agnostic environment framework: `EnvCfg`, registry, frontends, lifecycle |
-| `motrix_envs`           | Policy–environment interaction | Built-in environments, robot models, and task assets                 |
-| `motrix_rl`             | Policy training and updates    | RL framework integrations (providers, trainers) and training tools   |
-| `configs/`, `scripts/`  | Configuration and orchestration | Hydra algorithm base configs and Task recipes; train / play / view / export entry points |
-| `motrix_deploy*`        | Policy deployment              | Framework-agnostic artifacts and runtime contracts, MuJoCo replay and Unitree hardware backends |
+| Package | Loop stage | Responsibility |
+| --- | --- | --- |
+| `motrix_env_core` | Policy–environment interaction | Backend-agnostic environment framework: `EnvCfg`, registry, frontends, lifecycle |
+| `motrix_env_motrixsim` | Policy–environment interaction | MotrixSim `SimBackend`, renderer, and Torch frontend |
+| `motrix_env_mujoco` | Scene compilation | Compile-only MuJoCo scene backend |
+| `motrix_envs` | Policy–environment interaction | Built-in environments, robot models, and task assets |
+| `motrix_rl` | Policy training and updates | RL control plane, provider/trainer contracts, run/checkpoint handling, and discovery |
+| `motrix_rl_builtin` | Policy training and updates | Built-in Motrix FastSAC provider |
+| `motrix_rl_skrl` | Policy training and updates | SKRL PPO provider for Torch (required) and optional JAX extra |
+| `motrix_rl_rslrl` | Policy training and updates | RSL-RL PPO provider for Torch (optional) |
+| `configs/`, `scripts/` | Configuration and orchestration | Hydra algorithm configs and Task recipes; train / play / view / export entry points |
+| `motrix_deploy` | Policy deployment | Framework-independent artifacts, runtime contracts, and deployment CLI |
+| `motrix_deploy_mujoco` | Policy deployment | MuJoCo deployment backend plugin |
+| `motrix_deploy_unitree` | Policy deployment | Unitree SDK2 DDS hardware backend plugin |
+| `motrix_deploy_tasks` | Policy deployment | Versioned deployment tasks and executable bootstrap |
 
 A simulation backend (such as `motrix_env_motrixsim`) is isolated behind the `SimBackend` interface —
 when using an environment you normally do not need to care which one it is. To select or integrate a

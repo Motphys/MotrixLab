@@ -29,15 +29,23 @@ MotrixLab 将环境实现、仿真后端、训练方法、配置和命令行编�
 
 ## MotrixLab package 与流程的对应
 
-MotrixLab 是一个 UV workspace，由九个 package 组成。按上述流程划分：
+MotrixLab 是一个由十二个 package 组成的 UV workspace。下面按所有权而不是按单一整体运行时划分这些 package：
 
-| Package             | 流程环节           | 职责                                                             |
-| ------------------- | ------------------ | ---------------------------------------------------------------- |
-| `motrix_env_core`   | 策略与环境的交互   | backend 无关的环境框架：`EnvCfg`、registry、环境前端与生命周期   |
-| `motrix_envs`       | 策略与环境的交互   | 内置环境、机器人模型与任务资产                                   |
-| `motrix_rl`         | 策略的训练与更新   | RL 框架集成（provider、trainer）与训练工具                       |
-| `configs/`、`scripts/` | 配置与编排      | Hydra 算法基础配置与 Task 配方；train / play / view / export 入口 |
-| `motrix_deploy*`    | 策略的部署         | 框架无关 artifact 与运行时契约、MuJoCo 回放与 Unitree 真机后端   |
+| Package | 流程环节 | 职责 |
+| --- | --- | --- |
+| `motrix_env_core` | 策略与环境的交互 | backend 无关的环境框架：`EnvCfg`、registry、环境前端与生命周期 |
+| `motrix_env_motrixsim` | 策略与环境的交互 | MotrixSim `SimBackend`、renderer 与 Torch frontend |
+| `motrix_env_mujoco` | 场景编译 | 仅负责编译场景的 MuJoCo backend |
+| `motrix_envs` | 策略与环境的交互 | 内置环境、机器人模型与任务资产 |
+| `motrix_rl` | 策略的训练与更新 | RL 控制平面、provider/trainer contract、run/checkpoint 管理与 discovery |
+| `motrix_rl_builtin` | 策略的训练与更新 | 内置 Motrix FastSAC provider |
+| `motrix_rl_skrl` | 策略的训练与更新 | SKRL PPO Torch provider（必需）及可选 JAX extra |
+| `motrix_rl_rslrl` | 策略的训练与更新 | RSL-RL PPO Torch provider（可选） |
+| `configs/`、`scripts/` | 配置与编排 | Hydra 算法配置与 Task 配方；train / play / view / export 入口 |
+| `motrix_deploy` | 策略的部署 | 框架无关 artifact、运行时契约与部署 CLI |
+| `motrix_deploy_mujoco` | 策略的部署 | MuJoCo 部署 backend plugin |
+| `motrix_deploy_unitree` | 策略的部署 | Unitree SDK2 DDS 硬件 backend plugin |
+| `motrix_deploy_tasks` | 策略的部署 | 带版本的部署任务与可执行入口 bootstrap |
 
 仿真后端（如 `motrix_env_motrixsim`）通过 `SimBackend` 接口隔离在环境框架之下，使用环境时通常
 无需关心它；需要选择或接入仿真后端时，见[SimBackend：与仿真器解耦](building_envs/sim_backend.md)。

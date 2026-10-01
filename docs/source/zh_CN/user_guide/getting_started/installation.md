@@ -49,8 +49,8 @@ cd MotrixLab
 sh install.sh
 ```
 
-该命令会自动探测 GPU 厂商（NVIDIA → CUDA，AMD → ROCm），安装全部 workspace package、对应的
-PyTorch wheel、SKRL 训练框架以及内置的 FastSAC 算法。
+该命令会自动探测 GPU 厂商（NVIDIA → CUDA，AMD → ROCm），安装运行环境所需的 workspace package、对应的
+PyTorch wheel、必需的 SKRL Torch provider 以及内置的 FastSAC 算法。运行环境采用选择性安装：开发工具、文档工具、RSL-RL、SKRL JAX 和其他可选 extra 不会自动安装。
 
 :::{dropdown} 配置国内镜像源（可选）
 :animate: fade-in
@@ -86,7 +86,8 @@ source .venv/bin/activate
 
 ```{note}
 避免裸 `uv sync` / `uv run`：CUDA 与 ROCm wheel 由互斥的 extras 选择，裸命令会解析到默认的 PyPI
-分支并重装环境。请从激活后的环境运行命令，或对单条命令使用 `uv run --no-sync`。
+分支并可能替换当前环境。安装脚本每次都会重新计算请求的依赖集合，并非永久追加；使用不同参数重新运行时，
+未被新选择的 package 可能会被移除。请从激活后的环境运行命令，或对单条命令使用 `uv run --no-sync`。
 ```
 
 ## 开发环境安装
@@ -99,21 +100,22 @@ sh install.sh --all
 ```
 
 `--all` 会把所有依赖一次性全部启用：开发工具链、测试依赖、全部训练后端
-（`--skrl-jax` / `--rslrl`）与文档工具。也可以在运行环境基础上按需追加，
-例如 `sh install.sh --docs` 只补文档工具链。
+（SKRL Torch 为必需项；`--skrl-jax` 和 `--rslrl` 添加可选后端）与文档工具。在 ROCm 下，CUDA-only
+extra（例如 SKRL JAX）会被跳过。也可以按需选择额外依赖，例如 `sh install.sh --docs` 只添加文档工具链。
 
 ## 安装参数参考
 
-所有模式都会安装全部 workspace package；运行环境在此基础上启用「1 个 GPU extra ＋ 训练后端 extra」，
-各参数只负责选择或追加：
+运行环境只安装训练与部署所需的 package，其中包括必需的 SKRL Torch 与 builtin provider，不会安装所有可选
+workspace plugin；`--all` 才会安装全部 workspace package 与支持的开发 extra。后端参数负责选择或追加：
 
 | 参数 | 可选值 | 说明 |
 | ---- | ------ | ---- |
 | `--all` | — | 完整开发环境：把下述所有依赖一次性全部启用（开发工具链、测试依赖、全部训练后端与文档工具） |
 | （无参数） | — | 运行环境；自动探测 GPU 厂商（NVIDIA → CUDA，AMD → ROCm，无法探测时回退 CUDA） |
 | `--gpu` | `cuda`<br>`rocm` | 指定 torch wheel 来源，覆盖自动探测 |
-| `--skrl-jax` | — | SKRL（JAX）训练后端，仅 Linux |
-| `--rslrl` | — | RSL-RL（PyTorch）训练后端 |
+| `--skrl-torch` | — | 兼容性参数；SKRL Torch 已由根项目作为必需依赖提供 |
+| `--skrl-jax` | — | 添加 SKRL（JAX）训练后端，仅 Linux |
+| `--rslrl` | — | 添加 RSL-RL（PyTorch）训练后端，同时保留必需的 SKRL |
 | `--tbb` | — | 为 numba 并行 kernel 安装 Intel TBB 线程层；多核服务器（64 核以上）训练推荐启用，安装后自动生效 |
 | `--docs` | — | 追加本地构建文档所需的工具链（Sphinx） |
 | `-h`、`--help` | — | 显示帮助 |

@@ -9,8 +9,8 @@
 # from the loaded kernel driver (nvidia -> cuda, amdgpu -> rocm); CPU-only
 # hosts fall back to cuda.
 #
-# Training backends are enabled with --skrl-torch (default), --skrl-jax or
-# --rslrl, named after the extras that install them; multiple flags combine.
+# Built-in FastSAC and SKRL on Torch are always installed. --skrl-jax adds
+# the JAX runtime, and --rslrl adds the RSLRL plugin; multiple flags combine.
 # --tbb installs Intel TBB so numba parallel kernels use its threading layer
 # (avoids the OpenMP per-region thread-wakeup storm on many-core hosts).
 
@@ -33,7 +33,6 @@ usage() {
 
 ALL=""
 GPU=""
-SKRL_TORCH=""
 SKRL_JAX=""
 RSLRL=""
 DOCS=""
@@ -53,7 +52,7 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --skrl-torch)
-            SKRL_TORCH=1
+            # SKRL Torch is already included in the required root dependencies.
             ;;
         --skrl-jax)
             SKRL_JAX=1
@@ -155,21 +154,17 @@ fi
 if [ -n "$ALL" ]; then
     if [ "$GPU" = rocm ]; then
         set -x
-        uv sync --all-packages --all-groups --extra rocm --extra skrl-torch --extra rslrl --extra unitree --extra docs
+        uv sync --all-packages --all-groups --extra rocm --extra rslrl --extra unitree --extra docs
     else
         set -x
         uv sync --all-packages --all-groups --all-extras --no-extra rocm
     fi
 else
-    if [ -z "$SKRL_TORCH" ] && [ -z "$SKRL_JAX" ] && [ -z "$RSLRL" ]; then
-        SKRL_TORCH=1
-    fi
     EXTRAS=""
-    [ -n "$SKRL_TORCH" ] && EXTRAS="$EXTRAS --extra skrl-torch"
     [ -n "$SKRL_JAX" ] && EXTRAS="$EXTRAS --extra skrl-jax"
     [ -n "$RSLRL" ] && EXTRAS="$EXTRAS --extra rslrl"
     [ -n "$DOCS" ] && EXTRAS="$EXTRAS --extra docs"
     [ -n "$TBB" ] && EXTRAS="$EXTRAS --extra tbb"
     set -x
-    uv sync --all-packages --no-default-groups --extra "$GPU"$EXTRAS
+    uv sync --no-default-groups --extra "$GPU"$EXTRAS
 fi

@@ -42,15 +42,6 @@ def test_parse_method_prefers_rllib_algo_form():
     assert parse_method("motrix.fastsac") == RlMethod(rllib="motrix", algo="fastsac")
 
 
-def test_motrix_registers_fastsac_as_one_algorithm():
-    from motrix_rl.fastsac.config import FastSacCfg
-
-    assert frameworks.supported_agents("motrix") == ("fastsac",)
-    assert frameworks.get_config_type("motrix", "fastsac") is FastSacCfg
-    assert frameworks.supported_train_backends("motrix", "fastsac") == ("torch",)
-    assert not frameworks.exists("fastsac")
-
-
 def test_parse_method_supports_deprecated_rllib_shorthand():
     assert parse_method("ppo", deprecated_rllib="skrl") == RlMethod(rllib="skrl", algo="ppo")
 
@@ -63,6 +54,7 @@ def test_parse_method_supports_deprecated_rllib_shorthand():
 
 def test_frameworks_register_provider(monkeypatch):
     monkeypatch.setattr(frameworks, "_frameworks", {})
+    monkeypatch.setattr("motrix_rl.plugins.load_plugins", lambda: None)
 
     provider = _UnitProvider("skrl", "torch", "unit")
     _register_unit_provider(provider)
@@ -73,6 +65,7 @@ def test_frameworks_register_provider(monkeypatch):
 
 def test_frameworks_expose_provider_queries(monkeypatch):
     monkeypatch.setattr(frameworks, "_frameworks", {})
+    monkeypatch.setattr("motrix_rl.plugins.load_plugins", lambda: None)
 
     provider = _UnitProvider("skrl", "torch", "unit")
     _register_unit_provider(provider)
@@ -96,6 +89,7 @@ def test_framework_rejects_backend_config_type_mismatch():
 
 def test_frameworks_create_standard_trainer(monkeypatch, tmp_path):
     monkeypatch.setattr(frameworks, "_frameworks", {})
+    monkeypatch.setattr("motrix_rl.plugins.load_plugins", lambda: None)
     provider = _UnitProvider("skrl", "torch", "unit")
     _register_unit_provider(provider)
     run = runs.create_run_context(
@@ -131,6 +125,7 @@ def test_frameworks_create_standard_trainer(monkeypatch, tmp_path):
 
 def test_frameworks_pass_trainer_context(monkeypatch, tmp_path):
     monkeypatch.setattr(frameworks, "_frameworks", {})
+    monkeypatch.setattr("motrix_rl.plugins.load_plugins", lambda: None)
     provider = _UnitProvider("skrl", "torch", "unit")
     _register_unit_provider(provider)
 
@@ -187,6 +182,7 @@ def test_create_trainer_context_validates_runtime_config(tmp_path, logging, chec
 
 def test_trainer_handle_returns_framework_train_result(monkeypatch, tmp_path):
     monkeypatch.setattr(frameworks, "_frameworks", {})
+    monkeypatch.setattr("motrix_rl.plugins.load_plugins", lambda: None)
     provider = _UnitProvider("skrl", "torch", "unit")
     _register_unit_provider(provider)
 
@@ -208,6 +204,7 @@ def test_trainer_handle_returns_framework_train_result(monkeypatch, tmp_path):
 
 def test_frameworks_reject_missing_run_provider(monkeypatch, tmp_path):
     monkeypatch.setattr(frameworks, "_frameworks", {})
+    monkeypatch.setattr("motrix_rl.plugins.load_plugins", lambda: None)
     provider = _UnitProvider("skrl", "torch", "unit", fail_on_create=True)
     _register_unit_provider(provider)
 
@@ -227,6 +224,7 @@ def test_frameworks_reject_missing_run_provider(monkeypatch, tmp_path):
 
 def test_frameworks_reject_provider_config_type_mismatch(monkeypatch, tmp_path):
     monkeypatch.setattr(frameworks, "_frameworks", {})
+    monkeypatch.setattr("motrix_rl.plugins.load_plugins", lambda: None)
     _register_unit_provider(_UnitProvider("skrl", "torch", "unit"))
     run = runs.create_run_context(
         env_name="demo-env",

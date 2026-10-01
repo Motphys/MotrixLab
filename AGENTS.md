@@ -9,13 +9,16 @@ MotrixLab 是构建在 MotrixSim 仿真后端之上的强化学习框架，提�
 
 ## Workspace 结构
 
-项目使用 UV workspace，包含九个 package：
+项目使用 UV workspace，包含十二个 package：
 
 - `motrix_env_core`：backend 无关的环境框架（不依赖任何 simulator）
 - `motrix_env_motrixsim`：MotrixSim 仿真后端（SimBackend、scene compiler、renderer、torch frontend）
 - `motrix_env_mujoco`：仅用于编译的 MuJoCo scene 后端
 - `motrix_envs`：内置环境、机器人模型与任务资产
-- `motrix_rl`：RL 框架集成与训练工具
+- `motrix_rl`：RL 控制平面、训练编排与稳定 contracts（runner、run/checkpoint、backend 选择、`motrix_rl.frameworks` discovery、provider/trainer 接口）
+- `motrix_rl_builtin`：内置 Motrix FastSAC provider 插件
+- `motrix_rl_skrl`：SKRL PPO provider 插件（Torch 必需，额外 JAX runtime 可选）
+- `motrix_rl_rslrl`：RSLRL PPO provider 插件（Torch）
 - `motrix_deploy`：框架无关的 artifact、运行时契约与部署 CLI
 - `motrix_deploy_mujoco`：SceneCfg 支撑的 MuJoCo 后端插件
 - `motrix_deploy_unitree`：Unitree SDK2 DDS 硬件后端插件
@@ -72,7 +75,7 @@ Python 方法，由 manager 运行时契约定义（`wiki/design/manager/runtime
 
 ### RL 任务配置规范
 
-- RL provider 配置使用对应 provider 的 `@dataclass` 配置类：SKRL 使用 `motrix_rl.skrl.config.SkrlCfg`，RSLRL 使用 `motrix_rl.rslrl.cfg.RslrlCfg`。
+- RL provider 配置使用对应插件包的 `@dataclass` 配置类：SKRL 使用 `motrix_rl_skrl.config.SkrlCfg`，RSLRL 使用 `motrix_rl_rslrl.cfg.RslrlCfg`，FastSAC 使用 `motrix_rl_builtin.fastsac.config.FastSacCfg`。
 - provider 配置的字段结构必须与对应的 `configs/algo_base/*.yaml` 保持一致；不要使用已经删除的 `@rlcfg` 或旧的嵌套结构。
 - 超参数在配置对象初始化或明确的配置组装流程中赋值；同一环境的多个变体应通过配置复用，子变体只覆写实际差异。
 - SKRL 和 RSLRL 的 provider 配置结构不同，不要为了统一接口强行增加无用的兼容层；框架通过 provider 的 `config_type` 和 trainer context 选择对应实现。
@@ -96,7 +99,7 @@ Python 方法，由 manager 运行时契约定义（`wiki/design/manager/runtime
 
 ### 版本与依赖一致性
 
-- 所有 workspace package（见上文 Workspace 结构，共九个）的 `pyproject.toml` 中 `version` 字段必须保持一致。
+- 所有 workspace package（见上文 Workspace 结构，共十二个）的 `pyproject.toml` 中 `version` 字段必须保持一致。
 - MotrixSim 相关依赖版本必须在使用该依赖的 workspace package 之间保持一致。
 - 关键第三方依赖使用精确版本锁定（`===`）；新增或升级依赖时同步更新 `uv.lock`。
 
@@ -110,7 +113,7 @@ Python 方法，由 manager 运行时契约定义（`wiki/design/manager/runtime
 sh install.sh --all
 ```
 
-运行环境（无开发工具链；GPU 厂商自动探测，`--rslrl` 换后端）：
+运行环境（无开发工具链；GPU 厂商自动探测；builtin 与 SKRL Torch 必需，`--rslrl` 追加 RSLRL，`--skrl-jax` 追加 JAX runtime）：
 
 ```bash
 sh install.sh
@@ -196,6 +199,14 @@ tensorboard --logdir runs/{env-name}
 
 ```bash
 python -m pytest
+```
+
+RL 测试按所有权组织：`motrix_rl/tests` 覆盖公共契约与控制面；`motrix_rl_builtin/tests`、
+`motrix_rl_skrl/tests`、`motrix_rl_rslrl/tests` 覆盖各插件实现；根目录 `tests/` 覆盖 workspace CLI 和 task 配置集成。
+插件与 workspace 集成测试需要安装相应依赖；完整验证使用 `sh install.sh --all` 后运行：
+
+```bash
+python -m pytest motrix_rl/tests motrix_rl_builtin/tests motrix_rl_skrl/tests motrix_rl_rslrl/tests tests
 ```
 
 ### 提交前检查

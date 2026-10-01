@@ -12,9 +12,13 @@ dependencies = [
     "motrix-env-mujoco",
     "motrix-envs",
     "motrix-rl",
+    "motrix-rl-builtin",
+    "motrix-rl-skrl",
 ]
 
 [project.optional-dependencies]
+rslrl = ["motrix-rl-rslrl"]
+skrl-jax = ["motrix-rl-skrl[jax]"]
 unitree = [
     "motrix-deploy-unitree",
 ]
@@ -79,6 +83,9 @@ members = [
     "motrix_env_mujoco",
     "motrix_envs",
     "motrix_rl",
+    "motrix_rl_builtin",
+    "motrix_rl_skrl",
+    "motrix_rl_rslrl",
 ]
 
 [tool.uv]
@@ -118,6 +125,9 @@ motrix-env-motrixsim = { workspace = true }
 motrix-env-mujoco = { workspace = true }
 motrix-envs = { workspace = true }
 motrix-rl = { workspace = true }
+motrix-rl-builtin = { workspace = true }
+motrix-rl-skrl = { workspace = true }
+motrix-rl-rslrl = { workspace = true }
 # The `extra = "rocm"` entry routes torch requirements declared in the rocm
 # extra to the ROCm index; the `extra = "cuda"` entry does the same for the
 # cuda extra. Requirements outside both extras (bare sync) fall back to the

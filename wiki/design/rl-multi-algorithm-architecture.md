@@ -51,8 +51,8 @@ RL 集成层需要在同一套入口下承载多个 RL 框架和多种算法：
 │ motrix_rl.backend_runtime                   │
 │ train backend 可用性判断与自动选择           │
 ├─────────────────────────────────────────────┤
-│ motrix_rl.{skrl,rslrl,fastsac}              │
-│ 算法特异 model/memory/agent/runtime + Trainer │
+│ motrix_rl_builtin · motrix_rl_skrl · motrix_rl_rslrl │
+│ 插件包：算法特异 model/memory/agent/runtime + Trainer │
 ├─────────────────────────────────────────────┤
 │ motrix_rl.runs · motrix_rl.checkpoints      │
 │ run 目录 / metadata / checkpoint manifest    │
@@ -60,6 +60,32 @@ RL 集成层需要在同一套入口下承载多个 RL 框架和多种算法：
 ```
 
 `rllib` 是 RL 框架 namespace，也是 run metadata 与 CLI method 中的第一段。`algo` 是该 framework 内部的算法/agent 名称。`train_backend` 是训练实现所用的计算后端（如 `jax` / `torch`，也允许自定义名称）。
+
+### 4.1 Workspace package boundaries
+
+RL 集成拆分为控制平面（同时持有稳定 contracts）和可选 provider 插件两个边界：
+
+| Package | 所有权 | 允许依赖 | 不负责 |
+|---|---|---|---|
+| `motrix_rl` | 控制平面与稳定 contracts：runner、CLI 协作、run metadata、checkpoint manifest、backend 选择、`motrix_rl.frameworks` 注册/查询与 Hydra schema 安装，以及 `RlFramework`、`AgentProvider`、`TrainerBase`、`TrainerContext` 等 provider/trainer 契约 | 环境与通用运行时；可使用控制平面基础依赖 | 不内置具体 FastSAC、SKRL 或 RSLRL trainer；contracts 不包含 provider 实现细节 |
+| `motrix_rl_builtin` | Motrix 内置 FastSAC（`motrix.fastsac`）及其模型、replay、同步/异步 trainer 与导出实现 | 仅依赖 `motrix_rl` 与 Torch 等 FastSAC 运行时依赖 | 不把 FastSAC 类型重新定义为控制平面公共契约 |
+| `motrix_rl_skrl` | SKRL PPO provider（JAX/Torch）及 SKRL-specific wrapper、配置和 trainer | 依赖 `motrix_rl`、SKRL 与 Torch；额外 JAX runtime 按 extra 安装 | 不让 SKRL 依赖成为控制平面的强制依赖 |
+| `motrix_rl_rslrl` | RSLRL PPO provider（Torch）及原生 `rsl_rl` runner 适配 | 仅依赖 `motrix_rl` 与 RSLRL/Torch | 不把 RSLRL runner 细节泄漏到控制平面 |
+
+控制平面保留稳定的 `motrix_rl.frameworks` 入口与 `motrix_rl.contracts` 契约模块；插件包实现 `RlFramework`，并通过该入口注册，而不是由 `motrix_rl` 直接 import provider 模块。算法库是所属插件包的必需依赖，仅额外 backend runtime 使用可选依赖组；插件依赖控制平面，控制平面不依赖插件。根项目必需安装 builtin 与 SKRL，RSLRL plugin 和 SKRL JAX runtime 通过 extras 选择。
+
+### 4.2 Entry-point discovery
+
+插件以 Python packaging entry point group `motrix_rl.frameworks` 发现。每个插件包在自己的分发声明中提供一个命名 entry point，指向无参数 `register()` callable；以下汇总三个包的条目：
+
+```toml
+[project.entry-points."motrix_rl.frameworks"]
+builtin = "motrix_rl_builtin.plugin:register"
+skrl = "motrix_rl_skrl.plugin:register"
+rslrl = "motrix_rl_rslrl.plugin:register"
+```
+
+`motrix_rl.plugins.load_plugins()` 在框架查询或 Hydra task 组合前读取已安装 entry points，按名称稳定排序并确保每个 entry point 只加载一次；注册失败向调用方传播，不被静默吞掉。未安装的可选插件不影响控制平面启动，只有选择其 method 或查询其 framework 时才会报告 provider 不可用。entry-point 名称是分发标识，真实 method identity 仍由 `RlFramework.name`、`AgentProvider.agent_name` 和 `train_backend` 声明。
 
 ## 5. CLI 与 method 解析
 
@@ -155,11 +181,13 @@ backend 专用 option 需要显式选择；option 不存在或其 defaults 损�
 
 ## 7. RlFramework 与 AgentProvider
 
-`motrix_rl.frameworks` 回答"某训练后端、算法如何创建 Trainer"。
+`motrix_rl.frameworks` 回答"某训练后端、算法如何创建 Trainer"。它是控制平面的稳定入口，不是 provider 实现包的聚合模块；provider 通过 `motrix_rl.frameworks` 的注册 API 接入。
 
 - **`RlFramework`**：外部 RL 框架的注册入口，定义 framework namespace（即 `rllib`），持有一组 framework-scoped `AgentProvider`，并提供 supported agents / supported train backends / provider 查询 API。
 - **`AgentProvider`**：framework 内部的训练实现单元，声明 `train_backend`、`agent_name`、`checkpoint_format`，并负责创建 `TrainerBase`。
 - **`TrainerBase`**：可运行对象基类，负责框架内部的 train 与 play。外部算法接入时继承它。
+
+这些契约与 `TrainerContext` / `TrainerHandle` 定义于 `motrix_rl.contracts`；`motrix_rl.frameworks` 保留公共兼容入口，并负责将具体的 `RunContext`、运行配置与 result factory 注入接口对象。contracts 模块不 import 控制平面的 `RunContext` / Hydra 配置类型，后者只在控制平面和插件的调用边界被使用。
 
 `AgentProvider` 不要求暴露 `wrap_env` / `make_models` / `make_memory` 等细粒度步骤——这些是内置 trainer 的内部 helper，不是外部接入面。
 
@@ -501,7 +529,7 @@ def resolve_train_backend(env_name, method, requested_backend, device_supports) 
 | `skrl` | `jax` | `ppo` | `pickle` | SKRL PPO，JAX backend |
 | `skrl` | `torch` | `ppo` | `pt` | SKRL PPO，PyTorch backend |
 | `rslrl` | `torch` | `ppo` | `pt` | RSLRL PPO |
-| `motrix` | `torch` | `fastsac` | `pt` | Motrix 分布式（C51）FastSAC；配置选择同步或异步拓扑 |
+| `motrix` | `torch` | `fastsac` | `pt` | `motrix_rl_builtin` 提供的 Motrix 分布式（C51）FastSAC；配置选择同步或异步拓扑 |
 
 `skrl` 通过 `SkrlPpoTrainerBase` 复用 train/play 主流程与 runtime config，JAX/Torch provider 只提供 backend 特异的 model/memory/agent 构建。`motrix.fastsac` 自带 replay buffer、观测归一化与同步/异步 Trainer；唯一 provider 根据 `FastSacCfg.asynchronous` 选择执行拓扑。
 

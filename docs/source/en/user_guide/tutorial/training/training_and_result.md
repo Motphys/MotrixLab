@@ -2,6 +2,12 @@
 
 This section introduces how to execute reinforcement learning training and how to analyze and use training results. For the layout of training artifacts (the `runs/` directory, `metadata.json`, checkpoints), see [Training Artifacts: the runs Directory and Checkpoint Structure](runs_and_checkpoints.md).
 
+## Prerequisites
+
+Install the runtime environment before training. The root package always installs the SKRL Torch provider and the built-in FastSAC provider; add RSL-RL with `sh install.sh --rslrl`, and add the optional SKRL JAX backend with `sh install.sh --skrl-jax` on Linux. Select CUDA or ROCm with `--gpu` when automatic detection is not suitable, then activate `.venv` as described in the [installation guide](../../getting_started/installation.md).
+
+A Task recipe selects an RL provider, but it does not install that provider. If a Task requires an optional backend that is not installed, provider discovery fails before training starts.
+
 ## Start Training
 
 ### Selecting a Task
@@ -66,6 +72,12 @@ python scripts/train.py task=g1-walk-flat/motrix.fastsac \
 
 # Enable rendering to monitor the training process
 python scripts/train.py task=cartpole/skrl.ppo render=true
+```
+
+Training and playback are separate operations: `play=true` replays the best policy after a successful training run, while `scripts/play.py` reopens a saved run later. Export a trained policy artifact with:
+
+```bash
+python scripts/export_onnx.py run_dir=/path/to/run output=/tmp/policy.onnx
 ```
 
 ### Common Hydra Overrides

@@ -2,6 +2,12 @@
 
 本节介绍如何执行强化学习训练，以及如何分析和使用训练结果。训练产物（`runs/` 目录、`metadata.json`、checkpoint）的结构与生成逻辑见[训练产物：runs 目录与 checkpoint 结构](runs_and_checkpoints.md)。
 
+## 前置条件
+
+训练前请先安装运行环境。根项目始终安装 SKRL Torch provider 和内置 FastSAC provider；使用 `sh install.sh --rslrl` 添加 RSL-RL，Linux 上使用 `sh install.sh --skrl-jax` 添加可选的 SKRL JAX 后端。自动探测不适用时，可使用 `--gpu` 选择 CUDA 或 ROCm，然后按[安装指南](../../getting_started/installation.md)激活 `.venv`。
+
+Task 配方只选择 RL provider，不会替你安装 provider。如果 Task 需要尚未安装的可选后端，训练会在开始前因 provider discovery 失败而停止。
+
 ## 启动训练
 
 ### 选择 Task
@@ -66,6 +72,12 @@ python scripts/train.py task=g1-walk-flat/motrix.fastsac \
 
 # 启用渲染监控训练过程
 python scripts/train.py task=cartpole/skrl.ppo render=true
+```
+
+训练和回放是两个独立操作：`play=true` 会在训练成功后回放本次 run 的最佳策略；稍后可使用 `scripts/play.py` 重新打开已保存的 run。使用以下命令导出训练好的策略 artifact：
+
+```bash
+python scripts/export_onnx.py run_dir=/path/to/run output=/tmp/policy.onnx
 ```
 
 ### 常用 Hydra 覆盖项
