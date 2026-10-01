@@ -18,11 +18,11 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from hydra.core.object_type import ObjectType
 from hydra.errors import MissingConfigException
+from motrix_rl_rslrl.cfg import RslrlRunnerCfg
 from omegaconf import MISSING, OmegaConf
 
 from motrix_rl import frameworks, runner, runs
 from motrix_rl.config import TaskConfig
-from motrix_rl.rslrl.cfg import RslrlRunnerCfg
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 RSLRL_BASE_CONFIG = CONFIG_DIR / "algo_base" / "rslrl.ppo.yaml"
@@ -67,6 +67,9 @@ def _compose_task_option(
     overrides: list[str] | None = None,
 ):
     option = f"{env}/{rllib}.{algo}" + (f".{backend}" if backend else "")
+    from motrix_rl.plugins import load_plugins
+
+    load_plugins()
     GlobalHydra.instance().clear()
     with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
         cfg = compose(config_name="train", overrides=[f"task={option}", *(overrides or [])])
@@ -135,9 +138,11 @@ def test_task_checkpoint_policy_composes_at_root(env, rllib, algo):
 
 
 def test_motrix_fastsac_asynchronous_switches_trainer(tmp_path):
-    from motrix_rl.fastsac.async_impl.train import Trainer as AsyncTrainer
-    from motrix_rl.fastsac.config import FastSacAsyncOptionsCfg
-    from motrix_rl.fastsac.sync.train import Trainer as SyncTrainer
+    from motrix_rl_builtin.fastsac.async_impl.train import Trainer as AsyncTrainer
+    from motrix_rl_builtin.fastsac.config import FastSacAsyncOptionsCfg
+    from motrix_rl_builtin.fastsac.sync.train import Trainer as SyncTrainer
+
+    import motrix_envs  # noqa: F401 registers environments used by the trainer
 
     async_cfg = _compose_task_option(
         "g1-walk-flat",

@@ -14,8 +14,7 @@ from unittest import mock
 
 import pytest
 import torch
-
-from motrix_rl.fastsac.buffer import SimpleReplayBuffer
+from motrix_rl_builtin.fastsac.buffer import SimpleReplayBuffer
 
 N_ENV = 3
 N_OBS = 4
@@ -206,7 +205,7 @@ def test_extend_batch_matches_extend_across_wrap():
 
 def test_ring_read_span_fifo_and_no_wrap():
     """Contiguous-run consumption is FIFO, in-order, and never crosses the wrap."""
-    from motrix_rl.fastsac.async_impl.transport import SharedTransitionRing
+    from motrix_rl_builtin.fastsac.async_impl.transport import SharedTransitionRing
 
     capacity, num_envs, obs_dim, act_dim = 5, 3, 4, 2
 

@@ -5,7 +5,7 @@
 
 from types import SimpleNamespace
 
-from motrix_rl.fastsac.async_impl.learner import Learner
+from motrix_rl_builtin.fastsac.async_impl.learner import Learner
 
 
 def _make_learner(utd_mode: str, num_updates: int) -> Learner:
@@ -36,7 +36,7 @@ def test_own_copies_compiled_outputs_out_of_the_graph_pool() -> None:
     if not torch.cuda.is_available():
         pytest.skip("CUDA graphs require a GPU")
 
-    from motrix_rl.fastsac.agent import _own
+    from motrix_rl_builtin.fastsac.agent import _own
 
     @torch.compile(mode="reduce-overhead")
     def step(x):
@@ -56,7 +56,7 @@ def test_own_copies_compiled_outputs_out_of_the_graph_pool() -> None:
 
 
 def test_own_leaves_non_tensors_alone() -> None:
-    from motrix_rl.fastsac.agent import _own
+    from motrix_rl_builtin.fastsac.agent import _own
 
     assert _own((1, "a", None)) == (1, "a", None)
 
@@ -119,7 +119,7 @@ def test_update_metrics_survive_later_graph_generations() -> None:
     if not torch.cuda.is_available():
         pytest.skip("CUDA graphs require a GPU")
 
-    from motrix_rl.fastsac.agent import FastSacAgent
+    from motrix_rl_builtin.fastsac.agent import FastSacAgent
 
     n_env, obs, cri, act = 8, 5, 7, 3
     agent = FastSacAgent(
@@ -164,8 +164,7 @@ def test_update_metrics_keep_actor_pair_when_final_step_skips_policy() -> None:
     next replay invalidated it and crashed the async learner's log path).
     """
     import torch
-
-    from motrix_rl.fastsac.agent import FastSacAgent
+    from motrix_rl_builtin.fastsac.agent import FastSacAgent
 
     n_env, obs, cri, act = 8, 5, 7, 3
     agent = FastSacAgent(
@@ -205,7 +204,7 @@ def test_update_metrics_keep_actor_pair_when_final_step_skips_policy() -> None:
 
 
 def test_nest_timing_path_merges_scalar_total_with_children_in_any_order() -> None:
-    from motrix_rl.fastsac.async_impl.stats import nest_timing_path
+    from motrix_rl_builtin.fastsac.async_impl.stats import nest_timing_path
 
     # the collector emits a stage's scalar before its dotted sub-stages; the
     # rebuild must fold it into a "total" instead of nesting under a float

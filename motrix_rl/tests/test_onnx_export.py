@@ -31,6 +31,9 @@ def _clear_hydra():
 
 
 def _train_config(task: str, overrides: list[str]) -> TrainConfig:
+    from motrix_rl.plugins import load_plugins
+
+    load_plugins()
     with initialize_config_dir(version_base=None, config_dir=CONFIG_DIR):
         config = compose(config_name="train", overrides=[f"task={task}", *overrides])
     return to_typed_config(config, TrainConfig)
@@ -147,8 +150,8 @@ def test_skrl_torch_export_bakes_observation_preprocessor(tmp_path: Path) -> Non
 
 
 def test_fastsac_export_restores_actor_and_normalizer(tmp_path: Path) -> None:
-    from motrix_rl.fastsac.buffer import EmpiricalNormalization
-    from motrix_rl.fastsac.networks import Actor
+    from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
+    from motrix_rl_builtin.fastsac.networks import Actor
 
     config = _train_config(
         "g1-wbt-dance/motrix.fastsac",
@@ -194,7 +197,7 @@ def test_fastsac_export_restores_actor_and_normalizer(tmp_path: Path) -> None:
 
 
 def test_fastsac_checkpoint_excludes_runtime_wrappers() -> None:
-    from motrix_rl.fastsac.agent import FastSacAgent
+    from motrix_rl_builtin.fastsac.agent import FastSacAgent
 
     config = _train_config(
         "g1-wbt-dance/motrix.fastsac",

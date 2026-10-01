@@ -6,10 +6,11 @@ from pathlib import Path
 import pytest
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
+from motrix_rl_skrl.config import SkrlCfg
 
 from motrix_rl.cli import to_typed_config
 from motrix_rl.config import OnnxExportConfig, TrainConfig
-from motrix_rl.skrl.config import SkrlCfg
+from motrix_rl.plugins import load_plugins
 
 CONFIG_DIR = str(Path(__file__).resolve().parents[2] / "configs")
 
@@ -22,6 +23,7 @@ def _clear_hydra():
 
 
 def _compose(config_name: str, overrides: list[str]):
+    load_plugins()
     with initialize_config_dir(version_base=None, config_dir=CONFIG_DIR):
         return compose(config_name=config_name, overrides=overrides)
 

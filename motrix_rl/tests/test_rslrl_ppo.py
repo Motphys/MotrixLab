@@ -4,10 +4,10 @@
 from types import SimpleNamespace
 
 import pytest
+from motrix_rl_rslrl.torch.train import ppo
+from motrix_rl_rslrl.torch.train.ppo import Trainer, add_runtime_config
 
 from motrix_rl.config import CheckpointConfig, LoggingConfig
-from motrix_rl.rslrl.torch.train import ppo
-from motrix_rl.rslrl.torch.train.ppo import Trainer, add_runtime_config
 
 
 def test_add_runtime_config():

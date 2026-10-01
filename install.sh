@@ -9,7 +9,7 @@
 # from the loaded kernel driver (nvidia -> cuda, amdgpu -> rocm); CPU-only
 # hosts fall back to cuda.
 #
-# Training backends are enabled with --skrl-torch (default), --skrl-jax or
+# Training plugins are enabled with --skrl-torch (default), --skrl-jax or
 # --rslrl, named after the extras that install them; multiple flags combine.
 # --tbb installs Intel TBB so numba parallel kernels use its threading layer
 # (avoids the OpenMP per-region thread-wakeup storm on many-core hosts).

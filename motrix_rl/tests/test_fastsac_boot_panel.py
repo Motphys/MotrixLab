@@ -9,7 +9,7 @@ wrapping) and tolerate workers that have not created their log file yet.
 
 from pathlib import Path
 
-from motrix_rl.fastsac.async_impl.panels import BootPanel, worker_log_tail
+from motrix_rl_builtin.fastsac.async_impl.panels import BootPanel, worker_log_tail
 
 
 def test_tail_shows_placeholder_before_any_log_exists(tmp_path: Path) -> None:
@@ -118,7 +118,7 @@ def test_boot_panel_render_fits_terminal_height(tmp_path: Path, monkeypatch) -> 
     from rich.console import Console
 
     (tmp_path / "collector0.log").write_text("c-line\n")
-    monkeypatch.setattr("motrix_rl.fastsac.async_impl.panels.Console", lambda: Console(width=100, height=20))
+    monkeypatch.setattr("motrix_rl_builtin.fastsac.async_impl.panels.Console", lambda: Console(width=100, height=20))
     panel = BootPanel(
         title="env/motrix.fastsac — worker startup",
         log_dir=tmp_path,
@@ -142,7 +142,7 @@ def test_boot_panel_handoff_mode_renders_progress_and_gate(tmp_path: Path, monke
     from rich.console import Console
 
     (tmp_path / "collector0.log").write_text("c-line\n")
-    import motrix_rl.fastsac.async_impl.panels as panels
+    import motrix_rl_builtin.fastsac.async_impl.panels as panels
 
     devnull = open("/dev/null", "w")
     monkeypatch.setattr(panels, "Console", lambda: Console(width=100, height=20, force_terminal=True, file=devnull))

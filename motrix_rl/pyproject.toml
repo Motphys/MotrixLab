@@ -11,6 +11,7 @@ requires-python = "==3.10.*"
 readme = "README.md"
 license = "Apache-2.0"
 dependencies = [
+    "motrix-rl-interface",
     "gymnasium==1.1.1",
     "python-abc>=0.2.0",
     "motrix-env-core[numba,video]",
@@ -31,17 +32,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-skrl-jax = [
-    "skrl>=2.1,<2.2; sys_platform == 'linux'",
-    "jax[cuda12]==0.4.34; sys_platform == 'linux'",
-    "flax==0.10.4; sys_platform == 'linux'",
-    "tensorflow==2.20.0; sys_platform == 'linux'",
-]
-skrl-torch = [
-    "skrl>=2.1,<2.2",
-    "torch>=2.7,<3",
-]
-rslrl = [
-    "rsl-rl-lib>=4.0,<5.0",
-    "torch>=2.7,<3",
-]
+builtin = ["motrix-rl-builtin"]
+skrl-jax = ["motrix-rl-skrl[jax]"]
+skrl-torch = ["motrix-rl-skrl[torch]"]
+rslrl = ["motrix-rl-rslrl[rslrl]"]

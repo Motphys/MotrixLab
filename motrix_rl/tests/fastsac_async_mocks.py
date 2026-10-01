@@ -14,9 +14,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import torch
-
-from motrix_rl.fastsac.async_impl.learner import GenerationAssembler, Learner
-from motrix_rl.fastsac.async_impl.transport import Control
+from motrix_rl_builtin.fastsac.async_impl.learner import GenerationAssembler, Learner
+from motrix_rl_builtin.fastsac.async_impl.transport import Control
 
 
 def make_mock_learner(rings: list, extends: list | None) -> Learner:

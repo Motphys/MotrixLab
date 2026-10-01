@@ -22,10 +22,9 @@ from types import SimpleNamespace
 
 import torch
 from fastsac_async_mocks import make_mock_learner
-
-from motrix_rl.fastsac.async_impl.learner import Learner
-from motrix_rl.fastsac.async_impl.transport import SharedTransitionRing
-from motrix_rl.fastsac.buffer import EmpiricalNormalization, SimpleReplayBuffer
+from motrix_rl_builtin.fastsac.async_impl.learner import Learner
+from motrix_rl_builtin.fastsac.async_impl.transport import SharedTransitionRing
+from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization, SimpleReplayBuffer
 
 _OBS, _COBS, _ACT = 7, 5, 3
 

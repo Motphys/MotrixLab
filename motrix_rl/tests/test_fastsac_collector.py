@@ -7,17 +7,17 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-
-from motrix_env_core.perf import Perf
-from motrix_rl.fastsac.async_impl.collector import Collector, resolve_collector_inference_device
-from motrix_rl.fastsac.async_impl.transport import Control, SharedTransitionRing
-from motrix_rl.fastsac.async_impl.transport.weight_channel import (
+from motrix_rl_builtin.fastsac.async_impl.collector import Collector, resolve_collector_inference_device
+from motrix_rl_builtin.fastsac.async_impl.transport import Control, SharedTransitionRing
+from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import (
     HostWeightReceiver,
     HostWeightSender,
     WeightChannelShared,
 )
-from motrix_rl.fastsac.buffer import EmpiricalNormalization
-from motrix_rl.fastsac.networks import Actor
+from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
+from motrix_rl_builtin.fastsac.networks import Actor
+
+from motrix_env_core.perf import Perf
 
 _NUM_ENVS = 8
 _OBS_DIM = 6

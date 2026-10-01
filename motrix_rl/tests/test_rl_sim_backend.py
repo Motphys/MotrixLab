@@ -12,6 +12,10 @@ import numpy as np
 import pytest
 import torch
 import torch.multiprocessing as mp
+from motrix_rl_builtin.fastsac.async_impl.transport import Control, SharedTransitionRing, StartupHandshake
+from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import HostWeightSender, WeightChannelShared
+from motrix_rl_builtin.fastsac.async_impl.worker import actor_param_numel, run_collector_process
+from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap
 
 from motrix_env_core.array.env import ArrayEnvState, NpObs
 from motrix_env_core.base import EnvCfg
@@ -19,10 +23,6 @@ from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.registry import EnvBuildSpec
 from motrix_env_motrixsim.torch_env import TorchEnv, TorchEnvState, TorchObs
-from motrix_rl.fastsac.async_impl.transport import Control, SharedTransitionRing, StartupHandshake
-from motrix_rl.fastsac.async_impl.transport.weight_channel import HostWeightSender, WeightChannelShared
-from motrix_rl.fastsac.async_impl.worker import actor_param_numel, run_collector_process
-from motrix_rl.fastsac.wrap import FastSacEnvWrap
 
 _TRAINERS = ["skrl.torch", "skrl.jax", "rslrl.torch", "fastsac"]
 _SIM_BACKENDS = ["np", "torch"]
@@ -76,23 +76,33 @@ def _make_env(sim_backend: str):
 
 def _require_trainer(trainer: str) -> None:
     if trainer.startswith("skrl"):
+        pytest.importorskip("motrix_rl_skrl")
         pytest.importorskip("skrl")
         if trainer == "skrl.jax":
             pytest.importorskip("jax")
     elif trainer == "rslrl.torch":
+        pytest.importorskip("motrix_rl_rslrl")
         pytest.importorskip("rsl_rl")
+    else:
+        pytest.importorskip("motrix_rl_builtin")
 
 
 def _wrap_env(monkeypatch, trainer: str, sim_backend: str, env, renderer):
     _require_trainer(trainer)
-    wrapper_module = importlib.import_module(f"motrix_rl.{trainer}.wrap_{sim_backend}")
+    package = {
+        "skrl.torch": "motrix_rl_skrl.torch",
+        "skrl.jax": "motrix_rl_skrl.jax",
+        "rslrl.torch": "motrix_rl_rslrl.torch",
+        "fastsac": "motrix_rl_builtin.fastsac",
+    }[trainer]
+    wrapper_module = importlib.import_module(f"{package}.wrap_{sim_backend}")
     monkeypatch.setattr(wrapper_module, "create_renderer", Mock(return_value=renderer))
 
     device = torch.device("cpu")
     if trainer == "fastsac":
         return getattr(wrapper_module, _FASTSAC_WRAPPERS[sim_backend])(env, device, render=object())
 
-    trainer_module = importlib.import_module(f"motrix_rl.{trainer}")
+    trainer_module = importlib.import_module(package)
     if trainer == "rslrl.torch":
         return trainer_module.wrap_env(env, device, render=object())
     return trainer_module.wrap_env(env, render=object())
@@ -141,7 +151,7 @@ def test_rl_trainer_supports_sim_backend(monkeypatch, trainer: str, sim_backend:
 @pytest.mark.parametrize("sim_backend", _SIM_BACKENDS)
 def test_fastsac_clips_actions_for_sim_backend(sim_backend: str) -> None:
     env = _make_env(sim_backend)
-    module = importlib.import_module(f"motrix_rl.fastsac.wrap_{sim_backend}")
+    module = importlib.import_module(f"motrix_rl_builtin.fastsac.wrap_{sim_backend}")
     wrapped = getattr(module, _FASTSAC_WRAPPERS[sim_backend])(env, torch.device("cpu"))
     actions = torch.tensor([[3.0, -2.0], [0.5, 4.0]])
 

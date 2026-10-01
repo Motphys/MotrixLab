@@ -17,13 +17,12 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-
-from motrix_rl.fastsac.async_impl.transport import (
+from motrix_rl_builtin.fastsac.async_impl.transport import (
     IpcTransitionRing,
     RingCursors,
     SharedTransitionRing,
 )
-from motrix_rl.fastsac.buffer import SimpleReplayBuffer
+from motrix_rl_builtin.fastsac.buffer import SimpleReplayBuffer
 
 CAPACITY, N_ENV, OBS, CRI, ACT = 5, 3, 4, 6, 2
 FEAT = OBS + CRI + ACT + 3
@@ -176,7 +175,7 @@ def test_ipc_and_host_ring_produce_identical_replay_buffers():
 
 
 def test_use_ipc_transition_ring_gating():
-    from motrix_rl.fastsac.async_impl.topology import use_ipc_transition_ring
+    from motrix_rl_builtin.fastsac.async_impl.topology import use_ipc_transition_ring
 
     def opts(mode):
         return SimpleNamespace(transition_ipc=mode)
@@ -210,8 +209,8 @@ def test_learner_drains_ipc_ring_end_to_end():
     conversion, rb wrap — interleaved with publish/commit laziness, mirroring
     the earlier batched-drain smoke test for the host ring.
     """
-    from motrix_rl.fastsac.agent import FastSacAgent
-    from motrix_rl.fastsac.async_impl.learner import Learner
+    from motrix_rl_builtin.fastsac.agent import FastSacAgent
+    from motrix_rl_builtin.fastsac.async_impl.learner import Learner
 
     agent = FastSacAgent(
         obs_dim=OBS,
@@ -259,7 +258,7 @@ def test_learner_drains_ipc_ring_end_to_end():
             async_options=SimpleNamespace(max_ingest_per_iter=CAPACITY, utd_mode="strict", weight_publish_interval=1)
         )
     )
-    from motrix_rl.fastsac.async_impl.learner import CollectorEndpoint
+    from motrix_rl_builtin.fastsac.async_impl.learner import CollectorEndpoint
 
     stub_sender = SimpleNamespace(publish=lambda *a, **k: None)
     control = SimpleNamespace(num_collectors=1, stop=False)
@@ -299,8 +298,8 @@ def test_learner_drains_mixed_host_and_ipc_rings():
     merged batch is assembled on a single device: env block [0:N_ENV] comes
     from the host ring, [N_ENV:] from the IPC ring.
     """
-    from motrix_rl.fastsac.agent import FastSacAgent
-    from motrix_rl.fastsac.async_impl.learner import CollectorEndpoint, Learner
+    from motrix_rl_builtin.fastsac.agent import FastSacAgent
+    from motrix_rl_builtin.fastsac.async_impl.learner import CollectorEndpoint, Learner
 
     total, merged_envs = 10, 2 * N_ENV
     agent = FastSacAgent(

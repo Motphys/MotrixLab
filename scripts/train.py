@@ -19,6 +19,10 @@ from motrix_env_core.renderer import RenderConfig  # noqa: E402
 from motrix_rl import runner  # noqa: E402
 from motrix_rl.cli import to_typed_config  # noqa: E402
 from motrix_rl.config import TrainConfig  # noqa: E402
+from motrix_rl.plugins import load_plugins  # noqa: E402
+
+# Plugin schemas must be available before Hydra composes the selected task.
+load_plugins()
 
 logger = logging.getLogger(__name__)
 

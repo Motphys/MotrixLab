@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
+from motrix_rl_skrl.ppo import SkrlPpoTrainerBase, add_runtime_config, ppo_memory_size
 
 from motrix_rl.config import CheckpointConfig, LoggingConfig
-from motrix_rl.skrl.ppo import SkrlPpoTrainerBase, add_runtime_config, ppo_memory_size
 
 
 class Scheduler:

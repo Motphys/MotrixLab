@@ -25,10 +25,9 @@ OBS, COBS, ACT = 6, 4, 2
 def _make_agent(world_size: int, seed: int) -> object:
     from pathlib import Path
 
+    from motrix_rl_builtin.fastsac.agent import FastSacAgent
+    from motrix_rl_builtin.fastsac.config import FastSacAgentCfg
     from omegaconf import OmegaConf
-
-    from motrix_rl.fastsac.agent import FastSacAgent
-    from motrix_rl.fastsac.config import FastSacAgentCfg
 
     yaml_path = Path(__file__).resolve().parents[2] / "configs" / "algo_base" / "motrix.fastsac.yaml"
     base = OmegaConf.merge(OmegaConf.structured(FastSacAgentCfg), OmegaConf.load(yaml_path)["agent"])

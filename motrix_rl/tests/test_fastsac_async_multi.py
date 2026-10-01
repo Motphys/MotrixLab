@@ -10,11 +10,10 @@ from types import SimpleNamespace
 import pytest
 import torch
 from fastsac_async_mocks import make_mock_learner
-
-from motrix_rl.fastsac.async_impl.learner import Learner
-from motrix_rl.fastsac.async_impl.numa import parse_cpulist, select_collector_cpus
-from motrix_rl.fastsac.async_impl.stats import aggregate_collector_stats
-from motrix_rl.fastsac.async_impl.topology import (
+from motrix_rl_builtin.fastsac.async_impl.learner import Learner
+from motrix_rl_builtin.fastsac.async_impl.numa import parse_cpulist, select_collector_cpus
+from motrix_rl_builtin.fastsac.async_impl.stats import aggregate_collector_stats
+from motrix_rl_builtin.fastsac.async_impl.topology import (
     CollectorInfo,
     LearnerInfo,
     TrainerTopology,
@@ -24,8 +23,8 @@ from motrix_rl.fastsac.async_impl.topology import (
     ring_transport_is_ipc,
     split_num_envs,
 )
-from motrix_rl.fastsac.async_impl.train import Trainer
-from motrix_rl.fastsac.async_impl.transport import Control, SharedTransitionRing
+from motrix_rl_builtin.fastsac.async_impl.train import Trainer
+from motrix_rl_builtin.fastsac.async_impl.transport import Control, SharedTransitionRing
 
 
 def test_control_aggregates_per_collector_steps() -> None:
@@ -182,7 +181,7 @@ def test_aggregate_collector_stats_defaults_without_snapshots() -> None:
 def test_extend_batch_matches_repeated_extend_including_wraparound() -> None:
     """extend_batch writes exactly what successive extend calls would, including
     a run that wraps the circular buffer end — n-step time adjacency depends on it."""
-    from motrix_rl.fastsac.buffer import SimpleReplayBuffer
+    from motrix_rl_builtin.fastsac.buffer import SimpleReplayBuffer
 
     def make():
         return SimpleReplayBuffer(n_env=4, buffer_size=5, n_obs=3, n_act=2, n_critic_obs=3, device="cpu")
@@ -241,7 +240,7 @@ def test_select_collector_cpus_chunks_and_shares() -> None:
 
 
 def test_topology_pairs_collectors_with_owning_learner(monkeypatch) -> None:
-    from motrix_rl.fastsac.async_impl import numa
+    from motrix_rl_builtin.fastsac.async_impl import numa
 
     monkeypatch.setattr(numa, "available_numa_nodes", lambda: [0, 1])
     monkeypatch.setattr(numa, "gpu_numa_node", lambda index: {0: 0, 1: 1}.get(index))
@@ -284,7 +283,7 @@ def test_topology_chunks_cpus_by_node_local_ordinal(monkeypatch) -> None:
     collectors past their own node's CPUs (asymmetric bindings, or a
     "leaves no CPUs" abort once the offset exceeds the node's list).
     """
-    from motrix_rl.fastsac.async_impl import numa
+    from motrix_rl_builtin.fastsac.async_impl import numa
 
     node_cpus = {0: list(range(8)), 1: list(range(100, 108))}
     monkeypatch.setattr(numa, "available_numa_nodes", lambda: [0, 1])
@@ -317,7 +316,7 @@ def test_topology_chunks_cpus_by_node_local_ordinal(monkeypatch) -> None:
 
 
 def test_topology_unbound_without_gpu_locality(monkeypatch) -> None:
-    from motrix_rl.fastsac.async_impl import numa
+    from motrix_rl_builtin.fastsac.async_impl import numa
 
     cuda = torch.device("cuda", 0)
     cpu = torch.device("cpu")
@@ -520,8 +519,7 @@ def test_ring_transport_ipc_colocated_collectors() -> None:
 def test_normalizer_stat_sync_merges_shards(monkeypatch) -> None:
     """_sync_normalizer_stats merges per-rank (n, Sum, SumSq) into global stats."""
     import torch.distributed as dist
-
-    from motrix_rl.fastsac.buffer import EmpiricalNormalization
+    from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
 
     def make_norm(seed: int, data: torch.Tensor) -> EmpiricalNormalization:
         norm = EmpiricalNormalization(data.shape[1:], torch.device("cpu"))
@@ -562,8 +560,7 @@ def test_normalizer_stat_sync_merges_shards(monkeypatch) -> None:
 def test_normalizer_stat_sync_zero_count_is_noop(monkeypatch) -> None:
     """A never-updated normalizer (count=0) must contribute zeros, not NaN."""
     import torch.distributed as dist
-
-    from motrix_rl.fastsac.buffer import EmpiricalNormalization
+    from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
 
     fresh = EmpiricalNormalization(5, torch.device("cpu"))  # count=0
     other = EmpiricalNormalization(5, torch.device("cpu"))
