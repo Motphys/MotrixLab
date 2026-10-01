@@ -60,9 +60,7 @@ def test_video_recorder_paces_frames_and_closes_frame_source(tmp_path, monkeypat
     # renderer imports imageio lazily inside _write_frame, so patch the real
     # module attribute the function resolves on import. imageio is optional
     # (motrix-env-core[video]); skip cleanly on minimal core installs.
-    imageio = pytest.importorskip(
-        "imageio.v2", reason="video recording requires motrix-env-core[video]"
-    )
+    imageio = pytest.importorskip("imageio.v2", reason="video recording requires motrix-env-core[video]")
 
     monkeypatch.setattr(imageio, "get_writer", get_writer)
 
