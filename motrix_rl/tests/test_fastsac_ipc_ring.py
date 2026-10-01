@@ -372,7 +372,8 @@ def test_learner_drains_mixed_host_and_ipc_rings():
         owner.size()
         learner.drain()
 
-    torch.cuda.synchronize()
+    torch.cuda.synchronize()  # land the last push's event before the final drains
+    owner.size()  # producer-side flush, as the collector's polling would do
     while host_ring.has_next() or receiver.has_next():
         learner.drain()
     learner.wait_ingest()
