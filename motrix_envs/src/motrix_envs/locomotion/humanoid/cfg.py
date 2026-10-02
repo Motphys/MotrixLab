@@ -12,6 +12,8 @@ queries (height-field grid, key-pose foot frames via FK) provide the static
 data those terms consume. No environment subclass is needed.
 """
 
+from copy import deepcopy
+
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import (
@@ -47,7 +49,7 @@ from motrix_env_core.mdp.rewards import (
     TrackingAngVelZRewardCfg,
     TrackingLinVelXyRewardCfg,
 )
-from motrix_env_core.mdp.terminations import CollidingTerminationCfg
+from motrix_env_core.mdp.terminations import BadDofVelocityTerminationCfg, CollidingTerminationCfg
 from motrix_env_core.sim import (
     ActuatorKdQuery,
     ActuatorKpQuery,
@@ -57,18 +59,23 @@ from motrix_env_core.sim import (
     GeomSpecsQuery,
     HeightFieldDataQuery,
     LinkCenterOfMassQuery,
+    LinkPositionQuery,
+    LinkQuaternionQuery,
 )
 from motrix_envs.config.scene import StandardSceneAssetsCfg, StandardSceneCfg
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.command import WalkCommandCfg
-from motrix_envs.locomotion.humanoid.walk_manager_mdp.observations import GaitPhaseObsCfg
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.observations import GaitPhaseObsCfg, HeightScanObsCfg
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.reset import WalkStateResetCfg
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.rewards import (
     FeetPhaseRewardCfg,
     PenaltyActionRateRewardCfg,
     PenaltyAngVelXyRewardCfg,
+    PenaltyBaseClearanceRewardCfg,
     PenaltyCloseFeetXyRewardCfg,
+    PenaltyCollisionRewardCfg,
     PenaltyFeetOriRewardCfg,
     PenaltyOrientationRewardCfg,
+    PenaltyOutwardTiltRewardCfg,
     PoseRewardCfg,
 )
 from motrix_envs.robot import HumanoidRobotCfg
@@ -115,7 +122,10 @@ class WalkRewardsCfg(ManagerRewardsCfg):
     tracking_lin_vel: TrackingLinVelXyRewardCfg = TrackingLinVelXyRewardCfg(command_name="walk", weight=4.0)
     tracking_ang_vel: TrackingAngVelZRewardCfg = TrackingAngVelZRewardCfg(command_name="walk", weight=3.0)
     penalty_ang_vel_xy: PenaltyAngVelXyRewardCfg = PenaltyAngVelXyRewardCfg(weight=-1.0)
+    penalty_base_clearance: PenaltyBaseClearanceRewardCfg | None = None
+    penalty_collision: PenaltyCollisionRewardCfg | None = None
     penalty_orientation: PenaltyOrientationRewardCfg = PenaltyOrientationRewardCfg(weight=-10.0)
+    penalty_outward_tilt: PenaltyOutwardTiltRewardCfg | None = None
     penalty_action_rate: PenaltyActionRateRewardCfg = PenaltyActionRateRewardCfg(weight=-0.5)
     feet_phase: FeetPhaseRewardCfg = FeetPhaseRewardCfg(weight=5.0)
     pose: PoseRewardCfg = PoseRewardCfg(weight=-0.5)
@@ -127,6 +137,7 @@ class WalkRewardsCfg(ManagerRewardsCfg):
 @configclass
 class WalkTerminationsCfg(ManagerTerminationsCfg):
     colliding: CollidingTerminationCfg = CollidingTerminationCfg()
+    bad_dof_velocity: BadDofVelocityTerminationCfg | None = None
 
 
 @configclass
@@ -135,6 +146,7 @@ class WalkObservationsCfg(ManagerObservationsCfg):
 
     @configclass
     class PolicyCfg(ManagerObservationGroupCfg):
+        base_lin_vel: BodyLinearVelocityObsCfg | None = None
         base_ang_vel: BodyAngularVelocityObsCfg = BodyAngularVelocityObsCfg(scale=0.25)
         projected_gravity: BodyProjectedGravityObsCfg = BodyProjectedGravityObsCfg()
         command: CommandObsCfg = CommandObsCfg(command_name="walk")
@@ -143,6 +155,7 @@ class WalkObservationsCfg(ManagerObservationsCfg):
         actions: ActionsObsCfg = ActionsObsCfg()
         sin_phase: GaitPhaseObsCfg = GaitPhaseObsCfg(offset=0, size=2)
         cos_phase: GaitPhaseObsCfg = GaitPhaseObsCfg(offset=2, size=2)
+        height_scan: HeightScanObsCfg | None = None
 
     @configclass
     class ValueCfg(ManagerObservationGroupCfg):
@@ -155,6 +168,7 @@ class WalkObservationsCfg(ManagerObservationsCfg):
         actions: ActionsObsCfg = ActionsObsCfg()
         sin_phase: GaitPhaseObsCfg = GaitPhaseObsCfg(offset=0, size=2)
         cos_phase: GaitPhaseObsCfg = GaitPhaseObsCfg(offset=2, size=2)
+        height_scan: HeightScanObsCfg | None = None
 
     policy: PolicyCfg = PolicyCfg()
     value: ValueCfg = ValueCfg()
@@ -189,6 +203,14 @@ class HumanoidVelocityTrackingManagerEnvCfg(ManagerBasedEnvCfg):
     rewards: WalkRewardsCfg = WalkRewardsCfg()
     terminations: WalkTerminationsCfg = WalkTerminationsCfg()
 
+    def for_play(self) -> "HumanoidVelocityTrackingManagerEnvCfg":
+        """Keep reset-time column balancing exclusive to training rollouts."""
+        if not self.commands.walk.terrain_balanced_columns:
+            return self
+        cfg = deepcopy(self)
+        cfg.commands.walk.terrain_balanced_columns = False
+        return cfg
+
     def __post_init__(self) -> None:
         robot = self.scene.objs.robot
         if not isinstance(robot, HumanoidRobotCfg):
@@ -203,6 +225,8 @@ class HumanoidVelocityTrackingManagerEnvCfg(ManagerBasedEnvCfg):
         # Reward and observation terms self-declare their data queries; the
         # task declares only what no term owns.
         self.queries.data = {}
+        self.queries.data["terrain_curriculum_base_pos"] = LinkPositionQuery(link=robot.resolved_base_link_name)
+        self.queries.data["terrain_curriculum_base_quat"] = LinkQuaternionQuery(link=robot.resolved_base_link_name)
         self.queries.model = {
             "geoms": GeomSpecsQuery(names=termination_geoms + (ground_geom,)),
             "actuator_kp": ActuatorKpQuery(),
@@ -230,5 +254,22 @@ class HumanoidVelocityTrackingManagerEnvCfg(ManagerBasedEnvCfg):
 
         # Scene-level facts shared by several terms.
         self.rewards.feet_phase.ground_geom = ground_geom
+        if self.rewards.penalty_feet_ori.terrain_relative:
+            self.rewards.penalty_feet_ori.ground_geom = ground_geom
+        if self.rewards.penalty_collision is not None:
+            if not self.rewards.penalty_collision.ground_geom:
+                self.rewards.penalty_collision.ground_geom = ground_geom
+            if not self.rewards.penalty_collision.termination_geoms:
+                self.rewards.penalty_collision.termination_geoms = self.terminations.colliding.termination_geoms
+        if self.rewards.penalty_base_clearance is not None:
+            self.rewards.penalty_base_clearance.ground_geom = ground_geom
         self.sim_reset.humanoid_state.ground_geom = ground_geom
+        # The initial-state curriculum ramp lives on the walk command (it owns
+        # the per-step host hook); mirror the randomization cfg's settings.
+        self.commands.walk.init_state_curriculum_steps = randomization.curriculum_steps
+        self.commands.walk.init_state_curriculum_start = randomization.curriculum_start
+        # The terrain difficulty curriculum also lives on the walk command,
+        # which owns the episode-end host hook.
+        if getattr(self.sim_reset.humanoid_state, "terrain_curriculum", False):
+            self.commands.walk.terrain_curriculum = True
         self.commands.walk.ctrl_dt = self.ctrl_dt

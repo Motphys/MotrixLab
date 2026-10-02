@@ -548,7 +548,8 @@ def test_procedural_hfield_rejects_invalid_generator_output(heights, match):
 
 
 def test_stairs_terrain_runs_along_configured_axis():
-    # axis semantics contract: "x" varies along shape[0] rows, "y" along shape[1] columns.
+    # axis semantics contract: "x" varies along shape[1] columns (hfield x),
+    # "y" along shape[0] rows (hfield y).
     generator = StairsTerrainGeneratorCfg(
         axis="x",
         profile="ascending",
@@ -559,10 +560,10 @@ def test_stairs_terrain_runs_along_configured_axis():
 
     heights = generator.generate((8.0, 8.0), (8, 8))
 
-    assert np.all(heights == heights[:, :1])
-    row_levels = heights[:, 0]
-    assert sorted(np.unique(row_levels)) == pytest.approx([0.0, 1.0 / 3, 2.0 / 3, 1.0])
-    assert np.all(np.diff(row_levels) >= 0.0)
+    assert np.all(heights == heights[:1, :])
+    col_levels = heights[0, :]
+    assert sorted(np.unique(col_levels)) == pytest.approx([0.0, 1.0 / 3, 2.0 / 3, 1.0])
+    assert np.all(np.diff(col_levels) >= 0.0)
 
     transposed = StairsTerrainGeneratorCfg(
         axis="y",
@@ -571,8 +572,8 @@ def test_stairs_terrain_runs_along_configured_axis():
         step_height=0.05,
         height_scale=0.15,
     ).generate((8.0, 8.0), (8, 8))
-    assert np.all(transposed == transposed[0:1, :])
-    assert np.all(transposed[:, 0] == heights[0, :])
+    assert np.all(transposed == transposed[:, :1])
+    assert np.all(transposed == heights.T)
 
 
 def test_stairs_terrain_profiles():
@@ -581,7 +582,7 @@ def test_stairs_terrain_profiles():
         step_count=8,
         step_height=0.1,
         height_scale=0.7,
-    ).generate((8.0, 8.0), (8, 8))[:, 0]
+    ).generate((8.0, 8.0), (8, 8))[0, :]
     assert np.all(np.diff(pyramid[:4]) > 0.0)
     assert np.all(np.diff(pyramid[4:]) < 0.0)
     assert pyramid[0] == pytest.approx(0.0)
@@ -592,7 +593,7 @@ def test_stairs_terrain_profiles():
         step_count=8,
         step_height=0.1,
         height_scale=0.7,
-    ).generate((8.0, 8.0), (8, 8))[:, 0]
+    ).generate((8.0, 8.0), (8, 8))[0, :]
     # The central pit floor is the lowest point and the edges are the highest.
     assert pit[3:5].min() == pit.min()
     assert pit[0] == pit.max()
@@ -825,16 +826,16 @@ def test_composite_terrain_conserves_physical_heights_and_stays_normalized():
     # Later regions overwrite earlier ones: the flat patch shows through at full
     # height where it overlaps the stairs region.
     assert heights[8, 11] == pytest.approx(1.0)
-    # Inside the stairs region (rows flush, right edge flush; the left edge is an
+    # Inside the stairs region (columns flush right; the left edge is an
     # interior seam) the physical step size is conserved after sub-generator rescaling.
-    core = np.unique(heights[6:10, 15])
+    core = np.unique(heights[4, 10:16])
     assert np.diff(core) * 0.4 == pytest.approx(0.05)
     assert core[0] * 0.4 == pytest.approx(0.05)
     # The blend margin mixes the flat base into the stairs across the interior seam
-    # (row 3 lies on stairs level 0, i.e. normalized height 0).
+    # (column 10 lies on stairs level 1, i.e. normalized height 0.125).
     assert heights[3, 8] == pytest.approx(0.25)
     assert heights[3, 9] == pytest.approx(0.5 * 0.25)
-    assert heights[3, 8] > heights[3, 9] > heights[3, 12]
+    assert heights[3, 10] == pytest.approx(0.125)
 
 
 def test_composite_terrain_rejects_sub_generator_above_height_scale():
@@ -852,6 +853,28 @@ def test_composite_terrain_rejects_sub_generator_above_height_scale():
 
     with pytest.raises(ValueError, match="exceeds its composite height_scale"):
         composite.generate((16.0, 16.0), (16, 16))
+
+
+def test_grid_terrain_rectangular_cells_preserve_generator_physical_extent():
+    size, shape = (56.0, 120.0), (16, 24)
+    generator = StairsTerrainGeneratorCfg(
+        axis="x",
+        profile="ascending",
+        step_count=4,
+        step_height=0.1,
+        height_scale=0.8,
+    )
+    composite = grid_terrain(
+        [[generator, generator, generator], [generator, generator, generator]],
+        size=size,
+    )
+
+    heights = composite.generate(size, shape)
+    expected = generator.generate((size[0] / 3.0, size[1] / 2.0), (8, 8))
+    for row in range(2):
+        for col in range(3):
+            patch = heights[row * 8 : (row + 1) * 8, col * 8 : (col + 1) * 8]
+            np.testing.assert_allclose(patch, expected)
 
 
 def test_grid_terrain_lays_out_cells():
@@ -873,6 +896,42 @@ def test_grid_terrain_lays_out_cells():
     heights = composite.generate((16.0, 16.0), (16, 16))
     assert np.all(heights >= 0.0)
     assert np.all(heights <= 1.0)
+
+
+def test_grid_terrain_border_reserves_flat_margin():
+    cells = [
+        [FlatTerrainGeneratorCfg(height=0.5, height_scale=0.1), FlatTerrainGeneratorCfg(height=0.5, height_scale=0.1)],
+        [FlatTerrainGeneratorCfg(height=0.5, height_scale=0.1), FlatTerrainGeneratorCfg(height=0.5, height_scale=0.1)],
+    ]
+    size, shape = (12.0, 8.0), (80, 120)
+    composite = grid_terrain(cells, size=size, border=(2.0, 2.0))
+
+    # A 2 m border on each side reserves normalized insets of 1/6 (x, over
+    # 12 m) and 1/4 (y, over 8 m), shrinking and centering the region grid.
+    assert composite.regions[0].center == pytest.approx((0.375, 1 / 3))
+    assert composite.regions[0].size == pytest.approx((0.25, 1 / 3))
+
+    heights = composite.generate(size, shape)
+    margin = np.concatenate(
+        [
+            heights[:20, :].ravel(),
+            heights[-20:, :].ravel(),
+            heights[20:-20, :20].ravel(),
+            heights[20:-20, -20:].ravel(),
+        ]
+    )
+    assert np.all(margin == 0.0)
+    assert np.all(heights[20:-20, 20:-20] == pytest.approx(0.5))
+
+
+def test_grid_terrain_border_requires_size_and_bounds():
+    cells = [[FlatTerrainGeneratorCfg()]]
+    with pytest.raises(ValueError, match="requires the world-space field size"):
+        grid_terrain(cells, border=(1.0, 0.0))
+    with pytest.raises(ValueError, match="non-negative"):
+        grid_terrain(cells, size=(4.0, 4.0), border=(-1.0, 0.0))
+    with pytest.raises(ValueError, match="leave room"):
+        grid_terrain(cells, size=(4.0, 4.0), border=(2.5, 0.0))
 
 
 def test_composite_terrain_supports_hydra_overrides():

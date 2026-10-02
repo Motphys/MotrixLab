@@ -8,7 +8,7 @@ from omegaconf import MISSING
 
 @dataclass
 class FastSacAgentCfg:
-    """FastSAC agent hyperparameters (ported from holosoma ``FastSACConfig``)."""
+    """FastSAC agent hyperparameters."""
 
     # optimization
     actor_learning_rate: float = MISSING
@@ -36,7 +36,7 @@ class FastSacAgentCfg:
     tau: float = MISSING
     alpha_init: float = MISSING
     use_autotune: bool = MISSING
-    target_entropy_ratio: float = MISSING  # holosoma g1 fast_sac uses 0.0
+    target_entropy_ratio: float = MISSING
 
     # replay / updates
     buffer_size: int = MISSING  # per environment

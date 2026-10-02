@@ -5,9 +5,10 @@
 
 All generators follow the `TerrainGeneratorCfg` contract: `generate(size, shape)`
 returns normalized `[0, 1]` heights as a MuJoCo-row-major 2D array whose first
-dimension (rows, ``shape[0]``) maps to the hfield x axis and second dimension
-(columns, ``shape[1]``) maps to the y axis. Physical heights are normalized
-values scaled by ``height_scale`` in meters.
+dimension (rows, ``shape[0]``) maps to the hfield y axis (spanning ``size[1]``)
+and second dimension (columns, ``shape[1]``) maps to the x axis (spanning
+``size[0]``). Physical heights are normalized values scaled by ``height_scale``
+in meters.
 """
 
 from __future__ import annotations
@@ -51,8 +52,8 @@ class StairsTerrainGeneratorCfg(TerrainGeneratorCfg):
     """Regular stairs along one field axis or radially from the center.
 
     Linear modes occupy the full field along the stair axis and are constant
-    along the other axis. ``axis="x"`` varies along ``shape[0]`` rows (the
-    hfield x axis); ``axis="y"`` varies along ``shape[1]`` columns (the hfield y
+    along the other axis. ``axis="x"`` varies along ``shape[1]`` columns (the
+    hfield x axis); ``axis="y"`` varies along ``shape[0]`` rows (the hfield y
     axis). ``axis="radial"`` lays the steps as concentric square rings around
     the field center (Isaac Lab pyramid-stairs style): ``ascending`` rises
     outward from a low center (a central pit), ``descending`` falls outward
@@ -68,7 +69,7 @@ class StairsTerrainGeneratorCfg(TerrainGeneratorCfg):
       is ``step_count // 2`` steps above the pit floor).
     """
 
-    # Stair direction: "x" -> shape[0] rows, "y" -> shape[1] columns,
+    # Stair direction: "x" -> shape[1] columns, "y" -> shape[0] rows,
     # "radial" -> concentric rings around the field center.
     axis: str = "x"
     # Step arrangement profile.
@@ -144,10 +145,10 @@ class StairsTerrainGeneratorCfg(TerrainGeneratorCfg):
             index = self._index_from_distance(radius, extent, steps)
             index = np.broadcast_to(index, shape)
         else:
-            axis_length = shape[0] if self.axis == "x" else shape[1]
+            axis_length = shape[1] if self.axis == "x" else shape[0]
             pos_frac = (np.arange(axis_length, dtype=np.float64) + 0.5) / axis_length
             index = self._index_from_distance(pos_frac, extent, steps)
-            index = np.broadcast_to(index[:, None] if self.axis == "x" else index[None, :], shape)
+            index = np.broadcast_to(index[None, :] if self.axis == "x" else index[:, None], shape)
         if self.profile == "ascending":
             level = index
         elif self.profile == "descending":
@@ -198,10 +199,10 @@ class StairsTerrainGeneratorCfg(TerrainGeneratorCfg):
             radius = np.maximum(np.abs(rows)[:, None], np.abs(cols)[None, :])
             mask = radius <= platform_half_frac
         else:
-            axis_length = shape[0] if self.axis == "x" else shape[1]
+            axis_length = shape[1] if self.axis == "x" else shape[0]
             pos_frac = (np.arange(axis_length, dtype=np.float64) + 0.5) / axis_length
             mask_1d = np.abs(pos_frac - 0.5) <= platform_half_frac
-            mask = mask_1d[:, None] if self.axis == "x" else mask_1d[None, :]
+            mask = mask_1d[None, :] if self.axis == "x" else mask_1d[:, None]
             mask = np.broadcast_to(mask, shape)
         return np.where(mask, level[tuple(np.array(shape) // 2)], level)
 
@@ -271,8 +272,9 @@ class DiscreteObstaclesTerrainGeneratorCfg(TerrainGeneratorCfg):
             c1 = int(np.ceil((center_col + col_frac / 2.0) * cols))
             heights[r0 : max(r0 + 1, r1), c0 : max(c0 + 1, c1)] = 0.5 + delta
         if self.platform_width > 0.0:
-            half_row = (self.platform_width / 2.0) / size[0]
-            half_col = (self.platform_width / 2.0) / size[1]
+            # Rows span size[1] (hfield y), columns span size[0] (hfield x).
+            half_row = (self.platform_width / 2.0) / size[1]
+            half_col = (self.platform_width / 2.0) / size[0]
             row_mask = np.abs((np.arange(rows, dtype=np.float64) + 0.5) / rows - 0.5) <= half_row
             col_mask = np.abs((np.arange(cols, dtype=np.float64) + 0.5) / cols - 0.5) <= half_col
             heights[np.ix_(row_mask, col_mask)] = 0.5
@@ -297,6 +299,9 @@ class PyramidSlopeTerrainGeneratorCfg(TerrainGeneratorCfg):
     inverted: bool = False
     # Flat central zone width in meters; 0 runs the slope to the center point.
     platform_width: float = 0.0
+    # Normalized base offset added to every cell, shifting the whole shape up
+    # so an inverted pit can keep its rim flush with a shared tile datum.
+    base_level: float = 0.0
 
     def validate(self) -> None:
         super().validate()
@@ -307,16 +312,25 @@ class PyramidSlopeTerrainGeneratorCfg(TerrainGeneratorCfg):
                 f"PyramidSlopeTerrainGeneratorCfg.platform_width must be finite and non-negative, "
                 f"got {self.platform_width!r}"
             )
+        if not np.isfinite(self.base_level) or not 0.0 <= self.base_level <= 1.0:
+            raise ValueError(
+                f"PyramidSlopeTerrainGeneratorCfg.base_level must be finite and within [0, 1], got {self.base_level!r}"
+            )
 
     def generate(self, size: Vec2, shape: tuple[int, int]) -> np.ndarray:
         half = (size[0] / 2.0, size[1] / 2.0)
-        offset_x = (np.arange(shape[0], dtype=np.float64) + 0.5) / shape[0] * size[0] - half[0]
-        offset_y = (np.arange(shape[1], dtype=np.float64) + 0.5) / shape[1] * size[1] - half[1]
-        edge_distance = np.minimum((half[0] - np.abs(offset_x))[:, None], (half[1] - np.abs(offset_y))[None, :])
-        heights = np.maximum(edge_distance - self.platform_width / 2.0, 0.0) * self.slope
+        # Columns span the x axis (size[0]), rows span the y axis (size[1]).
+        offset_x = (np.arange(shape[1], dtype=np.float64) + 0.5) / shape[1] * size[0] - half[0]
+        offset_y = (np.arange(shape[0], dtype=np.float64) + 0.5) / shape[0] * size[1] - half[1]
+        edge_distance = np.minimum((half[0] - np.abs(offset_x))[None, :], (half[1] - np.abs(offset_y))[:, None])
+        # Clip the ramp at the platform-edge height so the central zone is a
+        # flat pad at the peak (mound) or pit floor (inverted) level.
+        platform_level = max(min(half) - self.platform_width / 2.0, 0.0) * self.slope
+        heights = np.minimum(edge_distance * self.slope, platform_level)
         peak = float(heights.max())
         if self.inverted:
             heights = peak - heights
+        heights += self.base_level * self.height_scale
         normalized = heights / self.height_scale
         if normalized.max() > 1.0 + _HEIGHT_EPS:
             raise ValueError(
@@ -325,6 +339,40 @@ class PyramidSlopeTerrainGeneratorCfg(TerrainGeneratorCfg):
                 f"lower slope"
             )
         return normalized.astype(np.float32)
+
+
+@configclass
+class WaveTerrainGeneratorCfg(TerrainGeneratorCfg):
+    """Summed sinusoidal waves along both field axes (Isaac Lab ``wave_terrain``).
+
+    Height is ``0.5 * amplitude * (cos(2*pi*num_waves*y/Y) + sin(2*pi*num_waves*x/X))``
+    around the 0.5 datum, so the physical surface spans ``+/- amplitude``
+    around the datum.
+    """
+
+    # Physical wave amplitude in meters; the surface spans datum +/- amplitude.
+    amplitude: float = 0.1
+    # Number of complete wave cycles along each axis.
+    num_waves: int = 4
+
+    def validate(self) -> None:
+        super().validate()
+        if not np.isfinite(self.amplitude) or self.amplitude <= 0.0:
+            raise ValueError(f"WaveTerrainGeneratorCfg.amplitude must be finite and positive, got {self.amplitude!r}")
+        if self.num_waves < 1:
+            raise ValueError(f"WaveTerrainGeneratorCfg.num_waves must be at least 1, got {self.num_waves!r}")
+        if self.amplitude > 0.5 * self.height_scale * (1.0 + _HEIGHT_EPS):
+            raise ValueError(
+                f"WaveTerrainGeneratorCfg.amplitude {self.amplitude:.4f} m must stay within "
+                f"0.5 * height_scale = {0.5 * self.height_scale:.4f} m of the datum"
+            )
+
+    def generate(self, size: Vec2, shape: tuple[int, int]) -> np.ndarray:
+        x = (np.arange(shape[1], dtype=np.float64) + 0.5) / shape[1]
+        y = (np.arange(shape[0], dtype=np.float64) + 0.5) / shape[0]
+        kx = 2.0 * np.pi * self.num_waves
+        wave = 0.5 * self.amplitude * (np.cos(kx * y)[:, None] + np.sin(kx * x)[None, :])
+        return (0.5 + wave / self.height_scale).astype(np.float32)
 
 
 @configclass
@@ -363,8 +411,8 @@ class TerrainRegionCfg:
 
     ``center`` and ``size`` are fractions of the full field: center coordinates
     in [0, 1] with (0, 0) at the low-index corner, sizes in (0, 1]. Index 0
-    follows ``shape[0]`` rows (hfield x), index 1 follows ``shape[1]`` columns
-    (hfield y).
+    follows ``shape[0]`` rows (hfield y), index 1 follows ``shape[1]`` columns
+    (hfield x).
     """
 
     # Generator sampled over the region rectangle.
@@ -458,14 +506,17 @@ class CompositeTerrainGeneratorCfg(TerrainGeneratorCfg):
 
     def _paste_region(self, heights: np.ndarray, region: TerrainRegionCfg, index: int, size: Vec2) -> np.ndarray:
         nrow, ncol = heights.shape
-        r0 = max(int(np.floor((region.center[0] - region.size[0] / 2.0) * nrow)), 0)
-        r1 = min(int(np.ceil((region.center[0] + region.size[0] / 2.0) * nrow)), nrow)
-        c0 = max(int(np.floor((region.center[1] - region.size[1] / 2.0) * ncol)), 0)
-        c1 = min(int(np.ceil((region.center[1] + region.size[1] / 2.0) * ncol)), ncol)
+        # round() absorbs float error in the fraction-to-cell mapping (e.g.
+        # (0.95 - 0.05) * 800 == 719.9999...): floor/ceil would shift a boundary
+        # by one cell and bleed one region's generator into its neighbor.
+        r0 = max(int(np.round((region.center[0] - region.size[0] / 2.0) * nrow)), 0)
+        r1 = min(int(np.round((region.center[0] + region.size[0] / 2.0) * nrow)), nrow)
+        c0 = max(int(np.round((region.center[1] - region.size[1] / 2.0) * ncol)), 0)
+        c1 = min(int(np.round((region.center[1] + region.size[1] / 2.0) * ncol)), ncol)
         if r1 <= r0 or c1 <= c0:
             return heights
         region_shape = (r1 - r0, c1 - c0)
-        region_size = (region.size[0] * size[0], region.size[1] * size[1])
+        region_size = (region.size[1] * size[0], region.size[0] * size[1])
         sub = np.asarray(region.generator.generate(region_size, region_shape), dtype=np.float32)
         _check_peak(f"CompositeTerrainGeneratorCfg.regions[{index}]", sub, region.generator, self.height_scale)
         scaled = sub * (region.generator.height_scale / self.height_scale)
@@ -483,14 +534,23 @@ def grid_terrain(
     height_scale: float | None = None,
     blend: float = 0.0,
     base: TerrainGeneratorCfg | None = None,
+    border: Vec2 = (0.0, 0.0),
+    size: Vec2 | None = None,
 ) -> CompositeTerrainGeneratorCfg:
     """Lay generators out on a rows x cols grid as a composite terrain.
 
-    ``cells`` is a rectangular nested sequence (rows of columns). Each cell keeps
+    ``cells`` is a rectangular nested sequence (rows of columns); cell rows
+    follow ``shape[0]`` (hfield y) and cell columns follow ``shape[1]``
+    (hfield x). Each cell keeps
     its own generator, so physical heights are conserved. ``height_scale``
     defaults to the largest sub-generator height_scale; ``blend`` is applied to
     every cell boundary. Difficulty gradients are expressed by arranging the
     cells; runtime difficulty switching is out of scope.
+
+    ``border`` reserves a flat ``base``-filled margin of the given world-space
+    widths ``(x, y)`` around the cell grid. It requires ``size``, the
+    world-space field size the composite will be generated with, and is
+    applied as a normalized inset on the region layout.
     """
     rows = len(cells)
     cols = len(cells[0]) if rows else 0
@@ -498,14 +558,26 @@ def grid_terrain(
         raise ValueError(f"grid_terrain requires a non-empty rectangular grid, got {rows}x{cols}")
     if any(len(row) != cols for row in cells):
         raise ValueError(f"grid_terrain requires every row to have {cols} cells")
+    inset_x = inset_y = 0.0
+    if border[0] != 0.0 or border[1] != 0.0:
+        if size is None:
+            raise ValueError("grid_terrain border requires the world-space field size")
+        if border[0] < 0.0 or border[1] < 0.0:
+            raise ValueError(f"grid_terrain.border must be non-negative, got {border!r}")
+        inset_x = border[0] / size[0]
+        inset_y = border[1] / size[1]
+        if not 0.0 <= inset_x < 0.5 or not 0.0 <= inset_y < 0.5:
+            raise ValueError(f"grid_terrain.border {border!r} must leave room for the cell grid inside size {size!r}")
+    span_x = 1.0 - 2.0 * inset_x
+    span_y = 1.0 - 2.0 * inset_y
     scale = height_scale
     if scale is None:
         scale = max(generator.height_scale for row in cells for generator in row)
     regions = tuple(
         TerrainRegionCfg(
             generator=generator,
-            center=((i + 0.5) / rows, (j + 0.5) / cols),
-            size=(1.0 / rows, 1.0 / cols),
+            center=(inset_y + (i + 0.5) * span_y / rows, inset_x + (j + 0.5) * span_x / cols),
+            size=(span_y / rows, span_x / cols),
             blend=blend,
         )
         for i, row in enumerate(cells)

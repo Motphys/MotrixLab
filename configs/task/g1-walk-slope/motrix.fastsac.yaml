@@ -1,0 +1,10 @@
+# @package _global_
+# Isolate slope learning while retaining the mixed task's training recipe.
+defaults:
+  - /task/g1-walk-mixed/motrix.fastsac
+  - _self_
+task:
+  env: g1-walk-slope
+algo:
+  trainer:
+    num_learning_iterations: 30000

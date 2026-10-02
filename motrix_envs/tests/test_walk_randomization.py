@@ -164,3 +164,142 @@ def test_walk_env_randomized_reset_samples_within_ranges():
         assert np.all((action_state.delay_steps >= 0) & (action_state.delay_steps <= 1))
     finally:
         del env
+
+
+def test_terrain_env_tile_spawn_binds_origins_and_offsets_within_tile():
+    from motrix_envs.locomotion.humanoid.g1 import make_g129dof_walk_terrain_cfg
+
+    num_envs = 4
+    env = ManagerEnv(make_g129dof_walk_terrain_cfg(), num_envs=num_envs)
+    try:
+        env.step(np.zeros((num_envs, env.num_actuators), dtype=np.float32))
+        params = env.sim_reset_terms["humanoid_state"].args[0]
+        assert params.tile_spawn
+        origins = params.spawn_origins
+        assert origins.shape == (num_envs, 3)
+        # Map spans 160 m x 80 m with 8 m tiles: centers stay inside the map.
+        assert np.all(origins[:, 0] > -80.0) and np.all(origins[:, 0] < 80.0)
+        assert np.all(origins[:, 1] > -40.0) and np.all(origins[:, 1] < 40.0)
+
+        runtime = env._sim_reset_runtime
+        names = list(runtime.writes["humanoid_state"].keys())
+        buffers = dict(zip([f"humanoid_state.{name}" for name in names], runtime.buffers))
+
+        def written_xy(env=env):
+            env.reset(np.arange(num_envs))
+            return buffers["humanoid_state.position"].reshape(num_envs, -1)[:, :2].copy()
+
+        def written_z(env=env):
+            env.reset(np.arange(num_envs))
+            return buffers["humanoid_state.position"].reshape(num_envs, -1)[:, 2].copy()
+
+        first, second = written_xy(), written_xy()
+        offset_a = first - origins[:, :2]
+        offset_b = second - origins[:, :2]
+        # The tile binding is fixed; only the in-tile offset resamples.
+        assert np.all(np.abs(offset_a) <= 1.0)
+        assert np.all(np.abs(offset_b) <= 1.0)
+        assert not np.allclose(offset_a, offset_b)
+        # Spawn z is the model base height above the tile's ground patch,
+        # not a footprint-clearance lift.
+        np.testing.assert_allclose(written_z(), params.init_pose[2] + origins[:, 2], atol=1e-6)
+    finally:
+        del env
+
+
+def test_tile_spawn_cfg_requires_spawn_tiles():
+    from motrix_envs.locomotion.humanoid.walk_manager_mdp.reset import WalkStateResetCfg
+
+    with pytest.raises(ValueError, match="spawn_tiles"):
+        WalkStateResetCfg(ground_geom="floor", tile_spawn=True).__call__(None)
+
+
+def _curriculum_flat_cfg(curriculum_steps: int, start: float):
+    from dataclasses import replace as dc_replace
+
+    from motrix_envs.locomotion.humanoid.g1 import make_g129dof_walk_flat_cfg
+
+    cfg = make_g129dof_walk_flat_cfg()
+    return dc_replace(
+        cfg,
+        sim_reset=dc_replace(
+            cfg.sim_reset,
+            humanoid_state=dc_replace(
+                cfg.sim_reset.humanoid_state,
+                randomization=dc_replace(
+                    cfg.sim_reset.humanoid_state.randomization,
+                    curriculum_steps=curriculum_steps,
+                    curriculum_start=start,
+                ),
+            ),
+        ),
+    )
+
+
+def test_walk_randomization_cfg_rejects_invalid_curriculum():
+    with pytest.raises(ValueError, match="curriculum_steps"):
+        WalkRandomizationCfg(curriculum_steps=-1)
+    with pytest.raises(ValueError, match="curriculum_start"):
+        WalkRandomizationCfg(curriculum_steps=100, curriculum_start=0.0)
+    with pytest.raises(ValueError, match="curriculum_start"):
+        WalkRandomizationCfg(curriculum_steps=100, curriculum_start=1.5)
+
+
+def test_initial_state_curriculum_mix_widens_over_steps():
+    cfg = _curriculum_flat_cfg(curriculum_steps=40, start=0.3)
+    walk_cfg = cfg.commands.walk
+    assert walk_cfg.init_state_curriculum_steps == 40
+    assert walk_cfg.init_state_curriculum_start == pytest.approx(0.3)
+
+    env = ManagerEnv(cfg, num_envs=2)
+    try:
+        walk = env.command_terms["walk"]
+        assert walk.init_state_mix[0] == pytest.approx(0.3)
+        for _ in range(10):
+            env.step(np.zeros((2, env.num_actuators), dtype=np.float32))
+        assert 0.3 < walk.init_state_mix[0] < 1.0
+        for _ in range(60):
+            env.step(np.zeros((2, env.num_actuators), dtype=np.float32))
+        assert walk.init_state_mix[0] == pytest.approx(1.0)
+    finally:
+        del env
+
+
+def test_initial_state_curriculum_narrowest_reset_writes_nominal_state():
+    cfg = _curriculum_flat_cfg(curriculum_steps=40, start=0.3)
+    env = ManagerEnv(cfg, num_envs=2)
+    try:
+        env.step(np.zeros((2, env.num_actuators), dtype=np.float32))
+        params = env.sim_reset_terms["humanoid_state"].args[0]
+        walk = env.command_terms["walk"]
+        runtime = env._sim_reset_runtime
+        names = list(runtime.writes["humanoid_state"].keys())
+        buffers = dict(zip([f"humanoid_state.{name}" for name in names], runtime.buffers))
+
+        # Narrowest mix degenerates both ranges to their centers: the nominal
+        # pose, zero root velocity — exactly the unrandomized spawn.
+        walk.init_state_mix[0] = np.float32(0.0)
+        env.reset(np.arange(2))
+        joints = buffers["humanoid_state.joints_position"].reshape(2, -1)
+        lin = buffers["humanoid_state.linear_velocity"].reshape(2, -1)
+        np.testing.assert_allclose(joints[0], params.default_joint_angles, atol=1e-6)
+        np.testing.assert_array_equal(lin[0], 0.0)
+
+        # Full mix restores the sampled randomization.
+        walk.init_state_mix[0] = np.float32(1.0)
+        env.reset(np.arange(2))
+        joints = buffers["humanoid_state.joints_position"].reshape(2, -1)
+        assert not np.allclose(joints[0], params.default_joint_angles)
+    finally:
+        del env
+
+
+def test_initial_state_curriculum_disabled_keeps_full_ranges():
+    env = ManagerEnv(make_g129dof_walk_flat_cfg(), num_envs=2)
+    try:
+        walk = env.command_terms["walk"]
+        assert walk.init_state_mix[0] == pytest.approx(1.0)
+        env.step(np.zeros((2, env.num_actuators), dtype=np.float32))
+        assert walk.init_state_mix[0] == pytest.approx(1.0)
+    finally:
+        del env

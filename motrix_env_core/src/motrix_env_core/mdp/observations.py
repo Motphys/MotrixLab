@@ -50,8 +50,8 @@ def body_joint_vel_obs(
     ctx: ManagerContext, out: np.ndarray, dof_vel: np.ndarray, scale: np.float32, noise_amplitude: np.float32
 ) -> None:
     out[:] = dof_vel
-    out *= scale
     add_uniform_noise(out, noise_amplitude, ctx.rand.state)
+    out *= scale
 
 
 @dispatch

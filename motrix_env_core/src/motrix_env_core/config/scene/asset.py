@@ -30,7 +30,13 @@ class TerrainGeneratorCfg(ABC):
 
     @abstractmethod
     def generate(self, size: Vec2, shape: tuple[int, int]) -> np.ndarray:
-        """Generate unitless terrain samples as a MuJoCo-row-major 2D array."""
+        """Generate unitless terrain samples as a MuJoCo-row-major 2D array.
+
+        The returned array follows the engine height-field convention: row 0 is
+        the -Y side, so ``shape[0]`` rows map to the hfield y axis (spanning
+        ``size[1]``) and ``shape[1]`` columns map to the hfield x axis
+        (spanning ``size[0]``).
+        """
 
 
 @configclass
@@ -43,6 +49,11 @@ class NoiseTerrainGeneratorCfg(TerrainGeneratorCfg):
     # of this pitch and bilinearly interpolated to the output resolution, producing
     # smooth rolling noise instead of per-cell speckle (Isaac Lab ``downsampled_scale``).
     downsampled_scale: float | None = None
+    # Optional (min, max) height offsets in meters around the half-height datum
+    # (0.5): generated heights are 0.5 + U(min, max) / height_scale. This expresses
+    # one-sided noise such as pure dips below a shared tile datum (Isaac Lab
+    # ``random_uniform_terrain`` min/max height). None samples the full [0, 1] range.
+    height_range: tuple[float, float] | None = None
 
     def validate(self) -> None:
         super().validate()
@@ -53,16 +64,37 @@ class NoiseTerrainGeneratorCfg(TerrainGeneratorCfg):
                 f"NoiseTerrainGeneratorCfg.downsampled_scale must be finite and positive when set, "
                 f"got {self.downsampled_scale!r}"
             )
+        if self.height_range is not None:
+            lo, hi = self.height_range
+            if not np.isfinite(lo) or not np.isfinite(hi) or lo > hi:
+                raise ValueError(
+                    f"NoiseTerrainGeneratorCfg.height_range must be (min, max) with min <= max, "
+                    f"got {self.height_range!r}"
+                )
+            if not -0.5 * self.height_scale <= lo or not hi <= 0.5 * self.height_scale:
+                raise ValueError(
+                    f"NoiseTerrainGeneratorCfg.height_range {self.height_range!r} must stay within "
+                    f"+/- 0.5 * height_scale = +/- {0.5 * self.height_scale:.4f} m of the datum "
+                    "so heights remain within [0, 1]"
+                )
 
     def generate(self, size: Vec2, shape: tuple[int, int]) -> np.ndarray:
         rng = np.random.default_rng(self.seed)
-        if self.downsampled_scale is not None and size[0] > self.downsampled_scale and size[1] > self.downsampled_scale:
-            coarse_rows = max(int(size[0] / self.downsampled_scale), 2)
-            coarse_cols = max(int(size[1] / self.downsampled_scale), 2)
-            coarse = rng.uniform(0.0, 1.0, size=(coarse_rows, coarse_cols))
-            heights = _bilinear_resize(coarse, shape)
+        if self.height_range is None:
+            offset, lo, hi = 0.0, 0.0, 1.0
         else:
-            heights = rng.uniform(0.0, 1.0, size=shape).astype(np.float32)
+            offset = 0.5
+            lo = self.height_range[0] / self.height_scale
+            hi = self.height_range[1] / self.height_scale
+        if self.downsampled_scale is not None and size[0] > self.downsampled_scale and size[1] > self.downsampled_scale:
+            # Rows span size[1] (hfield y) and columns span size[0] (hfield x),
+            # matching the MuJoCo-row-major output contract.
+            coarse_rows = max(int(size[1] / self.downsampled_scale), 2)
+            coarse_cols = max(int(size[0] / self.downsampled_scale), 2)
+            coarse = rng.uniform(lo, hi, size=(coarse_rows, coarse_cols))
+            heights = offset + _bilinear_resize(coarse, shape)
+        else:
+            heights = offset + rng.uniform(lo, hi, size=shape)
         return np.flipud(heights) if self.flip_y else heights
 
 

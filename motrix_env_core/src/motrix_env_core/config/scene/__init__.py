@@ -47,6 +47,7 @@ from motrix_env_core.config.scene.terrain import (
     QuantizedTerrainGeneratorCfg,
     StairsTerrainGeneratorCfg,
     TerrainRegionCfg,
+    WaveTerrainGeneratorCfg,
     grid_terrain,
 )
 from motrix_env_core.config.scene.urdf import (
@@ -87,6 +88,7 @@ __all__ = [
     "ProceduralHFieldAssetCfg",
     "PyramidSlopeTerrainGeneratorCfg",
     "QuantizedTerrainGeneratorCfg",
+    "WaveTerrainGeneratorCfg",
     "StairsTerrainGeneratorCfg",
     "TerrainRegionCfg",
     "TerrainGeneratorCfg",

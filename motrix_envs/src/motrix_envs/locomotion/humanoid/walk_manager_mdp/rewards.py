@@ -6,7 +6,7 @@
 import math
 
 import numpy as np
-from numba import njit
+from numba import literally, njit
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import (
@@ -20,8 +20,10 @@ from motrix_env_core.numba.math.quaternion import rotate_inverse_components
 from motrix_env_core.sim import (
     BatchLinkPositionQuery,
     BatchLinkQuaternionQuery,
+    GeomPairCollidingQuery,
     JointPositionQuery,
     LinkAngularVelocityQuery,
+    LinkPositionQuery,
     LinkQuaternionQuery,
     SitePositionQuery,
 )
@@ -42,6 +44,77 @@ def _expected_foot_height(phi: float, swing_height: float) -> float:
     return bezier(swing_height, 0.0, 2.0 * x - 1.0)
 
 
+@njit(inline="always")
+def _squared_hinge(value: float) -> float:
+    deficit = max(0.0, value)
+    return deficit * deficit
+
+
+@dispatch
+def penalty_base_clearance_reward(
+    ctx: ManagerContext,
+    minimum_height: np.float32,
+    heightfield: HeightFieldGrid,
+    base_pos: np.ndarray,
+    command_name: str,
+) -> float:
+    command_name = literally(command_name)
+    walk: WalkCommand = ctx.commands[command_name]
+    ground_z = heightfield_lookup(heightfield, base_pos[0], base_pos[1])
+    deficit = float(minimum_height) - (base_pos[2] - ground_z)
+    return _squared_hinge(deficit) * walk.penalty_scale[0]
+
+
+@configclass(kw_only=True)
+class PenaltyBaseClearanceRewardCfg(RewardTermCfg):
+    """Squared hinge penalty for base clearance above terrain."""
+
+    minimum_height: float = 0.5
+    ground_geom: str = "floor"
+    command_name: str = "walk"
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.minimum_height) or self.minimum_height <= 0.0:
+            raise ValueError("minimum_height must be finite and positive")
+
+    def __call__(self, ctx) -> RewardTerm:
+        body = ctx.model.bodies["robot"]
+        return RewardTerm(
+            penalty_base_clearance_reward,
+            np.float32(self.minimum_height),
+            ground_height_grid(ctx, self.ground_geom),
+            LinkPositionQuery(link=body.base_link_name),
+            self.command_name,
+        )
+
+
+@dispatch
+def penalty_collision_reward(ctx: ManagerContext, colliding: np.ndarray) -> float:
+    """Penalize any configured ground collision on the current reward step."""
+    walk: WalkCommand = ctx.commands["walk"]
+    hit = np.float32(0.0)
+    for contact in colliding:
+        hit = max(hit, contact)
+    return hit * walk.penalty_scale[0]
+
+
+@configclass(kw_only=True)
+class PenaltyCollisionRewardCfg(RewardTermCfg):
+    """Penalty for any configured geom contacting the ground, independent of termination."""
+
+    ground_geom: str = ""
+    termination_geoms: tuple[str, ...] = ()
+    command_name: str = "walk"
+
+    def __call__(self, ctx) -> RewardTerm:
+        if not self.termination_geoms or not self.ground_geom:
+            raise ValueError("PenaltyCollisionRewardCfg requires non-empty termination_geoms and ground_geom.")
+        query = GeomPairCollidingQuery(pairs=tuple((name, self.ground_geom) for name in self.termination_geoms))
+        if self.command_name != "walk":
+            raise ValueError("PenaltyCollisionRewardCfg currently supports command_name='walk' only.")
+        return RewardTerm(penalty_collision_reward, query)
+
+
 @dispatch
 def penalty_ang_vel_xy_reward(ctx: ManagerContext, base_quat: np.ndarray, base_ang_vel: np.ndarray) -> float:
     vx, vy, _ = rotate_inverse_components(base_quat, base_ang_vel)
@@ -55,6 +128,49 @@ class PenaltyAngVelXyRewardCfg(RewardTermCfg):
         link = ctx.model.bodies["robot"].base_link_name
         return RewardTerm(
             penalty_ang_vel_xy_reward,
+            LinkQuaternionQuery(link=link),
+            LinkAngularVelocityQuery(link=link),
+        )
+
+
+@njit(inline="always")
+def _outward_tilt_penalty(
+    deadzone_threshold: float, gx: float, gy: float, gz: float, omega_x: float, omega_y: float
+) -> float:
+    severity = 1.0 + gz
+    tilt_excess = max(severity - deadzone_threshold, 0.0)
+    outward_rate = max(omega_y * gx - omega_x * gy, 0.0)
+    return tilt_excess * outward_rate
+
+
+@dispatch
+def penalty_outward_tilt_reward(
+    ctx: ManagerContext,
+    deadzone_threshold: np.float32,
+    base_quat: np.ndarray,
+    base_ang_vel: np.ndarray,
+) -> float:
+    gx, gy, gz = rotate_inverse_components(base_quat, (0.0, 0.0, -1.0))
+    omega_x, omega_y, _ = rotate_inverse_components(base_quat, base_ang_vel)
+    walk: WalkCommand = ctx.commands["walk"]
+    return _outward_tilt_penalty(deadzone_threshold, gx, gy, gz, omega_x, omega_y) * walk.penalty_scale[0]
+
+
+@configclass(kw_only=True)
+class PenaltyOutwardTiltRewardCfg(RewardTermCfg):
+    """Penalize angular velocity that increases tilt beyond a deadzone."""
+
+    deadzone_angle: float = math.radians(15.0)
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.deadzone_angle) or not 0.0 < self.deadzone_angle < math.pi / 2.0:
+            raise ValueError("deadzone_angle must be finite and in (0, pi/2)")
+
+    def __call__(self, ctx) -> RewardTerm:
+        link = ctx.model.bodies["robot"].base_link_name
+        return RewardTerm(
+            penalty_outward_tilt_reward,
+            np.float32(1.0 - math.cos(self.deadzone_angle)),
             LinkQuaternionQuery(link=link),
             LinkAngularVelocityQuery(link=link),
         )
@@ -227,8 +343,83 @@ def penalty_feet_ori_reward(ctx: ManagerContext, default_foot_gravity: np.ndarra
     return total * walk.penalty_scale[0]
 
 
+@njit(inline="always")
+def _foot_orientation_error(foot_quat: np.ndarray, reference: np.ndarray, gravity: np.ndarray) -> float:
+    gx, gy, gz = rotate_inverse_components(foot_quat, gravity)
+    cx = gy * reference[2] - gz * reference[1]
+    cy = gz * reference[0] - gx * reference[2]
+    cz = gx * reference[1] - gy * reference[0]
+    return math.sqrt(cx * cx + cy * cy + cz * cz)
+
+
+@njit(inline="always")
+def _terrain_relative_foot_ori_error_from_samples(
+    foot_quat: np.ndarray,
+    reference: np.ndarray,
+    height_minus_x: float,
+    height_plus_x: float,
+    height_minus_y: float,
+    height_plus_y: float,
+    normal_sample_distance: float,
+) -> float:
+    dx = (height_plus_x - height_minus_x) / (2.0 * normal_sample_distance)
+    dy = (height_plus_y - height_minus_y) / (2.0 * normal_sample_distance)
+    norm = math.sqrt(dx * dx + dy * dy + 1.0)
+    # The negative terrain normal is the gravity direction on the surface.
+    return _foot_orientation_error(foot_quat, reference, (dx / norm, dy / norm, -1.0 / norm))
+
+
+@njit(inline="always")
+def _terrain_relative_foot_ori_error(
+    foot_pos: np.ndarray,
+    foot_quat: np.ndarray,
+    reference: np.ndarray,
+    heightfield: HeightFieldGrid,
+    normal_sample_distance: float,
+) -> float:
+    x, y = foot_pos[0], foot_pos[1]
+    distance = normal_sample_distance
+    return _terrain_relative_foot_ori_error_from_samples(
+        foot_quat,
+        reference,
+        heightfield_lookup(heightfield, x - distance, y),
+        heightfield_lookup(heightfield, x + distance, y),
+        heightfield_lookup(heightfield, x, y - distance),
+        heightfield_lookup(heightfield, x, y + distance),
+        distance,
+    )
+
+
+@dispatch
+def penalty_feet_ori_terrain_relative_reward(
+    ctx: ManagerContext,
+    default_foot_gravity: np.ndarray,
+    foot_quat: np.ndarray,
+    normal_sample_distance: np.float32,
+    heightfield: HeightFieldGrid,
+    foot_pos: np.ndarray,
+) -> float:
+    total = 0.0
+    for foot in range(2):
+        total += _terrain_relative_foot_ori_error(
+            foot_pos[foot], foot_quat[foot], default_foot_gravity[foot], heightfield, normal_sample_distance
+        )
+    walk: WalkCommand = ctx.commands["walk"]
+    return total * walk.penalty_scale[0]
+
+
 @configclass(kw_only=True)
 class PenaltyFeetOriRewardCfg(RewardTermCfg):
+    terrain_relative: bool = False
+    normal_sample_distance: float = 0.15
+    ground_geom: str = ""
+
+    def __post_init__(self) -> None:
+        if self.terrain_relative and (
+            not math.isfinite(self.normal_sample_distance) or self.normal_sample_distance <= 0.0
+        ):
+            raise ValueError("normal_sample_distance must be finite and positive when terrain_relative is enabled")
+
     def __call__(self, ctx) -> RewardTerm:
         robot = ctx.cfg.scene.objs.robot
         body = ctx.model.bodies["robot"]
@@ -241,8 +432,20 @@ class PenaltyFeetOriRewardCfg(RewardTermCfg):
                 for link in robot.resolved_foot_link_names
             ]
         ).astype(np.float32)
+        if not self.terrain_relative:
+            # Keep the flat-ground term's dispatch and arguments unchanged.
+            return RewardTerm(
+                penalty_feet_ori_reward,
+                default_foot_gravity,
+                BatchLinkQuaternionQuery(links=robot.resolved_foot_link_names),
+            )
+        if not self.ground_geom:
+            raise ValueError("terrain-relative PenaltyFeetOriRewardCfg requires ground_geom")
         return RewardTerm(
-            penalty_feet_ori_reward,
+            penalty_feet_ori_terrain_relative_reward,
             default_foot_gravity,
             BatchLinkQuaternionQuery(links=robot.resolved_foot_link_names),
+            np.float32(self.normal_sample_distance),
+            ground_height_grid(ctx, self.ground_geom),
+            BatchLinkPositionQuery(links=robot.resolved_foot_link_names),
         )

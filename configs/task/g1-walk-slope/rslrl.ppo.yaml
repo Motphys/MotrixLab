@@ -1,0 +1,13 @@
+# @package _global_
+# PPO control: retain slope geometry, commands, rewards and asymmetric observations.
+defaults:
+  - /task/go1-walk-flat/rslrl.ppo@_global_
+  - _self_
+task:
+  env: g1-walk-slope
+num_envs: 2048
+algo:
+  # 1250 updates x 24 rollout steps = 30k environment steps per lane.
+  max_iterations: 1250
+  algorithm:
+    gamma: 0.995

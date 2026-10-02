@@ -1,0 +1,26 @@
+# @package _global_
+# Task g1-walk-mixed: motrix.fastsac shared training recipe.
+defaults:
+  - /algo_base@algo: motrix.fastsac
+  - _self_
+task:
+  env: g1-walk-mixed
+  rllib: motrix
+  algo: fastsac
+num_envs: 2048
+play_num_envs: 16
+seed: 1
+checkpoint:
+  interval: 1000
+algo:
+  agent:
+    alpha_init: 0.001
+    target_entropy_ratio: 0.0
+    num_updates: 4
+    # At 50 Hz, value future falls over seconds rather than sub-second gains.
+    gamma: 0.995
+    # Cover the longer-horizon return with the stronger tracking reward.
+    v_min: -100.0
+    v_max: 150.0
+  trainer:
+    num_learning_iterations: 50000

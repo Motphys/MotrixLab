@@ -116,6 +116,8 @@ def _manager_group_to_dict(
 
     configs = {}
     for name, config in items:
+        if config is None:
+            continue
         if not isinstance(config, item_type):
             raise TypeError(f"Manager {label} {name!r} must be a {item_type.__name__}, got {type(config).__name__}.")
         configs[name] = config
