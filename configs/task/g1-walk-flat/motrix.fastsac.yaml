@@ -14,6 +14,11 @@ checkpoint:
   interval: 1000
 algo:
   agent:
-    alpha_init: 0.01
-    target_entropy_ratio: -0.1
+    # Holosoma-alpha parity (alpha_init 0.001, target_entropy_ratio 0.0).
+    # UTD 4 instead of holosoma's 8: the utd16 sweep measured no tracking
+    # gain from more updates, at half the learner cost.
+    alpha_init: 0.001
+    target_entropy_ratio: 0.0
     num_updates: 4
+  trainer:
+    num_learning_iterations: 30000

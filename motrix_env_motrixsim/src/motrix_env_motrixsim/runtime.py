@@ -97,10 +97,27 @@ class MotrixSimModelCompiler(SimModelCompiler):
     def compile_actuator_kd(self, key: str, actuator_names: tuple[str, ...] | None) -> None:
         self._others[key] = _nominal_actuator_kd(self._model, actuator_names)
 
-    def compile_body_mass(self, key: str, body: str) -> None:
+    def compile_link_mass(self, key: str, body: str) -> None:
         self._others[key] = float(_named_link(self._model, body).mass)
 
-    def compile_body_center_of_mass(self, key: str, body: str) -> None:
+    def compile_body_masses(self, key: str, body: str, links: tuple[str, ...] | None) -> None:
+        # ``body`` names the body tree root (unlike compile_link_mass, which
+        # addresses a single link); ``links=None`` covers the whole subtree in
+        # tree order, otherwise exactly the named links in the given order.
+        scene_body = self._model.get_body(body)
+        if scene_body is None:
+            raise KeyError(f"Unknown body {body!r}.")
+        body_links = {link.name: link for link in scene_body.links}
+        if links is None:
+            masses = [link.mass for link in scene_body.links]
+        else:
+            try:
+                masses = [body_links[name].mass for name in links]
+            except KeyError as exc:
+                raise KeyError(f"Link {exc.args[0]!r} is not part of body {body!r}.") from None
+        self._others[key] = np.asarray(masses, dtype=np.float32)
+
+    def compile_link_center_of_mass(self, key: str, body: str) -> None:
         self._others[key] = np.asarray(_named_link(self._model, body).center_of_mass, dtype=np.float32).reshape(3)
 
     def compile_geom_friction(self, key: str, geom: str) -> None:

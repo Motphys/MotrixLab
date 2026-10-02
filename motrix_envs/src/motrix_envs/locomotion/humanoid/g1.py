@@ -9,6 +9,7 @@ from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config.scene import HFieldTerrainCfg, SystemCameraCfg
 from motrix_env_core.manager import ManagerEnv
+from motrix_env_core.mdp.action import JointPositionActionCfg
 from motrix_env_core.mdp.rewards import TrackingAngVelZRewardCfg, TrackingLinVelXyRewardCfg
 from motrix_env_core.mdp.terminations import CollidingTerminationCfg
 from motrix_envs.config.scene import StandardSceneObjsCfg
@@ -19,6 +20,8 @@ from motrix_envs.locomotion.humanoid.cfg import (
     WalkRewardsCfg,
     WalkTerminationsCfg,
 )
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.command import WalkCommandCfg
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.randomization import WalkRandomizationCfg
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.reset import WalkStateResetCfg
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.rewards import (
     FeetPhaseRewardCfg,
@@ -119,6 +122,30 @@ def make_g129dof_walk_flat_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
             colliding=CollidingTerminationCfg(
                 termination_geoms=_G1_TERMINATION_GEOMS,
                 ground_geom="floor",
+            )
+        ),
+        # Holosoma g1_29dof_randomization parity: reset-time kp/kd, friction,
+        # mass, and base-com randomization plus per-episode gait-period jitter
+        # and a [0, 1]-step control delay. Push disturbance is not included.
+        actions=humanoid_cfg.WalkActionsCfg(
+            joint_position=JointPositionActionCfg(
+                action_scale=0.25,
+                action_scales_by_effort_limit_over_p_gain=False,
+                action_delay_steps=(0, 1),
+            )
+        ),
+        commands=humanoid_cfg.WalkCommandsCfg(walk=WalkCommandCfg(gait_period_randomization_width=0.2)),
+        sim_reset=WalkResetCfg(
+            humanoid_state=WalkStateResetCfg(
+                randomization=WalkRandomizationCfg(
+                    enabled=True,
+                    kp_scale_range=(0.9, 1.1),
+                    damping_scale_range=(0.9, 1.1),
+                    sliding_friction_range=(0.5, 1.25),
+                    link_mass_scale_range=(0.9, 1.2),
+                    base_mass_offset_range=(-1.0, 3.0),
+                    base_com_offset_noise=(0.05, 0.05, 0.05),
+                )
             )
         ),
         sim=SimCfg(dt=0.01, solver_iterations=3, solver_tolerance=1e-4),

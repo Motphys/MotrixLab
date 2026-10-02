@@ -7,6 +7,11 @@ The surface types (:class:`SimModel`, :class:`BodyModel`, :class:`ActuatorSpec`,
 ...) define what every backend must produce as ``env.model``; the query
 classes declare environment-owned metadata lookups; the compiler base wires
 the two together. Runtime behavior lives in ``sim.backend``.
+
+Naming convention for query targets: ``Link*`` types address a single rigid
+link; ``Body*`` types address one ``BodyCfg`` body tree by its root's name
+and read the whole link subtree in tree order. How a backend maps these two
+namespaces onto its own model representation is backend-private.
 """
 
 from __future__ import annotations
@@ -215,23 +220,41 @@ class HeightFieldDataQuery(ModelQuery):
 
 
 @dataclass(frozen=True)
-class BodyMassQuery(ModelQuery):
+class LinkMassQuery(ModelQuery):
     """Scalar ``float`` nominal mass of one named link."""
 
     name: str
 
     def compile_with(self, compiler: SimModelCompiler, *, key: str) -> None:
-        compiler.compile_body_mass(key, self.name)
+        compiler.compile_link_mass(key, self.name)
 
 
 @dataclass(frozen=True)
-class BodyCenterOfMassQuery(ModelQuery):
+class BodyMassesQuery(ModelQuery):
+    """``(L,)`` float32 nominal masses of one body tree's links.
+
+    ``body`` names the body tree root (a ``BodyCfg`` base link works, since the
+    root link and the tree share one name); this is a different namespace from
+    :class:`LinkMassQuery`, whose ``name`` addresses a single link. ``links``
+    selects and orders the result: ``None`` returns every link of the tree in
+    tree order, otherwise exactly the named links in the given order.
+    """
+
+    body: str
+    links: tuple[str, ...] | None = None
+
+    def compile_with(self, compiler: SimModelCompiler, *, key: str) -> None:
+        compiler.compile_body_masses(key, self.body, self.links)
+
+
+@dataclass(frozen=True)
+class LinkCenterOfMassQuery(ModelQuery):
     """``(3,)`` float32 nominal center-of-mass offset of one named link."""
 
     name: str
 
     def compile_with(self, compiler: SimModelCompiler, *, key: str) -> None:
-        compiler.compile_body_center_of_mass(key, self.name)
+        compiler.compile_link_center_of_mass(key, self.name)
 
 
 @dataclass(frozen=True)
@@ -334,7 +357,7 @@ class SimModelCompiler(abc.ABC):
         """
 
     @abc.abstractmethod
-    def compile_body_mass(self, key: str, body: str) -> None:
+    def compile_link_mass(self, key: str, body: str) -> None:
         """Compile the nominal mass of one body link.
 
         Args:
@@ -343,7 +366,21 @@ class SimModelCompiler(abc.ABC):
         """
 
     @abc.abstractmethod
-    def compile_body_center_of_mass(self, key: str, body: str) -> None:
+    def compile_body_masses(self, key: str, body: str, links: tuple[str, ...] | None) -> None:
+        """Compile the nominal masses of one body tree's links.
+
+        Unlike :meth:`compile_link_mass` (a single link name), ``body`` names
+        the body tree root. ``links=None`` covers the whole link subtree in
+        tree order; an explicit tuple selects and orders exactly those links.
+
+        Args:
+            key: Logical key under which the result is stored.
+            body: Name of the body tree whose link masses are read.
+            links: Link-name subset to read, or ``None`` for the full tree.
+        """
+
+    @abc.abstractmethod
+    def compile_link_center_of_mass(self, key: str, body: str) -> None:
         """Compile the nominal center-of-mass offset of one body link.
 
         Args:

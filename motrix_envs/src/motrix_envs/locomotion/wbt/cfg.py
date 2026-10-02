@@ -30,6 +30,7 @@ from motrix_env_core.mdp.observations import (
     UniformNoiseCfg,
 )
 from motrix_env_core.mdp.rewards import ActionRateRewardCfg
+from motrix_env_core.mdp.terminations import BadDofVelocityTerminationCfg
 from motrix_env_core.sim import (
     ActuatorKpQuery,
     BatchLinkAngularVelocityQuery,
@@ -72,7 +73,6 @@ from motrix_envs.locomotion.wbt.mdp.rewards import (
 from motrix_envs.locomotion.wbt.mdp.terminations import (
     BadBodyZTerminationCfg,
     BadDofPositionTerminationCfg,
-    BadDofVelocityTerminationCfg,
     BadRefOrientationTerminationCfg,
     BadRefZTerminationCfg,
 )
@@ -140,7 +140,10 @@ class TerminationsCfg(ManagerTerminationsCfg):
     bad_ref_ori: BadRefOrientationTerminationCfg = BadRefOrientationTerminationCfg(threshold=0.8)
     bad_body_z: BadBodyZTerminationCfg = BadBodyZTerminationCfg(threshold=0.25)
     bad_dof_pos: BadDofPositionTerminationCfg = BadDofPositionTerminationCfg(threshold=0.5)
-    bad_dof_vel: BadDofVelocityTerminationCfg = BadDofVelocityTerminationCfg(threshold=100.0)
+    bad_dof_vel: BadDofVelocityTerminationCfg = BadDofVelocityTerminationCfg(
+        body="robot",
+        threshold=100.0,
+    )
 
 
 @configclass

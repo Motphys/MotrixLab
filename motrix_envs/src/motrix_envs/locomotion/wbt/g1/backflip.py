@@ -9,6 +9,7 @@ from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SystemCameraCfg
 from motrix_env_core.manager import ManagerEnv
 from motrix_env_core.mdp.rewards import ActionRateRewardCfg
+from motrix_env_core.mdp.terminations import BadDofVelocityTerminationCfg
 from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
 from motrix_envs.locomotion.wbt.cfg import CommandsCfg, RewardsCfg, TerminationsCfg
 from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommandCfg
@@ -21,7 +22,6 @@ from motrix_envs.locomotion.wbt.mdp.rewards import (
 from motrix_envs.locomotion.wbt.mdp.terminations import (
     BadBodyZTerminationCfg,
     BadDofPositionTerminationCfg,
-    BadDofVelocityTerminationCfg,
     BadRefOrientationTerminationCfg,
     BadRefZTerminationCfg,
 )

@@ -7,13 +7,13 @@ from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.sim import (
     ActuatorKdQuery,
     ActuatorKpQuery,
-    BodyCenterOfMassQuery,
     BodyJointPositionLimitsQuery,
-    BodyMassQuery,
     DofPositionLimitsQuery,
     GeomFrictionQuery,
     GeomSpecsQuery,
     HeightFieldDataQuery,
+    LinkCenterOfMassQuery,
+    LinkMassQuery,
     SimModelCompiler,
 )
 from motrix_env_core.sim.model import SimModel
@@ -50,13 +50,17 @@ class _DispatchCompiler(SimModelCompiler):
         del actuator_names
         self.dispatched[key] = "kd"
 
-    def compile_body_mass(self, key, body) -> None:
+    def compile_link_mass(self, key, body) -> None:
         del body
         self.dispatched[key] = "mass"
 
-    def compile_body_center_of_mass(self, key, body) -> None:
+    def compile_link_center_of_mass(self, key, body) -> None:
         del body
         self.dispatched[key] = "com"
+
+    def compile_body_masses(self, key, body, links) -> None:
+        del body, links
+        self.dispatched[key] = "masses"
 
     def compile_geom_friction(self, key, geom) -> None:
         del geom
@@ -75,8 +79,8 @@ def test_model_queries_dispatch_to_typed_compiler_methods() -> None:
         "dof_limits": DofPositionLimitsQuery(),
         "kp": ActuatorKpQuery(names=("first", "second")),
         "kd": ActuatorKdQuery(names=None),
-        "mass": BodyMassQuery(name="body"),
-        "com": BodyCenterOfMassQuery(name="body"),
+        "mass": LinkMassQuery(name="body"),
+        "com": LinkCenterOfMassQuery(name="body"),
         "friction": GeomFrictionQuery(name="geom"),
         "heightfield": HeightFieldDataQuery(geom="floor"),
     }

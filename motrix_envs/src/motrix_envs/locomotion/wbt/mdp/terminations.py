@@ -168,30 +168,3 @@ class BadDofPositionTerminationCfg(_WbtTerminationCfg):
             np.float32(self.threshold),
             metric_names=("dof_limit_violation_max",),
         )
-
-
-@dispatch
-def bad_dof_velocity_termination(ctx: ManagerContext, threshold: np.float32) -> bool:
-    dof_vel = ctx.sim["robot_dof_vel"]
-    error = 0.0
-    finite = True
-    for joint_id in range(dof_vel.shape[0]):
-        velocity = dof_vel[joint_id]
-        if math.isfinite(velocity):
-            error = max(error, abs(velocity))
-        else:
-            finite = False
-            error = math.inf
-    ctx.metrics["dof_vel_abs_max"][0] = error
-    return (not finite) or error > threshold
-
-
-@configclass(kw_only=True)
-class BadDofVelocityTerminationCfg(_WbtTerminationCfg):
-    def __call__(self, ctx) -> TerminationTerm:
-        del ctx
-        return TerminationTerm(
-            bad_dof_velocity_termination,
-            np.float32(self.threshold),
-            metric_names=("dof_vel_abs_max",),
-        )

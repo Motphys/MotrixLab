@@ -12,6 +12,10 @@ right moment — per control step, at reset, or between physics substeps.
 Reset-before-write and forward-kinematics behavior are fixed by
 :meth:`SimWriteCompiler.compile`; execution only selects rows. Target names
 are validated at compile time and fail loudly.
+
+Naming convention for write targets: ``Link*`` ops address single links;
+``Body*`` ops address one ``BodyCfg`` body tree by its root's name and
+cover the whole link subtree in tree order.
 """
 
 from __future__ import annotations
@@ -190,23 +194,23 @@ class ActuatorDampingWrite(SimWrite):
 
 
 @dataclass(frozen=True)
-class BodyMassWrite(SimWrite):
+class LinkMassWrite(SimWrite):
     """Link mass overrides in declared order: ``(N, L)``."""
 
     links: tuple[str, ...]
 
     def compile_with(self, compiler: SimWriteCompiler, name: str) -> None:
-        compiler.compile_body_mass(name, self)
+        compiler.compile_link_mass(name, self)
 
 
 @dataclass(frozen=True)
-class BodyComWrite(SimWrite):
+class LinkComWrite(SimWrite):
     """Link center-of-mass overrides in declared order: ``(N, L, 3)``."""
 
     links: tuple[str, ...]
 
     def compile_with(self, compiler: SimWriteCompiler, name: str) -> None:
-        compiler.compile_body_com(name, self)
+        compiler.compile_link_com(name, self)
 
 
 @dataclass(frozen=True)
@@ -317,11 +321,11 @@ class SimWriteCompiler(abc.ABC):
         """Record actuator damping overrides."""
 
     @abc.abstractmethod
-    def compile_body_mass(self, name: str, write: BodyMassWrite) -> None:
+    def compile_link_mass(self, name: str, write: LinkMassWrite) -> None:
         """Record body mass overrides."""
 
     @abc.abstractmethod
-    def compile_body_com(self, name: str, write: BodyComWrite) -> None:
+    def compile_link_com(self, name: str, write: LinkComWrite) -> None:
         """Record body center-of-mass overrides."""
 
     @abc.abstractmethod

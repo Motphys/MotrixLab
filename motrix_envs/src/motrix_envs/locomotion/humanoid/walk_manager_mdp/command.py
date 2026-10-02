@@ -23,11 +23,18 @@ from motrix_env_core.numba.manager.dispatch import dispatch
 
 
 @njit(inline="always")
-def _lane_phase(cmd, phase_out, sin_cos_out, phase_offset, steps, phase_dt) -> None:
+def _lane_phase(
+    cmd: np.ndarray,
+    phase_out: np.ndarray,
+    sin_cos_out: np.ndarray,
+    phase_offset: np.ndarray,
+    steps: float,
+    phase_step: float,
+) -> None:
     """Refresh both lanes' phase clocks, pinning standing commands to ``pi``."""
     tau = 2.0 * math.pi
     for i in range(2):
-        phase_out[i] = (steps * phase_dt + phase_offset[i] + math.pi) % tau - math.pi
+        phase_out[i] = (steps * phase_step + phase_offset[i] + math.pi) % tau - math.pi
     speed = math.sqrt(cmd[0] * cmd[0] + cmd[1] * cmd[1])
     if speed < 0.01 and abs(cmd[2]) < 0.01:
         # Standing commands pin both lanes, matching the direct env's
@@ -39,14 +46,16 @@ def _lane_phase(cmd, phase_out, sin_cos_out, phase_offset, steps, phase_dt) -> N
 
 
 @njit(inline="always")
-def _lane_resample_phase_offset(ctx, phase_offset) -> None:
+def _lane_resample_phase_offset(ctx: ManagerContext, phase_offset: np.ndarray) -> None:
     first = ctx.rand.uniform_range(np.float32(-math.pi), np.float32(math.pi))
     phase_offset[0] = first
     phase_offset[1] = (first + 2.0 * math.pi) % (2.0 * math.pi) - math.pi
 
 
 @njit(inline="always")
-def _lane_resample_command(ctx, commands, low, high, stand_prob) -> None:
+def _lane_resample_command(
+    ctx: ManagerContext, commands: np.ndarray, low: np.ndarray, high: np.ndarray, stand_prob: np.float32
+) -> None:
     rand = ctx.rand
     for index in range(3):
         commands[index] = rand.uniform_range(low[index], high[index])
@@ -60,16 +69,47 @@ class WalkCommand(CommandTerm):
 
     Mirrors the direct env's ``commands`` / ``phase`` episode state:
     commands resample every ``resample_steps`` transitions, the phase advances
-    by ``phase_dt`` per step from a per-env offset, and standing commands pin
+    by ``phase_step`` per step from a per-env offset, and standing commands pin
     the phase to ``pi``.
+
+    Attributes:
+        vel_limit_low: Lower velocity-command bounds ``(vx, vy, wz)``.
+        vel_limit_high: Upper velocity-command bounds ``(vx, vy, wz)``.
+        stand_prob: Probability of resampling a zero (standing) command.
+        resample_steps: Command resampling interval in control steps.
+        gait_period_base: Nominal gait period in seconds.
+        gait_period_width: Per-episode uniform gait-period jitter half-width
+            in seconds; 0 freezes the period at ``gait_period_base``.
+        curriculum_enabled: Whether the penalty-scale curriculum is active.
+        penalty_scale: Current penalty-curriculum scale (host EMA in
+            ``reset``; read by the penalty reward kernels).
+        avg_ep_len: Curriculum EMA of the average episode length.
+        level_down_threshold: Average episode length below which the penalty
+            scale decreases.
+        level_up_threshold: Average episode length above which the penalty
+            scale increases.
+        degree: Multiplicative curriculum step per update.
+        min_scale: Curriculum scale lower clamp.
+        max_scale: Curriculum scale upper clamp.
+        phase_offset: Per-lane phase offsets, ``(2,)``; the right lane is
+            offset by ``pi`` and both are re-randomized at reset.
+        sin_cos: Published ``sin``/``cos`` of both lanes' phase,
+            ``(sin_l, sin_r, cos_l, cos_r)``; consumed by the gait-phase
+            observation.
+        phase: Both lanes' phase clocks, ``(2,)`` in ``[-pi, pi]``.
+        phase_step: Per-lane phase increment per control step,
+            ``2*pi*ctrl_dt/gait_period``, resampled per episode when
+            ``gait_period_width`` is positive.
+        steps: Control steps since the last command resample (published as
+            the ``command_steps`` metric).
     """
 
     vel_limit_low: SharedArray
     vel_limit_high: SharedArray
     stand_prob: np.float32
     resample_steps: np.float32
-    phase_dt: np.float32
-    # Curriculum state (host EMA in reset(ctx); kernel/host read the scale).
+    gait_period_base: np.float32
+    gait_period_width: np.float32
     curriculum_enabled: bool
     penalty_scale: SharedArray
     avg_ep_len: SharedArray
@@ -86,11 +126,19 @@ class WalkCommand(CommandTerm):
     phase_offset: np.ndarray
     sin_cos: np.ndarray
     phase: np.ndarray
+    phase_step: np.ndarray
     steps: np.ndarray = metric(name="command_steps", dtype=np.float32)
 
     @dispatch
     def update(self, ctx: ManagerContext) -> None:
-        _lane_phase(self.command, self.phase, self.sin_cos, self.phase_offset, self.steps[0], self.phase_dt)
+        _lane_phase(
+            self.command,
+            self.phase,
+            self.sin_cos,
+            self.phase_offset,
+            self.steps[0],
+            self.phase_step[0],
+        )
 
     @dispatch
     def advance(self, ctx: ManagerContext) -> None:
@@ -101,9 +149,21 @@ class WalkCommand(CommandTerm):
     @dispatch
     def reset_env(self, ctx: ManagerContext) -> None:
         self.steps[0] = 0.0
+        if self.gait_period_width > np.float32(0.0):
+            period = float(self.gait_period_base) + ctx.rand.uniform_range(
+                -self.gait_period_width, self.gait_period_width
+            )
+            self.phase_step[0] = np.float32(2.0 * math.pi * ctx.dt / max(period, 0.1))
         _lane_resample_phase_offset(ctx, self.phase_offset)
         _lane_resample_command(ctx, self.command, self.vel_limit_low, self.vel_limit_high, self.stand_prob)
-        _lane_phase(self.command, self.phase, self.sin_cos, self.phase_offset, self.steps[0], self.phase_dt)
+        _lane_phase(
+            self.command,
+            self.phase,
+            self.sin_cos,
+            self.phase_offset,
+            self.steps[0],
+            self.phase_step[0],
+        )
 
     def reset(self, ctx: ResetContext) -> None:
         """Update the penalty-scale curriculum from this round's episode ends.
@@ -133,6 +193,8 @@ class WalkCommandCfg(CommandCfg):
     resampling_time: float = 10.0
     ctrl_dt: float = 0.02
     gait_period: float = 1.0
+    # Per-episode uniform gait-period jitter: period ~ U(g-w, g+w). 0 disables.
+    gait_period_randomization_width: float = 0.0
     stand_prob: float = 0.2
     curriculum_enabled: bool = True
     initial_scale: float = 0.5
@@ -153,7 +215,13 @@ class WalkCommandCfg(CommandCfg):
             vel_limit_high=np.asarray(self.vel_limit[1], dtype=np.float32),
             stand_prob=np.float32(self.stand_prob),
             resample_steps=np.float32(max(int(round(self.resampling_time / self.ctrl_dt)), 1)),
-            phase_dt=np.float32(2.0 * math.pi * self.ctrl_dt / self.gait_period),
+            phase_step=np.full(
+                (num_envs, 1),
+                np.float32(2.0 * math.pi * self.ctrl_dt / self.gait_period),
+                dtype=np.float32,
+            ),
+            gait_period_base=np.float32(self.gait_period),
+            gait_period_width=np.float32(self.gait_period_randomization_width),
             curriculum_enabled=self.curriculum_enabled,
             penalty_scale=np.full(
                 (1,),

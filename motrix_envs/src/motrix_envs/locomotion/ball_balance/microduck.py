@@ -33,6 +33,7 @@ from motrix_env_core.mdp.observations import (
     UniformNoiseCfg,
 )
 from motrix_env_core.mdp.rewards import ActionRateRewardCfg, AliveRewardCfg
+from motrix_env_core.mdp.terminations import BadDofVelocityTerminationCfg
 from motrix_env_core.sim import (
     ActuatorKpQuery,
     BatchLinkPositionQuery,
@@ -78,10 +79,7 @@ from motrix_envs.locomotion.wbt.mdp.rewards import (
     DofLimitRewardCfg,
     UndesiredContactsRewardCfg,
 )
-from motrix_envs.locomotion.wbt.mdp.terminations import (
-    BadDofPositionTerminationCfg,
-    BadDofVelocityTerminationCfg,
-)
+from motrix_envs.locomotion.wbt.mdp.terminations import BadDofPositionTerminationCfg
 from motrix_envs.robot import Microduck
 
 _BALL_ASSET_DIR = Path(__file__).parent / "assets"

@@ -49,10 +49,14 @@ from motrix_env_core.mdp.rewards import (
 )
 from motrix_env_core.mdp.terminations import CollidingTerminationCfg
 from motrix_env_core.sim import (
+    ActuatorKdQuery,
     ActuatorKpQuery,
     BodyJointPositionLimitsQuery,
+    BodyMassesQuery,
+    GeomFrictionQuery,
     GeomSpecsQuery,
     HeightFieldDataQuery,
+    LinkCenterOfMassQuery,
 )
 from motrix_envs.config.scene import StandardSceneAssetsCfg, StandardSceneCfg
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.command import WalkCommandCfg
@@ -204,6 +208,17 @@ class HumanoidVelocityTrackingManagerEnvCfg(ManagerBasedEnvCfg):
             "actuator_kp": ActuatorKpQuery(),
             "robot_joint_position_limits": BodyJointPositionLimitsQuery(body=robot.resolved_base_link_name),
         }
+
+        randomization = self.sim_reset.humanoid_state.randomization
+        if randomization.enabled:
+            self.queries.model.update(
+                {
+                    "randomize_actuator_kd": ActuatorKdQuery(),
+                    "randomize_friction_default": GeomFrictionQuery(name=ground_geom),
+                    "randomize_link_masses": BodyMassesQuery(body=robot.resolved_base_link_name),
+                    "randomize_base_com": LinkCenterOfMassQuery(name=robot.resolved_base_link_name),
+                }
+            )
 
         # Rough-terrain presets place an HField geom as the floor; export its
         # static grid so the fused kernel can look up ground heights itself.

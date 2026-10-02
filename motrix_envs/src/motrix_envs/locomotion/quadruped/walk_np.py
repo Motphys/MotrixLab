@@ -15,16 +15,16 @@ from motrix_env_core.sim import (
     ActuatorKdQuery,
     ActuatorKpQuery,
     BodyAngularVelocityWrite,
-    BodyCenterOfMassQuery,
     BodyJointPositionQuery,
     BodyJointPositionWrite,
     BodyJointVelocityQuery,
     BodyLinearVelocityWrite,
-    BodyMassQuery,
     BodyPositionWrite,
     BodyRotationWrite,
     DofVelocityQuery,
     GeomFrictionQuery,
+    LinkCenterOfMassQuery,
+    LinkMassQuery,
     LinkPositionQuery,
     SensorValuesQuery,
 )
@@ -32,11 +32,11 @@ from motrix_env_core.sim.model import ActuatorType
 from motrix_env_core.sim.write import (
     ActuatorDampingWrite,
     ActuatorKpWrite,
-    BodyComWrite,
     BodyJointVelocityWrite,
-    BodyMassWrite,
     CtrlTargetsWrite,
     GeomFrictionWrite,
+    LinkComWrite,
+    LinkMassWrite,
 )
 from motrix_envs.locomotion.quadruped.cfg import QuadrupedWalkEnvCfg
 from motrix_envs.locomotion.quadruped.velocity_command import RandomPlanarVelocityBinding
@@ -70,8 +70,8 @@ def _sim_model_queries(cfg: QuadrupedWalkEnvCfg):
     return {
         "actuator_kp": ActuatorKpQuery(),
         "actuator_kd": ActuatorKdQuery(),
-        "base_mass": BodyMassQuery(name=base_link_name),
-        "base_com": BodyCenterOfMassQuery(name=base_link_name),
+        "base_mass": LinkMassQuery(name=base_link_name),
+        "base_com": LinkCenterOfMassQuery(name=base_link_name),
         "ground_friction": GeomFrictionQuery(name=cfg.ground_geom_name),
     }
 
@@ -213,9 +213,9 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         if self._randomize_friction:
             randomize_writes["friction"] = GeomFrictionWrite((cfg.ground_geom_name,))
         if self._randomize_base_mass:
-            randomize_writes["mass"] = BodyMassWrite((self._base_link_name,))
+            randomize_writes["mass"] = LinkMassWrite((self._base_link_name,))
         if self._randomize_base_com:
-            randomize_writes["com"] = BodyComWrite((self._base_link_name,))
+            randomize_writes["com"] = LinkComWrite((self._base_link_name,))
         self._randomize_writes = self.sim.write_compiler.compile(randomize_writes) if randomize_writes else None
 
         self.feet_contact = np.zeros((num_envs, self._num_feet), dtype=bool)

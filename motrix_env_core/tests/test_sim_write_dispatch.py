@@ -9,11 +9,9 @@ from motrix_env_core.sim.write import (
     ActuatorDampingWrite,
     ActuatorKpWrite,
     BodyAngularVelocityWrite,
-    BodyComWrite,
     BodyJointPositionWrite,
     BodyJointVelocityWrite,
     BodyLinearVelocityWrite,
-    BodyMassWrite,
     BodyPositionWrite,
     BodyRotationWrite,
     CtrlTargetsWrite,
@@ -24,6 +22,8 @@ from motrix_env_core.sim.write import (
     JointVelocityWrite,
     KinematicBodyPositionWrite,
     KinematicBodyRotationWrite,
+    LinkComWrite,
+    LinkMassWrite,
     SimWriteCompiler,
     WriteProgram,
 )
@@ -110,11 +110,11 @@ class _DispatchCompiler(SimWriteCompiler):
         del name, write
         self.dispatched.append("damping")
 
-    def compile_body_mass(self, name, write) -> None:
+    def compile_link_mass(self, name, write) -> None:
         del name, write
         self.dispatched.append("mass")
 
-    def compile_body_com(self, name, write) -> None:
+    def compile_link_com(self, name, write) -> None:
         del name, write
         self.dispatched.append("com")
 
@@ -141,8 +141,8 @@ def test_sim_write_compiler_dispatches_each_write_to_its_typed_compiler() -> Non
     KinematicBodyRotationWrite(("body",)).compile_with(compiler, "write")
     ActuatorKpWrite(("actuator",)).compile_with(compiler, "write")
     ActuatorDampingWrite(("actuator",)).compile_with(compiler, "write")
-    BodyMassWrite(("body",)).compile_with(compiler, "write")
-    BodyComWrite(("body",)).compile_with(compiler, "write")
+    LinkMassWrite(("body",)).compile_with(compiler, "write")
+    LinkComWrite(("body",)).compile_with(compiler, "write")
     GeomFrictionWrite(("geom",)).compile_with(compiler, "write")
 
     assert compiler.dispatched == [

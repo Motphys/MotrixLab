@@ -13,11 +13,9 @@ from motrix_env_core.sim.write import (
     ActuatorDampingWrite,
     ActuatorKpWrite,
     BodyAngularVelocityWrite,
-    BodyComWrite,
     BodyJointPositionWrite,
     BodyJointVelocityWrite,
     BodyLinearVelocityWrite,
-    BodyMassWrite,
     BodyPositionWrite,
     BodyRotationWrite,
     CtrlTargetsWrite,
@@ -28,6 +26,8 @@ from motrix_env_core.sim.write import (
     JointVelocityWrite,
     KinematicBodyPositionWrite,
     KinematicBodyRotationWrite,
+    LinkComWrite,
+    LinkMassWrite,
     SimWriteCompiler,
     WriteProgram,
 )
@@ -242,11 +242,11 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
         self._targets(name, write.actuators, "actuator", _named_actuator)
         self._pending.append((name, _CompiledWrite(native=mtx_write.ActuatorDampingOverride(list(write.actuators)))))
 
-    def compile_body_mass(self, name: str, write: BodyMassWrite) -> None:
+    def compile_link_mass(self, name: str, write: LinkMassWrite) -> None:
         self._targets(name, write.links, "link", _named_link)
         self._pending.append((name, _CompiledWrite(native=mtx_write.LinkMassOverride(list(write.links)))))
 
-    def compile_body_com(self, name: str, write: BodyComWrite) -> None:
+    def compile_link_com(self, name: str, write: LinkComWrite) -> None:
         self._targets(name, write.links, "link", _named_link)
         self._pending.append((name, _CompiledWrite(native=mtx_write.LinkCenterOfMassOverride(list(write.links)))))
 
