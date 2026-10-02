@@ -1,6 +1,10 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+import os
+import subprocess
+import sys
+
 import numba
 
 from motrix_env_core.numba.fingerprint import function_fingerprint
@@ -67,3 +71,43 @@ def test_numba_dispatcher_matches_python_function():
         return value + 1
 
     assert function_fingerprint(numba.njit(helper)) == function_fingerprint(helper)
+
+
+def test_fingerprint_is_stable_across_hash_seeds(tmp_path):
+    script = tmp_path / "fingerprint.py"
+    script.write_text(
+        "from motrix_env_core.numba.fingerprint import function_fingerprint\n"
+        "def entry(value):\n"
+        "    return value in {'alpha', 'beta', 'gamma'}\n"
+        "print(function_fingerprint(entry))\n",
+        encoding="utf-8",
+    )
+    fingerprints = []
+    for seed in ("1", "2"):
+        result = subprocess.run(
+            [sys.executable, str(script)],
+            check=True,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONHASHSEED": seed, "PYTHONPATH": "motrix_env_core/src"},
+        )
+        fingerprints.append(result.stdout.strip())
+    assert fingerprints[0] == fingerprints[1]
+
+
+def test_fingerprint_is_stable_after_inline_helper_compilation():
+    namespace = {"__name__": "fingerprint_test", "numba": numba}
+    exec(
+        "@numba.njit(inline='always')\n"
+        "def helper(value):\n"
+        "    if value > 0:\n"
+        "        return min(value + 1, 10)\n"
+        "    return max(value - 1, -10)\n"
+        "def entry(value):\n"
+        "    return helper(value)\n",
+        namespace,
+    )
+    entry = namespace["entry"]
+    first = function_fingerprint(entry)
+    assert numba.njit(entry)(2) == 3
+    assert function_fingerprint(entry) == first

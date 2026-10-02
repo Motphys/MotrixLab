@@ -17,6 +17,8 @@ import concurrent.futures
 import subprocess
 import sys
 
+import pytest
+
 import motrix_envs  # noqa: F401 registers built-in environments
 from motrix_env_core import registry
 
@@ -61,6 +63,8 @@ def _smoke_in_subprocess(case: tuple[str, int]) -> tuple[str, str | None]:
     return (label, None)
 
 
+@pytest.mark.slow
+@pytest.mark.integration
 def test_all_demos():
     all_envs = sorted(registry.list_registered_envs())
     cases = [(env_name, num_env) for num_env in (1, 2) for env_name in all_envs]

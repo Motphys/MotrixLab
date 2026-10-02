@@ -66,7 +66,19 @@ def validate_kernel_context(
 def clone_kernel_value(value: T) -> T:
     """Recursively clone arrays while preserving task-specific tuple types."""
     if isinstance(value, np.ndarray):
-        return cast(T, value.copy())
+        # Warmup must use the same Numba array type as real execution: copy()
+        # normalizes strided views to C layout and drops the readonly flag.
+        lower = (
+            sum(min(0, (size - 1) * stride) for size, stride in zip(value.shape, value.strides)) if value.size else 0
+        )
+        upper = (
+            sum(max(0, (size - 1) * stride) for size, stride in zip(value.shape, value.strides)) if value.size else 0
+        )
+        storage = np.empty(max(value.itemsize, upper - lower + value.itemsize), dtype=np.uint8)
+        copied = np.ndarray(value.shape, dtype=value.dtype, buffer=storage, offset=-lower, strides=value.strides)
+        copied[...] = value
+        copied.flags.writeable = value.flags.writeable
+        return cast(T, copied)
     if isinstance(value, tuple):
         items = [clone_kernel_value(item) for item in value]
         if hasattr(type(value), "_fields"):

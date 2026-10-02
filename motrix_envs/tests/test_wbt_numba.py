@@ -55,6 +55,10 @@ from motrix_envs.locomotion.wbt.mdp.reset import (  # noqa: E402
 )
 from motrix_envs.motion import MotrixMotion, WbtMotionClip  # noqa: E402
 
+# Keep WBT kernels in one suite: deselecting only the first expensive tests
+# shifts first-use compilation to later tests instead of removing its cost.
+pytestmark = pytest.mark.numba
+
 
 def _motion_command(env: ManagerEnv) -> WbtMotionCommand:
     command = env.command_terms["motion"]
@@ -215,6 +219,7 @@ def test_numba_wbt_read_plan_reuses_preallocated_arrays() -> None:
     np.testing.assert_array_equal(action.action_queue[[1, 3], action.action_ptr[0]], 0.0)
 
 
+@pytest.mark.slow
 def test_numba_wbt_step_preserves_previous_actor_and_critic_observations() -> None:
     env = _make_numba_env(_deterministic_manager_cfg(), num_envs=2)
     initial = env.init_state()
@@ -224,7 +229,22 @@ def test_numba_wbt_step_preserves_previous_actor_and_critic_observations() -> No
     initial_policy_snapshot = initial_policy.copy()
     initial_value_snapshot = initial_value.copy()
 
+    task = env._task_program
+    assert task is not None
+    kernels = (task.evaluate_kernel, task.observe_kernel, task.reset_kernel)
+    signatures = tuple(tuple(kernel.signatures) for kernel in kernels)
+    assert all(len(items) == 1 for items in signatures)
+    env.warmup()
     first = env.step(np.zeros((env.num_envs, *env.action_space.shape), dtype=np.float32))
+    assert tuple(tuple(kernel.signatures) for kernel in kernels) == signatures
+    second_env = _make_numba_env(_deterministic_manager_cfg(), num_envs=2)
+    second_env.init_state()
+    assert second_env.manager_layout.plan_keys == env.manager_layout.plan_keys
+    second_task = second_env._task_program
+    assert second_task is not None
+    assert second_task.evaluate_kernel is task.evaluate_kernel
+    assert second_task.observe_kernel is task.observe_kernel
+    assert second_task.reset_kernel is task.reset_kernel
 
     np.testing.assert_array_equal(initial_policy, initial_policy_snapshot)
     np.testing.assert_array_equal(initial_value, initial_value_snapshot)
@@ -233,6 +253,7 @@ def test_numba_wbt_step_preserves_previous_actor_and_critic_observations() -> No
     assert not np.shares_memory(initial_value, first.obs.value)
 
 
+@pytest.mark.slow
 def test_numba_wbt_observation_noise_bounds_and_determinism() -> None:
     """Observation noise is uniform(-amp, amp), zero for zero amplitudes, and
     reproducible for a fresh environment with the same seed and episode step."""

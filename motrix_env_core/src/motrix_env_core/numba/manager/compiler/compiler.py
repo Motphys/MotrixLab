@@ -19,7 +19,6 @@ import numpy as np
 from numba.extending import register_jitable
 
 from motrix_env_core.numba.fingerprint import function_fingerprint
-from motrix_env_core.numba.kernel import clone_kernel_value
 from motrix_env_core.numba.kernel_data import (
     KernelDataLayout,
     KernelDataLowering,
@@ -891,9 +890,9 @@ class NumbaKernelCompiler:
         task = self._env._task_program
         if task is None:
             return
-        reset_args = (clone_kernel_value(inputs), np.arange(2, dtype=np.int64), self._env._sim_reset_runtime.buffers)
+        reset_args = (inputs, np.arange(2, dtype=np.int64), self._env._sim_reset_runtime.buffers)
         try:
-            task.reset_kernel.compile(tuple(numba.typeof(arg) for arg in reset_args))
+            self._compile_specialization("reset", task.reset_kernel, reset_args)
         except (
             AttributeError,
             EOFError,
@@ -915,17 +914,29 @@ class NumbaKernelCompiler:
         # Terms are not compiled standalone: their dispatch bodies are inlined
         # into the fused kernels below, which type-checks the whole plan in one
         # compilation instead of paying a separate dispatcher compile per term.
-        warmup_args = tuple(
-            clone_kernel_value(value)
-            for value in (inputs, task.reward_weights, self._env._kernel_buffers, self._env._kernel_outputs)
-        )
-        task.evaluate_kernel.compile(tuple(numba.typeof(arg) for arg in warmup_args))
-        observe_args = (clone_kernel_value(inputs), clone_kernel_value(self._env._kernel_outputs))
-        task.observe_kernel.compile(tuple(numba.typeof(arg) for arg in observe_args))
+        # compile() only consumes types, not values. Copying input arrays here
+        # changes readonly/strided views into writable contiguous arrays and
+        # compiles a specialization that real reset/step calls cannot reuse.
+        warmup_args = (inputs, task.reward_weights, self._env._kernel_buffers, self._env._kernel_outputs)
+        self._compile_specialization("evaluate", task.evaluate_kernel, warmup_args)
+        observe_args = (inputs, self._env._kernel_outputs)
+        self._compile_specialization("observe", task.observe_kernel, observe_args)
         # Precompile the reset kernel here instead of paying its compilation on
         # the first reset; env_ids always come from np.flatnonzero (int64).
-        reset_args = (clone_kernel_value(inputs), np.arange(2, dtype=np.int64), self._env._sim_reset_runtime.buffers)
-        task.reset_kernel.compile(tuple(numba.typeof(arg) for arg in reset_args))
+        reset_args = (inputs, np.arange(2, dtype=np.int64), self._env._sim_reset_runtime.buffers)
+        self._compile_specialization("reset", task.reset_kernel, reset_args)
+
+    def _compile_specialization(self, kind: str, kernel: Any, args: tuple[Any, ...]) -> None:
+        signature = tuple(numba.typeof(arg) for arg in args)
+        started = perf_counter()
+        kernel.compile(signature)
+        logger.info(
+            "Manager startup %s: %s specialization finished in %.3fs",
+            self._env_name(),
+            kind,
+            perf_counter() - started,
+        )
+        logger.debug("Manager %s specialization signature: %s", kind, signature)
 
     def _load_kernel(self, kind: str, source: str, plan_key: str) -> tuple[Any, str]:
         """Load one fused kernel from the in-process or disk cache, else compile it."""
@@ -965,7 +976,7 @@ class NumbaKernelCompiler:
             kernel = self._compile_kernel(kind, source, filename)
         _KERNEL_CACHE[plan_key] = kernel
         logger.info(
-            "Manager startup %s: %s kernel compile finished in %.3fs (cache=%s)",
+            "Manager startup %s: %s kernel dispatcher prepared in %.3fs (cache=%s)",
             self._env_name(),
             kind,
             perf_counter() - compile_started,

@@ -5,18 +5,26 @@ on:
     branches: [main, stable]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Daily at 02:00 UTC (10:00 China Standard Time), on the default branch.
+    - cron: "0 2 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: tests-${{ github.ref }}
+  group: tests-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   pytest:
+    name: pytest (${{ matrix.suite }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '[{"suite":"full","selection":""}]' || '[{"suite":"fast","selection":"not slow and not integration and not numba"},{"suite":"numba","selection":"not integration and (slow or numba)"}]') }}
     steps:
       - name: Resolve numba cache dir
         run: |
@@ -31,8 +39,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/motrixlab
-          key: numba-kernel-${{ runner.os }}-${{ github.sha }}
+          key: numba-kernel-${{ runner.os }}-${{ matrix.suite }}-${{ github.sha }}
           restore-keys: |
+            numba-kernel-${{ runner.os }}-${{ matrix.suite }}-
             numba-kernel-${{ runner.os }}-
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -52,4 +61,17 @@ jobs:
         run: sh install.sh --all
 
       - name: Run tests
-        run: .venv/bin/python -m pytest -q --disable-warnings --maxfail=1
+        env:
+          PYTEST_SELECTION: ${{ matrix.selection }}
+        run: |
+          .venv/bin/python -m pytest -q --strict-markers --disable-warnings \
+            --durations=20 --junitxml=test-results/${{ matrix.suite }}.xml \
+            -m "$PYTEST_SELECTION"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-${{ matrix.suite }}
+          path: test-results/
+          if-no-files-found: warn

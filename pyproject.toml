@@ -136,6 +136,13 @@ triton-rocm = [
     { index = "pytorch-rocm72", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
 ]
 
+[tool.pytest.ini_options]
+markers = [
+    "slow: tests with substantial compilation or runtime cost",
+    "numba: dedicated Numba kernel regression tests",
+    "integration: full-environment or subprocess integration tests",
+]
+
 [tool.mypy]
 files = [
     "motrix_env_core/tests/typecheck/configclass.py",

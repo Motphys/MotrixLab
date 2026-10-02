@@ -16,10 +16,70 @@ access to repository contents and uses no repository secrets.
 
 ### File: `tests.yml`
 
-Runs the workspace test suite on pushes to `main` or `stable`, pull requests, and manual
-dispatch. It installs the uv workspace with Git LFS assets and executes
-`pytest`. The workflow intentionally runs on Linux, which is the supported
-public CI environment for the simulator and training dependencies.
+Runs on pull requests, pushes to `main` or `stable`, manual dispatch, and daily at 02:00 UTC
+(10:00 China Standard Time). Scheduled runs use the default branch. Each job installs the uv
+workspace with Git LFS assets on Linux, the supported public CI environment.
+
+PR and push runs have two independent, parallel jobs:
+
+- **fast**: `pytest -m "not slow and not integration and not numba"`.
+- **numba**: `pytest -m "not integration and (slow or numba)"`. This includes the two expensive
+  WBT kernel regressions on every PR, so failures are not deferred until the next day.
+  The entire `test_wbt_numba.py` module stays together: excluding only the first two expensive
+  tests shifts first-use compilation into later tests rather than making the fast suite cheap.
+
+These selections partition all non-integration tests, including future `slow` tests. They run on
+all PRs rather than relying on path filters that might miss a transitive dependency change.
+A failure in either job does not cancel the other job. Both should be required checks for merging;
+replace any branch-protection requirement for the old `pytest` job with these two checks.
+
+Nightly and manual dispatch run the **full** suite, including
+`test/test_all_envs.py::test_all_demos`. The full-environment subprocess smoke test is excluded
+from PR/push jobs. Each job reports the 20 slowest phases and uploads JUnit results, including on
+failure. Numba caches have per-suite write keys to avoid parallel jobs competing for one cache.
+
+Local commands (activate `.venv` first):
+
+```bash
+# Quick feedback; excludes expensive kernel regressions and full-environment smoke.
+python -m pytest -m "not slow and not integration and not numba"
+# Dedicated compilation/runtime regressions.
+python -m pytest -m "not integration and (slow or numba)"
+# Only the full-environment integration tests.
+python -m pytest -m integration
+# Full coverage remains the default; no tests are silently excluded by addopts.
+python -m pytest
+```
+
+Markers are registered in the root `pyproject.toml`: `slow` describes cost, `numba` identifies
+specialized kernel regressions, and `integration` identifies tests reserved for full runs.
+Not every test importing Numba needs the `numba` marker: inexpensive core contract tests remain
+in the fast suite.
+
+For new Numba environments, reuse small synthetic-manager tests for shared runtime contracts,
+keep task-specific smoke tests minimal, and retain a small set of representative real-environment
+regressions. The existing nightly smoke test automatically covers all registered environments.
+Do not duplicate a full expensive rollout for every preset. If the dedicated job grows too large,
+measure `--durations` and shard by environment family; do not silently drop kernel coverage from PRs.
+
+#### Diagnosing Numba startup costs
+
+Compare a fresh `NUMBA_CACHE_DIR` with a second process using the same directory, then compare
+another environment in the same process. `NUMBA_DEBUG_CACHE=1` reports actual specialization
+cache loads/saves. Manager INFO logs time each evaluate/observe/reset specialization; DEBUG
+logs include signatures. Dispatcher preparation is not the actual compilation phase.
+
+Precompilation uses the real input types, and warmup copies preserve strides and readonly flags,
+so warmup and reset/step share signatures. Function fingerprints use explicit code fields rather
+than marshal serialization, which can change after Numba inspects an unchanged code object.
+Keep these invariants intact when extending the compiler: a warmup must not introduce new
+signatures, and constructing the same configuration after execution must reuse the same plan.
+
+A local G1 WBT play-mode benchmark (`num_envs=2`, init and one step; interpreter imports excluded)
+measured about 29 seconds with an empty cache, 0.27 seconds in a second process with disk cache,
+and 0.07 seconds for another environment using the in-process cache after these fixes.
+The original cold benchmark took about 57 seconds and compiled each kernel twice.
+These are diagnostic measurements, not CI timing thresholds; hardware and cache state vary.
 
 ### File: `codeql.yml`
 
