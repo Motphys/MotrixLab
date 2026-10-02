@@ -343,6 +343,9 @@ class MotrixSimBackend(SimBackend):
         render_spacing: float,
         system_camera: SystemCameraCfg,
     ) -> SimRenderer:
+        follow_link = None
+        if system_camera.follow is not None:
+            follow_link = self._scene.objs[system_camera.follow].resolved_base_link_name
         return MotrixSimRenderer(
             self._model,
             lambda: self._data,
@@ -350,6 +353,7 @@ class MotrixSimBackend(SimBackend):
             num_envs=num_envs,
             render_spacing=render_spacing,
             system_camera=system_camera,
+            follow_link=follow_link,
         )
 
     def step(self, substeps: int) -> None:

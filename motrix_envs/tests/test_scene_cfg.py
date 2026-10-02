@@ -1209,3 +1209,28 @@ def test_direct_env_loads_model_from_scene_cfg():
     assert model.options.timestep == pytest.approx(0.005)
     assert model.options.max_iterations == 3
     assert model.options.solver_tolerance == pytest.approx(1e-4)
+
+
+def test_system_camera_follow_must_name_a_body_object():
+    @configclass
+    class FollowSceneObjsCfg(SceneObjsCfg):
+        floor: FlatTerrainCfg = FlatTerrainCfg()
+        cartpole: RobotCfg = RobotCfg(
+            model=MjcfFileCfg(file=_CARTPOLE_XML),
+            base_link_name="cart",
+        )
+
+    def scene_with_follow(target: str | None) -> SceneCfg:
+        return SceneCfg(
+            objs=FollowSceneObjsCfg(),
+            system_camera=SystemCameraCfg(follow=target),
+        )
+
+    # A declared body object resolves; validation passes.
+    validate_scene_cfg(scene_with_follow("cartpole"))
+
+    with pytest.raises(ValueError, match="system_camera.follow must name a body object"):
+        validate_scene_cfg(scene_with_follow("missing"))
+    with pytest.raises(ValueError, match="system_camera.follow must name a body object"):
+        # Declared but not a body: terrain objects cannot be followed.
+        validate_scene_cfg(scene_with_follow("floor"))

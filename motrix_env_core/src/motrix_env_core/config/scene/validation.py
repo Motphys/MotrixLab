@@ -9,7 +9,7 @@ from motrix_env_core.config.scene.asset import (
     SkyboxCfg,
     TextureCfg,
 )
-from motrix_env_core.config.scene.base import SceneAssetCfg, SceneCfg, SceneVisualCfg
+from motrix_env_core.config.scene.base import BodyCfg, SceneAssetCfg, SceneCfg, SceneVisualCfg
 from motrix_env_core.config.scene.geometry import GeomCfg, HFieldTerrainCfg
 
 
@@ -46,11 +46,14 @@ def validate_scene_cfg(scene: SceneCfg) -> None:
                 raise ValueError(f"Material asset {name!r} must reference a TextureCfg, got {asset.texture!r}")
 
     names: set[str] = set()
+    body_names: set[str] = set()
     for name, obj in scene.iter_objs():
         obj.validate(name)
         if name in names:
             raise ValueError(f"SceneCfg object names must be unique, got duplicate {name!r}")
         names.add(name)
+        if isinstance(obj, BodyCfg):
+            body_names.add(name)
 
         if isinstance(obj, GeomCfg) and obj.material is not None:
             material = assets.get(obj.material)
@@ -64,6 +67,13 @@ def validate_scene_cfg(scene: SceneCfg) -> None:
                     f"HField terrain {name!r} must reference an HFieldAssetCfg or ProceduralHFieldAssetCfg, "
                     f"got {obj.hfield!r}"
                 )
+
+    follow = scene.system_camera.follow
+    if follow is not None and follow not in body_names:
+        raise ValueError(
+            f"scene.system_camera.follow must name a body object in the scene, got {follow!r}; "
+            f"available body objects: {sorted(body_names)}."
+        )
 
     sensor_names: set[str] = set()
     for name, sensor in scene.iter_sensors():

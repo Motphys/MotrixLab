@@ -136,3 +136,108 @@ def test_headless_renderer_configures_camera_resolution_and_captures(monkeypatch
     render_app.sync.reset_mock()
     renderer.render()
     assert render_app.sync.call_args.kwargs == {"data": data}
+
+
+def _follow_model(positions: np.ndarray) -> Mock:
+    """Model mock whose one-field link-position query reports ``positions`` per row."""
+    model = Mock()
+    program = Mock()
+    program.execute.return_value = program
+    program.values.return_value = [np.asarray(positions, dtype=np.float32).reshape(len(positions), 1, 3)]
+    plan = Mock()
+    plan.allocate.return_value = program
+    model.compile_query.return_value = plan
+    return model
+
+
+def test_set_camera_view_updates_system_camera(monkeypatch):
+    render_app = MagicMock()
+    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False, fps=None: render_app)
+
+    renderer = motrixsim_renderer.MotrixSimRenderer(
+        object(),
+        lambda: object(),
+        RenderConfig(),
+        num_envs=1,
+        render_spacing=1.0,
+        system_camera=_system_camera(),
+    )
+
+    renderer.set_camera_view((1.0, 2.0, 3.0), 4.0, -15.0, 45.0)
+    render_app.system_camera.set_view.assert_called_with([1.0, 2.0, 3.0], 4.0, -15.0, 45.0)
+
+    with pytest.raises(ValueError, match="lookat must contain 3 values"):
+        renderer.set_camera_view((1.0, 2.0), 4.0, -15.0, 45.0)
+
+
+def test_follow_refreshes_lookat_from_tracked_link_each_frame(monkeypatch):
+    render_app = MagicMock()
+    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False, fps=None: render_app)
+    positions = np.array([[1.0, 2.0, 0.8], [9.0, 9.0, 9.0]])
+    model = _follow_model(positions)
+    data = object()
+
+    renderer = motrixsim_renderer.MotrixSimRenderer(
+        model,
+        lambda: data,
+        RenderConfig(),
+        num_envs=2,
+        render_spacing=2.0,
+        system_camera=SystemCameraCfg(distance=5.0, elevation=-30.0, azimuth=10.0, follow="robot"),
+        follow_link="pelvis",
+    )
+
+    model.compile_query.assert_called_once()
+    render_app.system_camera.set_view.reset_mock()
+    renderer.render()
+    # The camera tracks env row 0 of the followed link; distance/elevation/azimuth
+    # keep their configured values (env 0's render offset is the origin).
+    assert render_app.system_camera.set_view.call_count == 1
+    assert render_app.system_camera.set_view.call_args.args[0] == pytest.approx([1.0, 2.0, 0.8])
+    assert render_app.system_camera.set_view.call_args.args[1:] == (5.0, -30.0, 10.0)
+    render_app.sync.assert_called_once_with(data=data)
+
+
+def test_headless_capture_refreshes_follow_view_before_sync(monkeypatch):
+    render_app = MagicMock()
+    monkeypatch.setattr(motrixsim_renderer, "RenderApp", MagicMock(return_value=render_app))
+    image = MagicMock()
+    image.pixels = np.full((4, 6, 3), 255, dtype=np.uint8)
+    render_app.system_camera.capture.return_value.take_image.return_value = image
+    model = _follow_model(np.array([[0.5, -0.5, 1.0]]))
+    data = object()
+    config = RenderConfig(headless=True, path=Path("/tmp/video.mp4"), fps=20, num_frames=10)
+
+    renderer = motrixsim_renderer.MotrixSimRenderer(
+        model,
+        lambda: data,
+        config,
+        num_envs=1,
+        render_spacing=1.0,
+        system_camera=SystemCameraCfg(follow="robot"),
+        follow_link="pelvis",
+    )
+
+    render_app.system_camera.set_view.reset_mock()
+    frame = renderer.capture()
+    assert frame.shape == (4, 6, 3)
+    render_app.system_camera.set_view.assert_called_once()
+    assert render_app.system_camera.set_view.call_args.args[0] == [0.5, -0.5, 1.0]
+
+
+def test_interactive_renderer_without_follow_keeps_static_view(monkeypatch):
+    render_app = MagicMock()
+    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False, fps=None: render_app)
+
+    renderer = motrixsim_renderer.MotrixSimRenderer(
+        object(),
+        lambda: object(),
+        RenderConfig(),
+        num_envs=1,
+        render_spacing=1.0,
+        system_camera=_system_camera(),
+    )
+
+    render_app.system_camera.set_view.reset_mock()
+    renderer.render()
+    render_app.system_camera.set_view.assert_not_called()

@@ -80,6 +80,15 @@ class SimRenderer(abc.ABC):
     are no pixels to return.
     """
 
+    def set_camera_view(self, lookat: Sequence[float], distance: float, elevation: float, azimuth: float) -> None:
+        """Update the system camera view at runtime (windowed and headless).
+
+        Pure value method for scripts that drive the camera themselves (custom
+        follow, smoothing, view switching): no camera object crosses the
+        backend boundary. Optional capability.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support runtime camera view updates")
+
     @abc.abstractmethod
     def render(self) -> None:
         """Present one frame from the current simulator state (sync + viewer input)."""

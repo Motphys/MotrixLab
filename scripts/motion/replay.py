@@ -23,13 +23,15 @@ from pathlib import Path
 import motrixsim as mtx
 import numpy as np
 from absl import app, flags
-from motrixsim.render import RenderApp, RenderClosedError, RenderSettings
+from motrixsim.render import RenderClosedError
 
 from motrix_env_core.config.scene import (
     RobotCfg,
     SystemCameraCfg,
 )
+from motrix_env_core.renderer import RenderConfig
 from motrix_env_motrixsim.compiler import build_scene_model
+from motrix_env_motrixsim.renderer import MotrixSimRenderer
 from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
 from motrix_envs.motion import MotrixMotion
 from motrix_envs.robot import BoosterK1, DexEvt, UnitreeG129Dof
@@ -62,13 +64,12 @@ _LOOP = flags.DEFINE_bool("loop", False, "Loop the clip until the window is clos
 _SPEED = flags.DEFINE_float("speed", 1.0, "Playback speed multiplier (>0).", lower_bound=0.0)
 
 
-def build_replay_model(robot_cfg: RobotCfg) -> mtx.SceneModel:
+def _build_replay_scene(robot_cfg: RobotCfg) -> StandardSceneCfg:
     """Build a standard ground scene containing only the requested robot."""
-    scene = StandardSceneCfg(
+    return StandardSceneCfg(
         system_camera=SystemCameraCfg(distance=6.0, elevation=-20.0, azimuth=180.0),
         objs=StandardSceneObjsCfg(robot=robot_cfg),
     )
-    return build_scene_model(scene)
 
 
 def _model_joint_indices(model: mtx.SceneModel, motion: MotrixMotion) -> np.ndarray:
@@ -123,19 +124,15 @@ def _frame_range(motion: MotrixMotion, start: int, end: int | None) -> tuple[int
     return start, end
 
 
-def _launch_renderer(model: mtx.SceneModel) -> RenderApp:
-    settings = RenderSettings.performance()
-    settings.enable_shadow = True
-    renderer = RenderApp()
-    renderer.launch(
+def _launch_renderer(model: mtx.SceneModel, data: mtx.SceneData, camera: SystemCameraCfg) -> MotrixSimRenderer:
+    return MotrixSimRenderer(
         model,
-        batch=1,
-        render_offset=[[0.0, 0.0, 0.0]],
-        render_settings=settings,
+        lambda: data,
+        RenderConfig(),
+        num_envs=1,
+        render_spacing=1.0,
+        system_camera=camera,
     )
-    renderer.system_camera.set_view([0.0, 0.0, 0.75], 6.0, -20.0, 180.0)
-    renderer.system_camera.active = True
-    return renderer
 
 
 def replay(
@@ -150,7 +147,9 @@ def replay(
 ) -> None:
     """Replay a motion using only its file and the robot configuration."""
     motion = MotrixMotion(motion_path)
-    model = build_replay_model(robot_cfg)
+    scene = _build_replay_scene(robot_cfg)
+    model = build_scene_model(scene)
+    camera = scene.system_camera
     joint_indices = _model_joint_indices(model, motion)
     root_index = _root_index(motion)
     start, end = _frame_range(motion, start_step, end_step)
@@ -175,14 +174,14 @@ def replay(
 
     data = mtx.SceneData(model, batch=[1])
     data.reset(model)
-    renderer = _launch_renderer(model)
+    renderer = _launch_renderer(model, data, camera)
     steps = range(start, end)
     try:
         while True:
             for step in steps:
                 t0 = time.monotonic()
                 write_frame(model, data, motion, joint_indices, root_index, step)
-                renderer.sync(data=data)
+                renderer.render()
                 sleep_dt = frame_dt - (time.monotonic() - t0)
                 if sleep_dt > 0:
                     time.sleep(sleep_dt)
@@ -191,7 +190,7 @@ def replay(
     except RenderClosedError:
         logger.info("Render window closed.")
     finally:
-        renderer.__exit__(None, None, None)
+        renderer.close()
 
 
 def main(argv):

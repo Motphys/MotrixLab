@@ -8,7 +8,7 @@ import gymnasium as gym
 import hydra
 import motrixsim as mtx
 import numpy as np
-from motrixsim.render import RenderApp, RenderClosedError, RenderSettings
+from motrixsim.render import RenderClosedError
 from omegaconf import DictConfig
 
 import motrix_envs  # noqa: F401 registers built-in environments
@@ -19,6 +19,7 @@ from motrix_env_core.config import SimCfg
 from motrix_env_core.config.scene import RobotCfg, SystemCameraCfg
 from motrix_env_core.renderer import RenderConfig, create_renderer
 from motrix_env_motrixsim.compiler import build_scene_model
+from motrix_env_motrixsim.renderer import MotrixSimRenderer
 from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
 from motrix_rl.cli import to_typed_config
 from motrix_rl.config import ViewConfig
@@ -72,30 +73,26 @@ def _run_robot_motrixsim(scene: StandardSceneCfg) -> None:
     data.reset(model)
     model.forward_kinematic(data)
 
-    settings = RenderSettings.performance()
-    settings.enable_shadow = True
-    renderer = RenderApp()
+    follow_link = None
+    if camera.follow is not None:
+        follow_link = scene.objs[camera.follow].resolved_base_link_name
+    renderer = MotrixSimRenderer(
+        model,
+        lambda: data,
+        RenderConfig(),
+        num_envs=1,
+        render_spacing=1.0,
+        system_camera=camera,
+        follow_link=follow_link,
+    )
     try:
-        renderer.launch(
-            model,
-            batch=1,
-            render_offset=[[0.0, 0.0, 0.0]],
-            render_settings=settings,
-        )
-        renderer.system_camera.set_view(
-            camera.lookat,
-            camera.distance,
-            camera.elevation,
-            camera.azimuth,
-        )
-        renderer.system_camera.active = True
-        while not renderer.is_closed:
-            renderer.sync(data=data)
+        while True:
+            renderer.render()
             time.sleep(1.0 / ROBOT_VIEW_FPS)
     except RenderClosedError:
         pass
     finally:
-        renderer.__exit__(None, None, None)
+        renderer.close()
 
 
 def _run_robot_mujoco(scene: StandardSceneCfg) -> None:

@@ -191,12 +191,20 @@ class SceneVisualCfg:
 
 @configclass
 class SystemCameraCfg:
-    """System camera settings used by interactive viewing and video recording."""
+    """System camera settings used by interactive viewing and video recording.
+
+    ``follow`` names a scene object (a ``BodyCfg``/``RobotCfg`` field name in
+    ``SceneCfg.objs``) whose root link the camera tracks: backends refresh the
+    view's lookat from live state on every rendered frame while
+    ``distance`` / ``elevation`` / ``azimuth`` keep their configured values.
+    ``lookat`` is ignored while following.
+    """
 
     lookat: Vec3 | None = None
     distance: float = 2.0
     elevation: float = -20.0
     azimuth: float = 90.0
+    follow: str | None = None
 
     def validate(self) -> None:
         optional_vec("scene.system_camera.lookat", self.lookat, 3)
