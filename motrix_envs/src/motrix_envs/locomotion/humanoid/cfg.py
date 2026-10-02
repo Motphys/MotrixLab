@@ -47,7 +47,7 @@ from motrix_env_core.mdp.rewards import (
     TrackingAngVelZRewardCfg,
     TrackingLinVelXyRewardCfg,
 )
-from motrix_env_core.mdp.terminations import CollidingTerminationCfg
+from motrix_env_core.mdp.terminations import BadDofVelocityTerminationCfg, CollidingTerminationCfg
 from motrix_env_core.sim import (
     ActuatorKdQuery,
     ActuatorKpQuery,
@@ -127,6 +127,7 @@ class WalkRewardsCfg(ManagerRewardsCfg):
 @configclass
 class WalkTerminationsCfg(ManagerTerminationsCfg):
     colliding: CollidingTerminationCfg = CollidingTerminationCfg()
+    bad_dof_velocity: BadDofVelocityTerminationCfg | None = None
 
 
 @configclass

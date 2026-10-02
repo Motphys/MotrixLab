@@ -548,7 +548,8 @@ def test_procedural_hfield_rejects_invalid_generator_output(heights, match):
 
 
 def test_stairs_terrain_runs_along_configured_axis():
-    # axis semantics contract: "x" varies along shape[0] rows, "y" along shape[1] columns.
+    # axis semantics contract: "x" varies along shape[1] columns (hfield x),
+    # "y" along shape[0] rows (hfield y).
     generator = StairsTerrainGeneratorCfg(
         axis="x",
         profile="ascending",
@@ -559,10 +560,10 @@ def test_stairs_terrain_runs_along_configured_axis():
 
     heights = generator.generate((8.0, 8.0), (8, 8))
 
-    assert np.all(heights == heights[:, :1])
-    row_levels = heights[:, 0]
-    assert sorted(np.unique(row_levels)) == pytest.approx([0.0, 1.0 / 3, 2.0 / 3, 1.0])
-    assert np.all(np.diff(row_levels) >= 0.0)
+    assert np.all(heights == heights[:1, :])
+    col_levels = heights[0, :]
+    assert sorted(np.unique(col_levels)) == pytest.approx([0.0, 1.0 / 3, 2.0 / 3, 1.0])
+    assert np.all(np.diff(col_levels) >= 0.0)
 
     transposed = StairsTerrainGeneratorCfg(
         axis="y",
@@ -571,8 +572,8 @@ def test_stairs_terrain_runs_along_configured_axis():
         step_height=0.05,
         height_scale=0.15,
     ).generate((8.0, 8.0), (8, 8))
-    assert np.all(transposed == transposed[0:1, :])
-    assert np.all(transposed[:, 0] == heights[0, :])
+    assert np.all(transposed == transposed[:, :1])
+    assert np.all(transposed == heights.T)
 
 
 def test_stairs_terrain_profiles():
@@ -581,7 +582,7 @@ def test_stairs_terrain_profiles():
         step_count=8,
         step_height=0.1,
         height_scale=0.7,
-    ).generate((8.0, 8.0), (8, 8))[:, 0]
+    ).generate((8.0, 8.0), (8, 8))[0, :]
     assert np.all(np.diff(pyramid[:4]) > 0.0)
     assert np.all(np.diff(pyramid[4:]) < 0.0)
     assert pyramid[0] == pytest.approx(0.0)
@@ -592,7 +593,7 @@ def test_stairs_terrain_profiles():
         step_count=8,
         step_height=0.1,
         height_scale=0.7,
-    ).generate((8.0, 8.0), (8, 8))[:, 0]
+    ).generate((8.0, 8.0), (8, 8))[0, :]
     # The central pit floor is the lowest point and the edges are the highest.
     assert pit[3:5].min() == pit.min()
     assert pit[0] == pit.max()
@@ -825,16 +826,16 @@ def test_composite_terrain_conserves_physical_heights_and_stays_normalized():
     # Later regions overwrite earlier ones: the flat patch shows through at full
     # height where it overlaps the stairs region.
     assert heights[8, 11] == pytest.approx(1.0)
-    # Inside the stairs region (rows flush, right edge flush; the left edge is an
+    # Inside the stairs region (columns flush right; the left edge is an
     # interior seam) the physical step size is conserved after sub-generator rescaling.
-    core = np.unique(heights[6:10, 15])
+    core = np.unique(heights[4, 10:16])
     assert np.diff(core) * 0.4 == pytest.approx(0.05)
     assert core[0] * 0.4 == pytest.approx(0.05)
     # The blend margin mixes the flat base into the stairs across the interior seam
-    # (row 3 lies on stairs level 0, i.e. normalized height 0).
+    # (column 10 lies on stairs level 1, i.e. normalized height 0.125).
     assert heights[3, 8] == pytest.approx(0.25)
     assert heights[3, 9] == pytest.approx(0.5 * 0.25)
-    assert heights[3, 8] > heights[3, 9] > heights[3, 12]
+    assert heights[3, 10] == pytest.approx(0.125)
 
 
 def test_composite_terrain_rejects_sub_generator_above_height_scale():

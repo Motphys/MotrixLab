@@ -5,13 +5,23 @@
 
 from dataclasses import replace
 
+import numpy as np
+
 from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
-from motrix_env_core.config.scene import HFieldTerrainCfg, SystemCameraCfg
+from motrix_env_core.config.scene import (
+    DiscreteObstaclesTerrainGeneratorCfg,
+    FlatTerrainGeneratorCfg,
+    HFieldTerrainCfg,
+    NoiseTerrainGeneratorCfg,
+    ProceduralHFieldAssetCfg,
+    SystemCameraCfg,
+    grid_terrain,
+)
 from motrix_env_core.manager import ManagerEnv
 from motrix_env_core.mdp.action import JointPositionActionCfg
 from motrix_env_core.mdp.rewards import TrackingAngVelZRewardCfg, TrackingLinVelXyRewardCfg
-from motrix_env_core.mdp.terminations import CollidingTerminationCfg
+from motrix_env_core.mdp.terminations import BadDofVelocityTerminationCfg, CollidingTerminationCfg
 from motrix_envs.config.scene import StandardSceneObjsCfg
 from motrix_envs.locomotion.humanoid import cfg as humanoid_cfg
 from motrix_envs.locomotion.humanoid.cfg import (
@@ -124,9 +134,8 @@ def make_g129dof_walk_flat_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
                 ground_geom="floor",
             )
         ),
-        # Holosoma g1_29dof_randomization parity: reset-time kp/kd, friction,
-        # mass, and base-com randomization plus per-episode gait-period jitter
-        # and a [0, 1]-step control delay. Push disturbance is not included.
+        # Reset-time kp/kd, friction, mass, and base-COM randomization plus
+        # per-episode gait-period jitter and a [0, 1]-step control delay.
         actions=humanoid_cfg.WalkActionsCfg(
             joint_position=JointPositionActionCfg(
                 action_scale=0.25,
@@ -145,6 +154,8 @@ def make_g129dof_walk_flat_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
                     link_mass_scale_range=(0.9, 1.2),
                     base_mass_offset_range=(-1.0, 3.0),
                     base_com_offset_noise=(0.05, 0.05, 0.05),
+                    joint_pos_scale_range=(0.5, 1.5),
+                    root_velocity_range=(-0.5, 0.5),
                 )
             )
         ),
@@ -173,5 +184,78 @@ def make_g129dof_walk_rough_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
     )
 
 
+def _make_mix_terrain() -> ProceduralHFieldAssetCfg:
+    """Build the flat/rough/obstacle terrain mixture."""
+    height_scale = 0.16
+    rng = np.random.default_rng(8)
+    cells = []
+    for _ in range(10):
+        row = []
+        for _ in range(20):
+            seed = int(rng.integers(1 << 30))
+            pick = rng.random()
+            difficulty = float(rng.choice((0.5, 0.75, 0.9)))
+            if pick < 0.2:
+                cell = FlatTerrainGeneratorCfg(height=0.5, height_scale=height_scale)
+            elif pick < 0.8:
+                max_height = 0.025 * difficulty / 0.9
+                cell = NoiseTerrainGeneratorCfg(
+                    seed=seed,
+                    height_scale=height_scale,
+                    height_range=(-2.0 * max_height - 0.025, -0.025),
+                    flip_y=True,
+                )
+            else:
+                cell = DiscreteObstaclesTerrainGeneratorCfg(
+                    seed=seed,
+                    count=30,
+                    size_min=0.1,
+                    size_max=0.1,
+                    height=-0.03 * difficulty / 0.9,
+                    height_scale=height_scale,
+                )
+            row.append(cell)
+        cells.append(row)
+    return ProceduralHFieldAssetCfg(
+        generator=grid_terrain(cells),
+        # rows (y axis, 800) carry 10 cells over 80 m, columns (x axis, 1600)
+        # carry 20 cells over 160 m: every cell is an 8 m x 8 m tile at 0.1 m
+        # resolution on both axes.
+        size=(160.0, 80.0),
+        shape=(800, 1600),
+    )
+
+
+@registry.envcfg("g1-walk-terrain")
+def make_g129dof_walk_terrain_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
+    """Track G1 walking commands over a procedural terrain mixture."""
+    flat_cfg = make_g129dof_walk_flat_cfg()
+    return replace(
+        flat_cfg,
+        scene=humanoid_cfg.HumanoidWalkSceneCfg(
+            system_camera=SystemCameraCfg(distance=6.0, elevation=-20.0, azimuth=180.0),
+            assets=humanoid_cfg.TerrainSceneAssetsCfg(terrain=_make_mix_terrain()),
+            objs=StandardSceneObjsCfg(
+                floor=HFieldTerrainCfg(hfield="terrain", material="mat_ground"),
+                robot=UnitreeG129Dof(),
+            ),
+        ),
+        terminations=WalkTerminationsCfg(
+            colliding=CollidingTerminationCfg(
+                termination_geoms=_G1_TERMINATION_GEOMS,
+                ground_geom="floor",
+            ),
+            bad_dof_velocity=BadDofVelocityTerminationCfg(threshold=100.0),
+        ),
+        sim_reset=replace(
+            flat_cfg.sim_reset,
+            humanoid_state=replace(flat_cfg.sim_reset.humanoid_state, spawn_xy_range=38.0),
+        ),
+        sim=SimCfg(dt=0.005, solver_iterations=8, solver_tolerance=1e-4),
+        render_spacing=0.0,
+    )
+
+
 registry.env("g1-walk-flat")(ManagerEnv)
 registry.env("g1-walk-rough")(ManagerEnv)
+registry.env("g1-walk-terrain")(ManagerEnv)

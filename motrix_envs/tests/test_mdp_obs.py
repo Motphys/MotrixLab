@@ -188,7 +188,7 @@ def test_robot_base_velocities_are_expressed_in_the_base_local_frame() -> None:
 
 def test_robot_observation_noise_uses_one_stateful_sequence_per_environment() -> None:
     dof_vel = np.asarray([1.0, 2.0], dtype=np.float32)
-    term = BodyJointVelObsCfg(noise=UniformNoiseCfg(amplitude=0.25)).__call__(_env())
+    term = BodyJointVelObsCfg(scale=0.05, noise=UniformNoiseCfg(amplitude=0.25)).__call__(_env())
 
     def evaluate(rng_states: np.ndarray) -> np.ndarray:
         out = np.empty((2, dof_vel.shape[0]), dtype=np.float32)
@@ -206,6 +206,6 @@ def test_robot_observation_noise_uses_one_stateful_sequence_per_environment() ->
     np.testing.assert_array_equal(reproduced, first)
     assert np.any(continued != first)
     assert np.any(different_seed != first)
-    assert np.all(first >= dof_vel - 0.25)
-    assert np.all(first < dof_vel + 0.25)
+    assert np.all(first >= (dof_vel - 0.25) * 0.05)
+    assert np.all(first < (dof_vel + 0.25) * 0.05)
     assert not np.array_equal(first[0], first[1])
