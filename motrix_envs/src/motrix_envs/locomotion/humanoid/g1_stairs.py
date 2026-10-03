@@ -42,12 +42,15 @@ from motrix_envs.locomotion.humanoid.g1 import (
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.command import WalkCommandCfg
 from motrix_envs.robot import UnitreeG129Dof
 
-# mjlab STAIRS_TERRAINS_CFG proportions and step parameters.
+# mjlab STAIRS_TERRAINS_CFG proportions and step parameters. Per-tile ring
+# count follows mjlab's (size - 2*border - platform) / (2 * step_width) with
+# the border folded into the composite margin: rings + 1 sets step_count so
+# the outermost ring lands at level 0, flush with the tile rim.
 _STAIRS_TIERS = (
-    # (name, proportion, step_height range, step width, platform width)
-    ("easy", 0.35, (0.02, 0.05), 0.40, 3.0),
-    ("moderate", 0.25, (0.05, 0.08), 0.35, 2.5),
-    ("challenging", 0.15, (0.08, 0.10), 0.30, 2.0),
+    # (name, proportion, step_height range, step width, platform width, step_count)
+    ("easy", 0.35, (0.02, 0.05), 0.40, 3.0, 7),
+    ("moderate", 0.25, (0.05, 0.08), 0.35, 2.5, 8),
+    ("challenging", 0.15, (0.08, 0.10), 0.30, 2.0, 9),
 )
 _FLAT_PROPORTION = 0.25
 _ROWS, _COLS = 10, 8
@@ -57,14 +60,14 @@ _BORDER = 20.0
 
 def _make_stairs_terrain() -> ProceduralHFieldAssetCfg:
     """Build the mjlab-style flat/easy/moderate/challenging stairs mixture."""
-    height_scale = 0.8
-    rim_level = 0.5  # Flat tiles and stair rims share this normalized level.
+    height_scale = 1.0
+    rim_level = 0.15  # Flat tiles and stair rims share this normalized level.
     rng = np.random.default_rng(8)
     bounds = []
     cumulative = _FLAT_PROPORTION
-    for _name, proportion, h_range, width, platform in _STAIRS_TIERS:
+    for _name, proportion, h_range, width, platform, step_count in _STAIRS_TIERS:
         cumulative += proportion
-        bounds.append((cumulative, h_range, width, platform))
+        bounds.append((cumulative, h_range, width, platform, step_count))
     cells = []
     for _ in range(_ROWS):
         row = []
@@ -73,12 +76,15 @@ def _make_stairs_terrain() -> ProceduralHFieldAssetCfg:
             if pick < _FLAT_PROPORTION:
                 row.append(FlatTerrainGeneratorCfg(height=rim_level, height_scale=height_scale))
                 continue
-            for bound, h_range, width, platform in bounds:
+            for bound, h_range, width, platform, step_count in bounds:
                 if pick < bound:
                     row.append(
                         StairsTerrainGeneratorCfg(
                             axis="radial",
-                            profile="pyramid",
+                            # mjlab pyramid stairs: the central platform is the
+                            # top and steps descend outward to the rim.
+                            profile="descending",
+                            step_count=step_count,
                             step_width=width,
                             step_height=float(rng.uniform(*h_range)),
                             platform_width=platform,
