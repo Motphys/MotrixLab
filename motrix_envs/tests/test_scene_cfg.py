@@ -876,6 +876,40 @@ def test_grid_terrain_lays_out_cells():
     assert np.all(heights <= 1.0)
 
 
+def test_grid_terrain_border_reserves_flat_margin():
+    cells = [
+        [FlatTerrainGeneratorCfg(height=0.5, height_scale=0.1), FlatTerrainGeneratorCfg(height=0.5, height_scale=0.1)],
+        [FlatTerrainGeneratorCfg(height=0.5, height_scale=0.1), FlatTerrainGeneratorCfg(height=0.5, height_scale=0.1)],
+    ]
+    size, shape = (12.0, 8.0), (80, 120)
+    composite = grid_terrain(cells, size=size, border=(2.0, 2.0))
+
+    # A 2 m border on each side reserves normalized insets of 1/6 (x, over
+    # 12 m) and 1/4 (y, over 8 m), shrinking and centering the region grid.
+    assert composite.regions[0].center == pytest.approx((0.375, 1 / 3))
+    assert composite.regions[0].size == pytest.approx((0.25, 1 / 3))
+
+    heights = composite.generate(size, shape)
+    margin = np.concatenate([
+        heights[:20, :].ravel(),
+        heights[-20:, :].ravel(),
+        heights[20:-20, :20].ravel(),
+        heights[20:-20, -20:].ravel(),
+    ])
+    assert np.all(margin == 0.0)
+    assert np.all(heights[20:-20, 20:-20] == pytest.approx(0.5))
+
+
+def test_grid_terrain_border_requires_size_and_bounds():
+    cells = [[FlatTerrainGeneratorCfg()]]
+    with pytest.raises(ValueError, match="requires the world-space field size"):
+        grid_terrain(cells, border=(1.0, 0.0))
+    with pytest.raises(ValueError, match="non-negative"):
+        grid_terrain(cells, size=(4.0, 4.0), border=(-1.0, 0.0))
+    with pytest.raises(ValueError, match="leave room"):
+        grid_terrain(cells, size=(4.0, 4.0), border=(2.5, 0.0))
+
+
 def test_composite_terrain_supports_hydra_overrides():
     cfg = OmegaConf.structured(
         ProceduralHFieldAssetCfg(

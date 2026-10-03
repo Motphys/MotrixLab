@@ -221,10 +221,14 @@ def reset_walk_state_randomized(ctx: ManagerContext, sim_writes: Map[np.ndarray]
     _write_spawn_state(ctx, sim_writes, params, x, y, z)
 
 
-def _tile_spawn_origins(grid: HeightFieldGrid, num_envs: int, tiles: tuple[int, int]) -> np.ndarray:
+def _tile_spawn_origins(
+    grid: HeightFieldGrid, num_envs: int, tiles: tuple[int, int], border: tuple[float, float]
+) -> np.ndarray:
     """Bind each lane to one fixed terrain-tile origin at build time.
 
-    Tile rows follow the height-field y axis and columns the x axis. Each
+    Tile rows follow the height-field y axis and columns the x axis. ``border``
+    holds the flat base margin widths ``(x, y)`` around the tile grid in
+    meters; tile centers are computed on the interior span it reserves. Each
     origin carries the tile-center world xy and the maximum ground height
     over the center +/-0.5 m patch. Tile rows are drawn randomly per lane
     while tile columns are assigned by lane index, matching the reference
@@ -233,24 +237,30 @@ def _tile_spawn_origins(grid: HeightFieldGrid, num_envs: int, tiles: tuple[int, 
     Returns:
         ``(num_envs, 3)`` float32 origins in tile-row/tile-column order.
     """
+    if border[0] < 0.0 or border[1] < 0.0:
+        raise ValueError(f"tile spawn border must be non-negative, got {border!r}")
     nrow, ncol = grid.heights.shape
-    tile_rows, tile_cols = tiles
-    if nrow % tile_rows or ncol % tile_cols:
-        raise ValueError(
-            f"tile spawn requires the {nrow}x{ncol} height field to divide into "
-            f"{tile_rows}x{tile_cols} tiles"
-        )
-    rows_per = nrow // tile_rows
-    cols_per = ncol // tile_cols
     dx = float(grid.spacing[0])
     dy = float(grid.spacing[1])
+    bx = int(round(border[0] / dx))
+    by = int(round(border[1] / dy))
+    tile_rows, tile_cols = tiles
+    inner_rows = nrow - 2 * by
+    inner_cols = ncol - 2 * bx
+    if inner_rows % tile_rows or inner_cols % tile_cols:
+        raise ValueError(
+            f"tile spawn requires the {inner_rows}x{inner_cols} interior of the "
+            f"{nrow}x{ncol} height field to divide into {tile_rows}x{tile_cols} tiles"
+        )
+    rows_per = inner_rows // tile_rows
+    cols_per = inner_cols // tile_cols
     pr = max(1, int(round(0.5 / dy)))
     pc = max(1, int(round(0.5 / dx)))
     origin_grid = np.zeros((tile_rows, tile_cols, 3), dtype=np.float32)
     for row in range(tile_rows):
-        rs = row * rows_per + rows_per // 2
+        rs = by + row * rows_per + rows_per // 2
         for col in range(tile_cols):
-            cs = col * cols_per + cols_per // 2
+            cs = bx + col * cols_per + cols_per // 2
             origin_grid[row, col, 0] = grid.origin[0] + cs * dx
             origin_grid[row, col, 1] = grid.origin[1] + rs * dy
             origin_grid[row, col, 2] = grid.z0[0] + grid.heights[rs - pr : rs + pr + 1, cs - pc : cs + pc + 1].max()
@@ -269,8 +279,10 @@ class WalkStateResetCfg(ResetTermCfg):
     terrain tile origin at build time (random tile row, tile column assigned
     by lane index) and resamples only a ``tile_xy_offset_range`` in-tile XY
     offset per reset, keeping the origin's center-patch ground height as the
-    spawn z. ``ground_geom`` names the floor geom used for flat-ground height
-    lookups. ``randomization`` enables reset-time dynamics randomization
+    spawn z. ``spawn_border`` names the flat margin widths ``(x, y)`` around
+    the tile grid that tile centers must skip. ``ground_geom`` names the floor
+    geom used for flat-ground height lookups. ``randomization`` enables
+    reset-time dynamics randomization
     (kp/damping/friction/mass/com); the nominal values it needs are read from
     the model queries that the env config assembles when
     ``randomization.enabled`` is set.
@@ -280,6 +292,7 @@ class WalkStateResetCfg(ResetTermCfg):
     ground_geom: str = ""
     tile_spawn: bool = False
     spawn_tiles: tuple[int, int] | None = None
+    spawn_border: tuple[float, float] = (0.0, 0.0)
     tile_xy_offset_range: float = 1.0
     randomization: WalkRandomizationCfg = WalkRandomizationCfg()
 
@@ -323,7 +336,7 @@ class WalkStateResetCfg(ResetTermCfg):
         if self.tile_spawn:
             if not grid.enabled:
                 raise ValueError("WalkStateResetCfg.tile_spawn requires a height-field ground geom.")
-            spawn_origins = _tile_spawn_origins(grid, ctx.num_envs, self.spawn_tiles)
+            spawn_origins = _tile_spawn_origins(grid, ctx.num_envs, self.spawn_tiles, self.spawn_border)
         else:
             spawn_origins = np.zeros((ctx.num_envs, 3), dtype=np.float32)
         params = dict(

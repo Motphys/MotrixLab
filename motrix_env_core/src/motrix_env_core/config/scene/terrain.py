@@ -489,6 +489,8 @@ def grid_terrain(
     height_scale: float | None = None,
     blend: float = 0.0,
     base: TerrainGeneratorCfg | None = None,
+    border: Vec2 = (0.0, 0.0),
+    size: Vec2 | None = None,
 ) -> CompositeTerrainGeneratorCfg:
     """Lay generators out on a rows x cols grid as a composite terrain.
 
@@ -499,6 +501,11 @@ def grid_terrain(
     defaults to the largest sub-generator height_scale; ``blend`` is applied to
     every cell boundary. Difficulty gradients are expressed by arranging the
     cells; runtime difficulty switching is out of scope.
+
+    ``border`` reserves a flat ``base``-filled margin of the given world-space
+    widths ``(x, y)`` around the cell grid. It requires ``size``, the
+    world-space field size the composite will be generated with, and is
+    applied as a normalized inset on the region layout.
     """
     rows = len(cells)
     cols = len(cells[0]) if rows else 0
@@ -506,14 +513,28 @@ def grid_terrain(
         raise ValueError(f"grid_terrain requires a non-empty rectangular grid, got {rows}x{cols}")
     if any(len(row) != cols for row in cells):
         raise ValueError(f"grid_terrain requires every row to have {cols} cells")
+    inset_x = inset_y = 0.0
+    if border[0] != 0.0 or border[1] != 0.0:
+        if size is None:
+            raise ValueError("grid_terrain border requires the world-space field size")
+        if border[0] < 0.0 or border[1] < 0.0:
+            raise ValueError(f"grid_terrain.border must be non-negative, got {border!r}")
+        inset_x = border[0] / size[0]
+        inset_y = border[1] / size[1]
+        if not 0.0 <= inset_x < 0.5 or not 0.0 <= inset_y < 0.5:
+            raise ValueError(
+                f"grid_terrain.border {border!r} must leave room for the cell grid inside size {size!r}"
+            )
+    span_x = 1.0 - 2.0 * inset_x
+    span_y = 1.0 - 2.0 * inset_y
     scale = height_scale
     if scale is None:
         scale = max(generator.height_scale for row in cells for generator in row)
     regions = tuple(
         TerrainRegionCfg(
             generator=generator,
-            center=((i + 0.5) / rows, (j + 0.5) / cols),
-            size=(1.0 / rows, 1.0 / cols),
+            center=(inset_y + (i + 0.5) * span_y / rows, inset_x + (j + 0.5) * span_x / cols),
+            size=(span_y / rows, span_x / cols),
             blend=blend,
         )
         for i, row in enumerate(cells)

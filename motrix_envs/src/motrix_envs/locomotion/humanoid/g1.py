@@ -217,12 +217,14 @@ def _make_mix_terrain() -> ProceduralHFieldAssetCfg:
             row.append(cell)
         cells.append(row)
     return ProceduralHFieldAssetCfg(
-        generator=grid_terrain(cells),
-        # rows (y axis, 800) carry 10 cells over 80 m, columns (x axis, 1600)
-        # carry 20 cells over 160 m: every cell is an 8 m x 8 m tile at 0.1 m
-        # resolution on both axes.
-        size=(160.0, 80.0),
-        shape=(800, 1600),
+        generator=grid_terrain(cells, size=(240.0, 160.0), border=(40.0, 40.0)),
+        # Columns (x axis, 2400) carry 20 cells over the interior 160 m plus
+        # a 40 m flat border per side; rows (y axis, 1600) carry 10 cells
+        # over the interior 80 m likewise: every cell stays an 8 m x 8 m
+        # tile at 0.1 m resolution, and the border keeps walkers on valid
+        # ground for a full episode of commanded drift.
+        size=(240.0, 160.0),
+        shape=(1600, 2400),
     )
 
 
@@ -253,6 +255,7 @@ def make_g129dof_walk_terrain_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
                 flat_cfg.sim_reset.humanoid_state,
                 tile_spawn=True,
                 spawn_tiles=(10, 20),
+                spawn_border=(40.0, 40.0),
             ),
         ),
         sim=SimCfg(dt=0.005, solver_iterations=8, solver_tolerance=1e-4),
