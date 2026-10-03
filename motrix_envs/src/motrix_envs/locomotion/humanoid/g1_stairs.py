@@ -190,11 +190,16 @@ _SLOPE_HEIGHT_SCALE = 3.2  # slope peak = slope * (8/2 - platform/2) <= 3.0 m.
 
 
 def _make_mixed_terrain() -> ProceduralHFieldAssetCfg:
-    """Build the mjlab ROUGH_TERRAINS_CFG-style seven-type mixture."""
+    """Build the mjlab ROUGH_TERRAINS_CFG-style seven-type mixture.
+
+    Rows are a difficulty gradient -- row ``r`` scales every generator's
+    amplitude by ``(r + 1) / rows`` -- so the terrain curriculum can move
+    lanes between easy and hard rows on episode ends, mirroring mjlab's
+    difficulty-interpolated terrain levels.
+    """
     rng = np.random.default_rng(8)
 
-    def stairs(kind: str) -> StairsTerrainGeneratorCfg:
-        difficulty = rng.uniform(0.25, 1.0)
+    def stairs(kind: str, difficulty: float) -> StairsTerrainGeneratorCfg:
         return StairsTerrainGeneratorCfg(
             axis="radial",
             # descending: central platform is the top; ascending: central pit.
@@ -207,26 +212,27 @@ def _make_mixed_terrain() -> ProceduralHFieldAssetCfg:
             height_scale=1.0,
         )
 
-    def slope(inverted: bool) -> PyramidSlopeTerrainGeneratorCfg:
+    def slope(inverted: bool, difficulty: float) -> PyramidSlopeTerrainGeneratorCfg:
         return PyramidSlopeTerrainGeneratorCfg(
-            slope=1.0 * rng.uniform(0.25, 1.0),
+            slope=1.0 * difficulty,
             inverted=inverted,
             platform_width=2.0,
             height_scale=_SLOPE_HEIGHT_SCALE,
         )
 
     cells = []
-    for _ in range(_MIX_ROWS):
+    for row_index in range(_MIX_ROWS):
+        difficulty = (row_index + 1) / _MIX_ROWS
         row = []
         for kind in _MIX_COLS:
             if kind == "flat":
                 row.append(FlatTerrainGeneratorCfg(height=0.0, height_scale=1.0))
             elif kind in ("stairs", "stairs_inv"):
-                row.append(stairs(kind))
+                row.append(stairs(kind, difficulty))
             elif kind == "slope":
-                row.append(slope(False))
+                row.append(slope(False, difficulty))
             elif kind == "slope_inv":
-                row.append(slope(True))
+                row.append(slope(True, difficulty))
             elif kind == "rough":
                 row.append(
                     NoiseTerrainGeneratorCfg(
@@ -238,7 +244,7 @@ def _make_mixed_terrain() -> ProceduralHFieldAssetCfg:
             else:  # wave
                 row.append(
                     WaveTerrainGeneratorCfg(
-                        amplitude=0.2 * rng.uniform(0.25, 1.0),
+                        amplitude=0.2 * difficulty,
                         num_waves=4,
                         height_scale=0.5,
                     )
@@ -298,9 +304,10 @@ def make_g129dof_walk_mixed_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
                 spawn_tiles=(_MIX_ROWS, len(_MIX_COLS)),
                 spawn_border=(_MIX_BORDER, _MIX_BORDER),
                 spawn_yaw_range=math.pi,
+                terrain_curriculum=True,
             )
         ),
-        sim=SimCfg(dt=0.005, solver_iterations=8, solver_tolerance=1e-4),
+        sim=SimCfg(dt=0.01, solver_iterations=8, solver_tolerance=1e-4),
         render_spacing=0.0,
     )
 

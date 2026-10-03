@@ -205,11 +205,16 @@ def _spawn_position(ctx: ManagerContext, params: WalkResetParams) -> tuple[float
     """Sample this lane's spawn position from the configured spawn mode."""
     pose = params.init_pose
     if params.tile_spawn:
-        # Fixed per-env terrain-tile origin (bound once at build time) plus a
-        # fresh in-tile XY offset each reset; the origin z already carries the
-        # tile's center-patch ground height, so no footprint clearance lift.
-        origin = params.spawn_origins[ctx.env_id]
+        walk: WalkCommand = ctx.commands["walk"]
         offset = params.tile_xy_offset_range
+        if walk.terrain_curriculum_enabled:
+            # Curriculum binding: the host moves this lane's tile row on
+            # episode ends; the origin grid is shared and row-major. The
+            # per-env lane views hand this lane's row/column bindings.
+            index = walk.terrain_levels[0] * walk.terrain_cols_count + walk.terrain_cols[0]
+            origin = walk.terrain_origin_grid[index]
+        else:
+            origin = params.spawn_origins[ctx.env_id]
         x = origin[0] + ctx.rand.uniform_range(-offset, offset)
         y = origin[1] + ctx.rand.uniform_range(-offset, offset)
         return x, y, pose[2] + origin[2]
@@ -237,21 +242,18 @@ def reset_walk_state_randomized(ctx: ManagerContext, sim_writes: Map[np.ndarray]
     _write_spawn_state(ctx, sim_writes, params, x, y, z)
 
 
-def _tile_spawn_origins(
-    grid: HeightFieldGrid, num_envs: int, tiles: tuple[int, int], border: tuple[float, float]
+def _tile_origin_grid(
+    grid: HeightFieldGrid, tiles: tuple[int, int], border: tuple[float, float]
 ) -> np.ndarray:
-    """Bind each lane to one fixed terrain-tile origin at build time.
+    """Compute every tile origin on the interior grid, row-major.
 
-    Tile rows follow the height-field y axis and columns the x axis. ``border``
-    holds the flat base margin widths ``(x, y)`` around the tile grid in
-    meters; tile centers are computed on the interior span it reserves. Each
-    origin carries the tile-center world xy and the maximum ground height
-    over the center +/-0.5 m patch. Tile rows are drawn randomly per lane
-    while tile columns are assigned by lane index, matching the reference
-    locomotion sampler's env-origin selection.
+    Layout matches :func:`_tile_spawn_origins`; the returned grid lets the
+    terrain-difficulty curriculum re-bind lanes to any tile row at runtime.
+    Each origin carries the tile-center world xy and the maximum ground
+    height over the center +/-0.5 m patch.
 
     Returns:
-        ``(num_envs, 3)`` float32 origins in tile-row/tile-column order.
+        ``(tile_rows, tile_cols, 3)`` float32 origins.
     """
     if border[0] < 0.0 or border[1] < 0.0:
         raise ValueError(f"tile spawn border must be non-negative, got {border!r}")
@@ -280,6 +282,23 @@ def _tile_spawn_origins(
             origin_grid[row, col, 0] = grid.origin[0] + cs * dx
             origin_grid[row, col, 1] = grid.origin[1] + rs * dy
             origin_grid[row, col, 2] = grid.z0[0] + grid.heights[rs - pr : rs + pr + 1, cs - pc : cs + pc + 1].max()
+    return origin_grid
+
+
+def _tile_spawn_origins(
+    grid: HeightFieldGrid, num_envs: int, tiles: tuple[int, int], border: tuple[float, float]
+) -> np.ndarray:
+    """Bind each lane to one fixed terrain-tile origin at build time.
+
+    Tile rows are drawn randomly per lane while tile columns are assigned by
+    lane index, matching the reference locomotion sampler's env-origin
+    selection.
+
+    Returns:
+        ``(num_envs, 3)`` float32 origins in tile-row/tile-column order.
+    """
+    tile_rows, tile_cols = tiles
+    origin_grid = _tile_origin_grid(grid, tiles, border)
     rng = np.random.default_rng(0)
     levels = rng.integers(0, tile_rows, num_envs)
     types = np.floor_divide(np.arange(num_envs), num_envs / tile_cols).astype(np.int64)
@@ -311,6 +330,9 @@ class WalkStateResetCfg(ResetTermCfg):
     spawn_border: tuple[float, float] = (0.0, 0.0)
     tile_xy_offset_range: float = 1.0
     spawn_yaw_range: float = 0.0
+    # Terrain difficulty curriculum: lanes start on low tile rows and the
+    # walk command moves them up/down on episode ends (requires tile_spawn).
+    terrain_curriculum: bool = False
     randomization: WalkRandomizationCfg = WalkRandomizationCfg()
 
     def __call__(self, ctx: BuildContext) -> ResetTerm:

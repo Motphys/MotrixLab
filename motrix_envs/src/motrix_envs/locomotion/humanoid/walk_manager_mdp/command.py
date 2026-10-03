@@ -125,6 +125,17 @@ class WalkCommand(CommandTerm):
     init_state_step_count: SharedArray
     init_state_curriculum_steps: np.float32
     init_state_curriculum_start: np.float32
+    # Terrain difficulty curriculum: every tile origin on the grid (shared,
+    # row-major rows x cols) plus per-lane row/column bindings. The host
+    # moves a lane's row up after a long episode and down after an early
+    # fall; the reset kernel resolves the spawn origin from the binding.
+    terrain_curriculum_enabled: bool
+    terrain_origin_grid: SharedArray
+    terrain_levels: np.ndarray
+    terrain_cols: np.ndarray
+    terrain_cols_count: np.int64
+    terrain_rows_count: np.int64
+    terrain_move_up_steps: np.float32
 
     # Per-environment state. ``phase`` and ``steps`` are published as metrics;
     # the kernel lowering hands each lane a writable row view.
@@ -135,6 +146,7 @@ class WalkCommand(CommandTerm):
     phase: np.ndarray
     phase_step: np.ndarray
     steps: np.ndarray = metric(name="command_steps", dtype=np.float32)
+    episode_steps: np.ndarray = metric(name="episode_steps", dtype=np.float32)
 
     @dispatch
     def update(self, ctx: ManagerContext) -> None:
@@ -150,6 +162,7 @@ class WalkCommand(CommandTerm):
     @dispatch
     def advance(self, ctx: ManagerContext) -> None:
         self.steps[0] += 1.0
+        self.episode_steps[0] += 1.0
         if self.steps[0] % self.resample_steps == 0.0:
             _lane_resample_command(ctx, self.command, self.vel_limit_low, self.vel_limit_high, self.stand_prob)
 
@@ -173,14 +186,28 @@ class WalkCommand(CommandTerm):
         )
 
     def reset(self, ctx: ResetContext) -> None:
-        """Update the penalty-scale curriculum from this round's episode ends.
+        """Update both curricula from this round's episode ends.
 
         ``ctx.env_ids`` is exactly the set of done lanes (terminated or
         truncated), so the EMA sample matches the direct env's
-        ``done = terminated | truncated``.
+        ``done = terminated | truncated``. The terrain curriculum moves a
+        lane one row up when its episode survived near the timeout and one
+        row down on an early fall, then clears the lane's episode counter.
         """
         ctx.metrics["penalty_scale"] = float(self.penalty_scale[0])
-        if not self.curriculum_enabled or ctx.env_ids.size == 0:
+        if ctx.env_ids.size == 0:
+            return
+        if self.terrain_curriculum_enabled:
+            for env_id in ctx.env_ids:
+                if self.episode_steps[env_id, 0] >= self.terrain_move_up_steps:
+                    self.terrain_levels[env_id, 0] = min(
+                        int(self.terrain_levels[env_id, 0]) + 1, int(self.terrain_rows_count) - 1
+                    )
+                else:
+                    self.terrain_levels[env_id, 0] = max(int(self.terrain_levels[env_id, 0]) - 1, 0)
+                self.episode_steps[env_id, 0] = 0.0
+            ctx.metrics["terrain_level"] = float(np.mean(self.terrain_levels))
+        if not self.curriculum_enabled:
             return
         ep_len = self.steps[ctx.env_ids, 0].astype(np.float64) + 1.0
         self.avg_ep_len[0] = np.float32(0.99 * self.avg_ep_len[0] + 0.01 * float(ep_len.mean()))
@@ -222,6 +249,12 @@ class WalkCommandCfg(CommandCfg):
     degree: float = 0.001
     init_state_curriculum_steps: int = 0
     init_state_curriculum_start: float = 1.0
+    # Terrain difficulty curriculum (requires the walk reset term's tile
+    # spawn): lanes start at terrain_start_ratio of the tile rows and move
+    # up after surviving terrain_move_up_ratio of the episode, down on falls.
+    terrain_curriculum: bool = False
+    terrain_start_ratio: float = 0.2
+    terrain_move_up_ratio: float = 0.9
     vel_limit: list[list[float]] = (
         (-1.0, -1.0, -1.0),
         (1.0, 1.0, 1.0),
@@ -229,6 +262,7 @@ class WalkCommandCfg(CommandCfg):
 
     def __call__(self, env: ManagerEnv) -> WalkCommand:
         num_envs = env.num_envs
+        terrain = _build_terrain_curriculum(env, self) if self.terrain_curriculum else None
         return WalkCommand(
             vel_limit_low=np.asarray(self.vel_limit[0], dtype=np.float32),
             vel_limit_high=np.asarray(self.vel_limit[1], dtype=np.float32),
@@ -261,9 +295,53 @@ class WalkCommandCfg(CommandCfg):
             init_state_step_count=np.zeros((1,), dtype=np.float32),
             init_state_curriculum_steps=np.float32(max(self.init_state_curriculum_steps, 1)),
             init_state_curriculum_start=np.float32(self.init_state_curriculum_start),
+            terrain_curriculum_enabled=self.terrain_curriculum,
+            terrain_origin_grid=(
+                terrain["origin_grid"] if terrain else np.zeros((1, 3), dtype=np.float32)
+            ).reshape(-1, 3),
+            terrain_levels=(
+                terrain["levels"] if terrain else np.zeros((num_envs, 1), dtype=np.int64)
+            ),
+            terrain_cols=terrain["cols"] if terrain else np.zeros((num_envs, 1), dtype=np.int64),
+            terrain_cols_count=np.int64(terrain["cols_count"] if terrain else 1),
+            terrain_rows_count=np.int64(terrain["rows_count"] if terrain else 1),
+            terrain_move_up_steps=np.float32(
+                terrain["move_up_steps"] if terrain else np.float32(np.finfo(np.float32).max)
+            ),
             command=np.zeros((num_envs, 3), dtype=np.float32),
             phase_offset=np.zeros((num_envs, 2), dtype=np.float32),
             sin_cos=np.zeros((num_envs, 4), dtype=np.float32),
             phase=np.zeros((num_envs, 2), dtype=np.float32),
             steps=np.zeros((num_envs, 1), dtype=np.float32),
+            episode_steps=np.zeros((num_envs, 1), dtype=np.float32),
         )
+
+
+def _build_terrain_curriculum(env: ManagerEnv, cfg: WalkCommandCfg) -> dict:
+    """Build the tile-origin grid and per-lane bindings for tile-spawn cfgs."""
+    from motrix_env_core.config.scene import HFieldTerrainCfg  # noqa: TC001
+    from motrix_envs.locomotion.humanoid.walk_manager_mdp.reset import _tile_origin_grid
+    from motrix_envs.locomotion.humanoid.walk_manager_mdp.terrain import ground_height_grid
+
+    reset_cfg = env.cfg.sim_reset.humanoid_state
+    if not reset_cfg.tile_spawn or reset_cfg.spawn_tiles is None:
+        raise ValueError("WalkCommandCfg.terrain_curriculum requires tile_spawn with spawn_tiles.")
+    floor_obj = getattr(env.cfg.scene.objs, "floor", None)
+    if not isinstance(floor_obj, HFieldTerrainCfg):
+        raise ValueError("WalkCommandCfg.terrain_curriculum requires a height-field ground geom.")
+    grid = ground_height_grid(env, env.cfg.ground_heightfield_geom)
+    tiles = reset_cfg.spawn_tiles
+    rows, cols = tiles
+    origin_grid = _tile_origin_grid(grid, tiles, reset_cfg.spawn_border).reshape(rows * cols, 3)
+    levels = np.full((env.num_envs, 1), int(cfg.terrain_start_ratio * rows), dtype=np.int64)
+    cols_of_env = (np.arange(env.num_envs) * cols // env.num_envs).astype(np.int64).reshape(-1, 1)
+    # ctrl_dt on this cfg is wired to the env's control period in the task cfg.
+    episode_steps = 20.0 / max(cfg.ctrl_dt, 1e-6)
+    return {
+        "origin_grid": np.ascontiguousarray(origin_grid),
+        "levels": levels,
+        "cols": cols_of_env,
+        "cols_count": cols,
+        "rows_count": rows,
+        "move_up_steps": np.float32(cfg.terrain_move_up_ratio * episode_steps),
+    }

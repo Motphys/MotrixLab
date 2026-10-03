@@ -238,4 +238,8 @@ class HumanoidVelocityTrackingManagerEnvCfg(ManagerBasedEnvCfg):
         # the per-step host hook); mirror the randomization cfg's settings.
         self.commands.walk.init_state_curriculum_steps = randomization.curriculum_steps
         self.commands.walk.init_state_curriculum_start = randomization.curriculum_start
+        # The terrain difficulty curriculum also lives on the walk command,
+        # which owns the episode-end host hook.
+        if getattr(self.sim_reset.humanoid_state, "terrain_curriculum", False):
+            self.commands.walk.terrain_curriculum = True
         self.commands.walk.ctrl_dt = self.ctrl_dt
