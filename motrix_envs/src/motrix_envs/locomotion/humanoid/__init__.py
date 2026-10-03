@@ -3,4 +3,4 @@
 
 """Robot-agnostic humanoid locomotion environments and configuration schemas."""
 
-from . import dex_evt, g1, k1, microduck  # noqa: F401 register envs
+from . import dex_evt, g1, g1_stairs, k1, microduck  # noqa: F401 register envs

@@ -60,7 +60,7 @@ from motrix_env_core.sim import (
 )
 from motrix_envs.config.scene import StandardSceneAssetsCfg, StandardSceneCfg
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.command import WalkCommandCfg
-from motrix_envs.locomotion.humanoid.walk_manager_mdp.observations import GaitPhaseObsCfg
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.observations import GaitPhaseObsCfg, HeightScanObsCfg
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.reset import WalkStateResetCfg
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.rewards import (
     FeetPhaseRewardCfg,
@@ -144,6 +144,7 @@ class WalkObservationsCfg(ManagerObservationsCfg):
         actions: ActionsObsCfg = ActionsObsCfg()
         sin_phase: GaitPhaseObsCfg = GaitPhaseObsCfg(offset=0, size=2)
         cos_phase: GaitPhaseObsCfg = GaitPhaseObsCfg(offset=2, size=2)
+        height_scan: HeightScanObsCfg | None = None
 
     @configclass
     class ValueCfg(ManagerObservationGroupCfg):
@@ -156,6 +157,7 @@ class WalkObservationsCfg(ManagerObservationsCfg):
         actions: ActionsObsCfg = ActionsObsCfg()
         sin_phase: GaitPhaseObsCfg = GaitPhaseObsCfg(offset=0, size=2)
         cos_phase: GaitPhaseObsCfg = GaitPhaseObsCfg(offset=2, size=2)
+        height_scan: HeightScanObsCfg | None = None
 
     policy: PolicyCfg = PolicyCfg()
     value: ValueCfg = ValueCfg()

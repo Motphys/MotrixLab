@@ -20,6 +20,8 @@ from motrix_env_core.mdp.terrain import HeightFieldGrid, heightfield_lookup
 from motrix_env_core.numba.kernel_data.map import Map
 from motrix_env_core.numba.manager.context import BuildContext
 from motrix_env_core.numba.manager.dispatch import dispatch
+from motrix_env_core.numba.math.quaternion import from_euler as quat_from_euler
+from motrix_env_core.numba.math.quaternion import mul as quat_mul
 from motrix_env_core.sim.write import (
     ActuatorDampingWrite,
     ActuatorKpWrite,
@@ -88,6 +90,7 @@ class WalkResetParams:
     spawn_origins: SharedArray
     tile_spawn: bool
     tile_xy_offset_range: np.float32
+    spawn_yaw_range: np.float32
     randomization_enabled: bool
     kp_default: SharedArray
     damping_default: SharedArray
@@ -167,7 +170,12 @@ def _write_spawn_state(
 ) -> None:
     # Homogeneous float32 tuple: z picks up float64 from the terrain-height add.
     sim_writes["position"][0, :3] = np.float32(x), np.float32(y), np.float32(z)
-    sim_writes["rotation"][0] = params.init_pose[3:]
+    if params.spawn_yaw_range > 0.0:
+        yaw = ctx.rand.uniform_range(-params.spawn_yaw_range, params.spawn_yaw_range)
+        yaw_quat = quat_from_euler(0.0, 0.0, yaw)
+        sim_writes["rotation"][0] = quat_mul(yaw_quat, params.init_pose[3:])
+    else:
+        sim_writes["rotation"][0] = params.init_pose[3:]
     # The initial-state curriculum narrows both randomization ranges toward
     # their centers early in training; a degenerate range writes the nominal
     # pose and zero velocity through the same branches below.
@@ -302,6 +310,7 @@ class WalkStateResetCfg(ResetTermCfg):
     spawn_tiles: tuple[int, int] | None = None
     spawn_border: tuple[float, float] = (0.0, 0.0)
     tile_xy_offset_range: float = 1.0
+    spawn_yaw_range: float = 0.0
     randomization: WalkRandomizationCfg = WalkRandomizationCfg()
 
     def __call__(self, ctx: BuildContext) -> ResetTerm:
@@ -355,6 +364,7 @@ class WalkStateResetCfg(ResetTermCfg):
             spawn_origins=spawn_origins,
             tile_spawn=self.tile_spawn,
             tile_xy_offset_range=np.float32(self.tile_xy_offset_range),
+            spawn_yaw_range=np.float32(self.spawn_yaw_range),
         )
 
         randomization = self.randomization
