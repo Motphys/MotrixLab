@@ -263,7 +263,7 @@ def make_g129dof_walk_terrain_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
                 ),
             ),
         ),
-        sim=SimCfg(dt=0.005, solver_iterations=8, solver_tolerance=1e-4),
+        sim=SimCfg(dt=0.01, solver_iterations=8, solver_tolerance=1e-4),
         render_spacing=0.0,
     )
 
