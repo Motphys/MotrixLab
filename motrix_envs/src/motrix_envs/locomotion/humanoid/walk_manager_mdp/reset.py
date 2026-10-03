@@ -33,6 +33,7 @@ from motrix_env_core.sim.write import (
     LinkComWrite,
     LinkMassWrite,
 )
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.command import WalkCommand
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.randomization import WalkRandomizationCfg
 
 
@@ -103,6 +104,8 @@ class WalkResetParams:
     com_noise: np.ndarray
     joint_pos_scale_range: np.ndarray
     root_velocity_range: np.ndarray
+    joint_scale_center: np.float32
+    root_velocity_center: np.float32
 
 
 @njit(inline="always")
@@ -165,20 +168,25 @@ def _write_spawn_state(
     # Homogeneous float32 tuple: z picks up float64 from the terrain-height add.
     sim_writes["position"][0, :3] = np.float32(x), np.float32(y), np.float32(z)
     sim_writes["rotation"][0] = params.init_pose[3:]
-    root_velocity = params.root_velocity_range
-    if root_velocity[1] > root_velocity[0]:
+    # The initial-state curriculum narrows both randomization ranges toward
+    # their centers early in training; a degenerate range writes the nominal
+    # pose and zero velocity through the same branches below.
+    walk: WalkCommand = ctx.commands["walk"]
+    mix = walk.init_state_mix[0]
+    root_lo = params.root_velocity_center + (params.root_velocity_range[0] - params.root_velocity_center) * mix
+    root_hi = params.root_velocity_center + (params.root_velocity_range[1] - params.root_velocity_center) * mix
+    if root_hi > root_lo:
         for i in range(3):
-            sim_writes["linear_velocity"][0, i] = ctx.rand.uniform_range(root_velocity[0], root_velocity[1])
-            sim_writes["angular_velocity"][0, i] = ctx.rand.uniform_range(root_velocity[0], root_velocity[1])
+            sim_writes["linear_velocity"][0, i] = ctx.rand.uniform_range(root_lo, root_hi)
+            sim_writes["angular_velocity"][0, i] = ctx.rand.uniform_range(root_lo, root_hi)
     else:
         sim_writes["linear_velocity"][0, :] = 0.0
         sim_writes["angular_velocity"][0, :] = 0.0
-    joint_scale = params.joint_pos_scale_range
-    if joint_scale[1] > joint_scale[0]:
+    joint_lo = params.joint_scale_center + (params.joint_pos_scale_range[0] - params.joint_scale_center) * mix
+    joint_hi = params.joint_scale_center + (params.joint_pos_scale_range[1] - params.joint_scale_center) * mix
+    if joint_hi > joint_lo:
         for i in range(params.default_joint_angles.shape[0]):
-            sim_writes["joints_position"][i] = params.default_joint_angles[i] * ctx.rand.uniform_range(
-                joint_scale[0], joint_scale[1]
-            )
+            sim_writes["joints_position"][i] = params.default_joint_angles[i] * ctx.rand.uniform_range(joint_lo, joint_hi)
     else:
         sim_writes["joints_position"][:] = params.default_joint_angles
     sim_writes["joints_velocity"][:] = 0.0
@@ -387,6 +395,8 @@ class WalkStateResetCfg(ResetTermCfg):
                 com_noise=np.asarray(randomization.base_com_offset_noise, dtype=np.float32),
                 joint_pos_scale_range=np.asarray(randomization.joint_pos_scale_range, dtype=np.float32),
                 root_velocity_range=np.asarray(randomization.root_velocity_range, dtype=np.float32),
+                joint_scale_center=np.float32(np.mean(randomization.joint_pos_scale_range)),
+                root_velocity_center=np.float32(np.mean(randomization.root_velocity_range)),
             )
         else:
             params.update(
@@ -406,6 +416,8 @@ class WalkStateResetCfg(ResetTermCfg):
                 com_noise=np.zeros(3, dtype=np.float32),
                 joint_pos_scale_range=np.ones(2, dtype=np.float32),
                 root_velocity_range=np.zeros(2, dtype=np.float32),
+                joint_scale_center=np.float32(1.0),
+                root_velocity_center=np.float32(0.0),
             )
 
         kernel = reset_walk_state_randomized if randomization.enabled else reset_walk_state

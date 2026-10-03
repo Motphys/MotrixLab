@@ -256,6 +256,11 @@ def make_g129dof_walk_terrain_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
                 tile_spawn=True,
                 spawn_tiles=(10, 20),
                 spawn_border=(40.0, 40.0),
+                randomization=replace(
+                    flat_cfg.sim_reset.humanoid_state.randomization,
+                    curriculum_steps=15000,
+                    curriculum_start=0.3,
+                ),
             ),
         ),
         sim=SimCfg(dt=0.005, solver_iterations=8, solver_tolerance=1e-4),

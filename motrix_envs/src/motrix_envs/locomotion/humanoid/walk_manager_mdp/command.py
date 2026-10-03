@@ -118,6 +118,13 @@ class WalkCommand(CommandTerm):
     degree: np.float32
     min_scale: np.float32
     max_scale: np.float32
+    # Initial-state randomization curriculum: shared mix fraction read by the
+    # walk reset kernel; widened on the host from ``init_state_curriculum_start``
+    # toward 1.0 over ``init_state_curriculum_steps`` control steps.
+    init_state_mix: SharedArray
+    init_state_step_count: SharedArray
+    init_state_curriculum_steps: np.float32
+    init_state_curriculum_start: np.float32
 
     # Per-environment state. ``phase`` and ``steps`` are published as metrics;
     # the kernel lowering hands each lane a writable row view.
@@ -185,6 +192,16 @@ class WalkCommand(CommandTerm):
             min(max(float(self.penalty_scale[0]), float(self.min_scale)), float(self.max_scale))
         )
 
+    def on_transition(self) -> None:
+        """Widen the initial-state randomization curriculum by one step."""
+        if self.init_state_mix[0] >= np.float32(1.0):
+            return
+        self.init_state_step_count[0] += np.float32(1.0)
+        progress = min(float(self.init_state_step_count[0]) / float(self.init_state_curriculum_steps), 1.0)
+        self.init_state_mix[0] = np.float32(
+            float(self.init_state_curriculum_start) + (1.0 - float(self.init_state_curriculum_start)) * progress
+        )
+
 
 @configclass(kw_only=True)
 class WalkCommandCfg(CommandCfg):
@@ -203,6 +220,8 @@ class WalkCommandCfg(CommandCfg):
     level_down_threshold: float = 150.0
     level_up_threshold: float = 750.0
     degree: float = 0.001
+    init_state_curriculum_steps: int = 0
+    init_state_curriculum_start: float = 1.0
     vel_limit: list[list[float]] = (
         (-1.0, -1.0, -1.0),
         (1.0, 1.0, 1.0),
@@ -234,6 +253,14 @@ class WalkCommandCfg(CommandCfg):
             degree=np.float32(self.degree),
             min_scale=np.float32(self.min_scale),
             max_scale=np.float32(self.max_scale),
+            init_state_mix=np.full(
+                (1,),
+                self.init_state_curriculum_start if self.init_state_curriculum_steps > 0 else 1.0,
+                dtype=np.float32,
+            ),
+            init_state_step_count=np.zeros((1,), dtype=np.float32),
+            init_state_curriculum_steps=np.float32(max(self.init_state_curriculum_steps, 1)),
+            init_state_curriculum_start=np.float32(self.init_state_curriculum_start),
             command=np.zeros((num_envs, 3), dtype=np.float32),
             phase_offset=np.zeros((num_envs, 2), dtype=np.float32),
             sin_cos=np.zeros((num_envs, 4), dtype=np.float32),

@@ -232,4 +232,8 @@ class HumanoidVelocityTrackingManagerEnvCfg(ManagerBasedEnvCfg):
         # Scene-level facts shared by several terms.
         self.rewards.feet_phase.ground_geom = ground_geom
         self.sim_reset.humanoid_state.ground_geom = ground_geom
+        # The initial-state curriculum ramp lives on the walk command (it owns
+        # the per-step host hook); mirror the randomization cfg's settings.
+        self.commands.walk.init_state_curriculum_steps = randomization.curriculum_steps
+        self.commands.walk.init_state_curriculum_start = randomization.curriculum_start
         self.commands.walk.ctrl_dt = self.ctrl_dt
