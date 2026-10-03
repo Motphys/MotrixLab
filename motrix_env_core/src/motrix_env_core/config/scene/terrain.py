@@ -331,6 +331,40 @@ class PyramidSlopeTerrainGeneratorCfg(TerrainGeneratorCfg):
 
 
 @configclass
+class WaveTerrainGeneratorCfg(TerrainGeneratorCfg):
+    """Summed sinusoidal waves along both field axes (Isaac Lab ``wave_terrain``).
+
+    Height is ``0.5 * amplitude * (cos(2*pi*num_waves*y/Y) + sin(2*pi*num_waves*x/X))``
+    around the 0.5 datum, so the physical surface spans ``+/- amplitude``
+    around the datum.
+    """
+
+    # Physical wave amplitude in meters; the surface spans datum +/- amplitude.
+    amplitude: float = 0.1
+    # Number of complete wave cycles along each axis.
+    num_waves: int = 4
+
+    def validate(self) -> None:
+        super().validate()
+        if not np.isfinite(self.amplitude) or self.amplitude <= 0.0:
+            raise ValueError(f"WaveTerrainGeneratorCfg.amplitude must be finite and positive, got {self.amplitude!r}")
+        if self.num_waves < 1:
+            raise ValueError(f"WaveTerrainGeneratorCfg.num_waves must be at least 1, got {self.num_waves!r}")
+        if self.amplitude > 0.5 * self.height_scale * (1.0 + _HEIGHT_EPS):
+            raise ValueError(
+                f"WaveTerrainGeneratorCfg.amplitude {self.amplitude:.4f} m must stay within "
+                f"0.5 * height_scale = {0.5 * self.height_scale:.4f} m of the datum"
+            )
+
+    def generate(self, size: Vec2, shape: tuple[int, int]) -> np.ndarray:
+        x = (np.arange(shape[1], dtype=np.float64) + 0.5) / shape[1]
+        y = (np.arange(shape[0], dtype=np.float64) + 0.5) / shape[0]
+        kx = 2.0 * np.pi * self.num_waves
+        wave = 0.5 * self.amplitude * (np.cos(kx * y)[:, None] + np.sin(kx * x)[None, :])
+        return (0.5 + wave / self.height_scale).astype(np.float32)
+
+
+@configclass
 class QuantizedTerrainGeneratorCfg(TerrainGeneratorCfg):
     """Quantize another generator's output into discrete height levels (terraces).
 

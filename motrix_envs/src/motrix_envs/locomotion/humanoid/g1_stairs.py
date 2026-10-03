@@ -20,9 +20,12 @@ from motrix_env_core.base import SimCfg
 from motrix_env_core.config.scene import (
     FlatTerrainGeneratorCfg,
     HFieldTerrainCfg,
+    NoiseTerrainGeneratorCfg,
     ProceduralHFieldAssetCfg,
+    PyramidSlopeTerrainGeneratorCfg,
     StairsTerrainGeneratorCfg,
     SystemCameraCfg,
+    WaveTerrainGeneratorCfg,
     grid_terrain,
 )
 from motrix_env_core.manager import ManagerEnv
@@ -158,3 +161,148 @@ def make_g129dof_walk_stairs_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
 
 
 registry.env("g1-walk-stairs")(ManagerEnv)
+
+
+# ---------------------------------------------------------------------------
+# g1-walk-mixed: mjlab ROUGH_TERRAINS_CFG parity.
+# ---------------------------------------------------------------------------
+
+# Column layout mirrors mjlab's proportions exactly: flat .2 / pyramid stairs
+# .2 / inverted stairs .2 / slope .1 / inverted slope .1 / random rough .1 /
+# wave .1 across a 10-row x 10-column grid. Difficulty, which mjlab
+# interpolates along curriculum rows, is sampled per tile instead.
+_MIX_COLS = (
+    "flat",
+    "flat",
+    "stairs",
+    "stairs",
+    "stairs_inv",
+    "stairs_inv",
+    "slope",
+    "slope_inv",
+    "rough",
+    "wave",
+)
+_MIX_ROWS = 10
+_MIX_TILE = 8.0
+_MIX_BORDER = 20.0
+_SLOPE_HEIGHT_SCALE = 3.2  # slope peak = slope * (8/2 - platform/2) <= 3.0 m.
+
+
+def _make_mixed_terrain() -> ProceduralHFieldAssetCfg:
+    """Build the mjlab ROUGH_TERRAINS_CFG-style seven-type mixture."""
+    rng = np.random.default_rng(8)
+
+    def stairs(kind: str) -> StairsTerrainGeneratorCfg:
+        difficulty = rng.uniform(0.25, 1.0)
+        return StairsTerrainGeneratorCfg(
+            axis="radial",
+            # descending: central platform is the top; ascending: central pit.
+            profile="descending" if kind == "stairs" else "ascending",
+            step_count=9,
+            step_width=0.30,
+            step_height=0.10 * difficulty,
+            platform_width=3.0,
+            base_level=0.1,
+            height_scale=1.0,
+        )
+
+    def slope(inverted: bool) -> PyramidSlopeTerrainGeneratorCfg:
+        return PyramidSlopeTerrainGeneratorCfg(
+            slope=1.0 * rng.uniform(0.25, 1.0),
+            inverted=inverted,
+            platform_width=2.0,
+            height_scale=_SLOPE_HEIGHT_SCALE,
+        )
+
+    cells = []
+    for _ in range(_MIX_ROWS):
+        row = []
+        for kind in _MIX_COLS:
+            if kind == "flat":
+                row.append(FlatTerrainGeneratorCfg(height=0.0, height_scale=1.0))
+            elif kind in ("stairs", "stairs_inv"):
+                row.append(stairs(kind))
+            elif kind == "slope":
+                row.append(slope(False))
+            elif kind == "slope_inv":
+                row.append(slope(True))
+            elif kind == "rough":
+                row.append(
+                    NoiseTerrainGeneratorCfg(
+                        seed=int(rng.integers(1 << 30)),
+                        height_range=(0.02, 0.10),
+                        height_scale=0.3,
+                    )
+                )
+            else:  # wave
+                row.append(
+                    WaveTerrainGeneratorCfg(
+                        amplitude=0.2 * rng.uniform(0.25, 1.0),
+                        num_waves=4,
+                        height_scale=0.5,
+                    )
+                )
+        cells.append(row)
+    size = (len(_MIX_COLS) * _MIX_TILE + 2.0 * _MIX_BORDER, _MIX_ROWS * _MIX_TILE + 2.0 * _MIX_BORDER)
+    shape = (int(size[1] / 0.1), int(size[0] / 0.1))
+    return ProceduralHFieldAssetCfg(
+        generator=grid_terrain(cells, size=size, border=(_MIX_BORDER, _MIX_BORDER)),
+        size=size,
+        shape=shape,
+    )
+
+
+@registry.envcfg("g1-walk-mixed")
+def make_g129dof_walk_mixed_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
+    """Track G1 walking commands over the mjlab rough terrain mixture."""
+    robot = UnitreeG129Dof()
+    return HumanoidVelocityTrackingManagerEnvCfg(
+        scene=humanoid_cfg.HumanoidWalkSceneCfg(
+            system_camera=SystemCameraCfg(distance=6.0, elevation=-20.0, azimuth=180.0),
+            assets=humanoid_cfg.TerrainSceneAssetsCfg(terrain=_make_mixed_terrain()),
+            objs=StandardSceneObjsCfg(
+                floor=HFieldTerrainCfg(hfield="terrain", material="mat_ground"),
+                robot=robot,
+            ),
+        ),
+        rewards=_make_g1_rewards(robot),
+        terminations=WalkTerminationsCfg(
+            colliding=CollidingTerminationCfg(
+                termination_geoms=_G1_TERMINATION_GEOMS,
+                ground_geom="floor",
+            ),
+            bad_dof_velocity=BadDofVelocityTerminationCfg(threshold=100.0),
+        ),
+        commands=WalkCommandsCfg(
+            walk=WalkCommandCfg(
+                vel_limit=((-1.0, -1.0, -0.5), (1.0, 1.0, 0.5)),
+                stand_prob=0.1,
+                resampling_time=6.0,
+                gait_period_randomization_width=0.2,
+            )
+        ),
+        observations=WalkObservationsCfg(
+            policy=replace(
+                WalkObservationsCfg.PolicyCfg(),
+                height_scan=humanoid_cfg.HeightScanObsCfg(),
+            ),
+            value=replace(
+                WalkObservationsCfg.ValueCfg(),
+                height_scan=humanoid_cfg.HeightScanObsCfg(noise=0.0),
+            ),
+        ),
+        sim_reset=humanoid_cfg.WalkResetCfg(
+            humanoid_state=humanoid_cfg.WalkStateResetCfg(
+                tile_spawn=True,
+                spawn_tiles=(_MIX_ROWS, len(_MIX_COLS)),
+                spawn_border=(_MIX_BORDER, _MIX_BORDER),
+                spawn_yaw_range=math.pi,
+            )
+        ),
+        sim=SimCfg(dt=0.005, solver_iterations=8, solver_tolerance=1e-4),
+        render_spacing=0.0,
+    )
+
+
+registry.env("g1-walk-mixed")(ManagerEnv)
