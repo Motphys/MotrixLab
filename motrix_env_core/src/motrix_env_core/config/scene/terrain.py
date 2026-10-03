@@ -299,6 +299,9 @@ class PyramidSlopeTerrainGeneratorCfg(TerrainGeneratorCfg):
     inverted: bool = False
     # Flat central zone width in meters; 0 runs the slope to the center point.
     platform_width: float = 0.0
+    # Normalized base offset added to every cell, shifting the whole shape up
+    # so an inverted pit can keep its rim flush with a shared tile datum.
+    base_level: float = 0.0
 
     def validate(self) -> None:
         super().validate()
@@ -309,6 +312,11 @@ class PyramidSlopeTerrainGeneratorCfg(TerrainGeneratorCfg):
                 f"PyramidSlopeTerrainGeneratorCfg.platform_width must be finite and non-negative, "
                 f"got {self.platform_width!r}"
             )
+        if not np.isfinite(self.base_level) or not 0.0 <= self.base_level <= 1.0:
+            raise ValueError(
+                f"PyramidSlopeTerrainGeneratorCfg.base_level must be finite and within [0, 1], "
+                f"got {self.base_level!r}"
+            )
 
     def generate(self, size: Vec2, shape: tuple[int, int]) -> np.ndarray:
         half = (size[0] / 2.0, size[1] / 2.0)
@@ -316,10 +324,14 @@ class PyramidSlopeTerrainGeneratorCfg(TerrainGeneratorCfg):
         offset_x = (np.arange(shape[1], dtype=np.float64) + 0.5) / shape[1] * size[0] - half[0]
         offset_y = (np.arange(shape[0], dtype=np.float64) + 0.5) / shape[0] * size[1] - half[1]
         edge_distance = np.minimum((half[0] - np.abs(offset_x))[None, :], (half[1] - np.abs(offset_y))[:, None])
-        heights = np.maximum(edge_distance - self.platform_width / 2.0, 0.0) * self.slope
+        # Clip the ramp at the platform-edge height so the central zone is a
+        # flat pad at the peak (mound) or pit floor (inverted) level.
+        platform_level = max(min(half) - self.platform_width / 2.0, 0.0) * self.slope
+        heights = np.minimum(edge_distance * self.slope, platform_level)
         peak = float(heights.max())
         if self.inverted:
             heights = peak - heights
+        heights += self.base_level * self.height_scale
         normalized = heights / self.height_scale
         if normalized.max() > 1.0 + _HEIGHT_EPS:
             raise ValueError(

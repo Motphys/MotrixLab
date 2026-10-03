@@ -186,7 +186,13 @@ _MIX_COLS = (
 _MIX_ROWS = 10
 _MIX_TILE = 8.0
 _MIX_BORDER = 20.0
-_SLOPE_HEIGHT_SCALE = 3.2  # slope peak = slope * (8/2 - platform/2) <= 3.0 m.
+# Global tile datum: every tile rim sits at 3.0 m so inverted-pit rims stay
+# flush with flat/stairs neighbors (mjlab keeps its rim at z=0 and digs pits
+# below ground via per-geom hfield offsets; a single shared non-negative
+# composite hfield instead shifts the whole map up by the max pit depth).
+_DATUM = 3.0
+_FIELD_HEIGHT_SCALE = 6.0
+_DATUM_LEVEL = _DATUM / _FIELD_HEIGHT_SCALE
 
 
 def _make_mixed_terrain() -> ProceduralHFieldAssetCfg:
@@ -208,16 +214,22 @@ def _make_mixed_terrain() -> ProceduralHFieldAssetCfg:
             step_width=0.30,
             step_height=0.10 * difficulty,
             platform_width=3.0,
-            base_level=0.1,
-            height_scale=1.0,
+            base_level=_DATUM_LEVEL,
+            height_scale=_FIELD_HEIGHT_SCALE,
         )
 
     def slope(inverted: bool, difficulty: float) -> PyramidSlopeTerrainGeneratorCfg:
+        # Pit depth equals the mound peak, so an inverted rim stays flush with
+        # the shared datum by shifting the shape up by (datum - peak); a
+        # normal mound simply rises from the datum.
+        peak = 1.0 * difficulty * (_MIX_TILE / 2.0 - 1.0)
+        base = _DATUM_LEVEL if not inverted else (_DATUM - peak) / _FIELD_HEIGHT_SCALE
         return PyramidSlopeTerrainGeneratorCfg(
             slope=1.0 * difficulty,
             inverted=inverted,
             platform_width=2.0,
-            height_scale=_SLOPE_HEIGHT_SCALE,
+            base_level=base,
+            height_scale=_FIELD_HEIGHT_SCALE,
         )
 
     cells = []
@@ -226,7 +238,7 @@ def _make_mixed_terrain() -> ProceduralHFieldAssetCfg:
         row = []
         for kind in _MIX_COLS:
             if kind == "flat":
-                row.append(FlatTerrainGeneratorCfg(height=0.0, height_scale=1.0))
+                row.append(FlatTerrainGeneratorCfg(height=_DATUM_LEVEL, height_scale=_FIELD_HEIGHT_SCALE))
             elif kind in ("stairs", "stairs_inv"):
                 row.append(stairs(kind, difficulty))
             elif kind == "slope":
@@ -238,7 +250,7 @@ def _make_mixed_terrain() -> ProceduralHFieldAssetCfg:
                     NoiseTerrainGeneratorCfg(
                         seed=int(rng.integers(1 << 30)),
                         height_range=(0.02, 0.10),
-                        height_scale=0.3,
+                        height_scale=_FIELD_HEIGHT_SCALE,
                     )
                 )
             else:  # wave
@@ -246,14 +258,19 @@ def _make_mixed_terrain() -> ProceduralHFieldAssetCfg:
                     WaveTerrainGeneratorCfg(
                         amplitude=0.2 * difficulty,
                         num_waves=4,
-                        height_scale=0.5,
+                        height_scale=_FIELD_HEIGHT_SCALE,
                     )
                 )
         cells.append(row)
     size = (len(_MIX_COLS) * _MIX_TILE + 2.0 * _MIX_BORDER, _MIX_ROWS * _MIX_TILE + 2.0 * _MIX_BORDER)
     shape = (int(size[1] / 0.1), int(size[0] / 0.1))
     return ProceduralHFieldAssetCfg(
-        generator=grid_terrain(cells, size=size, border=(_MIX_BORDER, _MIX_BORDER)),
+        generator=grid_terrain(
+            cells,
+            size=size,
+            border=(_MIX_BORDER, _MIX_BORDER),
+            base=FlatTerrainGeneratorCfg(height=_DATUM_LEVEL, height_scale=_FIELD_HEIGHT_SCALE),
+        ),
         size=size,
         shape=shape,
     )
