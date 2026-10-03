@@ -164,3 +164,52 @@ def test_walk_env_randomized_reset_samples_within_ranges():
         assert np.all((action_state.delay_steps >= 0) & (action_state.delay_steps <= 1))
     finally:
         del env
+
+
+def test_terrain_env_tile_spawn_binds_origins_and_offsets_within_tile():
+    from motrix_envs.locomotion.humanoid.g1 import make_g129dof_walk_terrain_cfg
+
+    num_envs = 4
+    env = ManagerEnv(make_g129dof_walk_terrain_cfg(), num_envs=num_envs)
+    try:
+        env.step(np.zeros((num_envs, env.num_actuators), dtype=np.float32))
+        params = env.sim_reset_terms["humanoid_state"].args[0]
+        assert params.tile_spawn
+        origins = params.spawn_origins
+        assert origins.shape == (num_envs, 3)
+        # Map spans 160 m x 80 m with 8 m tiles: centers stay inside the map.
+        assert np.all(origins[:, 0] > -80.0) and np.all(origins[:, 0] < 80.0)
+        assert np.all(origins[:, 1] > -40.0) and np.all(origins[:, 1] < 40.0)
+
+        runtime = env._sim_reset_runtime
+        names = list(runtime.writes["humanoid_state"].keys())
+        buffers = dict(zip([f"humanoid_state.{name}" for name in names], runtime.buffers))
+
+        def written_xy():
+            env.reset(np.arange(num_envs))
+            return buffers["humanoid_state.position"].reshape(num_envs, -1)[:, :2].copy()
+
+        def written_z():
+            env.reset(np.arange(num_envs))
+            return buffers["humanoid_state.position"].reshape(num_envs, -1)[:, 2].copy()
+
+        first, second = written_xy(), written_xy()
+        offset_a = first - origins[:, :2]
+        offset_b = second - origins[:, :2]
+        # The tile binding is fixed; only the in-tile offset resamples.
+        assert np.all(np.abs(offset_a) <= 1.0)
+        assert np.all(np.abs(offset_b) <= 1.0)
+        assert not np.allclose(offset_a, offset_b)
+        # Spawn z is the model base height above the tile's ground patch,
+        # not a footprint-clearance lift.
+        np.testing.assert_allclose(written_z(), params.init_pose[2] + origins[:, 2], atol=1e-6)
+    finally:
+        del env
+
+
+def test_tile_spawn_cfg_requires_spawn_tiles():
+    from motrix_envs.locomotion.humanoid.walk_manager_mdp.reset import WalkStateResetCfg
+
+    with pytest.raises(ValueError, match="spawn_tiles"):
+        WalkStateResetCfg(ground_geom="floor", tile_spawn=True).__call__(None)
+

@@ -249,7 +249,11 @@ def make_g129dof_walk_terrain_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
         ),
         sim_reset=replace(
             flat_cfg.sim_reset,
-            humanoid_state=replace(flat_cfg.sim_reset.humanoid_state, spawn_xy_range=38.0),
+            humanoid_state=replace(
+                flat_cfg.sim_reset.humanoid_state,
+                tile_spawn=True,
+                spawn_tiles=(10, 20),
+            ),
         ),
         sim=SimCfg(dt=0.005, solver_iterations=8, solver_tolerance=1e-4),
         render_spacing=0.0,
