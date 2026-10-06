@@ -7,7 +7,7 @@ import numpy as np
 
 from motrix_env_core import registry
 from motrix_env_core.config.scene import PyramidSlopeTerrainGeneratorCfg
-from motrix_envs.locomotion.humanoid.g1_slope import make_g129dof_walk_slope_cfg
+from motrix_envs.locomotion.humanoid.g1_slope import _SLOPE_MAX_GRADIENT, make_g129dof_walk_slope_cfg
 from motrix_envs.locomotion.humanoid.g1_stairs import make_g129dof_walk_mixed_cfg
 
 
@@ -20,22 +20,39 @@ def test_slope_terrain_preserves_mixed_slope_generators():
         for region in mixed.scene.assets.terrain.generator.regions
         if isinstance(region.generator, PyramidSlopeTerrainGeneratorCfg)
     ]
-    assert slope_cells == reference
+
+    # Structure matches the mixed slope columns; the pitch is capped by the
+    # slope task's max-gradient scaling (difficulty * 0.5 instead of 1.0).
+    for actual, expected in zip(slope_cells, reference):
+        assert isinstance(actual, PyramidSlopeTerrainGeneratorCfg)
+        # Pitch is capped by the slope task's max-gradient scaling and the
+        # inverted-pit rim stays flush with the shared 3.0 m tile datum.
+        np.testing.assert_allclose(actual.slope, expected.slope * _SLOPE_MAX_GRADIENT)
+        if actual.inverted:
+            np.testing.assert_allclose((actual.base_level + actual.slope * 3.0 / 6.0) * 6.0, 3.0)
+        else:
+            np.testing.assert_allclose(actual.base_level * 6.0, 3.0)
 
     # Config equality alone misses rectangular-map physical-axis distortion.
-    # Compare every generated slope tile against its mixed-map counterpart.
-    def tile_patches(asset):
-        heights = asset.generator.generate(asset.size, asset.shape)
-        patches = []
-        for region in asset.generator.regions:
-            if isinstance(region.generator, PyramidSlopeTerrainGeneratorCfg):
-                start = np.rint((np.asarray(region.center) - np.asarray(region.size) / 2) * asset.shape).astype(int)
-                end = np.rint((np.asarray(region.center) + np.asarray(region.size) / 2) * asset.shape).astype(int)
-                patches.append(heights[start[0] : end[0], start[1] : end[1]])
-        return patches
-
-    for actual, expected in zip(tile_patches(slope.scene.assets.terrain), tile_patches(mixed.scene.assets.terrain)):
-        np.testing.assert_allclose(actual, expected, atol=1e-7)
+    # Generate the slope map and check every tile peaks at the capped
+    # gradient: datum 3.0 m plus the generator's rise over the 3.0 m ramp
+    # between the platform edge and the tile rim.
+    asset = slope.scene.assets.terrain
+    heights = asset.generator.generate(asset.size, asset.shape)
+    generators = [g for g in slope_cells if isinstance(g, PyramidSlopeTerrainGeneratorCfg)]
+    patches = []
+    for region in asset.generator.regions:
+        if isinstance(region.generator, PyramidSlopeTerrainGeneratorCfg):
+            start = np.rint((np.asarray(region.center) - np.asarray(region.size) / 2) * asset.shape).astype(int)
+            end = np.rint((np.asarray(region.center) + np.asarray(region.size) / 2) * asset.shape).astype(int)
+            patches.append(heights[start[0] : end[0], start[1] : end[1]])
+    assert len(patches) == len(generators)
+    for patch, generator in zip(patches, generators):
+        # Compare against the generator's own standalone tile rather than
+        # datum arithmetic: composite-map patch slicing rounds region bounds.
+        standalone = generator.generate((8.0, 8.0), (80, 80))
+        np.testing.assert_allclose(patch.max(), standalone.max(), atol=1e-5)
+        np.testing.assert_allclose(patch.min(), standalone.min(), atol=1e-5)
     rows, cols = slope.sim_reset.humanoid_state.spawn_tiles
     assert rows * cols == len(slope_cells)
     assert slope.observations.policy.base_lin_vel is None

@@ -223,6 +223,7 @@ class WalkCommand(CommandTerm):
     terrain_min_exploration_ratio: np.float32
     terrain_max_origin_radius: np.ndarray
     terrain_failure_demote_ratio: np.float32
+    terrain_promote_distance_ratio: np.float32
     terrain_min_level: np.int64
     terrain_min_command_speed: np.float32
     terrain_commanded_distance: np.ndarray
@@ -252,6 +253,12 @@ class WalkCommand(CommandTerm):
     sin_cos: np.ndarray
     phase: np.ndarray
     phase_step: np.ndarray
+    # Per-foot settled-contact credibility, ``(2,)`` per env, low-pass of the
+    # instantaneous "planted and not landing" indicator. Owned here because
+    # per-env reward state must live on a command term (kernels get writable
+    # row views); updated and read by the terrain-relative foot-attitude
+    # penalty so only soles with sustained contact pay the stance weight.
+    foot_contact_ema: np.ndarray
     steps: np.ndarray = metric(name="command_steps", dtype=np.float32)
     episode_steps: np.ndarray = metric(name="episode_steps", dtype=np.float32)
 
@@ -420,7 +427,8 @@ class WalkCommand(CommandTerm):
             delta = self.terrain_terminal_xy[ids] - self.terrain_spawn_xy[ids]
             distance = np.linalg.norm(delta, axis=1)
             failed = ctx.terminated[ids]
-            promoted = active & (distance > 0.5 * float(self.terrain_tile_length))
+            promote_distance = float(self.terrain_promote_distance_ratio) * float(self.terrain_tile_length)
+            promoted = active & (distance > promote_distance)
             if self.terrain_require_survival_for_promotion:
                 promoted &= ~failed
             commanded = self.terrain_commanded_distance[ids, 0]
@@ -432,7 +440,7 @@ class WalkCommand(CommandTerm):
                 progress_success = (
                     ~failed
                     & (commanded > 0.0)
-                    & (progress > 0.5 * float(self.terrain_tile_length))
+                    & (progress > promote_distance)
                     & (progress >= float(self.terrain_move_up_ratio) * commanded)
                     & (
                         self.terrain_max_origin_radius[ids, 0]
@@ -594,6 +602,11 @@ class WalkCommandCfg(CommandCfg):
     terrain_sampling_seed: int = 1
     terrain_min_exploration_ratio: float = 0.25
     terrain_failure_demote_ratio: float = 0.25
+    # Traversal (or command-aligned progress) beyond this fraction of a tile
+    # promotes. The default half-tile can wedge the curriculum at the top
+    # rows, where lanes that camp on the spawn platform never promote and so
+    # never practice the hardest terrain.
+    terrain_promote_distance_ratio: float = 0.5
     terrain_min_level: int = 1
     terrain_max_level: int | None = None
     terrain_min_command_speed: float = 0.05
@@ -613,6 +626,8 @@ class WalkCommandCfg(CommandCfg):
             raise ValueError("terrain_max_level requires terrain_sampling_enabled=False")
         if not 0.0 < self.terrain_min_exploration_ratio <= 0.5:
             raise ValueError("terrain_min_exploration_ratio must lie in (0, 0.5]")
+        if not 0.0 < self.terrain_promote_distance_ratio <= 1.0:
+            raise ValueError("terrain_promote_distance_ratio must lie in (0, 1]")
         if self.resampling_time <= 0.0:
             raise ValueError("resampling_time must be positive")
         if self.resampling_time_range is not None:
@@ -720,6 +735,7 @@ class WalkCommandCfg(CommandCfg):
             terrain_min_exploration_ratio=np.float32(self.terrain_min_exploration_ratio),
             terrain_max_origin_radius=np.zeros((num_envs, 1), dtype=np.float32),
             terrain_failure_demote_ratio=np.float32(self.terrain_failure_demote_ratio),
+            terrain_promote_distance_ratio=np.float32(self.terrain_promote_distance_ratio),
             terrain_min_level=np.int64(self.terrain_min_level),
             terrain_min_command_speed=np.float32(self.terrain_min_command_speed),
             terrain_commanded_distance=np.zeros((num_envs, 1), dtype=np.float32),
@@ -752,6 +768,7 @@ class WalkCommandCfg(CommandCfg):
             phase=np.zeros((num_envs, 2), dtype=np.float32),
             steps=np.zeros((num_envs, 1), dtype=np.float32),
             episode_steps=np.zeros((num_envs, 1), dtype=np.float32),
+            foot_contact_ema=np.zeros((num_envs, 2), dtype=np.float32),
         )
 
 

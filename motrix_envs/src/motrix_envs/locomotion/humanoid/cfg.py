@@ -70,6 +70,7 @@ from motrix_envs.locomotion.humanoid.walk_manager_mdp.rewards import (
     FeetPhaseRewardCfg,
     PenaltyActionRateRewardCfg,
     PenaltyAngVelXyRewardCfg,
+    PenaltyAngVelZMismatchRewardCfg,
     PenaltyBaseClearanceRewardCfg,
     PenaltyCloseFeetXyRewardCfg,
     PenaltyCollisionRewardCfg,
@@ -122,6 +123,7 @@ class WalkRewardsCfg(ManagerRewardsCfg):
     tracking_lin_vel: TrackingLinVelXyRewardCfg = TrackingLinVelXyRewardCfg(command_name="walk", weight=4.0)
     tracking_ang_vel: TrackingAngVelZRewardCfg = TrackingAngVelZRewardCfg(command_name="walk", weight=3.0)
     penalty_ang_vel_xy: PenaltyAngVelXyRewardCfg = PenaltyAngVelXyRewardCfg(weight=-1.0)
+    penalty_ang_vel_z_mismatch: PenaltyAngVelZMismatchRewardCfg | None = None
     penalty_base_clearance: PenaltyBaseClearanceRewardCfg | None = None
     penalty_collision: PenaltyCollisionRewardCfg | None = None
     penalty_orientation: PenaltyOrientationRewardCfg = PenaltyOrientationRewardCfg(weight=-10.0)

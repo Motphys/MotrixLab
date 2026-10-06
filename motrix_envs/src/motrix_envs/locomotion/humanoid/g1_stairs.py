@@ -195,13 +195,20 @@ _FIELD_HEIGHT_SCALE = 6.0
 _DATUM_LEVEL = _DATUM / _FIELD_HEIGHT_SCALE
 
 
-def _make_mixed_terrain(columns: tuple[str, ...] = _MIX_COLS) -> ProceduralHFieldAssetCfg:
+def _make_mixed_terrain(
+    columns: tuple[str, ...] = _MIX_COLS,
+    slope_scale: float = 1.0,
+    slope_platform_width: float = 2.0,
+) -> ProceduralHFieldAssetCfg:
     """Build the mjlab ROUGH_TERRAINS_CFG-style seven-type mixture.
 
     Rows are a difficulty gradient -- row ``r`` scales every generator's
     amplitude by ``(r + 1) / rows`` -- so the terrain curriculum can move
     lanes between easy and hard rows on episode ends, mirroring mjlab's
-    difficulty-interpolated terrain levels.
+    difficulty-interpolated terrain levels. ``slope_scale`` multiplies the
+    slope generators' rise-per-meter so derived tasks can cap the hardest
+    pitch below the mixed-task default of 1.0 (45 degrees).
+    ``slope_platform_width`` resizes the slopes' flat central pad.
     """
     rng = np.random.default_rng(8)
 
@@ -222,12 +229,12 @@ def _make_mixed_terrain(columns: tuple[str, ...] = _MIX_COLS) -> ProceduralHFiel
         # Pit depth equals the mound peak, so an inverted rim stays flush with
         # the shared datum by shifting the shape up by (datum - peak); a
         # normal mound simply rises from the datum.
-        peak = 1.0 * difficulty * (_MIX_TILE / 2.0 - 1.0)
+        peak = slope_scale * difficulty * (_MIX_TILE / 2.0 - 1.0)
         base = _DATUM_LEVEL if not inverted else (_DATUM - peak) / _FIELD_HEIGHT_SCALE
         return PyramidSlopeTerrainGeneratorCfg(
-            slope=1.0 * difficulty,
+            slope=slope_scale * difficulty,
             inverted=inverted,
-            platform_width=2.0,
+            platform_width=slope_platform_width,
             base_level=base,
             height_scale=_FIELD_HEIGHT_SCALE,
         )

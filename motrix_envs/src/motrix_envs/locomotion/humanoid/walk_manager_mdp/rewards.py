@@ -18,6 +18,7 @@ from motrix_env_core.mdp.terrain import HeightFieldGrid, heightfield_lookup
 from motrix_env_core.numba.manager.dispatch import dispatch
 from motrix_env_core.numba.math.quaternion import rotate_inverse_components
 from motrix_env_core.sim import (
+    BatchLinkLinearVelocityQuery,
     BatchLinkPositionQuery,
     BatchLinkQuaternionQuery,
     GeomPairCollidingQuery,
@@ -128,6 +129,31 @@ class PenaltyAngVelXyRewardCfg(RewardTermCfg):
         link = ctx.model.bodies["robot"].base_link_name
         return RewardTerm(
             penalty_ang_vel_xy_reward,
+            LinkQuaternionQuery(link=link),
+            LinkAngularVelocityQuery(link=link),
+        )
+
+
+@dispatch
+def penalty_ang_vel_z_mismatch_reward(ctx: ManagerContext, base_quat: np.ndarray, base_ang_vel: np.ndarray) -> float:
+    """Squared yaw-rate deviation from the commanded yaw rate.
+
+    Spinning on a spawn platform while stepping rhythmically farms the alive
+    and gait-phase income risk-free; the tracking term alone gives no
+    gradient there (its exponential is already ~0 far from the command).
+    """
+    _, _, wz = rotate_inverse_components(base_quat, base_ang_vel)
+    walk: WalkCommand = ctx.commands["walk"]
+    mismatch = wz - walk.command[2]
+    return (mismatch * mismatch) * walk.penalty_scale[0]
+
+
+@configclass(kw_only=True)
+class PenaltyAngVelZMismatchRewardCfg(RewardTermCfg):
+    def __call__(self, ctx) -> RewardTerm:
+        link = ctx.model.bodies["robot"].base_link_name
+        return RewardTerm(
+            penalty_ang_vel_z_mismatch_reward,
             LinkQuaternionQuery(link=link),
             LinkAngularVelocityQuery(link=link),
         )
@@ -353,41 +379,44 @@ def _foot_orientation_error(foot_quat: np.ndarray, reference: np.ndarray, gravit
 
 
 @njit(inline="always")
-def _terrain_relative_foot_ori_error_from_samples(
-    foot_quat: np.ndarray,
-    reference: np.ndarray,
-    height_minus_x: float,
-    height_plus_x: float,
-    height_minus_y: float,
-    height_plus_y: float,
-    normal_sample_distance: float,
-) -> float:
-    dx = (height_plus_x - height_minus_x) / (2.0 * normal_sample_distance)
-    dy = (height_plus_y - height_minus_y) / (2.0 * normal_sample_distance)
-    norm = math.sqrt(dx * dx + dy * dy + 1.0)
-    # The negative terrain normal is the gravity direction on the surface.
-    return _foot_orientation_error(foot_quat, reference, (dx / norm, dy / norm, -1.0 / norm))
-
-
-@njit(inline="always")
 def _terrain_relative_foot_ori_error(
     foot_pos: np.ndarray,
     foot_quat: np.ndarray,
     reference: np.ndarray,
     heightfield: HeightFieldGrid,
     normal_sample_distance: float,
+    cmd_x: float,
+    cmd_y: float,
+    base_deadband: float,
+    descend_extra: float,
 ) -> float:
     x, y = foot_pos[0], foot_pos[1]
     distance = normal_sample_distance
-    return _terrain_relative_foot_ori_error_from_samples(
-        foot_quat,
-        reference,
-        heightfield_lookup(heightfield, x - distance, y),
-        heightfield_lookup(heightfield, x + distance, y),
-        heightfield_lookup(heightfield, x, y - distance),
-        heightfield_lookup(heightfield, x, y + distance),
-        distance,
+    dx = (heightfield_lookup(heightfield, x + distance, y) - heightfield_lookup(heightfield, x - distance, y)) / (
+        2.0 * distance
     )
+    dy = (heightfield_lookup(heightfield, x, y + distance) - heightfield_lookup(heightfield, x, y - distance)) / (
+        2.0 * distance
+    )
+    norm = math.sqrt(dx * dx + dy * dy + 1.0)
+    # The negative terrain normal is the gravity direction on the surface.
+    sin_error = _foot_orientation_error(foot_quat, reference, (dx / norm, dy / norm, -1.0 / norm))
+    # Downhill-directed deadband: (dx, dy) points uphill, so a command
+    # anti-aligned with the gradient is a descent. Braking a descent wants
+    # a toe-biased sole (CoP forward does negative work), and demanding
+    # exact terrain-parallelism there removes that authority (observed:
+    # deep-slope falls at full commanded speed). The allowance fades in
+    # with the command's downhill alignment and is fully general -- no
+    # column or terrain-type knowledge involved.
+    grad_norm = math.sqrt(dx * dx + dy * dy)
+    cmd_norm = math.sqrt(cmd_x * cmd_x + cmd_y * cmd_y)
+    alignment = 0.0
+    if grad_norm > 1.0e-6 and cmd_norm > 1.0e-6:
+        downhill = -(cmd_x * dx + cmd_y * dy) / (cmd_norm * grad_norm)
+        alignment = min(max(downhill, 0.0), 1.0)
+    deadband = base_deadband + descend_extra * alignment
+    deficit = sin_error - deadband
+    return deficit if deficit > 0.0 else 0.0
 
 
 @dispatch
@@ -395,16 +424,60 @@ def penalty_feet_ori_terrain_relative_reward(
     ctx: ManagerContext,
     default_foot_gravity: np.ndarray,
     foot_quat: np.ndarray,
+    stance_weight: np.float32,
+    swing_weight: np.float32,
     normal_sample_distance: np.float32,
+    stance_height_threshold: np.float32,
+    stance_speed_scale: np.float32,
+    stance_filter_tau: np.float32,
+    pitch_deadband: np.float32,
+    descend_deadband: np.float32,
     heightfield: HeightFieldGrid,
     foot_pos: np.ndarray,
+    foot_vel: np.ndarray,
+    sole_l: np.ndarray,
+    sole_r: np.ndarray,
 ) -> float:
+    walk: WalkCommand = ctx.commands["walk"]
     total = 0.0
     for foot in range(2):
-        total += _terrain_relative_foot_ori_error(
-            foot_pos[foot], foot_quat[foot], default_foot_gravity[foot], heightfield, normal_sample_distance
+        # Settled-stance gating via a contact-time low-pass (the feet-air-time
+        # mechanism applied to the penalty side). The instantaneous "planted
+        # and not landing" indicator is low-passed with time constant
+        # ``stance_filter_tau`` in the per-env command state, so a sole pays
+        # the full stance weight only after sustained contact. High-frequency
+        # micro-bouncing never accumulates credibility (closing the loophole
+        # of a purely instantaneous speed gate, which a stronger weight
+        # taught the policy to exploit), while touchdown absorption stays
+        # free: the one-sided landing exemption keeps the descent exempt so
+        # the sole can roll heel-strike to flat instead of slamming down
+        # parallel to the slope.
+        #
+        # The height factor measures the sole site, not the foot link
+        # origin: a toe-walking policy pitches the link center high enough
+        # to dodge a link-based gate while the sole itself stays planted
+        # (observed on an unlucky seed at ~40 deg stance pitch).
+        sole = sole_l if foot == 0 else sole_r
+        clearance = sole[2] - heightfield_lookup(heightfield, sole[0], sole[1])
+        height_ratio = min(max(clearance / stance_height_threshold, 0.0), 1.0)
+        landing_ratio = min(max(-foot_vel[foot][2], 0.0) / stance_speed_scale, 1.0)
+        instant = (1.0 - height_ratio) * (1.0 - landing_ratio)
+        ema = walk.foot_contact_ema[foot]
+        ema += (instant - ema) * min(ctx.dt / stance_filter_tau, 1.0)
+        walk.foot_contact_ema[foot] = ema
+        settled = ema * ema
+        weight = swing_weight + (stance_weight - swing_weight) * settled
+        total += weight * _terrain_relative_foot_ori_error(
+            foot_pos[foot],
+            foot_quat[foot],
+            default_foot_gravity[foot],
+            heightfield,
+            normal_sample_distance,
+            walk.command[0],
+            walk.command[1],
+            pitch_deadband,
+            descend_deadband,
         )
-    walk: WalkCommand = ctx.commands["walk"]
     return total * walk.penalty_scale[0]
 
 
@@ -412,20 +485,54 @@ def penalty_feet_ori_terrain_relative_reward(
 class PenaltyFeetOriRewardCfg(RewardTermCfg):
     terrain_relative: bool = False
     normal_sample_distance: float = 0.15
+    # Soles higher than this above the terrain are swinging and pay the light
+    # swing weight instead of the stance weight.
+    stance_height_threshold: float = 0.07
+    swing_weight_scale: float = 0.1
+    # A low-and-slow sole counts as settled stance. The cutoff is a fraction
+    # of the gait's characteristic vertical foot speed (2*pi*swing_height /
+    # gait_period), so the term follows the robot's scale and gait tempo
+    # instead of an absolute speed; touchdown/push-off speeds sit near 1.0 of
+    # that scale and fade out, a planted sole sits well below it.
+    stance_speed_ratio: float = 0.45
+    # Settled-contact low-pass time constant as a fraction of the gait
+    # period: a sole must stay planted for roughly this long before the full
+    # stance weight applies, which rejects micro-bounce exploitation the way
+    # feet-air-time rewards reject skittering.
+    stance_filter_time_ratio: float = 0.15
+    # Attitude error (as sin of the pitch angle) below this is free. 0 bills
+    # all error; a wide band (12 deg) was tried to spare descent-braking toe
+    # bias but the policy just settled just outside the band (24-32 deg
+    # stance pitch), so the slope task runs at 0.
+    pitch_deadband_deg: float = 0.0
+    # Extra deadband that fades in with the command's downhill alignment:
+    # only descents get braking toe-bias freedom, flat/uphill stay strict.
+    descend_pitch_deadband_deg: float = 0.0
     ground_geom: str = ""
+    # Sole site names for the settled-contact height factor: measuring the
+    # sole (not the foot link origin) keeps toe-walking from pitching the
+    # link center out of the gate while the sole stays planted.
+    sole_l_site: str = ""
+    sole_r_site: str = ""
 
     def __post_init__(self) -> None:
         if self.terrain_relative and (
             not math.isfinite(self.normal_sample_distance) or self.normal_sample_distance <= 0.0
         ):
             raise ValueError("normal_sample_distance must be finite and positive when terrain_relative is enabled")
+        if not math.isfinite(self.stance_height_threshold) or self.stance_height_threshold <= 0.0:
+            raise ValueError("stance_height_threshold must be finite and positive")
+        if self.terrain_relative and (not self.sole_l_site or not self.sole_r_site):
+            raise ValueError("terrain-relative PenaltyFeetOriRewardCfg requires sole_l_site and sole_r_site")
 
     def __call__(self, ctx) -> RewardTerm:
         robot = ctx.cfg.scene.objs.robot
         body = ctx.model.bodies["robot"]
-        # Default foot gravity at the init key pose, from BodyModel's
-        # compile-time init-pose FK snapshot.
         gravity_vec = (0.0, 0.0, -1.0)
+        # Reference gravity per foot, expressed in the foot frame at the
+        # init key pose. The G1 key pose is a flat-footed crouch (hip, knee
+        # and ankle pitches cancel), so the FK snapshot is already the level
+        # foot -- do not "correct" it by the raw ankle angle.
         default_foot_gravity = np.stack(
             [
                 rotate_inverse_components(body.init_link_quats[body.link_names.index(link)], gravity_vec)
@@ -441,11 +548,31 @@ class PenaltyFeetOriRewardCfg(RewardTermCfg):
             )
         if not self.ground_geom:
             raise ValueError("terrain-relative PenaltyFeetOriRewardCfg requires ground_geom")
+        # Absolute speed scale for the settled-stance factor, derived from the
+        # gait itself: the vertical speed a foot sweeps at swing height over
+        # the gait period. Robots and gaits with different scales keep the
+        # same dimensionless ratio semantics.
+        gait_period = ctx.cfg.commands.walk.gait_period
+        swing_height = ctx.cfg.rewards.feet_phase.swing_height
+        speed_scale = 2.0 * math.pi * swing_height * self.stance_speed_ratio / gait_period
         return RewardTerm(
             penalty_feet_ori_terrain_relative_reward,
             default_foot_gravity,
             BatchLinkQuaternionQuery(links=robot.resolved_foot_link_names),
+            # The manager multiplies the kernel return by the cfg weight, so
+            # the kernel takes the swing weight as a ratio of the stance
+            # weight (cfg weight applies to planted soles).
+            np.float32(1.0),
+            np.float32(self.swing_weight_scale),
             np.float32(self.normal_sample_distance),
+            np.float32(self.stance_height_threshold),
+            np.float32(speed_scale),
+            np.float32(self.stance_filter_time_ratio * gait_period),
+            np.float32(math.sin(math.radians(self.pitch_deadband_deg))),
+            np.float32(math.sin(math.radians(self.descend_pitch_deadband_deg))),
             ground_height_grid(ctx, self.ground_geom),
             BatchLinkPositionQuery(links=robot.resolved_foot_link_names),
+            BatchLinkLinearVelocityQuery(links=robot.resolved_foot_link_names),
+            SitePositionQuery(site=self.sole_l_site),
+            SitePositionQuery(site=self.sole_r_site),
         )

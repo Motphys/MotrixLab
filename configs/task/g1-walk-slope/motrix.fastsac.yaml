@@ -7,4 +7,14 @@ task:
   env: g1-walk-slope
 algo:
   trainer:
-    num_learning_iterations: 30000
+    # 60k matches the stairs/rough budget: the ladder reaches the top rows
+    # by ~40k and the tail only churns the policy.
+    num_learning_iterations: 80000
+  agent:
+    # Match the distributional critics' support to realized returns: strong
+    # slope-walking episodes earn ~0.5-0.66/step for 1000 steps (up to
+    # ~660), camping ~300. The mixed default (-100..150) clipped the upside
+    # entirely, and -50..300 capped walking at the camping value, killing
+    # the climb incentive; -50..700 separates them.
+    v_min: -50.0
+    v_max: 700.0

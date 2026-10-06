@@ -200,6 +200,7 @@ def _terrain_command_for_reset(terminated):
         terrain_min_exploration_ratio=np.float32(0.25),
         terrain_max_origin_radius=np.zeros((n, 1), dtype=np.float32),
         terrain_failure_demote_ratio=np.float32(0.25),
+        terrain_promote_distance_ratio=np.float32(0.5),
         terrain_min_level=np.int64(1),
         terrain_min_command_speed=np.float32(0.05),
         terrain_commanded_distance=np.ones((n, 1), dtype=np.float32),
