@@ -23,6 +23,9 @@ from pathlib import Path
 import motrixsim as mtx
 import numpy as np
 from absl import app, flags
+from motrix_robots.booster import BoosterK1
+from motrix_robots.dex_evt import DexEvt
+from motrix_robots.unitree import UnitreeG129Dof
 from motrixsim.render import RenderApp, RenderClosedError, RenderSettings
 
 from motrix_env_core.config.scene import (
@@ -32,7 +35,6 @@ from motrix_env_core.config.scene import (
 from motrix_env_motrixsim.compiler import build_scene_model
 from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
 from motrix_envs.motion import MotrixMotion
-from motrix_envs.robot import BoosterK1, DexEvt, UnitreeG129Dof
 
 logger = logging.getLogger(__name__)
 

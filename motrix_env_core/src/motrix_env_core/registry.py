@@ -5,6 +5,7 @@ import copy
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from importlib.metadata import EntryPoint, entry_points
 from typing import Any, get_type_hints
 
 from motrix_env_core.base import ABEnv, EnvCfg
@@ -98,7 +99,41 @@ class RobotMeta:
     robot_cfg_factory: RobotCfgFactory
 
 
+ROBOT_ENTRY_POINT_GROUP = "motrix_env_core.robots"
+
 _robots: dict[str, RobotMeta] = {}
+_robots_discovered = False
+_robots_discovering = False
+_robot_entry_points: tuple[EntryPoint, ...] | None = None
+_completed_robot_entry_points = 0
+
+
+def _discover_robots() -> None:
+    """Invoke installed robot registration callbacks on the first query.
+
+    Completed callbacks are not repeated if a later entry point fails. Failed
+    loads/callbacks propagate and are retried on the next query; any registration
+    side effects of a failed callback remain. Reentrant queries see the registry
+    as populated so far, without starting another discovery pass.
+    """
+    global _robots_discovered, _robots_discovering, _robot_entry_points, _completed_robot_entry_points
+    if _robots_discovered or _robots_discovering:
+        return
+    _robots_discovering = True
+    try:
+        if _robot_entry_points is None:
+            _robot_entry_points = tuple(
+                sorted(entry_points(group=ROBOT_ENTRY_POINT_GROUP), key=lambda ep: (ep.name, ep.value))
+            )
+        for entry_point in _robot_entry_points[_completed_robot_entry_points:]:
+            register = entry_point.load()
+            if not callable(register):
+                raise TypeError(f"Robot entry point {entry_point.name!r} must load a callable")
+            register()
+            _completed_robot_entry_points += 1
+        _robots_discovered = True
+    finally:
+        _robots_discovering = False
 
 
 def _get_env_meta(name: str) -> EnvMeta:
@@ -232,7 +267,8 @@ def robotcfg(name: str, *, cfg_type: type[RobotCfg] | None = None) -> Callable[[
 
 
 def make_robot_config(name: str) -> RobotCfg:
-    """Create and validate a fresh config for a registered robot."""
+    """Discover installed robot plugins, then create and validate a fresh config."""
+    _discover_robots()
     if name not in _robots:
         raise ValueError(f"Robot '{name}' is not registered.")
 
@@ -247,7 +283,8 @@ def make_robot_config(name: str) -> RobotCfg:
 
 
 def list_registered_robots() -> dict[str, dict[str, Any]]:
-    """List registered robot configs."""
+    """Discover installed robot plugins and list their registered configs."""
+    _discover_robots()
     return {
         name: {
             "config_class": meta.robot_cfg_cls.__name__,

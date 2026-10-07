@@ -7,6 +7,20 @@ from pathlib import Path
 
 import motrixsim as mtx
 import pytest
+from motrix_robots.anymal import ANYMAL_C_ASSET_DIR, AnymalC
+from motrix_robots.booster import BOOSTER_K1_ASSET_DIR, BoosterK1
+from motrix_robots.dex_evt import DEX_EVT_ASSET_DIR, DexEvt
+from motrix_robots.humanoid import HumanoidRobotCfg
+from motrix_robots.microduck import MICRODUCK_ASSET_DIR, Microduck
+from motrix_robots.quadruped import QuadrupedLegCfg, QuadrupedRobotCfg
+from motrix_robots.unitree import (
+    UNITREE_G1_ASSET_DIR,
+    UNITREE_GO1_ASSET_DIR,
+    UNITREE_GO2_ASSET_DIR,
+    UnitreeG129Dof,
+    UnitreeGo1Robot,
+    UnitreeGo2Robot,
+)
 
 from motrix_env_core import registry
 from motrix_env_core.config import configclass
@@ -22,23 +36,6 @@ from motrix_env_core.config.scene import (
 from motrix_env_motrixsim.compiler import build_scene_model
 from motrix_envs.config.scene import StandardSceneObjsCfg
 from motrix_envs.locomotion.quadruped.cfg import QuadrupedSceneCfg
-from motrix_envs.robot import (
-    AnymalC,
-    BoosterK1,
-    DexEvt,
-    HumanoidRobotCfg,
-    Microduck,
-    QuadrupedLegCfg,
-    QuadrupedRobotCfg,
-    UnitreeG129Dof,
-    UnitreeGo1Robot,
-    UnitreeGo2Robot,
-)
-from motrix_envs.robot.anymal import ANYMAL_C_ASSET_DIR
-from motrix_envs.robot.booster import BOOSTER_K1_ASSET_DIR
-from motrix_envs.robot.dex_evt import DEX_EVT_ASSET_DIR
-from motrix_envs.robot.microduck import MICRODUCK_ASSET_DIR
-from motrix_envs.robot.unitree import UNITREE_G1_ASSET_DIR, UNITREE_GO1_ASSET_DIR, UNITREE_GO2_ASSET_DIR
 
 
 @configclass

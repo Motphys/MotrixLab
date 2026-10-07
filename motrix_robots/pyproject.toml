@@ -1,0 +1,19 @@
+[build-system]
+requires = ["uv_build>=0.11.23,<0.12"]
+build-backend = "uv_build"
+
+[project]
+name = "motrix-robots"
+version = "0.4.0b0"
+description = "Simulation robot configurations and model assets for MotrixLab."
+authors = [{ name = "Motphys", email = "developers@motphys.com" }]
+requires-python = "==3.10.*"
+readme = "README.md"
+license = "Apache-2.0"
+dependencies = ["motrix-env-core"]
+
+[project.entry-points."motrix_env_core.robots"]
+builtin = "motrix_robots.registration:register"
+
+[tool.uv.build-backend]
+module-name = "motrix_robots"

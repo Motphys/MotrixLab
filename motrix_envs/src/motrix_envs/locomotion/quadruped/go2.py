@@ -6,6 +6,7 @@
 from dataclasses import replace
 
 import numpy as np
+from motrix_robots.unitree import UnitreeGo2Robot
 
 from motrix_env_core import registry
 from motrix_env_core.config import configclass
@@ -22,7 +23,6 @@ from motrix_envs.locomotion.quadruped.cfg import (
     VelocityCommandCfg,
 )
 from motrix_envs.locomotion.quadruped.walk_np import QuadrupedWalkTask
-from motrix_envs.robot import UnitreeGo2Robot
 
 
 @registry.envcfg("go2-walk-flat")

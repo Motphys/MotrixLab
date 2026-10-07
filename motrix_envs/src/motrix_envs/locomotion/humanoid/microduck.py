@@ -5,6 +5,8 @@
 
 from dataclasses import replace
 
+from motrix_robots.microduck import Microduck
+
 from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config.scene import HFieldTerrainCfg, SystemCameraCfg
@@ -28,7 +30,6 @@ from motrix_envs.locomotion.humanoid.walk_manager_mdp.rewards import (
     PenaltyCloseFeetXyRewardCfg,
     PoseRewardCfg,
 )
-from motrix_envs.robot import Microduck
 
 
 def _make_microduck_robot() -> Microduck:

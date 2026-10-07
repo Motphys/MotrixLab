@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from motrix_env_core.config import configclass
-from motrix_env_core.config.scene import RobotCfg
+from motrix_env_core.config.scene.base import RobotCfg
 
 
 @configclass(kw_only=True)

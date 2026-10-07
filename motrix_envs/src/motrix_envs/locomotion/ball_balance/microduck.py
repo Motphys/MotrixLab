@@ -5,6 +5,7 @@
 
 from pathlib import Path
 
+from motrix_robots.microduck import Microduck
 from omegaconf import MISSING
 
 from motrix_env_core import registry
@@ -80,7 +81,6 @@ from motrix_envs.locomotion.wbt.mdp.rewards import (
     UndesiredContactsRewardCfg,
 )
 from motrix_envs.locomotion.wbt.mdp.terminations import BadDofPositionTerminationCfg
-from motrix_envs.robot import Microduck
 
 _BALL_ASSET_DIR = Path(__file__).parent / "assets"
 _BALL_RADIUS = 0.14

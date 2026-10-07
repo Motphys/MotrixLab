@@ -12,6 +12,8 @@ queries (height-field grid, key-pose foot frames via FK) provide the static
 data those terms consume. No environment subclass is needed.
 """
 
+from motrix_robots.humanoid import HumanoidRobotCfg
+
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import (
@@ -71,7 +73,6 @@ from motrix_envs.locomotion.humanoid.walk_manager_mdp.rewards import (
     PenaltyOrientationRewardCfg,
     PoseRewardCfg,
 )
-from motrix_envs.robot import HumanoidRobotCfg
 
 
 @configclass

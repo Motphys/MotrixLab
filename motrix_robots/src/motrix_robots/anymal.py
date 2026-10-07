@@ -5,7 +5,7 @@ from pathlib import Path
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import KeyPoseCfg, MjcfFileCfg
-from motrix_envs.robot.quadruped import QuadrupedLegCfg, QuadrupedLegsCfg, QuadrupedRobotCfg
+from motrix_robots.quadruped import QuadrupedLegCfg, QuadrupedLegsCfg, QuadrupedRobotCfg
 
 ANYMAL_C_ASSET_DIR = Path(__file__).parent / "assets" / "anymal_c"
 _ANYMAL_C_MJCF = ANYMAL_C_ASSET_DIR / "anymal_c.xml"

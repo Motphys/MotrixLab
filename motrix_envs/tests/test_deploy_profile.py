@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pytest
+from motrix_robots.unitree import UnitreeGo2Robot
 
 from motrix_env_core import registry
 from motrix_envs.deploy import build_deployment_profile, registered_profile_compilers
@@ -15,7 +16,6 @@ from motrix_envs.deploy.robot import (
     build_robot_spec,
     resolve_joint_actuators_in_canonical_order,
 )
-from motrix_envs.robot import UnitreeGo2Robot
 
 
 @dataclass

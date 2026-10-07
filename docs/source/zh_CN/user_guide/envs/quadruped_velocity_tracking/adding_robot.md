@@ -7,13 +7,12 @@
 推荐使用以下目录布局：
 
 ```text
-motrix_envs/src/motrix_envs/
-├── robot/
-│   ├── <robot>.py                # QuadrupedRobotCfg 与默认关键姿态
-│   └── assets/<robot>/           # 可跨任务复用的机器人资产
-└── locomotion/
-    └── quadruped/
-        └── <robot>.py            # 平地/粗糙地形配置与环境注册
+motrix_robots/src/motrix_robots/
+├── <robot>.py                    # QuadrupedRobotCfg 与默认关键姿态
+└── assets/<robot>/               # 可跨任务复用的机器人资产
+
+motrix_envs/src/motrix_envs/locomotion/quadruped/
+└── <robot>.py                    # 平地/粗糙地形配置与环境注册
 
 configs/task/
 ├── <robot>-walk-flat/
@@ -41,7 +40,7 @@ robot = registry.make_robot_config("go2")
 ```python
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import KeyPoseCfg, MjcfFileCfg
-from motrix_envs.robot import QuadrupedLegCfg, QuadrupedLegsCfg, QuadrupedRobotCfg
+from motrix_robots import QuadrupedLegCfg, QuadrupedLegsCfg, QuadrupedRobotCfg
 
 
 @configclass(kw_only=True)

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import KeyPoseCfg, MjcfFileCfg
-from motrix_envs.robot.humanoid import HumanoidRobotCfg
+from motrix_robots.humanoid import HumanoidRobotCfg
 
 BOOSTER_K1_ASSET_DIR = Path(__file__).parent / "assets" / "k1"
 _K1_22DOF_MJCF = BOOSTER_K1_ASSET_DIR / "k1_22dof.xml"

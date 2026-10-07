@@ -1,7 +1,6 @@
 # Supported Robots
 
-MotrixLab exposes reusable robot models through the robot registry. A registered robot has a public `RobotCfg` and can
-be composed into different scenes and tasks. The table below is generated directly from the registry and robot configs.
+`motrix_robots` provides reusable robot models that you can preview independently or use in tasks from `motrix_envs`.
 
 ## Built-in robots
 
@@ -20,6 +19,38 @@ be composed into different scenes and tasks. The table below is generated direct
 
 <!-- ROBOT_TABLE_END -->
 
+## Preview a robot
+
+Use `view.py` to inspect a registered robot in its default pose without creating an RL environment:
+
+```bash
+python scripts/view.py robot=go2
+```
+
+Robot view mode builds a static standard scene. It does not sample actions or run a physics rollout.
+
+## Python API
+
+Import reusable configurations directly from `motrix_robots`:
+
+```python
+from motrix_robots import Microduck, UnitreeGo2Robot
+
+microduck = Microduck()
+go2 = UnitreeGo2Robot(prefix="robot_")
+```
+
+You can also select a robot by its registry name and place it in a standard scene:
+
+```python
+from motrix_env_core import registry
+from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
+
+print(registry.list_registered_robots())
+robot = registry.make_robot_config("go2")
+scene = StandardSceneCfg(objs=StandardSceneObjsCfg(robot=robot))
+```
+
 ## Define a new robot
 
 A reusable robot should be defined as a `RobotCfg` that describes only the robot model and how it is instantiated.
@@ -31,7 +62,7 @@ markers, and task-created sensors belong to `SceneCfg` or the task configuration
 Use the following layout for a built-in robot:
 
 ```text
-motrix_envs/src/motrix_envs/robot/
+motrix_robots/src/motrix_robots/
 ├── my_robot.py
 └── assets/my_robot/
     ├── my_robot.xml              # or my_robot.urdf
@@ -45,7 +76,7 @@ Import `ActuatorCfg`, `PositionActuatorCfg`, and `MotorActuatorCfg` from `motrix
 
 ### 2. Declare the `RobotCfg`
 
-Define the configuration in `robot/my_robot.py` with `@configclass(kw_only=True)`. This is a minimal MJCF example:
+Define the configuration in `motrix_robots/src/motrix_robots/my_robot.py` with `@configclass(kw_only=True)`. This is a minimal MJCF example:
 
 ```python
 from pathlib import Path
@@ -88,7 +119,7 @@ robot joint poses here; ground names, task sensor names, and other scene semanti
 A humanoid robot should inherit `HumanoidRobotCfg` and define its left and right foot links:
 
 ```python
-from motrix_envs.robot import HumanoidRobotCfg
+from motrix_robots import HumanoidRobotCfg
 
 
 @configclass(kw_only=True)
@@ -138,18 +169,28 @@ Set `inherit_joint_range=True` to use imported joint limits as the control range
 
 ### 3. Register the robot
 
-Import and register a built-in robot in `motrix_envs/robot/__init__.py`:
+Register a built-in robot inside the `register()` callback in
+`motrix_robots/src/motrix_robots/registration.py`. Import the new class from its defining module
+and add its registration to the callback:
 
 ```python
 from motrix_env_core import registry
-from motrix_envs.robot.my_robot import MyRobot
+from motrix_robots.my_robot import MyRobot
 
-registry.robotcfg("my-robot")(MyRobot)
+
+def register() -> None:
+    # Keep the other built-in model registrations here.
+    registry.robotcfg("my-robot")(MyRobot)
 ```
 
-Also add `MyRobot` to that module's `__all__`. The registry name is the stable ID used by the CLI and
-`registry.make_robot_config()`. The class must be constructible without arguments; alternatively, register a typed
-zero-argument factory.
+Installed robot packages are discovered automatically; no manual registration import is needed.
+For a separate package, define the same `register()` callback using your own model import and declare it in that
+package's `pyproject.toml`:
+
+```toml
+[project.entry-points."motrix_env_core.robots"]
+my_robot = "my_robot_package.registration:register"
+```
 
 ### 4. Validate
 
@@ -172,32 +213,3 @@ To include the robot in the generated table above, add its type and screenshot p
 python docs/scripts/generate_robot_docs.py --screenshots my-robot
 python docs/scripts/generate_robot_docs.py --check
 ```
-
-## Preview a robot
-
-Use `view.py` to inspect a registered robot in its default pose without creating an RL environment:
-
-```bash
-python scripts/view.py robot=go2
-```
-
-Robot view mode builds a static standard scene. It does not sample actions or run a physics rollout.
-
-## Python API
-
-Importing `motrix_envs` registers the built-in robots. You can inspect the registry, create a fresh config, and compose
-it into a standard scene:
-
-```python
-import motrix_envs  # noqa: F401 registers built-in robots
-from motrix_env_core import registry
-from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
-
-print(registry.list_registered_robots())
-
-robot = registry.make_robot_config("go2")
-scene = StandardSceneCfg(objs=StandardSceneObjsCfg(robot=robot))
-```
-
-`make_robot_config()` returns a new validated config on every call, so callers can safely customize placement, naming
-prefixes, or other instance-level fields.

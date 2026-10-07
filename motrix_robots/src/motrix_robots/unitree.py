@@ -5,11 +5,11 @@ from pathlib import Path
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import KeyPoseCfg, MjcfFileCfg
-from motrix_envs.robot.humanoid import HumanoidRobotCfg
-from motrix_envs.robot.quadruped import QuadrupedLegCfg, QuadrupedLegsCfg, QuadrupedRobotCfg
+from motrix_robots.humanoid import HumanoidRobotCfg
+from motrix_robots.quadruped import QuadrupedLegCfg, QuadrupedLegsCfg, QuadrupedRobotCfg
 
 UNITREE_G1_ASSET_DIR = Path(__file__).parent / "assets" / "g1"
-UNITREE_GO1_ASSET_DIR = Path(__file__).parents[1] / "locomotion" / "go1" / "xmls"
+UNITREE_GO1_ASSET_DIR = Path(__file__).parent / "assets" / "go1"
 UNITREE_GO2_ASSET_DIR = Path(__file__).parent / "assets" / "go2"
 _G1_29DOF_MJCF = UNITREE_G1_ASSET_DIR / "g1_29dof.xml"
 _GO1_MJCF = UNITREE_GO1_ASSET_DIR / "go1_position_actuator.xml"

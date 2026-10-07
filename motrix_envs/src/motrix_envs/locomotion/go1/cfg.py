@@ -1,12 +1,14 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-import os
+from pathlib import Path
+
+from motrix_robots.unitree import UNITREE_GO1_ASSET_DIR, UnitreeGo1Robot
 
 from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config import configclass
-from motrix_env_core.config.scene import SceneCfg
+from motrix_env_core.config.scene import MjcfFileCfg, SceneCfg, SceneObjsCfg
 from motrix_env_core.direct.env import DirectEnvCfg
 
 
@@ -135,7 +137,12 @@ class Go1WalkDirectStairsEnvCfg(Go1TerrainWalkDirectEnvCfg):
     """
 
     render_spacing: float = 0.0
-    scene: SceneCfg = SceneCfg(file=os.path.dirname(__file__) + "/xmls/scene_stairs_terrain.xml")
+    scene: SceneCfg = SceneCfg(
+        file=Path(__file__).parent / "xmls" / "scene_stairs_terrain.xml",
+        objs=SceneObjsCfg(
+            robot=UnitreeGo1Robot(model=MjcfFileCfg(file=UNITREE_GO1_ASSET_DIR / "go1_motor_actuator.xml"))
+        ),
+    )
     # Pinned to the scene's geom inventory (single hfield "floor"): the legacy
     # env matched ground/foot geoms by substring over exactly these names.
     # Foot contact-force sensors follow Sensor.feet order.

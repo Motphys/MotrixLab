@@ -6,6 +6,8 @@
 from dataclasses import InitVar
 from pathlib import Path
 
+from motrix_robots.booster import BoosterK1
+
 from motrix_env_core import registry
 from motrix_env_core.base import EnvCfg, SimCfg
 from motrix_env_core.config import configclass
@@ -24,7 +26,6 @@ from motrix_envs.locomotion.wbt.mdp.command import (
 from motrix_envs.locomotion.wbt.mdp.terminations import (
     BadBodyZTerminationCfg,
 )
-from motrix_envs.robot import BoosterK1
 
 _MOTION_DIR = Path(__file__).parent / "assets" / "motion" / "k1"
 _K1_TRACKED_BODY_NAMES = (

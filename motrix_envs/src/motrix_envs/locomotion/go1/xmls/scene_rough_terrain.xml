@@ -1,5 +1,4 @@
 <mujoco model="go1 feetonly rough terrain scene">
-  <include file="go1_motor_actuator.xml" />
   <include file="materials.xml" />
   <statistic center="0 0 0.1" extent="0.8" meansize="0.04" />
 

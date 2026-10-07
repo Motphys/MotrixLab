@@ -3,6 +3,8 @@
 
 """G1 backflip tracking task."""
 
+from motrix_robots.unitree import UnitreeG129Dof
+
 from motrix_env_core import registry
 from motrix_env_core.base import EnvCfg, SimCfg
 from motrix_env_core.config import configclass
@@ -25,7 +27,6 @@ from motrix_envs.locomotion.wbt.mdp.terminations import (
     BadRefOrientationTerminationCfg,
     BadRefZTerminationCfg,
 )
-from motrix_envs.robot import UnitreeG129Dof
 
 from .common import MOTION_DIR, G1WbtEnvCfg
 

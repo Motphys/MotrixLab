@@ -6,6 +6,8 @@
 from dataclasses import InitVar
 from pathlib import Path
 
+from motrix_robots.unitree import UnitreeG129Dof
+
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SystemCameraCfg
@@ -15,7 +17,6 @@ from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
 from motrix_envs.locomotion.wbt.cfg import CommandsCfg, RewardsCfg, TerminationsCfg, WbtEnvCfg
 from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommandCfg
 from motrix_envs.locomotion.wbt.mdp.terminations import BadBodyZTerminationCfg
-from motrix_envs.robot import UnitreeG129Dof
 
 MOTION_DIR = Path(__file__).resolve().parent.parent / "assets" / "motion" / "g1"
 G1_TRACKED_BODY_NAMES = (

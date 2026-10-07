@@ -1,7 +1,6 @@
 # 支持的机器人
 
-MotrixLab 通过 robot registry 暴露可复用的机器人模型。注册后的 robot 具有公共 `RobotCfg`，可以组合到不同的
-scene 和 task 中。下表直接根据 registry 和 robot 配置生成。
+`motrix_robots` 提供可复用的机器人模型，可以独立预览，也可以用于 `motrix_envs` 中的任务。
 
 ## 内置机器人
 
@@ -20,6 +19,38 @@ scene 和 task 中。下表直接根据 registry 和 robot 配置生成。
 
 <!-- ROBOT_TABLE_END -->
 
+## 独立预览
+
+使用 `view.py` 可以在默认姿态下查看已注册 robot，无需创建 RL environment：
+
+```bash
+python scripts/view.py robot=go2
+```
+
+robot 模式会构建一个静态标准场景，不采样 action，也不执行 physics rollout。
+
+## Python API
+
+从 `motrix_robots` 直接导入可复用配置：
+
+```python
+from motrix_robots import Microduck, UnitreeGo2Robot
+
+microduck = Microduck()
+go2 = UnitreeGo2Robot(prefix="robot_")
+```
+
+也可以按 registry 名称选择机器人，并放入标准场景：
+
+```python
+from motrix_env_core import registry
+from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
+
+print(registry.list_registered_robots())
+robot = registry.make_robot_config("go2")
+scene = StandardSceneCfg(objs=StandardSceneObjsCfg(robot=robot))
+```
+
 ## 定义新机器人
 
 新的可复用机器人应定义为 `RobotCfg`，只描述机器人本体及其实例化方式。机器人资产、执行器、仿真所需的 site 和通用
@@ -30,7 +61,7 @@ scene 和 task 中。下表直接根据 registry 和 robot 配置生成。
 内置机器人推荐使用以下目录结构：
 
 ```text
-motrix_envs/src/motrix_envs/robot/
+motrix_robots/src/motrix_robots/
 ├── my_robot.py
 └── assets/my_robot/
     ├── my_robot.xml              # 或 my_robot.urdf
@@ -44,7 +75,7 @@ MJCF 和 URDF 的执行器均通过机器人实例继承的 `BodyCfg.actuators` 
 
 ### 2. 声明 `RobotCfg`
 
-在 `robot/my_robot.py` 中使用 `@configclass(kw_only=True)` 定义配置类。下面是一份最小的 MJCF 示例：
+在 `motrix_robots/src/motrix_robots/my_robot.py` 中使用 `@configclass(kw_only=True)` 定义配置类。下面是一份最小的 MJCF 示例：
 
 ```python
 from pathlib import Path
@@ -87,7 +118,7 @@ class MyRobot(RobotCfg):
 人形机器人应继承 `HumanoidRobotCfg`，并定义左右脚 link：
 
 ```python
-from motrix_envs.robot import HumanoidRobotCfg
+from motrix_robots import HumanoidRobotCfg
 
 
 @configclass(kw_only=True)
@@ -136,17 +167,27 @@ robot = RobotCfg(
 
 ### 3. 注册机器人
 
-内置机器人在 `motrix_envs/robot/__init__.py` 中导入并注册：
+内置机器人在 `motrix_robots/src/motrix_robots/registration.py` 的 `register()` 回调中注册。
+从新类的定义模块导入，并将注册语句加入回调：
 
 ```python
 from motrix_env_core import registry
-from motrix_envs.robot.my_robot import MyRobot
+from motrix_robots.my_robot import MyRobot
 
-registry.robotcfg("my-robot")(MyRobot)
+
+def register() -> None:
+    # 保留其他内置模型的注册语句。
+    registry.robotcfg("my-robot")(MyRobot)
 ```
 
-同时将 `MyRobot` 加入该模块的 `__all__`。注册名称是命令行和 `registry.make_robot_config()` 使用的稳定 ID；配置类必须能
-无参数构造，或者改用带明确返回类型的零参数 factory 注册。
+已安装的机器人 package 会自动发现，无需手动导入注册模块。
+若使用独立 package，在自己的注册模块中采用同样的 `register()` 回调并导入自己的模型，再在该 package 的
+`pyproject.toml` 中声明：
+
+```toml
+[project.entry-points."motrix_env_core.robots"]
+my_robot = "my_robot_package.registration:register"
+```
 
 ### 4. 验证
 
@@ -168,31 +209,3 @@ python -m pytest motrix_envs/tests/test_robot_cfg.py -q
 python docs/scripts/generate_robot_docs.py --screenshots my-robot
 python docs/scripts/generate_robot_docs.py --check
 ```
-
-## 独立预览
-
-使用 `view.py` 可以在默认姿态下查看已注册 robot，无需创建 RL environment：
-
-```bash
-python scripts/view.py robot=go2
-```
-
-robot 模式会构建一个静态标准场景，不采样 action，也不执行 physics rollout。
-
-## Python API
-
-导入 `motrix_envs` 会注册所有内置 robot。随后可以查看 registry、创建新的配置实例并组合到标准 scene 中：
-
-```python
-import motrix_envs  # noqa: F401 registers built-in robots
-from motrix_env_core import registry
-from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
-
-print(registry.list_registered_robots())
-
-robot = registry.make_robot_config("go2")
-scene = StandardSceneCfg(objs=StandardSceneObjsCfg(robot=robot))
-```
-
-`make_robot_config()` 每次调用都会返回一个经过校验的新配置，因此调用方可以安全地修改位置、名称前后缀或其他
-实例级字段。

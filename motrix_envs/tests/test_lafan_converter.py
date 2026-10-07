@@ -3,14 +3,14 @@
 
 import motrixsim as mtx
 import numpy as np
+from motrix_robots.unitree import UNITREE_G1_ASSET_DIR
 
 from motrix_envs.motion import MotrixMotion
 from motrix_envs.motion.converters.lafan_converter import G1_CSV_JOINT_ORDER, convert_lafan
-from motrix_envs.robot.unitree import UNITREE_G1_ASSET_DIR
 
 # G1 pelvis rest height (~0.79 m); keeps the synthetic root above ground.
 _ROOT_Z = 0.793
-_G1_MODEL_FILE = UNITREE_G1_ASSET_DIR / "scene_g1_29dof.xml"
+_G1_MODEL_FILE = UNITREE_G1_ASSET_DIR / "g1_29dof.xml"
 
 
 def _write_synthetic_csv(path, num_frames=12):

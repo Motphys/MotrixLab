@@ -4,13 +4,13 @@
 """Compile Go2 walking environments into their deployment artifact contract."""
 
 import numpy as np
+from motrix_robots.unitree import UnitreeGo2Robot
 
 from motrix_deploy.artifact import ControlSpec, TaskSpec
 from motrix_deploy.profile import DeploymentProfile, register_profile_compiler
 from motrix_env_core import registry
 from motrix_envs.deploy.robot import build_robot_model, build_robot_spec, read_position_servo_gains
 from motrix_envs.locomotion.quadruped.cfg import QuadrupedWalkEnvCfg
-from motrix_envs.robot import UnitreeGo2Robot
 
 GO2_TASK_NAME = "go2_walk/v1"
 GO2_COMMAND_SCALES = {

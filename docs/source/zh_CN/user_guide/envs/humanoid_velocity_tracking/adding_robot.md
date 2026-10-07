@@ -38,13 +38,12 @@ def make_robot_walk_flat_cfg() -> HumanoidVelocityTrackingEnvCfg:
 推荐将文件放在以下位置：
 
 ```text
-motrix_envs/src/motrix_envs/
-├── robot/
-│   ├── <robot>.py                # RobotCfg，包含默认 key pose
-│   └── assets/<robot>/           # 可跨任务复用的机器人资产
-└── locomotion/
-    └── humanoid/
-        └── <robot>.py            # 平地/地形配置与环境注册
+motrix_robots/src/motrix_robots/
+├── <robot>.py                    # RobotCfg 与默认关键姿态
+└── assets/<robot>/               # 可跨任务复用的机器人资产
+
+motrix_envs/src/motrix_envs/locomotion/humanoid/
+└── <robot>.py                    # 平地/地形配置与环境注册
 
 configs/task/
 ├── <robot>-walk-flat/

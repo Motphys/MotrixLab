@@ -29,14 +29,15 @@ MotrixLab 将环境实现、仿真后端、训练方法、配置和命令行编�
 
 ## MotrixLab package 与流程的对应
 
-MotrixLab 是一个由十二个 package 组成的 UV workspace。下面按所有权而不是按单一整体运行时划分这些 package：
+MotrixLab 是一个 UV workspace。下面按所有权而不是按单一整体运行时划分这些 package：
 
 | Package | 流程环节 | 职责 |
 | --- | --- | --- |
 | `motrix_env_core` | 策略与环境的交互 | backend 无关的环境框架：`EnvCfg`、registry、环境前端与生命周期 |
 | `motrix_env_motrixsim` | 策略与环境的交互 | MotrixSim `SimBackend`、renderer 与 Torch frontend |
 | `motrix_env_mujoco` | 场景编译 | 仅负责编译场景的 MuJoCo backend |
-| `motrix_envs` | 策略与环境的交互 | 内置环境、机器人模型与任务资产 |
+| `motrix_robots` | 仿真模型 | 机器人模型、默认姿态与模型资产 |
+| `motrix_envs` | 策略与环境的交互 | 内置环境与任务资产 |
 | `motrix_rl` | 策略的训练与更新 | RL 控制平面、provider/trainer contract、run/checkpoint 管理与 discovery |
 | `motrix_rl_builtin` | 策略的训练与更新 | 内置 Motrix FastSAC provider |
 | `motrix_rl_skrl` | 策略的训练与更新 | SKRL PPO Torch provider（必需）及可选 JAX extra |

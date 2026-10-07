@@ -28,6 +28,7 @@ from pathlib import Path
 
 import motrixsim as mtx
 import numpy as np
+from motrix_robots.unitree import UnitreeG129Dof
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import RobotCfg, SceneCfg, SceneObjsCfg
@@ -40,7 +41,6 @@ from motrix_envs.motion.converters.lafan_converter import (
     _trim,
 )
 from motrix_envs.motion.schema import SCHEMA_VERSION, XYZW_FROM_WXYZ
-from motrix_envs.robot import UnitreeG129Dof
 
 # Assumed joint column order of the mjbatch flip.npz: the MuJoCo Menagerie
 # unitree_g1 29-DOF qpos order (verified indirectly by the FK cross-check).

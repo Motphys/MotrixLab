@@ -9,6 +9,8 @@ per-foot position) are declared here via :class:`FrameSensorCfg` instead of edit
 into the robot file.
 """
 
+from motrix_robots.anymal import AnymalC
+
 from motrix_env_core import registry
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import (
@@ -30,7 +32,6 @@ from motrix_envs.locomotion.quadruped.cfg import (
     Sensor,
 )
 from motrix_envs.locomotion.quadruped.walk_np import QuadrupedWalkTask
-from motrix_envs.robot import AnymalC
 
 
 @configclass

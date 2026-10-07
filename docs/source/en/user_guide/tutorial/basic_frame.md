@@ -34,14 +34,15 @@ With this loop in mind, every MotrixLab package has a place in the figure.
 
 ## Which part of the loop each package covers
 
-MotrixLab is a UV workspace of twelve packages. The packages are grouped by ownership rather than treated as one monolithic runtime:
+MotrixLab is a UV workspace. The packages are grouped by ownership rather than treated as one monolithic runtime:
 
 | Package | Loop stage | Responsibility |
 | --- | --- | --- |
 | `motrix_env_core` | Policy–environment interaction | Backend-agnostic environment framework: `EnvCfg`, registry, frontends, lifecycle |
 | `motrix_env_motrixsim` | Policy–environment interaction | MotrixSim `SimBackend`, renderer, and Torch frontend |
 | `motrix_env_mujoco` | Scene compilation | Compile-only MuJoCo scene backend |
-| `motrix_envs` | Policy–environment interaction | Built-in environments, robot models, and task assets |
+| `motrix_robots` | Simulation models | Robot models, default poses, and model assets |
+| `motrix_envs` | Policy–environment interaction | Built-in environments and task assets |
 | `motrix_rl` | Policy training and updates | RL control plane, provider/trainer contracts, run/checkpoint handling, and discovery |
 | `motrix_rl_builtin` | Policy training and updates | Built-in Motrix FastSAC provider |
 | `motrix_rl_skrl` | Policy training and updates | SKRL PPO provider for Torch (required) and optional JAX extra |

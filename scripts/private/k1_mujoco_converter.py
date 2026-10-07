@@ -20,6 +20,7 @@ from pathlib import Path
 
 import motrixsim as mtx
 import numpy as np
+from motrix_robots.booster import BoosterK1
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import RobotCfg, SceneCfg, SceneObjsCfg
@@ -31,7 +32,6 @@ from motrix_envs.motion.converters.lafan_converter import (
     _trim,
 )
 from motrix_envs.motion.schema import SCHEMA_VERSION, XYZW_FROM_WXYZ
-from motrix_envs.robot import BoosterK1
 
 _K1_ROOT_BODY = "Trunk"
 _K1_REFERENCE_BODY = "Trunk"

@@ -1,5 +1,4 @@
 <mujoco model="anymal_c scene">
-  <include file="../../../robot/assets/anymal_c/anymal_c.xml" />
 
   <visual>
     <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />

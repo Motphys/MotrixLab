@@ -161,11 +161,20 @@ python scripts/view.py env=go2-walk-rough
 python scripts/view.py robot=go2
 ```
 
+通过公共配置 API 直接构造模型，用于场景组合：
+
+```python
+from motrix_robots import Microduck, UnitreeGo2Robot
+
+microduck = Microduck()
+go2 = UnitreeGo2Robot()
+```
+
 机器人配置细节与自定义新模型的方法见[支持的机器人](https://motrixlab.readthedocs.io/zh-cn/latest/user_guide/robots.html)。
 
 ## 🏗️ 项目组成
 
-MotrixLab 是一个由十二个 package 组成的 [uv](https://docs.astral.sh/uv/) workspace：
+MotrixLab 是一个 [uv](https://docs.astral.sh/uv/) workspace，包含以下 package：
 
 | Package | PyPI 名称 | 说明 |
 | --- | --- | --- |
@@ -173,10 +182,11 @@ MotrixLab 是一个由十二个 package 组成的 [uv](https://docs.astral.sh/uv
 | **motrix_deploy_mujoco** | `motrix-deploy-mujoco` | MuJoCo 部署 backend plugin |
 | **motrix_deploy_unitree** | `motrix-deploy-unitree` | Unitree SDK2 DDS 硬件 backend plugin |
 | **motrix_deploy_tasks** | `motrix-deploy-tasks` | 带版本的部署任务与可执行入口 bootstrap |
-| **motrix_env_core** | `motrix-env-core` | backend 无关的环境框架、配置、registry、生命周期与渲染 |
+| **motrix_env_core** | `motrix-env-core` | backend 无关的环境框架、配置、registry、robot entry-point discovery、生命周期与渲染 |
 | **motrix_env_motrixsim** | `motrix-env-motrixsim` | MotrixSim 实时仿真 backend、renderer 与 Torch frontend |
 | **motrix_env_mujoco** | `motrix-env-mujoco` | 仅负责编译场景的 MuJoCo backend |
-| **motrix_envs** | `motrix-envs` | 内置环境、机器人模型、数据及部署 profile 编译实现 |
+| **motrix_robots** | `motrix-robots` | 仿真机器人配置、模型自有姿态及 模型 MJCF/URDF、mesh 与模型纹理资产；仅依赖 core |
+| **motrix_envs** | `motrix-envs` | 内置环境、任务资产、数据及部署 profile 编译实现 |
 | **motrix_rl** | `motrix-rl` | RL 控制平面、provider/trainer contract、run/checkpoint 管理与 discovery |
 | **motrix_rl_builtin** | `motrix-rl-builtin` | 内置 Motrix FastSAC provider |
 | **motrix_rl_skrl** | `motrix-rl-skrl` | 必需的 SKRL PPO Torch provider；可选 JAX extra |

@@ -5,6 +5,8 @@
 
 from dataclasses import replace
 
+from motrix_robots.booster import BoosterK1
+
 from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config.scene import HFieldTerrainCfg
@@ -26,7 +28,6 @@ from motrix_envs.locomotion.humanoid.walk_manager_mdp.rewards import (
     PenaltyCloseFeetXyRewardCfg,
     PoseRewardCfg,
 )
-from motrix_envs.robot import BoosterK1
 
 
 def _make_k1_robot() -> BoosterK1:

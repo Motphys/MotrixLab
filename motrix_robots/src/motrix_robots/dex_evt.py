@@ -12,7 +12,7 @@ from motrix_env_core.config.scene import (
     UrdfFileCfg,
     UrdfGeomCfg,
 )
-from motrix_envs.robot.humanoid import HumanoidRobotCfg
+from motrix_robots.humanoid import HumanoidRobotCfg
 
 DEX_EVT_ASSET_DIR = Path(__file__).parent / "assets" / "dex_evt"
 _DEX_EVT_URDF = DEX_EVT_ASSET_DIR / "dex_evt.urdf"
@@ -121,7 +121,31 @@ class DexEvt(HumanoidRobotCfg):
     right_foot_link_name: str = "ankle_roll_r_link"
     translation: tuple[float, float, float] | None = (0.0, 0.0, 0.95)
     key_pose: KeyPoseCfg = KeyPoseCfg(
-        joint_names=list(_DRIVE_PARAMS),
+        joint_names=[
+            "hip_pitch_l_joint",
+            "hip_roll_l_joint",
+            "hip_yaw_l_joint",
+            "knee_pitch_l_joint",
+            "ankle_pitch_l_joint",
+            "ankle_roll_l_joint",
+            "hip_pitch_r_joint",
+            "hip_roll_r_joint",
+            "hip_yaw_r_joint",
+            "knee_pitch_r_joint",
+            "ankle_pitch_r_joint",
+            "ankle_roll_r_joint",
+            "waist_yaw_joint",
+            "waist_roll_joint",
+            "waist_pitch_joint",
+            "shoulder_pitch_l_joint",
+            "shoulder_roll_l_joint",
+            "shoulder_yaw_l_joint",
+            "elbow_pitch_l_joint",
+            "shoulder_pitch_r_joint",
+            "shoulder_roll_r_joint",
+            "shoulder_yaw_r_joint",
+            "elbow_pitch_r_joint",
+        ],
         poses={
             "default": [
                 -0.25,

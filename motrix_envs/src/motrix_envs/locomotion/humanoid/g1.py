@@ -5,6 +5,8 @@
 
 from dataclasses import replace
 
+from motrix_robots.unitree import UnitreeG129Dof
+
 from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config.scene import HFieldTerrainCfg, SystemCameraCfg
@@ -29,7 +31,6 @@ from motrix_envs.locomotion.humanoid.walk_manager_mdp.rewards import (
     PenaltyCloseFeetXyRewardCfg,
     PoseRewardCfg,
 )
-from motrix_envs.robot import UnitreeG129Dof
 
 # Pinned G1 termination collision inventory, owned by the G1 walk task.
 _G1_TERMINATION_GEOMS = (

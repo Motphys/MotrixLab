@@ -3,6 +3,8 @@
 
 """Go1 flat- and rough-terrain walk configuration and environment registration."""
 
+from motrix_robots.unitree import UnitreeGo1Robot
+
 from motrix_env_core import registry
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import FlatTerrainCfg, HFieldTerrainCfg
@@ -16,7 +18,6 @@ from motrix_envs.locomotion.quadruped.cfg import (
     RewardScales,
 )
 from motrix_envs.locomotion.quadruped.walk_np import QuadrupedWalkTask
-from motrix_envs.robot import UnitreeGo1Robot
 
 
 @registry.envcfg("go1-walk-flat")

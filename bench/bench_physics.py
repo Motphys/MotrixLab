@@ -40,7 +40,6 @@ import motrixsim as mtx
 import numpy as np
 from report import render_table
 
-import motrix_envs  # noqa: F401  registers robots and scene assets
 from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
 from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler

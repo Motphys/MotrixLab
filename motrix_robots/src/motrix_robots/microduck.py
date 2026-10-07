@@ -5,7 +5,7 @@ from pathlib import Path
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import KeyPoseCfg, MjcfFileCfg
-from motrix_envs.robot.humanoid import HumanoidRobotCfg
+from motrix_robots.humanoid import HumanoidRobotCfg
 
 MICRODUCK_ASSET_DIR = Path(__file__).parent / "assets" / "microduck"
 _MICRODUCK_MJCF = MICRODUCK_ASSET_DIR / "microduck.xml"
@@ -41,7 +41,7 @@ class Microduck(HumanoidRobotCfg):
             "right_ankle",
         ],
         poses={
-            # Upstream keyframe "STAND" (trunk at z=0.12).
+            # Upstream keyframe "STAND".
             "default": [
                 0.0,
                 -0.08726646259971647,
@@ -58,7 +58,7 @@ class Microduck(HumanoidRobotCfg):
                 0.004940,
                 -0.452984,
             ],
-            # Upstream keyframe "SIT" (trunk at z=0.07).
+            # Upstream keyframe "SIT".
             "sit": [
                 0.0,
                 0.0,
@@ -75,7 +75,7 @@ class Microduck(HumanoidRobotCfg):
                 -1.0472,
                 0.0,
             ],
-            # Upstream keyframe "FOLD" (trunk at z=0.07).
+            # Upstream keyframe "FOLD".
             "fold": [
                 0.0,
                 0.0,

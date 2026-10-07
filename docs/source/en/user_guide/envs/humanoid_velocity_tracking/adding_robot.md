@@ -38,13 +38,12 @@ nested config overrides, field details, and tuning guidance.
 Use the following layout:
 
 ```text
-motrix_envs/src/motrix_envs/
-├── robot/
-│   ├── <robot>.py                # RobotCfg, including its default key pose
-│   └── assets/<robot>/           # Reusable robot assets
-└── locomotion/
-    └── humanoid/
-        └── <robot>.py            # Flat/terrain configs and environment registration
+motrix_robots/src/motrix_robots/
+├── <robot>.py                    # RobotCfg and default key pose
+└── assets/<robot>/               # Reusable robot assets
+
+motrix_envs/src/motrix_envs/locomotion/humanoid/
+└── <robot>.py                    # Flat/terrain configs and environment registration
 
 configs/task/
 ├── <robot>-walk-flat/

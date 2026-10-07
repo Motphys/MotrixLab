@@ -6,6 +6,8 @@
 from dataclasses import InitVar
 from pathlib import Path
 
+from motrix_robots.dex_evt import DexEvt
+
 from motrix_env_core import registry
 from motrix_env_core.base import EnvCfg, SimCfg
 from motrix_env_core.config import configclass
@@ -27,7 +29,6 @@ from motrix_envs.locomotion.wbt.mdp.rewards import (
 from motrix_envs.locomotion.wbt.mdp.terminations import (
     BadBodyZTerminationCfg,
 )
-from motrix_envs.robot import DexEvt
 
 _MOTION_DIR = Path(__file__).parent / "assets" / "motion" / "dex_evt"
 _DEX_EVT_TRACKED_BODY_NAMES = (

@@ -12,7 +12,6 @@ from pathlib import Path
 import motrixsim as mtx
 from motrixsim.render import RenderApp, RenderSettings
 
-import motrix_envs  # noqa: F401 registers built-in robots
 from motrix_env_core import registry
 from motrix_env_core.config.scene import MjcfFileCfg, SystemCameraCfg, UrdfFileCfg
 from motrix_env_motrixsim.compiler import build_scene_model

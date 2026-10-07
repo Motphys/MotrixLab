@@ -375,7 +375,7 @@ Robot 页面继续作为独立参考。环境页面只链接其使用的 Robot�
 - Env ID 和 EnvCfg：`motrix_env_core.registry` 及 `motrix_envs` 注册代码；
 - Env description：注册 class 或 factory 的 Python docstring，由 Env Registry 自动提取；
 - Training Algorithms：`configs/task/<env-id>/` 中实际存在的 Hydra Task 选项；
-- Robot：Robot Registry 与 `motrix_envs.robot`；
+- Robot：`motrix_env_core.registry` 的 Robot Registry 与 `motrix_robots` 公共配置 API；
 - 页面视频和封面：`docs/source/_static/`。
 
 `envs/index.md` 的 overview 表格由生成器维护，不人工添加、删除或调整行。Env ID 和双语 description 直接来自 registry；description 的事实来源是注册 provider 的 Python docstring；Training Algorithms 直接来自 Hydra Task 发现结果。环境详情页中的长篇任务描述、任务语义和选型建议继续人工维护。

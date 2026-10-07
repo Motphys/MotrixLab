@@ -3,10 +3,12 @@
 
 import os
 
+from motrix_robots.anymal import AnymalC
+
 from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config import configclass
-from motrix_env_core.config.scene import SceneCfg
+from motrix_env_core.config.scene import SceneCfg, SceneObjsCfg
 from motrix_env_core.direct.env import DirectEnvCfg
 
 model_file = os.path.dirname(__file__) + "/xmls/scene.xml"
@@ -103,7 +105,7 @@ class AnymalCEnvCfg(DirectEnvCfg):
     zh_CN: 控制 ANYmal-C 在平地上朝目标位置导航。
     """
 
-    scene: SceneCfg = SceneCfg(file=model_file)
+    scene: SceneCfg = SceneCfg(file=model_file, objs=SceneObjsCfg(robot=AnymalC()))
     reset_noise_scale: float = 0.01
     max_episode_seconds: float = 7.0
     sim: SimCfg = SimCfg(dt=0.01)

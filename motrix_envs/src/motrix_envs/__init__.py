@@ -14,7 +14,7 @@ def register() -> None:
         return
     _registered = True
     try:
-        from motrix_envs import basic, locomotion, manipulation, robot  # noqa: F401
+        from motrix_envs import basic, locomotion, manipulation  # noqa: F401
     except Exception:
         _registered = False
         raise

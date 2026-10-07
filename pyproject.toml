@@ -74,6 +74,7 @@ test = [
 
 [tool.uv.workspace]
 members = [
+    "motrix_robots",
     "motrix_deploy",
     "motrix_deploy_mujoco",
     "motrix_deploy_unitree",
@@ -116,6 +117,7 @@ name = "pypi"
 url = "https://pypi.org/simple"
 
 [tool.uv.sources]
+motrix-robots = { workspace = true }
 motrix-env-core = { workspace = true }
 motrix-deploy = { workspace = true }
 motrix-deploy-mujoco = { workspace = true }

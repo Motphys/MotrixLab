@@ -5,6 +5,8 @@
 
 from dataclasses import replace
 
+from motrix_robots.dex_evt import DexEvt
+
 from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config.scene import FlatTerrainCfg, HFieldTerrainCfg
@@ -26,7 +28,6 @@ from motrix_envs.locomotion.humanoid.walk_manager_mdp.rewards import (
     PenaltyCloseFeetXyRewardCfg,
     PoseRewardCfg,
 )
-from motrix_envs.robot import DexEvt
 
 # Pinned Dex-EVT termination collision inventory, owned by the Dex-EVT walk task.
 _DEX_EVT_TERMINATION_GEOMS = (

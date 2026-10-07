@@ -32,10 +32,10 @@ from pathlib import Path
 
 import motrixsim as mtx
 import numpy as np
+from motrix_robots.unitree import UNITREE_G1_ASSET_DIR
 
 from motrix_env_core.math import quaternion
 from motrix_envs.motion.schema import SCHEMA_VERSION
-from motrix_envs.robot.unitree import UNITREE_G1_ASSET_DIR
 
 # G1 joint order as stored in the CSV columns (dataset meta_data/info.json).
 G1_CSV_JOINT_ORDER = (
@@ -76,10 +76,10 @@ _G1_REFERENCE_BODY = "torso_link"
 
 
 def _default_model_file(robot: str) -> Path:
-    """Locate the MotrixSim scene xml shipped with the requested robot package."""
+    """Locate the robot-only MJCF used for forward kinematics."""
     if robot != "g1":
         raise ValueError(f"LAFAN converter only supports robot 'g1', got {robot!r}")
-    return UNITREE_G1_ASSET_DIR / "scene_g1_29dof.xml"
+    return UNITREE_G1_ASSET_DIR / "g1_29dof.xml"
 
 
 def _normalize(q: np.ndarray) -> np.ndarray:

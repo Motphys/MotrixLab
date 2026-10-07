@@ -88,13 +88,20 @@ register_sim_backend("fake-registry", lambda: _FakeRegistryBackend)
 
 
 @pytest.fixture(autouse=True)
-def _restore_global_registry():
+def _restore_global_registry(monkeypatch):
     """Drop any envs/robots a test registers so they do not leak across tests.
 
     Several tests below register throwaway env/robot configs into the module-level
     registry. Without cleanup they leak into later tests (e.g. the robot-docs suite
     asserts the registered robot set matches its metadata) and into whole-repo runs.
     """
+    # Core unit tests must not depend on installed robot distributions.
+    monkeypatch.setattr(registry, "entry_points", lambda *, group: ())
+    monkeypatch.setattr(registry, "_robots", {})
+    monkeypatch.setattr(registry, "_robots_discovered", False)
+    monkeypatch.setattr(registry, "_robots_discovering", False)
+    monkeypatch.setattr(registry, "_robot_entry_points", None)
+    monkeypatch.setattr(registry, "_completed_robot_entry_points", 0)
     envs_before = set(registry._envs)
     robots_before = set(registry._robots)
     yield

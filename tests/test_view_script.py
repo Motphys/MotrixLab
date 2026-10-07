@@ -8,9 +8,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from motrix_robots.unitree import UnitreeGo2Robot
 
 from motrix_env_core import registry
-from motrix_envs.robot import UnitreeGo2Robot
 from motrix_rl.config import ViewConfig
 
 VIEW_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "view.py"

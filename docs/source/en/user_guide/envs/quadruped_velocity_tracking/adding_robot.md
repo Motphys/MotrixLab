@@ -8,13 +8,12 @@ construction, diagonal-trot rewards, reset, and termination.
 Use the following layout:
 
 ```text
-motrix_envs/src/motrix_envs/
-├── robot/
-│   ├── <robot>.py                # QuadrupedRobotCfg and default key pose
-│   └── assets/<robot>/           # Robot assets reusable across tasks
-└── locomotion/
-    └── quadruped/
-        └── <robot>.py            # Flat/rough configs and environment registration
+motrix_robots/src/motrix_robots/
+├── <robot>.py                    # QuadrupedRobotCfg and default key pose
+└── assets/<robot>/               # Robot assets reusable across tasks
+
+motrix_envs/src/motrix_envs/locomotion/quadruped/
+└── <robot>.py                    # Flat/rough configs and environment registration
 
 configs/task/
 ├── <robot>-walk-flat/
@@ -43,7 +42,7 @@ foot in front-left, front-right, rear-left, rear-right order:
 ```python
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import KeyPoseCfg, MjcfFileCfg
-from motrix_envs.robot import QuadrupedLegCfg, QuadrupedLegsCfg, QuadrupedRobotCfg
+from motrix_robots import QuadrupedLegCfg, QuadrupedLegsCfg, QuadrupedRobotCfg
 
 
 @configclass(kw_only=True)

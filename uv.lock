@@ -31,6 +31,7 @@ members = [
     "motrix-rl-builtin",
     "motrix-rl-rslrl",
     "motrix-rl-skrl",
+    "motrix-robots",
 ]
 
 [[package]]
@@ -1074,6 +1075,7 @@ dependencies = [
     { name = "gymnasium" },
     { name = "motrix-env-core", extra = ["numba", "video"] },
     { name = "motrix-env-motrixsim" },
+    { name = "motrix-robots" },
     { name = "numpy" },
     { name = "omegaconf" },
 ]
@@ -1089,6 +1091,7 @@ requires-dist = [
     { name = "motrix-deploy", marker = "extra == 'deploy'", editable = "motrix_deploy" },
     { name = "motrix-env-core", extras = ["numba", "video"], editable = "motrix_env_core" },
     { name = "motrix-env-motrixsim", editable = "motrix_env_motrixsim" },
+    { name = "motrix-robots", editable = "motrix_robots" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "omegaconf", specifier = ">=2.3,<2.4" },
 ]
@@ -1318,6 +1321,17 @@ requires-dist = [
     { name = "torch", specifier = ">=2.7,<3" },
 ]
 provides-extras = ["jax"]
+
+[[package]]
+name = "motrix-robots"
+version = "0.4.0b0"
+source = { editable = "motrix_robots" }
+dependencies = [
+    { name = "motrix-env-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "motrix-env-core", editable = "motrix_env_core" }]
 
 [[package]]
 name = "motrixsim"

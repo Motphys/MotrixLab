@@ -6,6 +6,7 @@
 from dataclasses import replace
 
 import numpy as np
+from motrix_robots.quadruped import QuadrupedRobotCfg
 from numpy.typing import NDArray
 from omegaconf import MISSING
 
@@ -20,7 +21,6 @@ from motrix_env_core.config.scene import (
 )
 from motrix_env_core.direct.env import DirectEnvCfg
 from motrix_envs.config.scene import StandardSceneAssetsCfg, StandardSceneCfg
-from motrix_envs.robot import QuadrupedRobotCfg
 
 
 def _contact_sensor(geom_name: str | None) -> ContactSensorCfg:
