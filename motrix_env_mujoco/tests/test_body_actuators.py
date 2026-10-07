@@ -195,10 +195,7 @@ def test_inherited_joint_range_uses_compiled_units_without_mutating_source(compi
     original_ranges = {joint.name: list(joint.range) for joint in spec.joints}
     apply_actuator_cfgs(
         spec,
-        {
-            name: PositionActuatorCfg(joint_name=name, kp=1.0, inherit_joint_range=True)
-            for name in original_ranges
-        },
+        {name: PositionActuatorCfg(joint_name=name, kp=1.0, inherit_joint_range=True) for name in original_ranges},
     )
     model = spec.compile()
     for index, name in enumerate(original_ranges):
