@@ -1,9 +1,12 @@
+# @package _global_
 defaults:
-  - base
+  - /runtime: hardware
   - _self_
 
-backend:
-  name: unitree_go2
+runtime:
+  backend: unitree_go2
+  kp: 50
+  kd: 1
   network_interface: enp5s0
   domain_id: 0
   lowcmd_topic: rt/lowcmd
@@ -34,3 +37,4 @@ command:
     invert_linear_y: true
     invert_yaw: true
     deadman_button: L1
+duration_s: 300.0

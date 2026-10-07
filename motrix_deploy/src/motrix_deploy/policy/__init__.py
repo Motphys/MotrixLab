@@ -14,24 +14,35 @@ from motrix_deploy.errors import ValidationError
 
 
 class PolicyRuntime(ABC):
-    """Framework-independent deterministic policy inference."""
+    """Decision runtime for a task's vector observation/action interface.
 
-    @property
-    @abstractmethod
-    def input_spec(self) -> TensorSpec:
-        """Return the policy input contract."""
-
-    @property
-    @abstractmethod
-    def output_spec(self) -> TensorSpec:
-        """Return the policy output contract."""
+    Implementations may use networks, planners, or fixed decisions. Tensor names
+    and dimensions are implementation details, not requirements of this contract.
+    """
 
     def reset(self) -> None:
-        """Reset recurrent state; v1 policies are stateless."""
+        """Reset decision state before a run; stateless implementations do nothing."""
 
     @abstractmethod
     def infer(self, observation: FloatArray) -> FloatArray:
         """Infer one unbatched action."""
+
+
+class NoOpPolicyRuntime(PolicyRuntime):
+    """Ignore observations and return zero actions; the task defines their meaning.
+
+    A zero action does not imply zero torque or skipping a command. For example,
+    a pose-offset task interprets it as holding its reference pose.
+    """
+
+    def __init__(self, action_size: int) -> None:
+        if isinstance(action_size, bool) or not isinstance(action_size, int) or action_size < 0:
+            raise ValidationError("policy.noop.action_size", "a non-negative integer", action_size)
+        self._action = np.zeros(action_size, dtype=np.float32)
+
+    def infer(self, observation: FloatArray) -> FloatArray:
+        del observation
+        return self._action.copy()
 
 
 class OnnxPolicyRuntime(PolicyRuntime):
@@ -100,4 +111,4 @@ class OnnxPolicyRuntime(PolicyRuntime):
         return float32_array(output[0], path="policy.output", shape=(self.output_spec.shape[1],))
 
 
-__all__ = ["OnnxPolicyRuntime", "PolicyRuntime"]
+__all__ = ["NoOpPolicyRuntime", "OnnxPolicyRuntime", "PolicyRuntime"]

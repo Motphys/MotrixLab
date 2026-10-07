@@ -1,0 +1,23 @@
+# @package _global_
+defaults:
+  - /runtime: sim
+  - _self_
+
+runtime:
+  backend: mujoco
+  sensor_bindings:
+    base_angular_velocity: gyro
+    base_linear_acceleration: accelerometer
+    base_linear_velocity: global_linvel
+  deploy_env_id: rough
+  robot_id: go2
+  # Attach offset from the model's root height (0.445), clearing the terrain at reset.
+  robot_translation: [0.0, 0.0, -0.025]
+  robot_rotation: [0.0, 0.0, 0.0, 1.0]
+  physics:
+    dt: 0.002
+    solver_iterations: 100
+
+command:
+  source: constant
+  velocity: [0.0, 0.0, 0.0]

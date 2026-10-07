@@ -7,17 +7,25 @@ import time
 
 import numpy as np
 
-from motrix_deploy.backend import RobotInterface
-from motrix_deploy.contracts import HealthStatus, RobotCapabilities, RobotCommand, RobotSpec, RobotState
+from motrix_deploy.contracts import (
+    HealthStatus,
+    JointControlMode,
+    JointServoCommand,
+    RobotCapabilities,
+    RobotCommand,
+    RobotSpec,
+    RobotState,
+)
 from motrix_deploy.errors import ValidationError
+from motrix_deploy.robot.interface import RobotInterface
 
 
 class FakeRobotInterface(RobotInterface):
-    """Echo position commands into state without a physics dependency."""
+    """Echo servo positions; record torque commands without inventing physics."""
 
     def __init__(
         self,
-        joint_names: tuple[str, ...],
+        spec: RobotSpec,
         *,
         sample_period_s: float = 0.02,
         response: float = 1.0,
@@ -26,7 +34,7 @@ class FakeRobotInterface(RobotInterface):
         unhealthy_at: int | None = None,
     ) -> None:
         self._capabilities = RobotCapabilities(
-            control_modes=("joint_pd",),
+            control_modes=(JointControlMode.SERVO, JointControlMode.TORQUE),
             state_fields=frozenset(
                 {
                     "joint_position",
@@ -38,16 +46,15 @@ class FakeRobotInterface(RobotInterface):
             ),
             max_command_rate_hz=1.0 / sample_period_s,
         )
-        self._joint_names = joint_names
+        self._spec = spec
         self._period_s = sample_period_s
         self._period_ns = round(sample_period_s * 1e9)
         self._response = response
         self._fail_read_at = fail_read_at
         self._fail_write_at = fail_write_at
         self._unhealthy_at = unhealthy_at
-        self._spec: RobotSpec | None = None
-        self._position = np.zeros(len(joint_names), dtype=np.float32)
-        self._velocity = np.zeros(len(joint_names), dtype=np.float32)
+        self._position = np.zeros(len(spec.joint_names), dtype=np.float32)
+        self._velocity = np.zeros(len(spec.joint_names), dtype=np.float32)
         self._sample_time_ns = 0
         self._read_count = 0
         self._write_count = 0
@@ -57,17 +64,18 @@ class FakeRobotInterface(RobotInterface):
         self.commands: list[RobotCommand] = []
 
     @property
+    def spec(self) -> RobotSpec:
+        return self._spec
+
+    @property
     def capabilities(self) -> RobotCapabilities:
         return self._capabilities
 
-    def open(self, spec: RobotSpec) -> None:
+    def open(self) -> None:
         if self._opened and not self._closed:
             raise RuntimeError("fake backend is already open")
         self.events.append("open")
-        if len(self._joint_names) != len(spec.joint_names) or set(self._joint_names) != set(spec.joint_names):
-            raise ValidationError("backend.joint_names", str(spec.joint_names), self._joint_names)
-        self._spec = spec
-        self._position = np.array(spec.default_joint_position, copy=True)
+        self._position = np.array(self._spec.default_joint_position, copy=True)
         self._velocity.fill(0)
         self._sample_time_ns = 0
         self._read_count = 0
@@ -90,9 +98,19 @@ class FakeRobotInterface(RobotInterface):
         self._require_open()
         if self._fail_write_at == self._write_count:
             raise RuntimeError(f"injected write failure at command {self._write_count}")
-        previous = self._position.copy()
-        self._position += np.float32(self._response) * (command.joint_position - self._position)
-        self._velocity = ((self._position - previous) / np.float32(self._period_s)).astype(np.float32)
+        expected = (self.spec.joint_count,)
+        if isinstance(command, JointServoCommand):
+            if command.joint_position.shape != expected:
+                raise ValidationError("command.joint_position.shape", str(expected), command.joint_position.shape)
+            previous = self._position.copy()
+            self._position += np.float32(self._response) * (command.joint_position - self._position)
+            self._velocity = ((self._position - previous) / np.float32(self._period_s)).astype(np.float32)
+        else:
+            if command.torque.shape != expected:
+                raise ValidationError("command.torque.shape", str(expected), command.torque.shape)
+            if np.any(np.abs(command.torque) > self.spec.torque_limit):
+                raise ValidationError("command.torque", "inside robot torque limits", command.torque.tolist())
+            self._velocity.fill(0)
         self._sample_time_ns += self._period_ns
         self.commands.append(command)
         self.events.append("write")
@@ -133,10 +151,3 @@ class FakeRobotInterface(RobotInterface):
             base_position=np.array([0.0, 0.0, 0.3], dtype=np.float32),
             base_linear_velocity=zeros,
         )
-
-
-class LaggedFakeRobotInterface(FakeRobotInterface):
-    """A second adapter whose state moves halfway to each command."""
-
-    def __init__(self, joint_names: tuple[str, ...], *, sample_period_s: float = 0.02) -> None:
-        super().__init__(joint_names, sample_period_s=sample_period_s, response=0.5)

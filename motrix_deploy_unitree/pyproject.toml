@@ -20,7 +20,7 @@ dependencies = [
 motrix-deploy-unitree = "motrix_deploy_unitree.cli:main"
 
 [project.entry-points."motrix_deploy.backends"]
-unitree_go2 = "motrix_deploy_unitree.plugin:create_backend"
+unitree_go2 = "motrix_deploy_unitree.plugin:create_runtime"
 
 [tool.uv.sources]
 unitree-sdk2py = { git = "https://github.com/motphys-developers/unitree_sdk2_python", rev = "ff87e731174f7258e0d09980897c55116634939a" }

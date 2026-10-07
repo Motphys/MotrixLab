@@ -50,12 +50,12 @@ def export_deploy_run(
     policy_bytes = exported.model_bytes
     input_spec = _deployment_tensor_spec(
         exported.report.input_spec,
-        expected_size=profile.task.observation_size,
+        expected_size=profile.observation_size,
         kind="input",
     )
     output_spec = _deployment_tensor_spec(
         exported.report.output_spec,
-        expected_size=profile.task.action_size,
+        expected_size=profile.action_size,
         kind="output",
     )
 

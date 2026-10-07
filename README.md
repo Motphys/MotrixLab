@@ -178,14 +178,14 @@ MotrixLab is a [uv](https://docs.astral.sh/uv/) workspace with the following pac
 
 | Package | PyPI name | Description |
 | --- | --- | --- |
-| **motrix_deploy** | `motrix-deploy` | Framework-independent artifacts, runtime contracts, deployment registry, and CLI |
+| **motrix_deploy** | `motrix-deploy` | Artifacts, control sessions, runtime contracts, and deployment CLI |
 | **motrix_deploy_mujoco** | `motrix-deploy-mujoco` | MuJoCo deployment backend plugin |
 | **motrix_deploy_unitree** | `motrix-deploy-unitree` | Unitree SDK2 DDS hardware backend plugin |
-| **motrix_deploy_tasks** | `motrix-deploy-tasks` | Versioned deployment tasks and executable bootstrap |
-| **motrix_env_core** | `motrix-env-core` | Backend-agnostic environment framework, configuration, registry, robot entry-point discovery, lifecycle, and rendering |
+| **motrix_deploy_tasks** | `motrix-deploy-tasks` | Walking tasks, deployment scenes, and installed Hydra recipes |
+| **motrix_env_core** | `motrix-env-core` | Backend-agnostic environment framework, configuration, registry, and rendering |
 | **motrix_env_motrixsim** | `motrix-env-motrixsim` | Live MotrixSim backend, renderer, and Torch frontend |
 | **motrix_env_mujoco** | `motrix-env-mujoco` | Compile-only MuJoCo scene backend |
-| **motrix_robots** | `motrix-robots` | Simulation robot configs, model-owned poses, and model MJCF/URDF, meshes, and model textures; core-only dependency |
+| **motrix_robots** | `motrix-robots` | Reusable robot configurations, default poses, and model assets |
 | **motrix_envs** | `motrix-envs` | Built-in environments, task assets, data, and deployment-profile compilers |
 | **motrix_rl** | `motrix-rl` | RL control plane, provider/trainer contracts, run/checkpoint handling, and discovery |
 | **motrix_rl_builtin** | `motrix-rl-builtin` | Built-in Motrix FastSAC provider |

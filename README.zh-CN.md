@@ -178,14 +178,14 @@ MotrixLab 是一个 [uv](https://docs.astral.sh/uv/) workspace，包含以下 pa
 
 | Package | PyPI 名称 | 说明 |
 | --- | --- | --- |
-| **motrix_deploy** | `motrix-deploy` | 框架无关 artifact、运行时契约、部署 registry 与 CLI |
+| **motrix_deploy** | `motrix-deploy` | artifact、控制会话、运行时契约与部署 CLI |
 | **motrix_deploy_mujoco** | `motrix-deploy-mujoco` | MuJoCo 部署 backend plugin |
 | **motrix_deploy_unitree** | `motrix-deploy-unitree` | Unitree SDK2 DDS 硬件 backend plugin |
-| **motrix_deploy_tasks** | `motrix-deploy-tasks` | 带版本的部署任务与可执行入口 bootstrap |
-| **motrix_env_core** | `motrix-env-core` | backend 无关的环境框架、配置、registry、robot entry-point discovery、生命周期与渲染 |
+| **motrix_deploy_tasks** | `motrix-deploy-tasks` | 行走任务、部署场景与安装的 Hydra 配方 |
+| **motrix_env_core** | `motrix-env-core` | backend 无关的环境框架、配置、registry 与渲染 |
 | **motrix_env_motrixsim** | `motrix-env-motrixsim` | MotrixSim 实时仿真 backend、renderer 与 Torch frontend |
 | **motrix_env_mujoco** | `motrix-env-mujoco` | 仅负责编译场景的 MuJoCo backend |
-| **motrix_robots** | `motrix-robots` | 仿真机器人配置、模型自有姿态及 模型 MJCF/URDF、mesh 与模型纹理资产；仅依赖 core |
+| **motrix_robots** | `motrix-robots` | 可复用机器人配置、默认姿态与模型资产 |
 | **motrix_envs** | `motrix-envs` | 内置环境、任务资产、数据及部署 profile 编译实现 |
 | **motrix_rl** | `motrix-rl` | RL 控制平面、provider/trainer contract、run/checkpoint 管理与 discovery |
 | **motrix_rl_builtin** | `motrix-rl-builtin` | 内置 Motrix FastSAC provider |

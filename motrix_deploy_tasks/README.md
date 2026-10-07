@@ -1,23 +1,28 @@
 # Motrix Deploy Tasks
 
-`motrix_deploy_tasks` contains concrete, versioned task implementations. It publishes the `motrix-deploy` executable as a
-thin bootstrap that imports these tasks before delegating to `motrix_deploy.cli`.
-In the MotrixLab workspace, the bootstrap selects `configs/deploy/sim2sim/go2_walk_sim2sim.yaml` for `sim2sim` and
-`configs/deploy/sim2real/go2_walk_flat_sim2real.yaml` for `sim2real`. Outside the workspace,
-pass an explicit Hydra `--config-path` and `--config-name`.
-
-The default sim2sim recipe targets `go2-walk-rough`; the default sim2real recipe targets `go2-walk-flat`. From the workspace root, select the flat-terrain recipe while retaining the
-workspace config path with:
+`motrix_deploy_tasks` supplies the Go2 walking task, flat/rough deployment scenes, and installed Hydra recipes for
+`motrix-deploy`. Install it alongside the MuJoCo runtime plugin to run an exported policy:
 
 ```bash
-motrix-deploy sim2sim \
-  --config-name go2_walk_flat_sim2sim \
-  artifact=artifacts/go2-walk-flat.deploy
+motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
 ```
 
-The package currently provides the `go2_walk/v1` task used by the Go2 flat and rough walking environments.
-Importing `motrix_deploy_tasks` registers its concrete implementations with the registry in `motrix_deploy.task`. The
-artifact stores this versioned task name; the runtime resolves it to
-`motrix_deploy_tasks.go2_walk.Go2WalkDeployTaskV1` for both sim2sim and sim2real. Deployment recipes select the backend and
-input binding, while the artifact remains the authority for task selection.
-The environment-to-artifact profile compiler is owned by `motrix_envs.deploy`, alongside the source environment config.
+The recipes are packaged with the plugin; the command works outside the repository without `--config-path`.
+`task=go2-walk-rough/sim` selects the rough scene, while `task=go2-walk-flat/hardware` selects the Unitree runtime.
+Task defaults choose the `sim` or `hardware` Hydra runtime group. Target settings live directly under `runtime`;
+`runtime.backend` is `mujoco` for simulation or `unitree_go2` for hardware. It is a scalar string selector, not a nested
+configuration mapping or Hydra group.
+Use an artifact exported for the matching task. Common settings are `artifact`, `duration_s`, and `command`;
+`duration_s` budgets `ceil(duration_s / control_period_s)` control ticks, not wall-clock time.
+Simulation exposes `runtime.viewer` and `runtime.realtime`; `runtime.realtime=null` follows `runtime.viewer`.
+Hardware is always real-time internally and has neither field. For hardware networking, override
+`runtime.network_interface=<interface>`.
+Follow the [deployment tutorial](../docs/source/en/user_guide/tutorial/advanced/motrix_deploy.md) for physical operator
+safety, startup/enable gates, and emergency stop procedures before commanding a robot.
+
+The artifact's `go2_walk/v1` specification defines observation preprocessing, action conversion, gains, command bounds,
+and termination settings. `Go2WalkTaskSpec` and `Go2WalkDeployTaskV1` are defined in
+`motrix_deploy_tasks.tasks.go2_walk`. Training profile compilers live in `motrix_envs.deploy`.
+
+For a scene/task/policy assembled directly in Python, see
+[`examples/deploy_to_sim.py`](../examples/deploy_to_sim.py).

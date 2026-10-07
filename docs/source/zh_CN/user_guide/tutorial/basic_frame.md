@@ -46,7 +46,7 @@ MotrixLab 是一个 UV workspace。下面按所有权而不是按单一整体运
 | `motrix_deploy` | 策略的部署 | 框架无关 artifact、运行时契约与部署 CLI |
 | `motrix_deploy_mujoco` | 策略的部署 | MuJoCo 部署 backend plugin |
 | `motrix_deploy_unitree` | 策略的部署 | Unitree SDK2 DDS 硬件 backend plugin |
-| `motrix_deploy_tasks` | 策略的部署 | 带版本的部署任务与可执行入口 bootstrap |
+| `motrix_deploy_tasks` | 策略的部署 | 行走任务、部署场景与安装的 Hydra 配方 |
 
 仿真后端（如 `motrix_env_motrixsim`）通过 `SimBackend` 接口隔离在环境框架之下，使用环境时通常
 无需关心它；需要选择或接入仿真后端时，见[SimBackend：与仿真器解耦](building_envs/sim_backend.md)。
@@ -69,6 +69,16 @@ python scripts/train.py task=cartpole/skrl.ppo num_envs=1024
 python scripts/train.py task=cartpole/skrl.ppo
 python scripts/train.py task=cartpole/rslrl.ppo
 ```
+
+## 运行导出的策略
+
+部署使用 artifact，而不是训练环境：
+
+```bash
+motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
+```
+
+上例在 MuJoCo 中无窗口运行导出的策略。导出、交互控制及真机操作见 [Go2 部署](advanced/motrix_deploy.md)。
 
 ## 分层带来的优势
 

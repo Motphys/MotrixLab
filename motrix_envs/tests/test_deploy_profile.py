@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from motrix_robots.unitree import UnitreeGo2Robot
 
+from motrix_deploy_tasks.tasks.go2_walk import Go2WalkTaskSpec
 from motrix_env_core import registry
 from motrix_envs.deploy import build_deployment_profile, registered_profile_compilers
 from motrix_envs.deploy.robot import (
@@ -36,14 +37,16 @@ def test_go2_walk_environments_compile_shared_deployment_profiles(
     env_cfg = registry.make_env_config(env_name)
 
     assert {"go2-walk-flat", "go2-walk-rough"} <= set(registered_profile_compilers())
+    assert isinstance(profile.task, Go2WalkTaskSpec)
     assert profile.task.name == "go2_walk/v1"
-    assert profile.task.observation_size == 49
-    assert profile.task.action_size == 12
+    env = registry.make(env_name, num_envs=1, mode="train")
+    assert profile.observation_size == env.policy_observation_space.shape[0]
+    assert profile.action_size == env.action_space.shape[0]
     assert profile.control.period_s == pytest.approx(env_cfg.ctrl_dt)
-    assert profile.task.config["command_lower"] == env_cfg.commands.velocity.lower.tolist()
-    assert profile.task.config["command_upper"] == env_cfg.commands.velocity.upper.tolist()
+    assert profile.task.command_lower == env_cfg.commands.velocity.lower.tolist()
+    assert profile.task.command_upper == env_cfg.commands.velocity.upper.tolist()
     # Command scale is an artifact/runtime input contract and intentionally differs by deployment environment.
-    assert profile.task.config["command_scale"] == command_scale
+    assert profile.task.command_scale == command_scale
 
 
 def test_robot_spec_is_built_without_an_environment_config() -> None:

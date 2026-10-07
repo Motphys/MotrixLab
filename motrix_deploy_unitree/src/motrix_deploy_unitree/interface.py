@@ -12,9 +12,17 @@ from typing import Any
 
 import numpy as np
 
-from motrix_deploy.backend import RobotInterface
-from motrix_deploy.contracts import HealthStatus, RobotCapabilities, RobotCommand, RobotSpec, RobotState
+from motrix_deploy.contracts import (
+    HealthStatus,
+    JointControlMode,
+    JointServoCommand,
+    RobotCapabilities,
+    RobotCommand,
+    RobotSpec,
+    RobotState,
+)
 from motrix_deploy.errors import EmergencyStopError, LieDownRequestedError, ValidationError
+from motrix_deploy.robot.interface import RobotInterface
 from motrix_deploy_unitree.config import GO2_MOTOR_COUNT, UnitreeGo2BackendConfig
 from motrix_deploy_unitree.remote import UnitreeRemoteGamePadDevice, UnitreeRemoteState, decode_wireless_remote
 from motrix_env_core.input import GamePadDevice
@@ -76,8 +84,8 @@ class UnitreeGo2RobotInterface(RobotInterface):
         config: UnitreeGo2BackendConfig,
         control_period_s: float,
         state_timeout_s: float,
-        hardware_confirmed: bool,
         *,
+        spec: RobotSpec,
         sdk: UnitreeSdkBindings | None = None,
         clock_ns: Callable[[], int] = time.monotonic_ns,
         sleep: Callable[[float], None] = time.sleep,
@@ -89,11 +97,8 @@ class UnitreeGo2RobotInterface(RobotInterface):
         ):
             if not isinstance(value, (int, float)) or isinstance(value, bool) or not np.isfinite(value) or value <= 0:
                 raise ValidationError(path, "a positive finite number", value)
-        if not isinstance(hardware_confirmed, bool):
-            raise ValidationError("hardware.confirm", "a boolean", hardware_confirmed)
         self._control_period_s = float(control_period_s)
         self._state_timeout_s = float(state_timeout_s)
-        self._hardware_confirmed = hardware_confirmed
         self._sdk = sdk
         self._clock_ns = clock_ns
         self._sleep = sleep
@@ -104,7 +109,7 @@ class UnitreeGo2RobotInterface(RobotInterface):
         self._low_cmd: Any = None
         self._command_crc: Any = None
         self._state_crc: Any = None
-        self._spec: RobotSpec | None = None
+        self._spec = spec
         self._motor_indices = np.empty(0, dtype=np.int64)
         self._kp_override: np.ndarray | None = None
         self._kd_override: np.ndarray | None = None
@@ -126,6 +131,10 @@ class UnitreeGo2RobotInterface(RobotInterface):
         self._enabled = False
         self._stopped = False
         self._closed = False
+
+    @property
+    def spec(self) -> RobotSpec:
+        return self._spec
 
     @property
     def capabilities(self) -> RobotCapabilities:
@@ -175,15 +184,10 @@ class UnitreeGo2RobotInterface(RobotInterface):
         if service_status != 0:
             raise RuntimeError(f"RobotState ServiceSwitch(sport_mode, false) failed with code {service_status}")
 
-    def open(self, spec: RobotSpec) -> None:
+    def open(self) -> None:
+        spec = self._spec
         if self._opened and not self._closed:
             raise RuntimeError("Unitree backend is already open")
-        if not self._hardware_confirmed:
-            raise ValidationError(
-                "hardware.confirm",
-                "true after the operator completes the physical safety checklist",
-                False,
-            )
         self._motor_indices = self.config.motor_indices(spec.joint_names)
         self._spec = spec
         self._kp_override = self.config.gain_override("kp", spec.joint_count)
@@ -216,7 +220,7 @@ class UnitreeGo2RobotInterface(RobotInterface):
                 len(self._low_cmd.motor_cmd),
             )
         self._capabilities = RobotCapabilities(
-            control_modes=("joint_pd",),
+            control_modes=(JointControlMode.SERVO,),
             state_fields=frozenset(
                 {
                     "joint_position",
@@ -238,18 +242,25 @@ class UnitreeGo2RobotInterface(RobotInterface):
         self._health_reason = ""
         self._last_communication_ns = self._latest_receive_time_ns
 
-    def enable(self, initial_command: RobotCommand) -> None:
+    def enable(self) -> None:
         self._require_open()
         if self._enabled:
             return
-        self._validate_command(initial_command)
-        assert self._spec is not None
-        if not np.allclose(initial_command.joint_position, self._spec.default_joint_position, atol=1e-6, rtol=0.0):
+        if self._kp_override is None or self._kd_override is None:
             raise ValidationError(
-                "backend.initial_command.joint_position",
-                "RobotSpec.default_joint_position",
-                initial_command.joint_position.tolist(),
+                "backend.enable",
+                "explicit backend kp and kd safety gains for startup",
+                "missing safety gains",
             )
+        zeros = np.zeros(self._spec.joint_count, dtype=np.float32)
+        initial_command = JointServoCommand(
+            joint_position=self._spec.default_joint_position,
+            joint_velocity=zeros,
+            feedforward_torque=zeros,
+            kp=self._kp_override,
+            kd=self._kd_override,
+        )
+        self._validate_command(initial_command)
 
         kp, kd = self._effective_gains(initial_command)
         self._last_position_kp = np.array(kp, dtype=np.float32, copy=True)
@@ -464,6 +475,8 @@ class UnitreeGo2RobotInterface(RobotInterface):
                 raise ValidationError(f"state.imu.{name}", f"{expected} finite values", value)
 
     def _validate_command(self, command: RobotCommand) -> None:
+        if not isinstance(command, JointServoCommand):
+            raise ValidationError("command.mode", "joint_servo", command.mode)
         assert self._spec is not None
         expected = (self._spec.joint_count,)
         for name in ("joint_position", "joint_velocity", "feedforward_torque", "kp", "kd"):

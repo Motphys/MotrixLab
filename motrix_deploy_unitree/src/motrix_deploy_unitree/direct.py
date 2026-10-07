@@ -5,6 +5,7 @@
 
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -12,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from motrix_deploy.artifact import read_artifact
-from motrix_deploy.contracts import HealthStatus, RobotCommand, RobotSpec, RobotState
+from motrix_deploy.contracts import HealthStatus, JointServoCommand, RobotSpec, RobotState
 from motrix_deploy.errors import ValidationError
 from motrix_deploy.profile import DeploymentProfile
 from motrix_deploy_unitree.config import (
@@ -53,8 +54,11 @@ class UnitreeGo2DirectInterface:
         self.backend = backend
         self._opened = False
         self._closed = False
-        self._task_gain("kp")
-        self._task_gain("kd")
+        backend.config = replace(
+            backend.config,
+            kp=self._task_gain("kp") if backend.config.kp is None else backend.config.kp,
+            kd=self._task_gain("kd") if backend.config.kd is None else backend.config.kd,
+        )
 
     @classmethod
     def from_profile(
@@ -62,7 +66,6 @@ class UnitreeGo2DirectInterface:
         profile: DeploymentProfile,
         *,
         network_interface: str,
-        hardware_confirmed: bool,
         joint_name_to_motor_index: Mapping[str, int] = GO2_JOINT_NAME_TO_MOTOR_INDEX,
         backend_options: Mapping[str, Any] | None = None,
         sdk: UnitreeSdkBindings | None = None,
@@ -72,11 +75,10 @@ class UnitreeGo2DirectInterface:
         """Build the direct API from an explicit robot, gain, and timing profile."""
         return cls._from_contract(
             robot=profile.robot,
-            task_config=profile.task.config,
+            task_config=profile.task.model_dump(mode="python"),
             control_period_s=profile.control.period_s,
             state_timeout_s=profile.control.state_timeout_s,
             network_interface=network_interface,
-            hardware_confirmed=hardware_confirmed,
             joint_name_to_motor_index=joint_name_to_motor_index,
             backend_options=backend_options,
             sdk=sdk,
@@ -90,7 +92,6 @@ class UnitreeGo2DirectInterface:
         artifact_path: str | Path,
         *,
         network_interface: str,
-        hardware_confirmed: bool,
         joint_name_to_motor_index: Mapping[str, int] = GO2_JOINT_NAME_TO_MOTOR_INDEX,
         backend_options: Mapping[str, Any] | None = None,
         sdk: UnitreeSdkBindings | None = None,
@@ -102,11 +103,10 @@ class UnitreeGo2DirectInterface:
         manifest = artifact.manifest
         return cls._from_contract(
             robot=manifest.robot,
-            task_config=manifest.task.config,
+            task_config=manifest.task.model_dump(mode="python"),
             control_period_s=manifest.control.period_s,
             state_timeout_s=manifest.control.state_timeout_s,
             network_interface=network_interface,
-            hardware_confirmed=hardware_confirmed,
             joint_name_to_motor_index=joint_name_to_motor_index,
             backend_options=backend_options,
             sdk=sdk,
@@ -123,7 +123,6 @@ class UnitreeGo2DirectInterface:
         control_period_s: float,
         state_timeout_s: float,
         network_interface: str,
-        hardware_confirmed: bool,
         joint_name_to_motor_index: Mapping[str, int],
         backend_options: Mapping[str, Any] | None,
         sdk: UnitreeSdkBindings | None,
@@ -141,7 +140,7 @@ class UnitreeGo2DirectInterface:
             config,
             control_period_s=control_period_s,
             state_timeout_s=state_timeout_s,
-            hardware_confirmed=hardware_confirmed,
+            spec=robot,
             sdk=sdk,
             clock_ns=clock_ns,
             sleep=sleep,
@@ -161,7 +160,7 @@ class UnitreeGo2DirectInterface:
         if self._opened:
             raise RuntimeError("direct Unitree interface is already open")
         try:
-            self.backend.open(self.robot)
+            self.backend.open()
         except Exception:
             try:
                 self.backend.close()
@@ -175,10 +174,10 @@ class UnitreeGo2DirectInterface:
         self._require_open()
         return self.backend.read_state(self.state_timeout_s if timeout_s is None else timeout_s)
 
-    def default_pose_command(self) -> RobotCommand:
+    def default_pose_command(self) -> JointServoCommand:
         """Build the zero-action default-pose command stored by the control contract."""
         zeros = np.zeros(self.robot.joint_count, dtype=np.float32)
-        return RobotCommand(
+        return JointServoCommand(
             joint_position=np.array(self.robot.default_joint_position, copy=True),
             joint_velocity=zeros,
             feedforward_torque=zeros,
@@ -186,10 +185,10 @@ class UnitreeGo2DirectInterface:
             kd=self._task_gain("kd"),
         )
 
-    def enable_command_output(self, initial_command: RobotCommand | None = None) -> None:
+    def enable_command_output(self) -> None:
         """Run the production Start -> default pose -> A hardware enable sequence."""
         self._require_open()
-        self.backend.enable(self.default_pose_command() if initial_command is None else initial_command)
+        self.backend.enable()
 
     def make_joint_command(
         self,
@@ -199,10 +198,10 @@ class UnitreeGo2DirectInterface:
         feedforward_torque: object | None = None,
         kp: object | None = None,
         kd: object | None = None,
-    ) -> RobotCommand:
+    ) -> JointServoCommand:
         """Construct one canonical float32 command using configured gains by default."""
         zeros = np.zeros(self.robot.joint_count, dtype=np.float32)
-        return RobotCommand(
+        return JointServoCommand(
             joint_position=self._command_array(joint_position, "joint_position"),
             joint_velocity=(zeros if joint_velocity is None else self._command_array(joint_velocity, "joint_velocity")),
             feedforward_torque=(
@@ -212,7 +211,7 @@ class UnitreeGo2DirectInterface:
             kd=self._task_gain("kd") if kd is None else self._command_array(kd, "kd"),
         )
 
-    def send_command(self, command: RobotCommand) -> None:
+    def send_command(self, command: JointServoCommand) -> None:
         """Send one canonical command through the production LowCmd writer."""
         self._require_open()
         self.backend.write_command(command)
@@ -225,7 +224,7 @@ class UnitreeGo2DirectInterface:
         feedforward_torque: object | None = None,
         kp: object | None = None,
         kd: object | None = None,
-    ) -> RobotCommand:
+    ) -> JointServoCommand:
         """Construct and send one command, returning the exact command sent."""
         command = self.make_joint_command(
             joint_position,

@@ -1,119 +1,109 @@
 # Go2 Flat-Terrain Walking: From Training to Physical Deployment
 
-This tutorial follows the full Go2 flat-terrain workflow: train a policy, export an artifact, check it in MuJoCo, and run
-it on a real robot. If you already have a training run, start at “Export the artifact”.
+Run an exported Go2 policy in MuJoCo before attempting hardware deployment. With the task and MuJoCo plugins installed,
+a bounded headless check is:
 
-## 1. Install the environment
+```bash
+motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
+```
 
-Run this command from the repository root:
+The following steps create that artifact, explain interactive control, and cover the existing Unitree hardware workflow.
+
+## 1. Install and train
+
+From the repository root:
 
 ```bash
 sh install.sh --all
-```
-
-This installs the training, MuJoCo, ONNX Runtime, and Unitree SDK2 dependencies.
-
-## 2. Train the policy
-
-If you do not have a run yet, train the flat-terrain Go2 policy:
-
-```bash
+source .venv/bin/activate
 python scripts/train.py task=go2-walk-flat/rslrl.ppo
 ```
 
-Training results are saved under `runs/go2-walk-flat/`.
+Training results are saved under `runs/go2-walk-flat/`. Skip training if you already have a metadata-backed run.
 
-## 3. Export the artifact
-
-Export the latest run:
+## 2. Export and inspect the artifact
 
 ```bash
 python scripts/export_deploy.py env=go2-walk-flat
+motrix-deploy inspect artifact=artifacts/go2-walk-flat.deploy
 ```
 
-The output is written to `artifacts/go2-walk-flat.deploy/`. This artifact is the only policy bundle needed for deployment;
-it contains the model and its runtime configuration.
+Export selects the latest run and creates `artifacts/go2-walk-flat.deploy/`. To select a specific run, use
+`run=<run-dir>` instead of `env`; `output=<new-artifact-dir>` changes the destination. Existing artifact directories are
+not overwritten. Confirm that inspection reports `valid: true`.
 
-## 4. Inspect the artifact
+The artifact contains the ONNX policy, robot/control settings, and task specification. Deployment also needs the installed
+`motrix_deploy_tasks` plugin, which supplies the walking implementation, deployment scenes, and Hydra recipes, plus the
+runtime plugin for the target. The recipes work outside the repository without a workspace config path.
+Task defaults select the Hydra runtime group (`sim` or `hardware`); you do not need a separate runtime override.
+Common top-level settings are `artifact`, `duration_s`, and `command`. All target-specific settings live directly under
+`runtime`. `runtime.kind` selects the simulation or hardware path; `runtime.backend` selects the plugin (`mujoco`
+for simulation or `unitree_go2` for hardware). `runtime.backend` is a scalar string selector, not a nested configuration
+mapping or Hydra group.
+
+## 3. Check in MuJoCo
+
+Use the headless command above for a bounded run, or open the viewer:
 
 ```bash
-motrix-deploy inspect \
-  artifact=artifacts/go2-walk-flat.deploy
+motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
 ```
 
-Make sure the output reports `valid: true`.
+Hold `W/S` to move forward/backward, `A/D` sideways, and `Q/E` to turn. Close the window, press Esc, or press Ctrl-C to stop.
+The recipe selects the flat scene and the `go2` robot. Headless mode uses constant zero velocity; for a moving check, add
+`'command.velocity=[0.5,0.0,0.0]'`. Set `duration_s` for a bounded run: it allows
+`ceil(duration_s / control_period_s)` control ticks, using the artifact's control period, not a wall-clock timeout.
+Startup and shutdown may take additional wall time.
 
-## 5. Run Sim2Sim first
+Simulation-only settings are `runtime.viewer` and `runtime.realtime`.
+`runtime.realtime=null` follows `runtime.viewer`; use `runtime.realtime=true` to pace a headless run in real time,
+or `runtime.realtime=false` to run without real-time pacing.
+
+### Assemble a runtime in Python
+
+The complete `examples/deploy_to_sim.py` example composes a scene, walking task, sample ONNX policy, and input binding:
 
 ```bash
-motrix-deploy sim2sim \
-  --config-name go2_walk_flat_sim2sim \
-  artifact=artifacts/go2-walk-flat.deploy
+python examples/deploy_to_sim.py --headless --steps 100
 ```
 
-This opens the MuJoCo viewer. Use `W/S` to move forward and backward, `A/D` to move sideways, and `Q/E` to turn. Close
-the window, press Esc, or press Ctrl-C to stop.
+It creates a MuJoCo runtime with `create_simulation_runtime`, attaches a `ControlSession` using
+`runtime.bind_control_session(control)`, and runs inside `with runtime:`. The control session handles input, observations,
+inference, and robot commands; the runtime handles physics, timing, and the viewer. A raw ONNX file needs explicit task
+preprocessing and action settings, whereas the artifact carries those settings for the CLI.
 
-## 6. Run on the real robot
+## 4. Run on the real robot
 
-Put the robot in low-level/debug mode, connect Ethernet, and keep an emergency stop ready. Replace `enp5s0` with the
-actual network interface:
+Suspend the robot, put it in low-level/debug mode, connect Ethernet, and keep an independent emergency stop and operator
+ready. Startup can physically stand the robot down before the remote Start gate. Inspect the artifact first, then replace
+`enp5s0` with the actual interface:
 
 ```bash
-motrix-deploy inspect \
-  artifact=artifacts/go2-walk-flat.deploy
-
-motrix-deploy sim2real \
-  --config-name go2_walk_flat_sim2real \
+motrix-deploy task=go2-walk-flat/hardware \
   artifact=artifacts/go2-walk-flat.deploy \
-  backend.network_interface=enp5s0 \
-  hardware.confirm=true
+  runtime.network_interface=enp5s0
 ```
 
-After startup, press Start on the remote. When the default-pose transition finishes, press A. Hold L1 and move the sticks
-to send motion commands. Press B to enter the lie-down sequence; Select triggers the emergency stop.
+Hardware runs are always real-time internally; the hardware runtime has no `runtime.viewer` or `runtime.realtime` fields.
+Press Start, wait for the default-pose transition, then
+press A. Hold L1 and move the sticks to command motion. B requests lie-down; Select triggers emergency stop. Stop paths
+send damping commands before closing DDS. Software tests do not replace a suspended real-robot check.
 
-You can also inspect the robot state before sending policy commands:
+The installed hardware recipe sets `runtime.kp=50` and `runtime.kd=1`. Set both to `null` to retain artifact gains, or
+supply non-negative scalars or per-joint values in canonical joint order.
+
+For read-only diagnostics without a command publisher:
 
 ```bash
-python -m motrix_deploy_unitree.read_lowstate enp5s0
+motrix-deploy-unitree read-lowstate enp5s0
 ```
 
-## Advanced usage
-
-### Override policy PD gains
-
-The physical-runtime base configuration, `configs/deploy/sim2real/base.yaml`, currently sets `backend.kp=50` and
-`backend.kd=1`, overriding the gains stored in the artifact `TaskSpec.config`. Set both fields to `null` to keep the artifact
-gains, or pass 12 non-negative values on the command line:
+For a bounded single-joint check, with the same hardware precautions:
 
 ```bash
-motrix-deploy sim2real \
-  artifact=artifacts/go2-walk-flat.deploy \
-  backend.network_interface=enp5s0 \
-  'backend.kp=[20,25,30,20,25,30,22,27,32,22,27,32]' \
-  'backend.kd=[0.3,0.4,0.5,0.3,0.4,0.5,0.35,0.45,0.55,0.35,0.45,0.55]' \
-  hardware.confirm=true
+motrix-deploy-unitree joint-control enp5s0 FL_thigh_joint 0.9 \
+  --artifact artifacts/go2-walk-flat.deploy
 ```
 
-### Inspect LowState without sending commands
-
-Run the read-only diagnostic before sending any motion command:
-
-```bash
-python -m motrix_deploy_unitree.read_lowstate enp5s0
-```
-
-### Send a single-joint motion command
-
-To bypass the policy and debug a single joint-position motion, use the bounded helper installed with
-`motrix_deploy_unitree`. By default, it builds the control contract from the current `go2-walk-flat` deployment profile and
-does not require a training run, checkpoint, policy, or deployment artifact:
-
-```bash
-python -m motrix_deploy_unitree.go2_joint_control \
-  enp5s0 \
-  FL_thigh_joint \
-  0.9 \
-  --hardware-confirm
-```
+This helper uses the artifact's robot, gain, timing, and limit settings. It waits for Start and A, moves the joint, holds,
+returns to the default pose, and closes with damping.

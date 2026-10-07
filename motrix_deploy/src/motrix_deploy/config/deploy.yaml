@@ -1,5 +1,6 @@
 defaults:
   - _self_
+  - task: null
   - override hydra/job_logging: stdout
 
 hydra:
@@ -13,5 +14,6 @@ hydra:
     chdir: false
 
 artifact: ???
-backend: ???
-viewer: ???
+runtime: ???
+duration_s: null
+command: null

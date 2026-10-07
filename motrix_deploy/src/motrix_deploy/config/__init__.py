@@ -3,44 +3,45 @@
 
 """Typed application configuration for the deployment CLI."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
 @dataclass
 class DeployRunConfig:
-    """Resolved, task-agnostic configuration consumed by one deployment run."""
+    """Resolved execution settings with one selected runtime configuration."""
 
     artifact: str
-    backend: dict[str, Any]
-    viewer: bool
+    runtime: dict[str, Any]
+    duration_s: float | None = None
     command: dict[str, Any] | None = None
-    rollout: dict[str, Any] | None = None
-    seed: int | None = None
-    realtime: bool | None = None
-    hardware: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.artifact:
             raise ValueError("artifact must be a non-empty path")
-        if not isinstance(self.viewer, bool):
-            raise ValueError(f"viewer must be bool, got {self.viewer!r}")
-        if self.realtime is not None and not isinstance(self.realtime, bool):
-            raise ValueError(f"realtime must be bool or null, got {self.realtime!r}")
-        confirmed = self.hardware.get("confirm", False)
-        if not isinstance(confirmed, bool):
-            raise ValueError(f"hardware.confirm must be bool, got {confirmed!r}")
-        backend_name = self.backend.get("name")
+        kind = self.runtime.get("kind")
+        if kind not in {"simulation", "hardware"}:
+            raise ValueError(f"runtime.kind must be simulation or hardware, got {kind!r}")
+        if kind == "simulation":
+            if not isinstance(self.runtime.get("viewer"), bool):
+                raise ValueError("runtime.viewer must be bool")
+            realtime = self.runtime.get("realtime")
+            if realtime is not None and not isinstance(realtime, bool):
+                raise ValueError("runtime.realtime must be bool or null")
+        backend_name = self.runtime.get("backend")
         if not isinstance(backend_name, str) or not backend_name:
-            raise ValueError(f"backend.name must be a non-empty string, got {backend_name!r}")
+            raise ValueError(f"runtime.backend must be a non-empty string, got {backend_name!r}")
 
     @property
     def backend_name(self) -> str:
-        return self.backend["name"]
+        return self.runtime["backend"]
 
     @property
-    def backend_options(self) -> dict[str, Any]:
-        return {name: value for name, value in self.backend.items() if name != "name"}
+    def runtime_options(self) -> dict[str, Any]:
+        execution_fields = {"kind", "backend"}
+        if self.runtime["kind"] == "simulation":
+            execution_fields |= {"viewer", "realtime"}
+        return {name: value for name, value in self.runtime.items() if name not in execution_fields}
 
 
 __all__ = ["DeployRunConfig"]

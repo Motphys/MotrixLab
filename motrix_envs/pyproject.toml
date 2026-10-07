@@ -20,4 +20,4 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-deploy = ["motrix-deploy"]
+deploy = ["motrix-deploy", "motrix-deploy-tasks"]

@@ -12,7 +12,33 @@ from onnx import TensorProto, helper, numpy_helper
 
 from motrix_deploy.contracts import TensorSpec
 from motrix_deploy.errors import ValidationError
-from motrix_deploy.policy import OnnxPolicyRuntime
+from motrix_deploy.policy import NoOpPolicyRuntime, OnnxPolicyRuntime, PolicyRuntime
+
+
+def test_decision_runtime_only_requires_infer() -> None:
+    class Planner(PolicyRuntime):
+        def infer(self, observation):
+            return observation[::-1].copy()
+
+    runtime = Planner()
+    runtime.reset()
+    np.testing.assert_array_equal(runtime.infer(np.array([1, 2], dtype=np.float32)), [2, 1])
+
+
+def test_noop_returns_independent_zero_actions_and_ignores_observation() -> None:
+    runtime = NoOpPolicyRuntime(3)
+    first = runtime.infer(np.array([1.0], dtype=np.float32))
+    assert first.shape == (3,) and first.dtype == np.float32
+    np.testing.assert_array_equal(first, np.zeros(3))
+    first[:] = 10
+    runtime.reset()
+    np.testing.assert_array_equal(runtime.infer(np.arange(10, dtype=np.float32)), np.zeros(3))
+
+
+@pytest.mark.parametrize("size", [-1, True, 1.5])
+def test_noop_rejects_invalid_action_size(size) -> None:
+    with pytest.raises(ValidationError, match="policy.noop.action_size"):
+        NoOpPolicyRuntime(size)
 
 
 def _write_linear_model(

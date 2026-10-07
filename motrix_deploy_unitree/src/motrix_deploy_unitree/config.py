@@ -74,15 +74,15 @@ class UnitreeGo2BackendConfig:
 
     def __post_init__(self) -> None:
         if not isinstance(self.network_interface, str) or not self.network_interface:
-            raise ValidationError("backend.network_interface", "a non-empty interface name", self.network_interface)
+            raise ValidationError("runtime.network_interface", "a non-empty interface name", self.network_interface)
         for name in ("wait_for_remote_buttons", "validate_crc"):
             value = getattr(self, name)
             if not isinstance(value, bool):
-                raise ValidationError(f"backend.{name}", "a boolean", value)
+                raise ValidationError(f"runtime.{name}", "a boolean", value)
         for name in ("lowcmd_topic", "lowstate_topic"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value:
-                raise ValidationError(f"backend.{name}", "a non-empty DDS topic", value)
+                raise ValidationError(f"runtime.{name}", "a non-empty DDS topic", value)
         for name in (
             "connect_timeout_s",
             "default_transition_duration_s",
@@ -92,31 +92,31 @@ class UnitreeGo2BackendConfig:
         ):
             value = getattr(self, name)
             if not isinstance(value, (int, float)) or isinstance(value, bool) or not np.isfinite(value):
-                raise ValidationError(f"backend.{name}", "a finite number", value)
+                raise ValidationError(f"runtime.{name}", "a finite number", value)
         if self.connect_timeout_s <= 0:
-            raise ValidationError("backend.connect_timeout_s", "a positive duration", self.connect_timeout_s)
+            raise ValidationError("runtime.connect_timeout_s", "a positive duration", self.connect_timeout_s)
         if self.default_transition_duration_s <= 0:
             raise ValidationError(
-                "backend.default_transition_duration_s",
+                "runtime.default_transition_duration_s",
                 "a positive duration",
                 self.default_transition_duration_s,
             )
         if self.damping_duration_s < 0 or self.damping_kd < 0:
-            raise ValidationError("backend.damping", "non-negative duration and kd", "invalid value")
+            raise ValidationError("runtime.damping", "non-negative duration and kd", "invalid value")
         if self.lie_down_duration_s <= 0:
-            raise ValidationError("backend.lie_down_duration_s", "a positive duration", self.lie_down_duration_s)
+            raise ValidationError("runtime.lie_down_duration_s", "a positive duration", self.lie_down_duration_s)
         self.lie_down_position()
         self._validate_gain_override("kp", self.kp)
         self._validate_gain_override("kd", self.kd)
         if not isinstance(self.domain_id, int) or isinstance(self.domain_id, bool) or self.domain_id < 0:
-            raise ValidationError("backend.domain_id", "a non-negative integer", self.domain_id)
+            raise ValidationError("runtime.domain_id", "a non-negative integer", self.domain_id)
         if (
             not isinstance(self.subscriber_queue_depth, int)
             or isinstance(self.subscriber_queue_depth, bool)
             or self.subscriber_queue_depth <= 0
         ):
             raise ValidationError(
-                "backend.subscriber_queue_depth",
+                "runtime.subscriber_queue_depth",
                 "a positive integer",
                 self.subscriber_queue_depth,
             )
@@ -125,17 +125,17 @@ class UnitreeGo2BackendConfig:
             or isinstance(self.motor_mode, bool)
             or not 0 <= self.motor_mode <= 0xFF
         ):
-            raise ValidationError("backend.motor_mode", "an integer in [0, 255]", self.motor_mode)
+            raise ValidationError("runtime.motor_mode", "an integer in [0, 255]", self.motor_mode)
         for name in ("start_button", "enable_button", "emergency_stop_button", "lie_down_button"):
             value = getattr(self, name)
             if value not in BUTTON_NAMES:
-                raise ValidationError(f"backend.{name}", f"one of {sorted(BUTTON_NAMES)}", value)
+                raise ValidationError(f"runtime.{name}", f"one of {sorted(BUTTON_NAMES)}", value)
         buttons = (self.start_button, self.enable_button, self.emergency_stop_button, self.lie_down_button)
         if len(set(buttons)) != len(buttons):
-            raise ValidationError("backend.remote_buttons", "four distinct buttons", "duplicate button")
+            raise ValidationError("runtime.remote_buttons", "four distinct buttons", "duplicate button")
         if not isinstance(self.joint_name_to_motor_index, Mapping):
             raise ValidationError(
-                "backend.joint_name_to_motor_index",
+                "runtime.joint_name_to_motor_index",
                 "a joint-name to motor-index mapping",
                 type(self.joint_name_to_motor_index).__name__,
             )
@@ -153,9 +153,9 @@ class UnitreeGo2BackendConfig:
         }
         actual_fields = set(values)
         if missing := required_fields - actual_fields:
-            raise ValidationError("backend", f"required fields {sorted(required_fields)}", f"missing={sorted(missing)}")
+            raise ValidationError("runtime", f"required fields {sorted(required_fields)}", f"missing={sorted(missing)}")
         if unknown := actual_fields - expected_fields:
-            raise ValidationError("backend", f"known fields {sorted(expected_fields)}", f"unknown={sorted(unknown)}")
+            raise ValidationError("runtime", f"known fields {sorted(expected_fields)}", f"unknown={sorted(unknown)}")
         mapping = values.get("joint_name_to_motor_index")
         if isinstance(mapping, Mapping):
             values["joint_name_to_motor_index"] = dict(mapping)
@@ -166,18 +166,18 @@ class UnitreeGo2BackendConfig:
         if value is None:
             return
         if isinstance(value, bool):
-            raise ValidationError(f"backend.{name}", "a non-negative scalar or 12 values", value)
+            raise ValidationError(f"runtime.{name}", "a non-negative scalar or 12 values", value)
         try:
             array = np.asarray(value, dtype=np.float32)
         except (TypeError, ValueError) as error:
             raise ValidationError(
-                f"backend.{name}",
+                f"runtime.{name}",
                 "a non-negative scalar or 12 values",
                 value,
             ) from error
         if array.shape not in ((), (GO2_MOTOR_COUNT,)) or not np.all(np.isfinite(array)) or np.any(array < 0):
             raise ValidationError(
-                f"backend.{name}",
+                f"runtime.{name}",
                 "a non-negative scalar or 12 finite non-negative values",
                 value,
             )
@@ -188,13 +188,13 @@ class UnitreeGo2BackendConfig:
             position = np.asarray(self.lie_down_joint_position, dtype=np.float32)
         except (TypeError, ValueError) as error:
             raise ValidationError(
-                "backend.lie_down_joint_position",
+                "runtime.lie_down_joint_position",
                 "12 finite canonical joint positions",
                 self.lie_down_joint_position,
             ) from error
         if position.shape != (GO2_MOTOR_COUNT,) or not np.all(np.isfinite(position)):
             raise ValidationError(
-                "backend.lie_down_joint_position",
+                "runtime.lie_down_joint_position",
                 "12 finite canonical joint positions",
                 self.lie_down_joint_position,
             )
@@ -209,7 +209,7 @@ class UnitreeGo2BackendConfig:
         if array.shape == ():
             return np.full(joint_count, array.item(), dtype=np.float32)
         if array.shape != (joint_count,):
-            raise ValidationError(f"backend.{name}", f"{joint_count} canonical joint gains", value)
+            raise ValidationError(f"runtime.{name}", f"{joint_count} canonical joint gains", value)
         return np.array(array, dtype=np.float32, copy=True)
 
     def motor_indices(self, joint_names: tuple[str, ...]) -> np.ndarray:
@@ -218,16 +218,16 @@ class UnitreeGo2BackendConfig:
         actual = set(self.joint_name_to_motor_index)
         if actual != expected:
             raise ValidationError(
-                "backend.joint_name_to_motor_index",
+                "runtime.joint_name_to_motor_index",
                 f"exactly joints {sorted(expected)}",
                 f"missing={sorted(expected - actual)}, unknown={sorted(actual - expected)}",
             )
         values = tuple(self.joint_name_to_motor_index[name] for name in joint_names)
         if any(not isinstance(index, int) or isinstance(index, bool) for index in values):
-            raise ValidationError("backend.motor_indices", "integer motor indices", values)
+            raise ValidationError("runtime.motor_indices", "integer motor indices", values)
         if len(set(values)) != len(values) or any(not 0 <= index < GO2_MOTOR_COUNT for index in values):
             raise ValidationError(
-                "backend.motor_indices",
+                "runtime.motor_indices",
                 f"unique values in [0, {GO2_MOTOR_COUNT - 1}]",
                 values,
             )

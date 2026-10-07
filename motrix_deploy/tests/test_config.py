@@ -13,8 +13,14 @@ from motrix_deploy.config import DeployRunConfig
 def _run_mapping() -> dict[str, object]:
     return {
         "artifact": "artifact.deploy",
-        "backend": {"name": "test", "option": 1},
-        "viewer": False,
+        "runtime": {
+            "kind": "simulation",
+            "backend": "test",
+            "option": 1,
+            "viewer": False,
+            "realtime": None,
+        },
+        "duration_s": 0.1,
     }
 
 
@@ -28,9 +34,32 @@ def test_deploy_run_config_parses_resolved_application_tree() -> None:
     config = _typed_config(_run_mapping())
 
     assert config.artifact == "artifact.deploy"
+    assert config.runtime == _run_mapping()["runtime"]
     assert config.backend_name == "test"
-    assert config.backend_options == {"option": 1}
-    assert config.viewer is False
+    assert config.runtime_options == {"option": 1}
+    assert config.duration_s == pytest.approx(0.1)
+    assert config.command is None
+
+
+def test_deploy_run_config_defaults_to_unbounded_duration() -> None:
+    values = _run_mapping()
+    values.pop("duration_s")
+
+    config = _typed_config(values)
+
+    assert config.duration_s is None
+
+
+def test_deploy_run_config_parses_hardware_runtime() -> None:
+    runtime = {"kind": "hardware", "backend": "test", "network_interface": "enp3s0"}
+
+    config = _typed_config({"artifact": "artifact.deploy", "runtime": runtime})
+
+    assert config.runtime == runtime
+    assert config.backend_name == "test"
+    assert config.runtime_options == {"network_interface": "enp3s0"}
+    assert config.duration_s is None
+    assert config.command is None
 
 
 def test_deploy_run_config_rejects_unknown_top_level_fields() -> None:

@@ -4,6 +4,7 @@
 """Artifact schema, safety and checksum tests."""
 
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -11,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from motrix_deploy.artifact import DeploymentManifest, inspect_artifact, read_artifact, write_artifact
+from motrix_deploy.artifact import ControlSpec, DeploymentManifest, inspect_artifact, read_artifact, write_artifact
+from motrix_deploy.contracts import JointControlMode
 from motrix_deploy.errors import ArtifactError, ValidationError
 
 POLICY_BYTES = b"deterministic ONNX placeholder"
@@ -27,7 +29,9 @@ def test_artifact_round_trip_and_inspect(
 
     assert artifact.manifest.to_dict() == read_artifact(output).manifest.to_dict()
     assert summary["valid"] is True
-    assert summary["task"]["name"] == "test/v1"
+    assert summary["task"] == {"name": "test/v1", "config": {}}
+    assert summary["observation_size"] == artifact.manifest.policy.input.shape[1]
+    assert summary["action_size"] == artifact.manifest.policy.output.shape[1]
     assert summary["robot"]["joint_names"] == ["left_joint", "right_joint"]
     assert summary["policy"]["input"] == {"name": "observation", "shape": [1, 4], "dtype": "float32"}
 
@@ -36,8 +40,19 @@ def test_cli_inspect_outputs_json(tmp_path: Path, manifest_factory: Callable[[],
     output = tmp_path / "fixture.deploy"
     write_artifact(output, manifest_factory(), {"policy/model.onnx": POLICY_BYTES})
 
+    # A subprocess cannot inherit monkeypatched discovery. Install only test
+    # metadata on its temporary import path, not a production fixture plugin.
+    dist_info = tmp_path / "test_task_spec-1.0.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text("Name: test-task-spec\nVersion: 1.0\n", encoding="utf-8")
+    (dist_info / "entry_points.txt").write_text(
+        "[motrix_deploy.tasks]\ntest/v1 = task_specs:TestDeployTask\n", encoding="utf-8"
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([str(tmp_path), str(Path(__file__).parent), env.get("PYTHONPATH", "")])
     result = subprocess.run(
         [sys.executable, "-m", "motrix_deploy.cli", "inspect", f"artifact={output}"],
+        env=env,
         check=False,
         capture_output=True,
         text=True,
@@ -90,6 +105,55 @@ def test_invalid_task_name_is_rejected(
 
     with pytest.raises(ValidationError, match="task.name"):
         DeploymentManifest.from_dict(manifest)
+
+
+@pytest.mark.parametrize("field_name", ["input", "output"])
+@pytest.mark.parametrize("shape", [[4], [2, 4], [1, 2, 3], [1, 0], [1, -1], [1, 1.5]])
+def test_policy_requires_positive_batch_one_vector(
+    manifest_factory: Callable[[], DeploymentManifest],
+    field_name: str,
+    shape: list[int | float],
+) -> None:
+    manifest = manifest_factory().to_dict()
+    manifest["policy"][field_name]["shape"] = shape
+
+    with pytest.raises(ValidationError, match=rf"policy\.{field_name}\.shape"):
+        DeploymentManifest.from_dict(manifest)
+
+
+@pytest.mark.parametrize("field_name", ["input", "output"])
+def test_policy_vector_size_is_independent_of_robot_joint_count(
+    manifest_factory: Callable[[], DeploymentManifest],
+    field_name: str,
+) -> None:
+    manifest = manifest_factory().to_dict()
+    manifest["policy"][field_name]["shape"] = [1, 7]
+
+    parsed = DeploymentManifest.from_dict(manifest)
+
+    assert getattr(parsed.policy, field_name).shape == (1, 7)
+    assert parsed.task.to_dict() == {"name": "test/v1", "config": {}}
+
+
+@pytest.mark.parametrize("mode", list(JointControlMode))
+def test_control_mode_serializes_explicitly(mode: JointControlMode) -> None:
+    control = ControlSpec(period_s=0.02, state_timeout_s=0.1, mode=mode)
+    assert control.to_dict()["mode"] == mode.value
+    assert ControlSpec.from_dict(control.to_dict()).mode is mode
+    assert ControlSpec(period_s=0.02, state_timeout_s=0.1).mode is JointControlMode.SERVO
+
+
+def test_control_mode_is_required_in_manifest(manifest_factory: Callable[[], DeploymentManifest]) -> None:
+    manifest = manifest_factory().to_dict()
+    del manifest["control"]["mode"]
+    with pytest.raises(ValidationError, match="control.*mode"):
+        DeploymentManifest.from_dict(manifest)
+
+
+@pytest.mark.parametrize("mode", ["invalid", None, 1])
+def test_invalid_control_mode_is_rejected(mode: object) -> None:
+    with pytest.raises(ValidationError, match="control.mode"):
+        ControlSpec(period_s=0.02, state_timeout_s=0.1, mode=mode)
 
 
 def test_joint_count_mismatch_is_rejected(manifest_factory: Callable[[], DeploymentManifest]) -> None:

@@ -6,7 +6,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from motrix_deploy.artifact import ControlSpec, TaskSpec
+from motrix_deploy.artifact.schema import ControlSpec, TaskSpec
 from motrix_deploy.contracts import RobotSpec
 
 
@@ -17,6 +17,9 @@ class DeploymentProfile:
     robot: RobotSpec
     task: TaskSpec
     control: ControlSpec
+    # Training-space dimensions used only to validate ONNX export, not serialized in TaskSpec.
+    observation_size: int
+    action_size: int
 
 
 ProfileCompiler = Callable[[str], DeploymentProfile]

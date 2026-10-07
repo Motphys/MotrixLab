@@ -403,7 +403,7 @@ event-based device 执行一次 `poll()`。`ControlLoop.run()` 的单步顺序�
   和确定性 CI。
 
 两种 scheduler 向 `PolicyContext` 提供相同的 step 和 elapsed control time；wall-clock latency 单独计量。
-realtime/fixed-step scheduler 由 runtime recipe 显式选择，不从 device 推断。
+仿真的 realtime/fixed-step scheduler 由 `runtime.realtime` 选择；`null` 跟随 `runtime.viewer`。硬件始终在内部实时调度，不从 device 推断。
 Fixed-step 模式记录“若实时运行是否 overrun”，但默认不因此终止 rollout。第一版 policy rate 与 command rate
 相同；未来需要多速率时通过 scheduler 扩展，不能由 backend 私自重复或插值 policy action。
 
@@ -853,9 +853,10 @@ timestep。初始化时调用 `mj_resetData`、写入确定的初始 root pose �
 
 ### 11.4 运行终止与指标
 
-sim2sim 的 Hydra runtime config 只配置 artifact、backend 和 viewer。CLI 不提供 rollout steps、duration、seed、input
-type 或 command scale override；Go2 command scale 由 artifact 的 `TaskSpec` 持有。启动后持续运行，直到 viewer
-关闭、用户按 Esc/Ctrl-C、机器人跌倒或发生错误。运行时还须：
+sim2sim 的 Hydra 配置将 artifact、duration_s 和 command 放在顶层，仿真设置直接放在 runtime 下。
+`runtime.backend=mujoco` 选择 MuJoCo；`runtime.viewer` 和 `runtime.realtime` 只用于仿真。`duration_s` 按 artifact 的
+控制周期换算为 `ceil(duration_s / control_period_s)` 个控制 tick，不是墙钟超时。未设置 duration_s 时持续运行，
+直到 viewer 关闭、用户按 Esc/Ctrl-C、机器人跌倒或发生错误。运行时还须：
 
 - 使用 task 从 artifact 读取的 command range 乘以 scale 后创建 keyboard binding；
 - reset 后从 step 0 重新初始化 phase、previous action 和 scheduler；
@@ -864,9 +865,10 @@ type 或 command scale override；Go2 command scale 由 artifact 的 `TaskSpec` 
 - 可配置任务指标：base height、fall、速度跟踪误差等，但这些指标不进入通用控制循环。
 
 deployment backend 使用最小 GLFW viewer：每次 `sync()` 只更新 MuJoCo scene 并 render，不拥有仿真步进；同一
-window 的 callbacks 提供 keyboard event frame 与 mouse camera control，失焦后立即释放 held keys。viewer 模式使用
-realtime scheduler。headless backend 仍可配合程序传入的 binding 和 fixed-step scheduler 用于测试，但内置交互式
-CLI keyboard path 要求 `viewer=true`。`ControlLoop.run(steps=...)` 保留为内部测试和确定性验证能力，不进入用户配置。
+window 的 callbacks 提供 keyboard event frame 与 mouse camera control，失焦后立即释放 held keys。viewer 模式默认使用
+realtime scheduler，可通过 `runtime.realtime=false` 关闭实时节奏控制。headless CLI 使用配方中的 constant command，可通过 `command.velocity` 覆盖；
+`runtime.realtime=null` 时跟随 `runtime.viewer`，也可显式配置实时节奏。`ControlLoop.run(steps=...)` 保留为
+程序化确定步数运行能力，不进入 CLI 配置。
 
 ## 12. CLI 设计
 
@@ -876,30 +878,33 @@ package 暴露统一入口：
 # 只检查 artifact，不创建设备
 motrix-deploy inspect artifact=path/to/go2_walk.deploy
 
-# sim2sim 持续运行，直到用户退出、机器人跌倒或发生错误
-motrix-deploy sim2sim \
-  artifact=path/to/go2_walk.deploy
+# sim2sim 有界无窗口检查
+motrix-deploy task=go2-walk-flat/sim \
+  artifact=path/to/go2_walk.deploy \
+  runtime.viewer=false duration_s=2.0
 
 # 实时可视化
-motrix-deploy sim2sim \
+motrix-deploy task=go2-walk-flat/sim \
   artifact=path/to/go2_walk.deploy \
-  viewer=true
+  runtime.viewer=true
 
-# 后续阶段的真机入口
-motrix-deploy sim2real \
+# 真机入口
+motrix-deploy task=go2-walk-flat/hardware \
   artifact=path/to/go2_walk.deploy \
-  backend.name=unitree \
-  hardware.confirm=true
+  runtime.network_interface=enp5s0
 ```
 
 `inspect` 只执行 artifact、RobotSpec 和 policy 静态校验，不查询 robot registry，也不打开 backend。
-当前 sim2sim 的类型化 Hydra 配置只包含 artifact、backend 和 viewer，CLI override 只修改所需字段；application
-从 backend 的可选 keyboard device capability 创建 binding。后续 sim2real 必须使用独立模式、显式确认参数和 adapter 自身的 enable 流程，
-默认配置不能把真机 enable 设为 true。
+Hydra 配置的公共执行字段是 artifact、duration_s 和 command；task 配方选择互斥的 runtime/sim 或 runtime/hardware 配置组。
+所有目标专用设置直接位于 runtime 下：`runtime.backend` 是标量字符串选择器，取值为 `mujoco` 或 `unitree_go2`，
+不是嵌套配置映射或 Hydra 配置组；场景、physics、sensor_bindings、network_interface、kp、kd 等字段也直接位于 runtime 下。viewer 和 realtime 仅用于仿真，硬件由 runtime 在内部强制实时调度。
+application 从 runtime 的可选 keyboard device capability 创建 binding。真机不使用静态确认布尔值，
+必须保留 adapter 的启动等待、enable、急停和安全停止流程；默认配置等待操作员按下启动和使能按钮。
+duration_s 换算为控制 tick 上限，不是墙钟超时；程序化 runtime.run(steps=...) 保留确定步数运行。
 
-具体 task/backend recipe 属于应用层，放在根目录 `configs/deploy/`，例如
-`configs/deploy/sim2sim/go2_walk_sim2sim.yaml`。`motrix_deploy` 包内只保留不含具体机器人、模型路径或 command 默认值的
-通用 mandatory-field 模板；workspace bootstrap 可以选择默认 recipe，外部部署则显式传入 Hydra config path/name。
+具体 task/runtime recipe 属于应用层，由 `motrix_deploy_tasks` 插件安装，提供 flat/rough 场景、机器人和 command 默认值。
+`motrix_deploy` 包内保留通用配置；任务 defaults 选择 runtime/sim 或 runtime/hardware 配置组。
+安装任务和目标 runtime 插件后，部署可在仓库外运行，不需要 workspace 配置路径。
 
 ## 13. 与现有 MotrixLab 的集成
 
@@ -907,7 +912,7 @@ motrix-deploy sim2real \
 
 policy exporter 与 deployment profile compiler 复用现有：
 
-- `metadata.json`：训练环境、framework、backend、算法、seed 和版本来源；
+- `metadata.json`：训练环境、framework、backend、算法和版本来源；
 - `task_config.yaml`：已解析的训练配置快照；
 - `checkpoints/manifest.json`：按语义定位 `best_policy`，不按文件名搜索 checkpoint。
 
@@ -969,14 +974,15 @@ uv run scripts/export_deploy.py env=go2-walk-rough
 
 ### 14.2 Contract test
 
-提供 `FakeRobotInterface` 和可复用 adapter contract suite，验证：
+`FakeRobotInterface` 是测试目录内共享的确定性 robot I/O 替身，不作为部署包的运行时 adapter 发布。控制面测试使用它验证：
 
 - lifecycle 调用顺序；
-- name-based joint mapping；
-- reset 与 seed；
-- state timeout、backend unhealthy、write failure；
-- stop/close 在正常结束、异常和用户中断下都执行；
-- 第二个 fake backend 无需修改控制循环即可通过。
+- 不同状态反馈响应下的控制循环与确定性闭环；
+- state timeout、backend unhealthy、write failure 和启动校验失败；
+- stop/close 在正常结束、异常和用户中断下都执行。
+
+name-based joint mapping、模型关节缺失以及 reset 等具体 adapter 行为由对应后端的测试验证，
+不使用 fake 的名字集合检查替代真实映射测试。
 
 command input 的 device contract suite 独立维护在
 [Command Input 第一版测试边界](./deploy-command-input.md#9-第一版测试边界) 中。
@@ -994,7 +1000,7 @@ command input 的 device contract suite 独立维护在
 CI smoke test 使用短 rollout，不以训练 reward 达标作为框架正确性的唯一条件。策略质量回归可以在 #139 基于
 同一 CLI 和 `RolloutResult` 增加独立阈值。
 
-Go2 vertical slice 的验收基线为：固定 seed 的 1000-tick headless rollout trace SHA-256
+Go2 vertical slice 的验收基线为：确定性初始化的 1000-tick headless rollout trace SHA-256
 `8db7e74506dbe36147746696cb15a57b0a4bd2ddf95096f3dce597e94dececda`；GLFW viewer 的 2 秒真实 GUI smoke
 完成 100 ticks、无 overrun，并正常退出。viewer 与 headless 的同长度 trace SHA-256 均为
 `b7b94aaa2cfba6e4700e92b650d408da13dd73091ce870c55e326e2012ce21a0`，两种模式共用同一 backend stepping 路径。

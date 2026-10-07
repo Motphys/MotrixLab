@@ -29,10 +29,9 @@ input_devices_and_bindings/extending
 Backend-neutral InputDevice, binding, and task-command pipeline
 ```
 
-The control path from `CommandBinding` through `RobotInterface` is backend-neutral. The same binding, task command,
-`PolicyContext`, task/policy contract, and `RobotCommand` semantics can control simulation and physical-robot targets. Moving
-between the two requires replacing only the concrete device provider and `RobotInterface` implementation. A physical backend
-that implements `RobotInterface` therefore reuses the same command pipeline, task, and policy.
+`ControlSession` combines a binding, task, policy, and `RobotInterface`. It reads the command, builds the task observation,
+runs the policy, and writes a `RobotCommand`. A simulation runtime advances physics and manages the viewer; a hardware
+runtime schedules control against live robot state. Both use the same task-command semantics.
 
 A simulation and a physical robot can select different concrete devices. For example, simulation can use a GLFW keyboard
 while a physical robot uses a remote controller or network input; both reuse the same binding and task-command semantics.
@@ -58,6 +57,8 @@ A high-level task command also has the opposite direction from `RobotCommand`:
 The runtime obtains a typed task command through `CommandBinding`:
 
 ```python
+from motrix_deploy.runtime.context import PolicyContext
+
 command = command_binding.read_command(batch_size=1)
 context = PolicyContext(
     step=step,
@@ -68,7 +69,7 @@ task.validate_command(context.command)
 observation = task.build_observation(state, context)
 ```
 
-For example, MuJoCo deployment obtains a `MujocoKeyboardDevice` from the backend's `KeyboardDeviceProvider` and constructs a
+For example, MuJoCo deployment obtains a `MujocoKeyboardDevice` from the runtime's `KeyboardDeviceProvider` and constructs a
 `KeyboardPlanarVelocityBinding`. Training can use a random binding for the same `PlanarVelocityCommand`. Both paths end at the
 same typed task contract.
 

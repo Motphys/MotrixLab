@@ -10,6 +10,7 @@ import motrix_deploy_tasks
 from motrix_deploy.contracts import RobotState
 from motrix_deploy.runtime import PolicyContext
 from motrix_deploy.task import create_task
+from motrix_deploy_tasks.tasks.go2_walk import Go2WalkTaskSpec
 from motrix_env_core import registry
 from motrix_env_core.input import PlanarVelocityCommand
 from motrix_envs.deploy import build_deployment_profile
@@ -30,11 +31,20 @@ def test_go2_training_and_deployment_task_golden_probe(env_name: str) -> None:
         command=PlanarVelocityCommand(env._commands),
     )
     task = create_task(profile.task, profile.robot)
-    command_scale = np.asarray(profile.task.config["command_scale"], dtype=np.float32)
+    assert isinstance(profile.task, Go2WalkTaskSpec)
+    command_scale = np.asarray(profile.task.command_scale, dtype=np.float32)
     assert command_scale.shape == (3,)
     np.testing.assert_allclose(task.command_lower, env.cfg.commands.velocity.lower * command_scale)
     np.testing.assert_allclose(task.command_upper, env.cfg.commands.velocity.upper * command_scale)
+    task.validate_command(context.command)
     task.reset(robot_state, context)
+    # Mainline training's compute_transition uses orientation-only up_z <= 0.5;
+    # these probes reproduce that behavior rather than require new training config.
+    for up_z in (-1.0, 0.0, 1.0):
+        angle = np.arccos(up_z)
+        robot_state.base_orientation_xyzw = np.array([np.sin(angle / 2), 0.0, 0.0, np.cos(angle / 2)], dtype=np.float32)
+        assert (task.check_termination(robot_state) is not None) == (up_z <= 0.5)
+    robot_state = _robot_state_from_env(env, env_state, probe)
 
     np.testing.assert_allclose(
         task.build_observation(robot_state, context),
@@ -55,6 +65,7 @@ def test_go2_training_and_deployment_task_golden_probe(env_name: str) -> None:
         elapsed_time_s=profile.control.period_s,
         command=PlanarVelocityCommand(env._commands),
     )
+    task.validate_command(next_context.command)
     np.testing.assert_allclose(
         task.build_observation(next_state, next_context),
         stepped.obs.policy[0],

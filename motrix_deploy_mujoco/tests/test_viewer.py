@@ -49,6 +49,7 @@ class _FakeGlfw:
         self.poll_count = 0
         self.destroy_count = 0
         self.terminate_count = 0
+        self.events: list[Any] = []
 
     def init(self) -> bool:
         return True
@@ -92,6 +93,9 @@ class _FakeGlfw:
 
     def poll_events(self) -> None:
         self.poll_count += 1
+        events, self.events = self.events, []
+        for event in events:
+            event()
 
     def window_should_close(self, window: _Window) -> bool:
         return window.should_close
@@ -252,6 +256,108 @@ def test_glfw_escape_and_window_close_interrupt_input() -> None:
     viewer.close()
 
 
+def test_render_event_pump_retains_keyboard_edges_for_command_input() -> None:
+    viewer, glfw, _ = _viewer()
+    device = viewer.keyboard_device
+    try:
+        glfw.events.append(lambda: glfw.callbacks["key"](glfw.window, glfw.KEY_A, 0, glfw.PRESS, 0))
+        viewer.sync()
+        viewer.sync()
+        # Rendering delivers callbacks but never freezes or consumes input frames.
+        assert not device.is_key_down("a")
+        device.poll()
+        assert device.is_key_down("a") and device.is_pressing("a")
+        viewer.sync()
+        assert device.is_key_down("a")
+        device.poll()
+        assert not device.is_key_down("a") and device.is_pressing("a")
+        glfw.events.append(lambda: glfw.callbacks["key"](glfw.window, glfw.KEY_A, 0, glfw.RELEASE, 0))
+        viewer.sync()
+        device.poll()
+        assert device.is_key_up("a") and not device.is_pressing("a")
+    finally:
+        viewer.close()
+
+
+@pytest.mark.parametrize("event", ["escape", "close"])
+def test_render_event_pump_interrupts_without_keyboard_binding(event) -> None:
+    viewer, glfw, mujoco = _viewer()
+    try:
+        if event == "escape":
+            glfw.events.append(lambda: glfw.callbacks["key"](glfw.window, glfw.KEY_ESCAPE, 0, glfw.PRESS, 0))
+        else:
+            glfw.events.append(lambda: glfw.callbacks["close"](glfw.window))
+        with pytest.raises(KeyboardInterrupt):
+            viewer.sync()
+        assert glfw.poll_count == 1
+        assert mujoco.render_count == 0
+    finally:
+        viewer.close()
+
+
+def test_gui_runtime_pumps_startup_camera_and_close_with_constant_input(
+    control_scene_config, control_gains, monkeypatch
+) -> None:
+    from control_helpers import DummyServoTask
+
+    from motrix_deploy.policy import NoOpPolicyRuntime
+    from motrix_deploy.runtime.control import ControlSession
+    from motrix_deploy_mujoco import runtime
+    from motrix_env_core.input import ConstantPlanarVelocityBinding
+
+    glfw = _FakeGlfw()
+    mujoco = _FakeMujoco()
+    viewer = MujocoGlfwViewer(mujoco, glfw_module=glfw)
+    from dataclasses import replace
+
+    simulation = runtime.MujocoRuntime(replace(control_scene_config, render=True), viewer_factory=lambda *_: viewer)
+    robot = simulation.robot
+    control = ControlSession(
+        robot=robot,
+        task=DummyServoTask(robot.spec, *control_gains),
+        policy=NoOpPolicyRuntime(robot.spec.joint_count),
+        command_binding=ConstantPlanarVelocityBinding((0.0, 0.0, 0.0)),
+        period_s=0.02,
+        state_timeout_s=0.1,
+    )
+    waits = []
+
+    class Scheduler:
+        overrun_count = 0
+
+        def __init__(self, period_s):
+            assert period_s == simulation.control_period_s
+
+        def reset(self):
+            pass
+
+        def wait(self, step):
+            waits.append(step)
+
+    monkeypatch.setattr(runtime, "RealtimeScheduler", Scheduler)
+    poll = glfw.poll_events
+
+    def deliver_events():
+        if glfw.poll_count == 1:
+            glfw.events.append(lambda: glfw.callbacks["scroll"](glfw.window, 0.0, 2.0))
+        elif glfw.poll_count == 3:
+            glfw.events.append(lambda: glfw.callbacks["close"](glfw.window))
+        poll()
+
+    monkeypatch.setattr(glfw, "poll_events", deliver_events)
+    simulation.bind_control_session(control)
+    with simulation:
+        assert glfw.poll_count == 1 and glfw.swap_count == 1
+        result = simulation.run(steps=10)
+        assert result.exit_reason == "interrupted" and result.completed_steps == 3
+        assert result.simulation_time_s == pytest.approx(0.06)
+        assert waits == [1, 2]
+        assert mujoco.camera_moves == [(mujoco.mjtMouse.mjMOUSE_ZOOM, 0.0, -0.1)]
+        assert not control.active
+    assert glfw.destroy_count == 1 and glfw.terminate_count == 1
+    assert mujoco.context.free_count == 1 and not viewer.is_running()
+
+
 def test_glfw_viewer_renders_and_moves_camera_without_stepping_physics() -> None:
     camera_config = SystemCameraCfg(lookat=(1.0, 2.0, 3.0), distance=4.0, elevation=-25.0, azimuth=120.0)
     viewer, glfw, mujoco = _viewer(camera_config)
@@ -265,6 +371,7 @@ def test_glfw_viewer_renders_and_moves_camera_without_stepping_physics() -> None
     assert mujoco.update_count == 1
     assert mujoco.render_count == 1
     assert glfw.swap_count == 1
+    assert glfw.poll_count == 1
 
     glfw.mouse_buttons[glfw.MOUSE_BUTTON_LEFT] = glfw.PRESS
     glfw.callbacks["cursor"](glfw.window, 100.0, 200.0)

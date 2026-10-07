@@ -1,17 +1,22 @@
 # motrix-deploy-mujoco
 
-`motrix-deploy-mujoco` is the MuJoCo backend plugin for `motrix-deploy`. It discovers a registered MotrixLab
-environment configuration, builds its `SceneCfg` through `MuJoCoSceneCompiler` with deployment-owned MuJoCo timestep and
-solver settings, converts the policy-training position actuators to deployment torque motors, and implements the
-`RobotInterface` lifecycle.
+`motrix-deploy-mujoco` runs deployment policies in MuJoCo. It compiles a `SceneCfg`, exposes the scene's robot through
+`RobotInterface`, and supplies physics stepping, joint control, and an optional keyboard viewer.
 
-The plugin is advertised through the `motrix_deploy.backends` Python entry-point group and is loaded only when a
-deployment recipe selects `backend.name=mujoco`.
+With `motrix_deploy_tasks` installed and a matching exported artifact:
 
-The workspace provides Go2 recipes for both registered scenes:
+```bash
+motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
+```
 
-- `configs/deploy/sim2sim/go2_walk_sim2sim.yaml` selects `go2-walk-rough` and remains the CLI default.
-- `configs/deploy/sim2sim/go2_walk_flat_sim2sim.yaml` selects `go2-walk-flat` explicitly.
+Omit the headless overrides for interactive control. The Go2 flat and rough recipes are installed with the task plugin,
+not read from workspace config paths. Task defaults select the `sim` Hydra runtime group. Simulation settings are
+`runtime.viewer` and `runtime.realtime`; `runtime.realtime=null` follows `runtime.viewer`. MuJoCo options live directly
+under `runtime`, including `runtime.backend=mujoco`, `runtime.deploy_env_id`, `runtime.robot_id`, and `runtime.physics`.
+`runtime.backend` is a scalar string selector, not a nested configuration mapping or Hydra group.
+`duration_s` budgets `ceil(duration_s / control_period_s)` control ticks, not wall-clock time.
 
-Both use a `0.002` second MuJoCo timestep and `100` solver iterations. The flat recipe resets the base at `z=0.331` to keep
-the default feet clear of the plane.
+Programmatic callers use `create_simulation_runtime("mujoco", SimulationRuntimeConfig(...))`, assemble a `ControlSession`
+with `runtime.robot`, and call `runtime.bind_control_session(control)` before running. The runtime advances physics between
+control ticks; the control session handles task observations, policy inference, and robot commands. See
+[`examples/deploy_to_sim.py`](../examples/deploy_to_sim.py) for a complete headless or viewer example.

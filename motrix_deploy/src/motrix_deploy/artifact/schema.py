@@ -4,13 +4,16 @@
 """Schema v1 for the deployment manifest."""
 
 import re
+from abc import ABC
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
+from pydantic import BaseModel, ConfigDict
+from pydantic import ValidationError as PydanticValidationError
 
-from motrix_deploy.contracts import RobotSpec, TensorSpec
+from motrix_deploy.contracts import JointControlMode, RobotSpec, TensorSpec
 from motrix_deploy.errors import ValidationError
 
 SCHEMA_VERSION = "motrix-deploy/v1"
@@ -157,49 +160,73 @@ def _robot_from_dict(value: object) -> RobotSpec:
             position_upper=np.asarray(data["position_upper"], dtype=np.float32),
             torque_limit=np.asarray(data["torque_limit"], dtype=np.float32),
         )
+    except ValidationError:
+        raise
     except (TypeError, ValueError) as error:
-        if isinstance(error, ValidationError):
-            raise
         raise ValidationError("robot", "numeric arrays matching joint_names", str(error)) from error
 
 
-@dataclass(frozen=True)
-class TaskSpec:
-    """Versioned task runtime selection and its JSON-compatible configuration."""
+def _task_validation_error(error: PydanticValidationError) -> ValidationError:
+    """Translate model diagnostics into the deployment artifact field namespace."""
+    detail = error.errors(include_url=False)[0]
+    location = ".".join(str(part) for part in detail["loc"])
+    path = f"task.config.{location}" if location else "task.config"
+    if detail["type"] == "missing":
+        return ValidationError(
+            path, "a required task field (re-export artifacts using an older task schema)", "missing"
+        )
+    return ValidationError(path, detail["msg"], detail.get("input"))
 
-    name: str
-    observation_size: int
-    action_size: int
-    config: Mapping[str, Any]
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.name, str) or _TASK_NAME_PATTERN.fullmatch(self.name) is None:
-            raise ValidationError("task.name", "a versioned task identifier such as go2_walk/v1", self.name)
-        for field_name in ("observation_size", "action_size"):
-            value = getattr(self, field_name)
-            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-                raise ValidationError(f"task.{field_name}", "a positive integer", value)
-        _mapping(self.config, "task.config")
+class TaskSpec(BaseModel, ABC):
+    """Typed task configuration, resolved through an installed versioned task class.
+
+    Concrete implementations declare ``task_name`` as a ClassVar and use
+    Pydantic fields and validators for configuration semantics. YAML composition
+    and interpolation resolution belong to the caller, not the artifact codec.
+    """
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, allow_inf_nan=False, validate_default=True)
+    task_name: ClassVar[str]
+
+    @property
+    def name(self) -> str:
+        return self.task_name
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "observation_size": self.observation_size,
-            "action_size": self.action_size,
-            "config": dict(self.config),
-        }
+        # Frozen models may still contain mutable lists. Revalidate a fresh
+        # mapping so mutations cannot bypass the artifact serialization boundary.
+        try:
+            spec = type(self).model_validate(self.model_dump())
+        except PydanticValidationError as error:
+            raise _task_validation_error(error) from error
+        return {"name": self.name, "config": spec.model_dump(mode="json")}
 
     @classmethod
     def from_dict(cls, value: object) -> "TaskSpec":
         data = _mapping(value, "task")
-        required = {"name", "observation_size", "action_size", "config"}
-        _keys(data, path="task", required=required)
-        return cls(
-            name=data["name"],
-            observation_size=data["observation_size"],
-            action_size=data["action_size"],
-            config=data["config"],
-        )
+        _keys(data, path="task", required={"name", "config"})
+        name = data["name"]
+        if not isinstance(name, str) or _TASK_NAME_PATTERN.fullmatch(name) is None:
+            raise ValidationError("task.name", "a versioned task identifier such as go2_walk/v1", name)
+        config = _mapping(data["config"], "task.config")
+        # Lazy import: the runtime contract itself depends on TaskSpec.
+        from motrix_deploy.task import load_task_type
+
+        try:
+            spec_type = getattr(load_task_type(name), "spec_type", None)
+        except Exception as error:
+            raise ValidationError("task.name", "an available installed task class plugin", str(error)) from error
+        if (
+            not isinstance(spec_type, type)
+            or not issubclass(spec_type, TaskSpec)
+            or getattr(spec_type, "task_name", None) != name
+        ):
+            raise ValidationError("task.name", "a TaskSpec BaseModel with matching task_name", name)
+        try:
+            return spec_type.model_validate(config)
+        except PydanticValidationError as error:
+            raise _task_validation_error(error) from error
 
 
 @dataclass(frozen=True)
@@ -211,8 +238,13 @@ class ControlSpec:
     quaternion_order: str = "xyzw"
     base_orientation: str = "body_to_world"
     angular_velocity_frame: str = "body"
+    mode: JointControlMode = JointControlMode.SERVO
 
     def __post_init__(self) -> None:
+        try:
+            object.__setattr__(self, "mode", JointControlMode(self.mode))
+        except (TypeError, ValueError) as error:
+            raise ValidationError("control.mode", "joint_servo or joint_torque", self.mode) from error
         _validate_positive_number(self.period_s, "control.period_s")
         _validate_positive_number(self.state_timeout_s, "control.state_timeout_s")
         if self.quaternion_order != "xyzw":
@@ -224,6 +256,7 @@ class ControlSpec:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "mode": self.mode.value,
             "period_s": self.period_s,
             "state_timeout_s": self.state_timeout_s,
             "quaternion_order": self.quaternion_order,
@@ -235,6 +268,7 @@ class ControlSpec:
     def from_dict(cls, value: object) -> "ControlSpec":
         data = _mapping(value, "control")
         required = {
+            "mode",
             "period_s",
             "state_timeout_s",
             "quaternion_order",
@@ -259,14 +293,10 @@ class DeploymentManifest:
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION:
             raise ValidationError("schema_version", SCHEMA_VERSION, self.schema_version)
-        if self.policy.input.shape != (1, self.task.observation_size):
-            raise ValidationError(
-                "policy.input.shape",
-                str((1, self.task.observation_size)),
-                self.policy.input.shape,
-            )
-        if self.policy.output.shape != (1, self.task.action_size):
-            raise ValidationError("policy.output.shape", str((1, self.task.action_size)), self.policy.output.shape)
+        for field_name in ("input", "output"):
+            shape = getattr(self.policy, field_name).shape
+            if len(shape) != 2 or shape[0] != 1:
+                raise ValidationError(f"policy.{field_name}.shape", "(1, size): a single batch-1 vector", shape)
 
     def to_dict(self) -> dict[str, Any]:
         return {

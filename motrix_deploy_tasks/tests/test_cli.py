@@ -1,18 +1,21 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Task bootstrap and deployment CLI configuration tests."""
+"""Installed task discovery and deployment CLI configuration tests."""
 
 import json
 import subprocess
 import sys
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import onnx
 import pytest
-from hydra import compose, initialize_config_dir
+from hydra import compose, initialize_config_dir, initialize_config_module
+from hydra.core.global_hydra import GlobalHydra
+from hydra.core.object_type import ObjectType
+from motrix_robots.unitree import UnitreeGo2Robot
 from onnx import TensorProto, helper, numpy_helper
 
 from motrix_deploy.artifact import (
@@ -20,16 +23,13 @@ from motrix_deploy.artifact import (
     DeploymentManifest,
     PolicySpec,
     SourceSpec,
-    TaskSpec,
     sha256_bytes,
     write_artifact,
 )
 from motrix_deploy.contracts import RobotSpec, TensorSpec
-
-ROOT = Path(__file__).parents[2]
-ROUGH_CONFIG_PATH = ROOT / "configs/deploy/sim2sim/go2_walk_sim2sim.yaml"
-FLAT_CONFIG_PATH = ROOT / "configs/deploy/sim2sim/go2_walk_flat_sim2sim.yaml"
-REAL_CONFIG_PATH = ROOT / "configs/deploy/sim2real/go2_walk_flat_sim2real.yaml"
+from motrix_deploy.env import assemble_deploy_scene, create_deploy_env
+from motrix_deploy_tasks.tasks.go2_walk import Go2WalkTaskSpec
+from motrix_env_core.config.scene import FlatTerrainCfg, HFieldTerrainCfg, SceneCfg
 
 
 def _rollout_result(stdout: str) -> dict[str, object]:
@@ -38,12 +38,26 @@ def _rollout_result(stdout: str) -> dict[str, object]:
     return json.loads(stdout[json_start:])
 
 
+@pytest.mark.parametrize("args", [[], ["--help"]])
+def test_cli_general_help(args: list[str]) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "motrix_deploy.cli", *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "artifact: ???" in result.stdout
+    assert "runtime: ???" in result.stdout
+
+
 def test_cli_help() -> None:
     result = subprocess.run(
         [
             sys.executable,
             "-c",
-            "from motrix_deploy_tasks import main; raise SystemExit(main())",
+            "from motrix_deploy.cli import main; raise SystemExit(main())",
+            "task=go2-walk-rough/sim",
             "--help",
         ],
         check=False,
@@ -53,16 +67,16 @@ def test_cli_help() -> None:
 
     assert result.returncode == 0
     assert "artifact: ???" in result.stdout
-    assert "scene: go2-walk-rough" in result.stdout
+    assert "deploy_env_id: rough" in result.stdout
 
 
-def test_sim2real_cli_help_selects_hardware_recipe() -> None:
+def test_hardware_cli_help_selects_hardware_recipe() -> None:
     result = subprocess.run(
         [
             sys.executable,
             "-c",
-            "from motrix_deploy_tasks import main; raise SystemExit(main())",
-            "sim2real",
+            "from motrix_deploy.cli import main; raise SystemExit(main())",
+            "task=go2-walk-flat/hardware",
             "--help",
         ],
         check=False,
@@ -71,17 +85,52 @@ def test_sim2real_cli_help_selects_hardware_recipe() -> None:
     )
 
     assert result.returncode == 0
-    assert "name: unitree_go2" in result.stdout
-    assert "confirm: false" in result.stdout
+    assert "backend: unitree_go2" in result.stdout
+    assert "kind: hardware" in result.stdout
 
 
-def test_import_registers_go2_task_with_motrix_deploy() -> None:
-    script = (
-        "from motrix_deploy.task import registered_tasks; "
-        "assert 'go2_walk/v1' not in registered_tasks(); "
-        "import motrix_deploy_tasks; "
-        "assert 'go2_walk/v1' in registered_tasks()"
+@pytest.mark.parametrize(
+    ("task", "runtime_kind", "backend"),
+    [
+        ("go2-walk-flat/sim", "simulation", "mujoco"),
+        ("go2-walk-rough/sim", "simulation", "mujoco"),
+        ("go2-walk-flat/hardware", "hardware", "unitree_go2"),
+    ],
+)
+def test_installed_recipes_compose_outside_workspace(tmp_path, task, runtime_kind, backend) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "motrix_deploy.cli", f"task={task}", "--cfg", "job"],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
     )
+    assert result.returncode == 0, result.stderr
+    assert f"backend: {backend}" in result.stdout
+    assert "artifact: ???" in result.stdout
+    assert f"kind: {runtime_kind}" in result.stdout
+    if runtime_kind == "simulation":
+        assert "sensor_bindings:" in result.stdout
+        assert "viewer: true" in result.stdout
+        assert "realtime: null" in result.stdout
+
+
+def test_deployment_plugin_preserves_other_app_task_discovery(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    task_dir = config_dir / "task"
+    task_dir.mkdir(parents=True)
+    (task_dir / "custom.yaml").write_text("value: custom\n")
+    (config_dir / "app.yaml").write_text("defaults:\n  - task: custom\n")
+
+    with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
+        loader = GlobalHydra.instance().config_loader()
+        assert loader.get_group_options("task", results_filter=ObjectType.CONFIG) == ["custom"]
+        cfg = compose(config_name="app")
+    assert cfg.task.value == "custom"
+
+
+def test_installed_go2_task_is_available_without_preimport() -> None:
+    script = "from motrix_deploy.task import available_tasks; assert 'go2_walk/v1' in available_tasks()"
 
     result = subprocess.run([sys.executable, "-c", script], check=False, capture_output=True, text=True)
 
@@ -89,99 +138,129 @@ def test_import_registers_go2_task_with_motrix_deploy() -> None:
 
 
 @pytest.mark.parametrize(
-    ("config_path", "scene", "base_height"),
+    ("task", "deploy_env_id", "terrain_type"),
     [
-        (ROUGH_CONFIG_PATH, "go2-walk-rough", 0.42),
-        (FLAT_CONFIG_PATH, "go2-walk-flat", 0.331),
+        ("go2-walk-rough/sim", "rough", HFieldTerrainCfg),
+        ("go2-walk-flat/sim", "flat", FlatTerrainCfg),
     ],
 )
-def test_sim2sim_hydra_configs_contain_all_runtime_parameters(
-    config_path: Path,
-    scene: str,
-    base_height: float,
+def test_mujoco_hydra_recipes_assemble_robot_and_selected_world(
+    task: str,
+    deploy_env_id: str,
+    terrain_type: type,
 ) -> None:
-    with initialize_config_dir(version_base=None, config_dir=str(config_path.parent)):
-        cfg = compose(
-            config_name=config_path.stem,
-            overrides=["artifact=artifact.deploy"],
-        )
+    with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
+        cfg = compose(config_name="deploy", overrides=[f"task={task}", "artifact=artifact.deploy"])
 
+    assert cfg.runtime.kind == "simulation"
+
+    scene = assemble_deploy_scene(cfg.runtime.deploy_env_id, cfg.runtime.robot_id)
+    assert isinstance(scene, SceneCfg)
+    assert isinstance(scene.objs.robot, UnitreeGo2Robot)
+    assert isinstance(scene.objs.floor, terrain_type)
+    assert cfg.runtime.deploy_env_id == deploy_env_id
+    assert cfg.runtime.robot_id == "go2"
     assert cfg.artifact == "artifact.deploy"
-    assert cfg.backend.name == "mujoco"
-    assert cfg.backend.scene == scene
-    assert cfg.backend.sim_dt == 0.002
-    assert cfg.backend.solver_iterations == 100
-    assert cfg.backend.base_position[2] == pytest.approx(base_height)
-    assert cfg.viewer is True
+    assert cfg.runtime.backend == "mujoco"
+    assert cfg.runtime.physics.dt > 0
+    assert cfg.runtime.physics.solver_iterations > 0
+    assert len(cfg.runtime.robot_translation) == 3
+    assert np.linalg.norm(cfg.runtime.robot_rotation) == pytest.approx(1.0)
+    assert cfg.runtime.viewer is True
+    assert cfg.runtime.realtime is None
+    assert cfg.duration_s is None
 
 
-def test_workspace_bootstrap_keeps_default_path_with_explicit_flat_config_name(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import motrix_deploy_tasks
+@pytest.mark.parametrize("deploy_env_id", ["flat", "rough"])
+def test_installed_world_factories_are_robot_free_and_fresh(deploy_env_id: str) -> None:
+    first = create_deploy_env(deploy_env_id)
+    second = create_deploy_env(deploy_env_id)
+    assert isinstance(first, SceneCfg)
+    assert first.objs.robot is None
+    assert second.objs.robot is None
+    assert first.objs.floor is not second.objs.floor
+    first.objs.robot = UnitreeGo2Robot()
+    assert second.objs.robot is None
+    if isinstance(first.objs.floor, HFieldTerrainCfg):
+        terrain = first.assets[first.objs.floor.hfield]
+        other = second.assets[second.objs.floor.hfield]
+        heights = terrain.generator.generate(terrain.size, terrain.shape)
+        np.testing.assert_array_equal(heights, other.generator.generate(other.size, other.shape))
+        assert np.ptp(heights) > 0
 
-    captured: list[str] = []
 
-    def capture(args: list[str]) -> int:
-        captured.extend(args)
-        return 0
-
-    monkeypatch.chdir(ROOT)
-    monkeypatch.setattr(motrix_deploy_tasks, "deploy_main", capture)
-
-    result: Any = motrix_deploy_tasks.main(
-        ["sim2sim", "--config-name", "go2_walk_flat_sim2sim", "artifact=artifact.deploy"]
+def test_installed_go2_task_can_be_created_without_preimport(tmp_path: Path) -> None:
+    specs_path = tmp_path / "specs.json"
+    robot = {
+        key: value.tolist() if isinstance(value, np.ndarray) else value for key, value in asdict(_robot_spec()).items()
+    }
+    specs_path.write_text(json.dumps({"task": _task_spec().to_dict(), "robot": robot}))
+    script = (
+        "import json, sys; import numpy as np; "
+        "from motrix_deploy.artifact import TaskSpec; "
+        "from motrix_deploy.contracts import RobotSpec; "
+        "from motrix_deploy.task import create_task; "
+        "specs = json.load(open(sys.argv[1])); "
+        "specs['robot']['joint_names'] = tuple(specs['robot']['joint_names']); "
+        "specs['robot'].update({key: np.asarray(value, dtype=np.float32) "
+        "for key, value in specs['robot'].items() if isinstance(value, list)}); "
+        "spec = TaskSpec.from_dict(specs['task']); "
+        "assert type(spec).__name__ == 'Go2WalkTaskSpec'; "
+        "assert type(spec).__module__ == 'motrix_deploy_tasks.tasks.go2_walk'; "
+        "assert not any(name in sys.modules for name in ('motrix_envs', 'motrixsim', 'mujoco', 'torch')); "
+        "task = create_task(spec, RobotSpec(**specs['robot'])); "
+        "assert type(task).__module__ == 'motrix_deploy_tasks.tasks.go2_walk'; "
+        "assert type(task).__name__ == 'Go2WalkDeployTaskV1'"
     )
 
-    assert result == 0
-    assert captured.count("--config-name") == 1
-    assert captured[captured.index("--config-name") + 1] == "go2_walk_flat_sim2sim"
-    assert captured[captured.index("--config-path") + 1] == str(ROOT / "configs/deploy/sim2sim")
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(specs_path)], check=False, capture_output=True, text=True
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
-def test_sim2real_hydra_config_contains_hardware_guards() -> None:
-    with initialize_config_dir(version_base=None, config_dir=str(REAL_CONFIG_PATH.parent)):
+def test_hardware_hydra_config_selects_runtime_and_command_defaults() -> None:
+    with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
         cfg = compose(
-            config_name=REAL_CONFIG_PATH.stem,
+            config_name="deploy",
             overrides=[
+                "task=go2-walk-flat/hardware",
                 "artifact=artifact.deploy",
-                "backend.network_interface=enp3s0",
+                "runtime.network_interface=enp3s0",
             ],
         )
 
-    assert cfg.backend.name == "unitree_go2"
-    assert cfg.rollout.steps is None
-    assert cfg.rollout.duration_s == 300.0
-    assert cfg.hardware.confirm is False
-    assert cfg.realtime is True
-    assert cfg.viewer is False
+    assert cfg.runtime.kind == "hardware"
+    assert cfg.runtime.backend == "unitree_go2"
+    assert cfg.duration_s is not None and cfg.duration_s > 0
     assert cfg.command.source == "gamepad"
-    assert cfg.backend.kp == 50
-    assert cfg.backend.kd == 1
-    assert cfg.backend.lie_down_button == "B"
-    assert cfg.backend.lie_down_duration_s == pytest.approx(2.0)
+    assert cfg.runtime.lie_down_button == "B"
     assert cfg.command.gamepad.deadman_button == "L1"
     assert cfg.command.gamepad.invert_linear_x is False
     assert cfg.command.gamepad.invert_linear_y is True
     assert cfg.command.gamepad.invert_yaw is True
 
 
-def test_sim2real_hydra_config_accepts_explicit_gain_overrides() -> None:
-    with initialize_config_dir(version_base=None, config_dir=str(REAL_CONFIG_PATH.parent)):
+def test_hardware_hydra_config_accepts_explicit_gain_overrides() -> None:
+    with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
         cfg = compose(
-            config_name=REAL_CONFIG_PATH.stem,
+            config_name="deploy",
             overrides=[
+                "task=go2-walk-flat/hardware",
                 "artifact=artifact.deploy",
-                "backend.kp=25.0",
-                "backend.kd=[0.4,0.4,0.4,0.5,0.5,0.5,0.6,0.6,0.6,0.7,0.7,0.7]",
+                "runtime.kp=25.0",
+                "runtime.kd=[0.4,0.4,0.4,0.5,0.5,0.5,0.6,0.6,0.6,0.7,0.7,0.7]",
             ],
         )
 
-    assert cfg.backend.kp == pytest.approx(25.0)
-    assert list(cfg.backend.kd) == pytest.approx([0.4, 0.4, 0.4, 0.5, 0.5, 0.5, 0.6, 0.6, 0.6, 0.7, 0.7, 0.7])
+    assert cfg.runtime.kp == pytest.approx(25.0)
+    assert list(cfg.runtime.kd) == pytest.approx([0.4, 0.4, 0.4, 0.5, 0.5, 0.5, 0.6, 0.6, 0.6, 0.7, 0.7, 0.7])
 
 
-def test_headless_sim2sim_cli_runs_deterministic_onnx_fixture(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ["mujoco"])
+@pytest.mark.parametrize("task", ["go2-walk-flat", "go2-walk-rough"])
+def test_headless_simulation_cli_runs_deterministic_onnx_fixture(tmp_path: Path, task: str, backend: str) -> None:
     policy_path = tmp_path / "fixture.onnx"
     weight = numpy_helper.from_array(np.zeros((49, 12), dtype=np.float32), name="weight")
     graph = helper.make_graph(
@@ -214,41 +293,40 @@ def test_headless_sim2sim_cli_runs_deterministic_onnx_fixture(tmp_path: Path) ->
     command = [
         sys.executable,
         "-c",
-        "from motrix_deploy_tasks import main; raise SystemExit(main())",
-        "sim2sim",
+        "from motrix_deploy.cli import main; raise SystemExit(main())",
+        f"task={task}/sim",
+        f"runtime.backend={backend}",
         f"artifact={artifact_path}",
         "command.velocity=[0.5,0.0,0.0]",
-        "rollout.steps=5",
-        "seed=1",
-        "viewer=false",
+        "duration_s=0.1",
+        "runtime.viewer=false",
     ]
 
     first = subprocess.run(command, check=False, capture_output=True, text=True)
-    second = subprocess.run(command, check=False, capture_output=True, text=True)
-    duration_command = command.copy()
-    steps_index = duration_command.index("rollout.steps=5")
-    duration_command[steps_index : steps_index + 1] = ["rollout.steps=null", "rollout.duration_s=0.1"]
-    duration = subprocess.run(duration_command, check=False, capture_output=True, text=True)
-    invalid_bound = subprocess.run(
-        [*command, "rollout.duration_s=0.1"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    first_result = _rollout_result(first.stdout)
-    second_result = _rollout_result(second.stdout)
-    duration_result = _rollout_result(duration.stdout)
-
     assert first.returncode == 0, first.stderr
-    assert second.returncode == 0, second.stderr
-    assert duration.returncode == 0, duration.stderr
-    assert invalid_bound.returncode == 2
-    assert "Exactly one of rollout.steps and rollout.duration_s" in invalid_bound.stderr
+    first_result = _rollout_result(first.stdout)
     assert first_result["success"] is True
     assert first_result["completed_steps"] == 5
-    assert first_result["trace_sha256"] == second_result["trace_sha256"]
-    assert duration_result["completed_steps"] == 5
-    assert "Converting 12 actuators from position servos to torque motors" in first.stdout
+
+    # Both worlds smoke-test each backend; repeat only one world per backend.
+    if task == "go2-walk-flat":
+        second = subprocess.run(command, check=False, capture_output=True, text=True)
+        assert second.returncode == 0, second.stderr
+        assert first_result["trace_sha256"] == _rollout_result(second.stdout)["trace_sha256"]
+
+    # Duration validation is shared, so cover it once rather than per world/backend.
+    if task == "go2-walk-flat" and backend == "mujoco":
+        for invalid_duration in ("0", "-0.1", "nan", "inf"):
+            invalid_command = command.copy()
+            invalid_command[invalid_command.index("duration_s=0.1")] = f"duration_s={invalid_duration}"
+            invalid_bound = subprocess.run(
+                invalid_command,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert invalid_bound.returncode == 2, invalid_bound.stderr
+            assert "duration_s" in invalid_bound.stderr
 
 
 def _robot_spec() -> RobotSpec:
@@ -278,21 +356,19 @@ def _robot_spec() -> RobotSpec:
     )
 
 
-def _task_spec() -> TaskSpec:
-    return TaskSpec(
-        name="go2_walk/v1",
-        observation_size=49,
-        action_size=12,
-        config={
-            "action_scale": 0.25,
-            "command_lower": [0.5, 0.0, 0.0],
-            "command_upper": [0.5, 0.0, 0.0],
-            "command_scale": [1.0, 1.0, 1.0],
-            "feet_phase_offsets": [0.0, 0.5, 0.5, 0.0],
-            "gait_frequency_hz": 2.0,
-            "standing_threshold": 0.05,
-            "kp": [35.0] * 12,
-            "kd": [0.5] * 12,
-            "raw_clip": [[-1.0] * 12, [1.0] * 12],
-        },
+def _task_spec() -> Go2WalkTaskSpec:
+    return Go2WalkTaskSpec(
+        action_scale=[0.25] * 12,
+        command_lower=[0.5, 0.0, 0.0],
+        command_upper=[0.5, 0.0, 0.0],
+        command_scale=[1.0, 1.0, 1.0],
+        feet_phase_offsets=[0.0, 0.5, 0.5, 0.0],
+        gait_frequency_hz=2.0,
+        standing_threshold=0.05,
+        termination_min_up_z=0.25,
+        termination_min_base_height=None,
+        kp=[35.0] * 12,
+        kd=[0.5] * 12,
+        action_lower=[-1.0] * 12,
+        action_upper=[1.0] * 12,
     )

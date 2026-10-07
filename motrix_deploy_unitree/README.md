@@ -15,9 +15,8 @@ The Motphys fork includes the CRC shared libraries in built distributions. The S
 and `opencv-python`; uv therefore installs them into the environment as transitive dependencies. The DDS control backend does not import
 OpenCV directly, but the official SDK includes camera/video clients in the same distribution.
 
-Deployment recipes inherit common physical-runtime guards and default policy gains from
-`configs/deploy/sim2real/base.yaml`. Concrete recipes such as
-`configs/deploy/sim2real/go2_walk_flat_sim2real.yaml` own their robot-specific backend fields and command input configuration.
+The installed `task=go2-walk-flat/hardware` recipe in `motrix_deploy_tasks` supplies hardware startup settings,
+policy gains, robot-specific SDK fields, and command input settings.
 The SDK is imported only when `open()` is called. Runtime behavior:
 
 - Subscribe to `rt/lowstate`, validate CRC, and map joint `q/dq` plus IMU data into canonical `RobotState`.
@@ -41,7 +40,6 @@ from motrix_deploy_unitree import UnitreeGo2DirectInterface
 robot = UnitreeGo2DirectInterface.from_artifact(
     "artifacts/go2-walk-rough.deploy",
     network_interface="enp5s0",
-    hardware_confirmed=True,
 )
 
 robot.open()
@@ -76,7 +74,7 @@ motrix-deploy-unitree read-lowstate enp5s0
 ```
 
 It subscribes to `rt/lowstate` for 10 seconds by default and prints at most one sample every 0.5 seconds. It does not need
-an artifact or `--hardware-confirm`, and it never creates a `LowCmd` publisher. Each printed sample contains:
+an artifact, and it never creates a `LowCmd` publisher. Each printed sample contains:
 
 | Output           | Contents and units                                                                 |
 | ---------------- | ---------------------------------------------------------------------------------- |
@@ -100,8 +98,7 @@ motrix-deploy-unitree joint-control \
   enp5s0 \
   FL_thigh_joint \
   0.9 \
-  --artifact artifacts/go2-walk-rough.deploy \
-  --hardware-confirm
+  --artifact artifacts/go2-walk-rough.deploy
 ```
 
 The three positional arguments are the network interface, canonical joint name, and absolute target position in radians.
@@ -117,20 +114,22 @@ helper changes one target, each Unitree `LowCmd` necessarily contains commands f
 
 ## Policy gain overrides
 
-`UnitreeGo2BackendConfig` defaults `backend.kp` and `backend.kd` to `null`, while
-`configs/deploy/sim2real/base.yaml` sets them to `50` and `1` for physical deployment recipes. Each accepts either one
+`UnitreeGo2BackendConfig` defaults `runtime.kp` and `runtime.kd` to `null`, while
+the installed Go2 hardware recipe sets them to `50` and `1`. Each accepts either one
 non-negative scalar for all joints or 12 values in canonical `FL, FR, RL, RR` order. Overrides apply to the
-default-pose transition and policy commands; damping stop still uses `kp=0` and `backend.damping_kd`.
+default-pose transition and policy commands; damping stop still uses `kp=0` and `runtime.damping_kd`.
 
 From the repository root:
 
 ```bash
-motrix-deploy sim2real \
-  artifact=artifacts/go2-walk-rough.deploy \
-  backend.network_interface=enp5s0 \
-  hardware.confirm=true
+motrix-deploy task=go2-walk-flat/hardware \
+  artifact=artifacts/go2-walk-flat.deploy \
+  runtime.network_interface=enp5s0
 ```
 
-`hardware.confirm=true`, `viewer=false`, and `realtime=true` are enforced before DDS initialization. Before opening LowCmd, the backend uses MotionSwitcher to stand down and release the active MCF mode, then calls `RobotStateClient.ServiceSwitch("sport_mode", False)`; failure aborts startup. Use a suspended
+All hardware settings live directly under `runtime`, with `runtime.backend=unitree_go2`. `runtime.backend` is a scalar
+string selector, not a nested configuration mapping or Hydra group. The hardware runtime always runs
+in real time internally and exposes no `runtime.viewer` or `runtime.realtime` fields. Before opening LowCmd, the backend uses MotionSwitcher to stand down and
+release the active MCF mode, then calls `RobotStateClient.ServiceSwitch("sport_mode", False)`; failure aborts startup. Use a suspended
 robot, low-level/debug mode, and an operator-ready emergency stop. The implementation is validated with an injected fake
 SDK; the suspended real-robot smoke test remains pending.

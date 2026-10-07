@@ -17,4 +17,8 @@ dependencies = [
     "motrix-env-core",
     "numpy>=1.26",
     "onnxruntime==1.23.2",
+    "pydantic===2.12.5",
 ]
+
+[project.scripts]
+motrix-deploy = "motrix_deploy.cli:main"

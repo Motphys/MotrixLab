@@ -5,6 +5,8 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum
+from typing import TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
@@ -99,6 +101,19 @@ class RobotSpec:
         if np.any(self.torque_limit <= 0):
             raise ValidationError("robot.torque_limit", "positive values", self.torque_limit.tolist())
 
+    def validate_compatible(self, actual: "RobotSpec") -> None:
+        """Require a runtime robot to match this policy/task contract in canonical order."""
+        for name in ("base_link_name", "joint_names"):
+            expected_value = getattr(self, name)
+            actual_value = getattr(actual, name)
+            if expected_value != actual_value:
+                raise ValidationError(f"robot.{name}", expected_value, actual_value)
+        for name in ("default_joint_position", "position_lower", "position_upper", "torque_limit"):
+            expected_value = getattr(self, name)
+            actual_value = getattr(actual, name)
+            if not np.allclose(expected_value, actual_value, atol=1e-6, rtol=0.0):
+                raise ValidationError(f"robot.{name}", expected_value.tolist(), actual_value.tolist())
+
     @property
     def joint_count(self) -> int:
         return len(self.joint_names)
@@ -170,9 +185,16 @@ class RobotState:
             _validate_float32_array(value, path=f"state.extras.{name}", shape=value.shape)
 
 
+class JointControlMode(str, Enum):
+    """Canonical joint command modes shared by artifacts and backends."""
+
+    SERVO = "joint_servo"
+    TORQUE = "joint_torque"
+
+
 @dataclass
-class RobotCommand:
-    """Canonical joint PD plus feed-forward command in SI units."""
+class JointServoCommand:
+    """Canonical joint servo plus feed-forward command in SI units."""
 
     joint_position: FloatArray
     joint_velocity: FloatArray
@@ -203,14 +225,40 @@ class RobotCommand:
         if np.any(self.kp < 0) or np.any(self.kd < 0):
             raise ValidationError("command.gains", "non-negative values", "negative gain")
 
+    @property
+    def mode(self) -> JointControlMode:
+        return JointControlMode.SERVO
+
+
+@dataclass
+class JointTorqueCommand:
+    """Canonical direct joint torque command in SI units."""
+
+    torque: FloatArray
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.torque, np.ndarray) or self.torque.ndim != 1 or not self.torque.size:
+            actual = self.torque.shape if isinstance(self.torque, np.ndarray) else type(self.torque)
+            raise ValidationError("command.torque.shape", "(joint_count,)", actual)
+        _validate_float32_array(self.torque, path="command.torque", shape=(self.torque.size,))
+
+    @property
+    def mode(self) -> JointControlMode:
+        return JointControlMode.TORQUE
+
+
+RobotCommand: TypeAlias = JointServoCommand | JointTorqueCommand
+
 
 @dataclass(frozen=True)
 class RobotCapabilities:
     """Static backend capabilities negotiated before control starts.
 
     Attributes:
-        control_modes: Canonical command modes accepted by the backend, such as ``joint_pd``.
+        control_modes: Canonical joint command modes accepted by the backend.
         state_fields: ``RobotState`` fields populated by every state sample.
+        privileged_state_fields: Subset of state_fields supplied as privileged simulator ground truth,
+            not measurements guaranteed to be available on hardware.
         extra_sensors: Additional entries available in ``RobotState.extras``, mapped to their fixed shapes.
         supports_rendering: Whether the backend can present a live viewer.
         max_command_rate_hz: Highest command update rate accepted by the backend, or ``None`` when unconstrained.
@@ -218,20 +266,37 @@ class RobotCapabilities:
         stop_semantics: Backend behavior after ``RobotInterface.stop()``, for example ``hold_position`` or ``damping``.
     """
 
-    control_modes: tuple[str, ...]
+    control_modes: tuple[JointControlMode, ...]
     state_fields: frozenset[str]
     extra_sensors: Mapping[str, tuple[int, ...]] = field(default_factory=dict)
     supports_rendering: bool = False
     max_command_rate_hz: float | None = None
     requires_enable: bool = False
     stop_semantics: str = "hold_position"
+    privileged_state_fields: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         _validate_names(self.control_modes, path="capabilities.control_modes")
+        try:
+            modes = tuple(JointControlMode(mode) for mode in self.control_modes)
+        except ValueError as error:
+            raise ValidationError(
+                "capabilities.control_modes", "joint_servo or joint_torque", self.control_modes
+            ) from error
+        object.__setattr__(self, "control_modes", modes)
         if not isinstance(self.state_fields, frozenset) or any(
             not isinstance(name, str) or not name for name in self.state_fields
         ):
             raise ValidationError("capabilities.state_fields", "a frozenset of non-empty names", self.state_fields)
+        if (
+            not isinstance(self.privileged_state_fields, frozenset)
+            or not self.privileged_state_fields <= self.state_fields
+        ):
+            raise ValidationError(
+                "capabilities.privileged_state_fields",
+                "a frozenset subset of state_fields",
+                self.privileged_state_fields,
+            )
         if self.max_command_rate_hz is not None and self.max_command_rate_hz <= 0:
             raise ValidationError("capabilities.max_command_rate_hz", "a positive value", self.max_command_rate_hz)
         if not self.stop_semantics:
@@ -245,7 +310,10 @@ class RobotCapabilities:
 
 @dataclass(frozen=True)
 class HealthStatus:
-    """Backend health with a reason and last successful communication time."""
+    """Backend resource/communication health, not task success or fall detection.
+
+    Task-owned termination is evaluated separately by DeployTask.check_termination.
+    """
 
     healthy: bool
     reason: str

@@ -27,10 +27,9 @@ input_devices_and_bindings/extending
 InputDevice、Binding 与 backend-neutral task command 控制链路
 ```
 
-从 `CommandBinding` 到 `RobotInterface` 的控制链路不依赖具体 backend。同一个 binding、任务指令、
-`PolicyContext`、task/policy contract 和 `RobotCommand` 语义可以同时用于仿真与真机；切换控制目标时，只需
-替换具体 device provider 和 `RobotInterface` 实现。真机 backend 实现 `RobotInterface` 后，即可复用相同的
-指令链路、task 和 policy。
+`ControlSession` 组合 binding、任务、策略和 `RobotInterface`，读取指令、构造任务观察、运行策略，并写入
+`RobotCommand`。仿真运行时推进物理并管理 viewer；硬件运行时根据实时机器人状态调度控制。
+两者使用相同的任务指令语义。
 
 仿真和真机可以选择各自合适的具体 device。例如，仿真使用 GLFW keyboard，真机使用遥控器或网络输入；两端
 复用同一个 binding 和任务指令语义。
@@ -55,6 +54,8 @@ InputDevice、Binding 与 backend-neutral task command 控制链路
 运行时通过 `CommandBinding` 获取强类型任务指令：
 
 ```python
+from motrix_deploy.runtime.context import PolicyContext
+
 command = command_binding.read_command(batch_size=1)
 context = PolicyContext(
     step=step,
@@ -65,7 +66,7 @@ task.validate_command(context.command)
 observation = task.build_observation(state, context)
 ```
 
-例如 MuJoCo deployment 从 backend 的 `KeyboardDeviceProvider` 取得 `MujocoKeyboardDevice`，再创建
+例如 MuJoCo deployment 从运行时的 `KeyboardDeviceProvider` 取得 `MujocoKeyboardDevice`，再创建
 `KeyboardPlanarVelocityBinding`。训练环境则可以为同一个 `PlanarVelocityCommand` 使用 random binding。两条路径最终
 进入同一个 typed task contract。
 

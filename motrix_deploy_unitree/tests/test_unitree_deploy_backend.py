@@ -11,10 +11,12 @@ import numpy as np
 import pytest
 
 from motrix_deploy.artifact import ControlSpec, TaskSpec
-from motrix_deploy.backend import BackendCreateContext, GamePadDeviceProvider
-from motrix_deploy.contracts import RobotCommand, RobotSpec
+from motrix_deploy.contracts import JointServoCommand, JointTorqueCommand, RobotSpec
 from motrix_deploy.errors import EmergencyStopError, LieDownRequestedError, ValidationError
 from motrix_deploy.profile import DeploymentProfile
+from motrix_deploy.robot.interface import GamePadDeviceProvider
+from motrix_deploy.runtime.factory import RuntimeCreateContext
+from motrix_deploy.runtime.hardware import HardwareRuntime
 from motrix_deploy_unitree import (
     UnitreeGo2BackendConfig,
     UnitreeGo2DirectInterface,
@@ -23,8 +25,8 @@ from motrix_deploy_unitree import (
     UnitreeSdkBindings,
     decode_wireless_remote,
 )
-from motrix_deploy_unitree.cli import _parser
-from motrix_deploy_unitree.plugin import create_backend
+from motrix_deploy_unitree.cli import _parser, main
+from motrix_deploy_unitree.plugin import create_runtime
 
 JOINT_NAMES = (
     "FL_hip_joint",
@@ -253,6 +255,8 @@ def _config(**overrides) -> UnitreeGo2BackendConfig:
         "default_transition_duration_s": 0.02,
         "damping_duration_s": 0.04,
         "wait_for_remote_buttons": False,
+        "kp": 35.0,
+        "kd": 0.5,
     }
     values.update(overrides)
     return UnitreeGo2BackendConfig(**values)
@@ -261,22 +265,20 @@ def _config(**overrides) -> UnitreeGo2BackendConfig:
 def _backend(
     config: UnitreeGo2BackendConfig,
     bus: _Bus,
-    *,
-    hardware_confirmed: bool = True,
 ) -> UnitreeGo2RobotInterface:
     return UnitreeGo2RobotInterface(
         config,
         control_period_s=0.02,
         state_timeout_s=0.1,
-        hardware_confirmed=hardware_confirmed,
+        spec=_spec(),
         sdk=bus.sdk(),
         sleep=lambda _: None,
     )
 
 
-def _command(position: np.ndarray) -> RobotCommand:
+def _command(position: np.ndarray) -> JointServoCommand:
     zeros = np.zeros(12, dtype=np.float32)
-    return RobotCommand(
+    return JointServoCommand(
         joint_position=np.asarray(position, dtype=np.float32),
         joint_velocity=zeros,
         feedforward_torque=zeros,
@@ -322,7 +324,7 @@ def test_open_releases_mcf_mode_and_disables_sport_service_before_lowcmd() -> No
     bus = _Bus()
     backend = _backend(_config(), bus)
 
-    backend.open(_spec())
+    backend.open()
 
     call_names = [name for name, _ in bus.service_calls]
     assert call_names.index("stand_down") < call_names.index("release_mode")
@@ -337,34 +339,24 @@ def test_sport_service_shutdown_failure_aborts_before_lowcmd_channels() -> None:
     backend = _backend(_config(), bus)
 
     with pytest.raises(RuntimeError, match="ServiceSwitch.*code 42"):
-        backend.open(_spec())
+        backend.open()
 
     assert bus.callback is None
     assert bus.commands == []
-
-
-def test_hardware_confirmation_fails_before_dds_initialization() -> None:
-    bus = _Bus()
-    backend = _backend(_config(), bus, hardware_confirmed=False)
-
-    with pytest.raises(ValidationError, match="hardware.confirm"):
-        backend.open(_spec())
-
-    assert bus.factory_calls == []
 
 
 def test_lowstate_and_lowcmd_are_mapped_by_canonical_joint_name() -> None:
     bus = _Bus()
     spec = _spec()
     backend = _backend(_config(), bus)
-    backend.open(spec)
+    backend.open()
 
     state = backend.read_state(0.1)
     expected_position = np.asarray([MOTOR_MAPPING[name] for name in JOINT_NAMES], dtype=np.float32)
     np.testing.assert_array_equal(state.joint_position, expected_position)
     np.testing.assert_array_equal(state.base_orientation_xyzw, [0.0, 0.0, 0.0, 1.0])
 
-    backend.enable(_command(spec.default_joint_position))
+    backend.enable()
     target = spec.default_joint_position + np.linspace(-0.01, 0.01, 12, dtype=np.float32)
     command = _command(target)
     backend.write_command(command)
@@ -390,14 +382,38 @@ def test_lowstate_and_lowcmd_are_mapped_by_canonical_joint_name() -> None:
     assert backend.health().reason == "backend is closed"
 
 
+def test_enable_requires_explicit_hardware_safety_gains_before_publishing() -> None:
+    bus = _Bus()
+    backend = _backend(_config(kp=None, kd=None), bus)
+    backend.open()
+
+    with pytest.raises(ValidationError, match="safety gains"):
+        backend.enable()
+    assert bus.commands == []
+    backend.close()
+
+
+def test_servo_only_interface_rejects_torque_commands_before_publishing() -> None:
+    bus = _Bus()
+    backend = _backend(_config(), bus)
+    backend.open()
+    backend.enable()
+    command_count = len(bus.commands)
+
+    with pytest.raises(ValidationError, match="joint_servo"):
+        backend.write_command(JointTorqueCommand(torque=np.zeros(12, dtype=np.float32)))
+    assert len(bus.commands) == command_count
+    backend.close()
+
+
 def test_runtime_gain_overrides_apply_to_transition_and_policy_commands() -> None:
     bus = _Bus()
     spec = _spec()
     kd = np.linspace(0.2, 1.3, 12, dtype=np.float32)
     backend = _backend(_config(kp=25.0, kd=kd.tolist()), bus)
-    backend.open(spec)
+    backend.open()
 
-    backend.enable(_command(spec.default_joint_position))
+    backend.enable()
     transition = copy.deepcopy(bus.commands[-1])
     backend.write_command(_command(spec.default_joint_position))
     policy = copy.deepcopy(bus.commands[-1])
@@ -454,15 +470,20 @@ def test_enable_waits_for_start_transitions_then_waits_for_a() -> None:
         2: _button("start"),
         3: _button("start") | _button("A"),
     }
-    spec = _spec()
     backend = _backend(
-        _config(wait_for_remote_buttons=True, damping_duration_s=0.0),
+        UnitreeGo2BackendConfig(
+            network_interface="enp3s0",
+            default_transition_duration_s=0.02,
+            damping_duration_s=0.0,
+            kp=35.0,
+            kd=0.5,
+        ),
         bus,
     )
-    backend.open(spec)
+    backend.open()
     backend.read_state(0.1)
 
-    backend.enable(_command(spec.default_joint_position))
+    backend.enable()
 
     assert len(bus.commands) == 3
     assert all(motor.kp == 0.0 and motor.kd == 0.0 for motor in bus.commands[0].motor_cmd)
@@ -473,14 +494,13 @@ def test_enable_waits_for_start_transitions_then_waits_for_a() -> None:
 
 def test_select_remote_button_raises_emergency_stop_and_stop_publishes_damping() -> None:
     bus = _Bus()
-    spec = _spec()
     backend = _backend(
         _config(damping_duration_s=0.02),
         bus,
     )
-    backend.open(spec)
+    backend.open()
     backend.read_state(0.1)
-    backend.enable(_command(spec.default_joint_position))
+    backend.enable()
     commands_before_stop = len(bus.commands)
 
     bus.state.wireless_remote = _remote_payload(_button("select"))
@@ -498,12 +518,11 @@ def test_select_remote_button_raises_emergency_stop_and_stop_publishes_damping()
 
 def test_b_button_lies_down_then_enters_damping() -> None:
     bus = _Bus()
-    spec = _spec()
     config = _config(lie_down_duration_s=0.04, damping_duration_s=0.02)
     backend = _backend(config, bus)
-    backend.open(spec)
+    backend.open()
     backend.read_state(0.1)
-    backend.enable(_command(spec.default_joint_position))
+    backend.enable()
     commands_before_stop = len(bus.commands)
 
     bus.state.wireless_remote = _remote_payload(_button("B"))
@@ -530,11 +549,10 @@ def test_b_button_lies_down_then_enters_damping() -> None:
 
 def test_select_has_priority_over_simultaneous_lie_down_request() -> None:
     bus = _Bus()
-    spec = _spec()
     backend = _backend(_config(damping_duration_s=0.02), bus)
-    backend.open(spec)
+    backend.open()
     backend.read_state(0.1)
-    backend.enable(_command(spec.default_joint_position))
+    backend.enable()
     commands_before_stop = len(bus.commands)
 
     bus.state.wireless_remote = _remote_payload(_button("select") | _button("B"))
@@ -551,7 +569,7 @@ def test_select_has_priority_over_simultaneous_lie_down_request() -> None:
 
 
 def test_lie_down_config_rejects_invalid_pose() -> None:
-    with pytest.raises(ValidationError, match="backend.lie_down_joint_position"):
+    with pytest.raises(ValidationError, match="runtime.lie_down_joint_position"):
         _config(lie_down_joint_position=[0.0] * 11)
 
 
@@ -571,48 +589,56 @@ def test_motor_mapping_must_exactly_cover_artifact_joint_names() -> None:
         config.motor_indices(JOINT_NAMES)
 
 
-def test_hardware_confirmation_must_be_a_real_boolean() -> None:
-    with pytest.raises(ValidationError, match="hardware.confirm"):
-        UnitreeGo2RobotInterface(
-            _config(),
-            control_period_s=0.02,
-            state_timeout_s=0.1,
-            hardware_confirmed="true",
-        )
-
-
-def _context(
-    *,
-    viewer: bool = False,
-    realtime: bool = True,
-    hardware_confirmed: bool = True,
-) -> BackendCreateContext:
-    return BackendCreateContext(
+def _context() -> RuntimeCreateContext:
+    return RuntimeCreateContext(
+        robot=_spec(),
         control=ControlSpec(period_s=0.02, state_timeout_s=0.1),
-        viewer=viewer,
-        realtime=realtime,
-        hardware_confirmed=hardware_confirmed,
     )
 
 
-def test_plugin_factory_enforces_hardware_guards_and_strict_config() -> None:
+def test_plugin_factory_creates_realtime_hardware_runtime_and_strict_config() -> None:
     config = {
         "name": "unitree_go2",
         "network_interface": "enp3s0",
     }
 
-    with pytest.raises(ValidationError, match="viewer"):
-        create_backend(config, _context(viewer=True))
-    with pytest.raises(ValidationError, match="realtime"):
-        create_backend(config, _context(realtime=False))
-    with pytest.raises(ValidationError, match="hardware.confirm"):
-        create_backend(config, _context(hardware_confirmed=False))
-
-    backend = create_backend(config, _context())
-    assert isinstance(backend, UnitreeGo2RobotInterface)
+    runtime = create_runtime(config, _context())
+    assert isinstance(runtime, HardwareRuntime)
+    assert runtime.realtime is True
+    assert isinstance(runtime.robot, UnitreeGo2RobotInterface)
+    assert runtime.robot.spec.joint_names == JOINT_NAMES
 
     with pytest.raises(ValidationError, match="unknown"):
         UnitreeGo2BackendConfig.from_mapping({**config, "unexpected": 1})
+
+
+def test_plugin_runtime_uses_production_interface_with_injected_sdk(monkeypatch) -> None:
+    bus = _Bus()
+    monkeypatch.setattr("motrix_deploy_unitree.interface._load_sdk_bindings", bus.sdk)
+    runtime = create_runtime(
+        {
+            "network_interface": "enp3s0",
+            "kp": 35.0,
+            "kd": 0.5,
+            "default_transition_duration_s": 0.02,
+            "damping_duration_s": 0.0,
+            "wait_for_remote_buttons": False,
+        },
+        _context(),
+    )
+    robot = runtime.robot
+    try:
+        robot.open()
+        robot.read_state(0.1)
+        robot.enable()
+        robot.write_command(_command(robot.spec.default_joint_position))
+        assert robot.health().healthy
+        assert bus.factory_calls == [(0, "enp3s0")]
+        assert bus.commands[-1].crc == 123
+    finally:
+        robot.close()
+        runtime.close()
+    assert robot.health().reason == "backend is closed"
 
 
 @pytest.mark.parametrize(
@@ -625,20 +651,23 @@ def test_plugin_factory_enforces_hardware_guards_and_strict_config() -> None:
     ],
 )
 def test_backend_config_rejects_invalid_gain_overrides(name: str, value: object) -> None:
-    with pytest.raises(ValidationError, match=f"backend.{name}"):
+    with pytest.raises(ValidationError, match=f"runtime.{name}"):
         _config(**{name: value})
+
+
+class _JointControlTaskSpec(TaskSpec):
+    task_name = "unitree_joint_control/v1"
+    kp: list[float]
+    kd: list[float]
 
 
 def _profile() -> DeploymentProfile:
     return DeploymentProfile(
         robot=_spec(),
-        task=TaskSpec(
-            name="go2_walk/v1",
-            observation_size=1,
-            action_size=12,
-            config={"kp": [35.0] * 12, "kd": [0.5] * 12},
-        ),
+        task=_JointControlTaskSpec(kp=[35.0] * 12, kd=[0.5] * 12),
         control=ControlSpec(period_s=0.02, state_timeout_s=0.1),
+        observation_size=1,
+        action_size=12,
     )
 
 
@@ -647,7 +676,6 @@ def test_direct_interface_builds_from_profile_without_artifact() -> None:
     direct = UnitreeGo2DirectInterface.from_profile(
         _profile(),
         network_interface="enp5s0",
-        hardware_confirmed=True,
         backend_options={
             "default_transition_duration_s": 0.02,
             "damping_duration_s": 0.0,
@@ -671,9 +699,25 @@ def test_direct_interface_builds_from_profile_without_artifact() -> None:
     assert bus.commands
 
 
+def test_joint_control_cli_dispatches_artifact_and_motion_defaults(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr("motrix_deploy_unitree.cli.run_joint_control", lambda **kwargs: calls.append(kwargs))
+
+    assert main(["joint-control", "enp5s0", "FL_thigh_joint", "0.9", "--artifact", "example.deploy"]) == 0
+
+    assert len(calls) == 1
+    assert str(calls[0]["artifact"]) == "example.deploy"
+    assert calls[0]["network_interface"] == "enp5s0"
+    assert calls[0]["joint_name"] == "FL_thigh_joint"
+    assert calls[0]["target_position"] == pytest.approx(0.9)
+    assert calls[0]["move_duration"] == pytest.approx(2.0)
+    assert calls[0]["hold_duration"] == pytest.approx(1.0)
+    assert calls[0]["return_duration"] == pytest.approx(2.0)
+
+
 def test_joint_control_requires_artifact() -> None:
     with pytest.raises(SystemExit):
-        _parser().parse_args(["joint-control", "enp5s0", "FL_thigh_joint", "0.9", "--hardware-confirm"])
+        _parser().parse_args(["joint-control", "enp5s0", "FL_thigh_joint", "0.9"])
 
 
 def test_read_lowstate_uses_unified_cli_defaults() -> None:
@@ -697,6 +741,5 @@ def test_joint_control_rejects_environment_option() -> None:
                 "example.deploy",
                 "--env",
                 "go2-walk-rough",
-                "--hardware-confirm",
             ]
         )

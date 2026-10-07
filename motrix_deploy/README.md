@@ -1,111 +1,50 @@
 # Motrix Deploy
 
-`motrix_deploy` is MotrixLab's framework-independent policy deployment library. It defines artifact, backend, policy,
-control-loop, deployment-profile registry, task registry, backend plugin discovery, and CLI without importing concrete
-tasks, simulator implementations, training environments, or RL frameworks. The simulator and hardware backends live in the
-sibling `motrix_deploy_mujoco` and
-`motrix_deploy_unitree` plugin packages. Concrete task semantics live in `motrix_deploy_tasks`, which publishes the
-`motrix-deploy` executable bootstrap so tasks are registered before the core CLI runs. Built-in environment profile
-compilers live under `motrix_envs.deploy`.
+`motrix_deploy` runs exported policies without a training framework. It provides deployment artifacts, robot and task
+contracts, `ControlSession`, simulation/hardware runtimes, and the `motrix-deploy` CLI. Install a task plugin and the
+runtime plugin for your target; the Go2 recipes below come from `motrix_deploy_tasks` and use `motrix_deploy_mujoco`.
 
-The supported vertical slice exports a metadata-backed Go2 RSL-RL walk policy and runs the same artifact in MuJoCo or
-on a physical Go2.
-From the repository root, install the required development extras:
+From the repository root, install and activate the environment, then export a trained Go2 flat-terrain run:
 
 ```bash
 sh install.sh --all
-```
-
-Export a new artifact directory, validate it without opening a backend, and run an interactive deployment:
-
-```bash
-python scripts/export_deploy.py env=go2-walk-rough
-
-motrix-deploy inspect \
-  artifact=artifacts/go2-walk-rough.deploy
-
-motrix-deploy sim2sim \
-  artifact=artifacts/go2-walk-rough.deploy
-```
-
-For the flat-terrain environment, export its own artifact and select the matching runtime recipe:
-
-```bash
+source .venv/bin/activate
 python scripts/export_deploy.py env=go2-walk-flat
-
-motrix-deploy inspect \
-  artifact=artifacts/go2-walk-flat.deploy
-
-motrix-deploy sim2sim \
-  --config-name go2_walk_flat_sim2sim \
-  artifact=artifacts/go2-walk-flat.deploy
+motrix-deploy inspect artifact=artifacts/go2-walk-flat.deploy
+motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
 ```
 
-Export defaults are defined in `configs/deploy/export.yaml`. The default rough-terrain workspace runtime is defined in
-`configs/deploy/sim2sim/go2_walk_sim2sim.yaml`; the explicit flat-terrain recipe is
-`configs/deploy/sim2sim/go2_walk_flat_sim2sim.yaml`. Both can be changed with Hydra overrides. The packaged
-`motrix_deploy/config/deploy.yaml` is only a task-agnostic mandatory-field template. The deployment runs until the viewer
-closes, the user presses Esc/Ctrl-C, or a runtime failure occurs. It then prints a JSON `RolloutResult`; artifact or
-configuration failures exit with code 2.
+Export selects the latest metadata-backed run. Use `run=<run-dir> output=<new-artifact-dir>` to select a specific run and
+output. Export creates a new directory; it does not overwrite an existing artifact.
 
-The minimal MuJoCo GLFW viewer opens by default and uses realtime pacing. Physics stepping remains owned by the backend
-control path, and closing the window interrupts deployment safely.
+The artifact contains the ONNX policy, robot/control contract, and serialized task specification. The installed task
+plugin supplies the matching implementation and Hydra recipes, so deployment does not require workspace config files.
+Task defaults select the Hydra runtime group (`sim` or `hardware`). All target-specific settings live directly under
+`runtime`: `runtime.kind` selects the simulation or hardware path, while `runtime.backend` selects the plugin (`mujoco`
+for simulation or `unitree_go2` for hardware). `runtime.backend` is a scalar string selector, not a nested configuration
+mapping or Hydra group. The simulation recipe selects the scene and robot
+(`runtime.deploy_env_id=flat`, `runtime.robot_id=go2`).
 
-The artifact writer is create-only. Choose a new output path or move an existing artifact before exporting again. Joint,
-actuator range, servo gain, tensor shape, checksum, and command-range mismatches fail before the first command.
-Headless and physical runs may set either `rollout.steps` or `rollout.duration_s`; viewer runs may leave both unset.
-`realtime` defaults to the viewer mode when omitted.
+Omit `runtime.viewer=false duration_s=2.0` to open the MuJoCo viewer. Hold `W/S`, `A/D`, and `Q/E` for forward, lateral, and yaw
+commands; Esc, Ctrl-C, or closing the window stops the run. Headless operation uses the recipe's constant zero velocity;
+override `command.velocity` to change it. Common settings are `artifact`, `duration_s`, and `command`.
+`duration_s` is a control-time budget of `ceil(duration_s / control_period_s)` ticks, not a wall-clock timer.
+Simulation-only settings are `runtime.viewer` and `runtime.realtime`; `runtime.realtime=null` follows
+`runtime.viewer`. Hardware runs are always real-time internally and expose neither simulation field.
 
-Optional dependencies remain isolated behind extras for smaller runtime environments (ONNX
-inference is a core dependency; `mujoco` and `unitree` select the deployment backends):
+## Programmatic control
+
+[`examples/deploy_to_sim.py`](../examples/deploy_to_sim.py) assembles a `SceneCfg`, `SimulationRuntimeConfig`, walking task,
+ONNX policy, and command binding, then binds a `ControlSession` to a MuJoCo runtime. It includes a sample policy:
 
 ```bash
-uv sync --package motrix-deploy-tasks --extra mujoco --extra unitree
+python examples/deploy_to_sim.py --headless --steps 100
 ```
 
-Interactive deployment reads keyboard events directly from the focused GLFW viewer window:
+`ControlSession` reads input and state, builds observations, runs inference, and writes robot commands. The runtime owns
+physics advancement, scheduling, and the viewer. A raw ONNX model needs explicit task preprocessing and action settings;
+use an exported artifact when those settings should travel with the policy.
 
-```bash
-motrix-deploy sim2sim \
-  artifact=artifacts/go2-walk-rough.deploy
-```
-
-Viewer mode uses realtime pacing. Hold `W/S`, `A/D`, and `Q/E` to set the signed forward, lateral, and yaw-rate
-axes to the lower or upper command bound stored in the artifact; releasing a key removes its contribution, and Esc
-interrupts the rollout. Losing viewer focus releases every held key, so typing in another window cannot command the robot.
-The deployment viewer does not register MuJoCo's built-in visualization shortcuts, so `W/A/S/D` do not have a second effect.
-Drag with the left mouse button to rotate the camera, right-drag to move it, and use the middle button or wheel to zoom.
-The built-in interactive keyboard path requires `viewer=true`.
-
-The standing-probability random binding is task-specific training behavior and is not exposed by the deployment runtime.
-
-## Physical Go2 Sim2Real
-
-The hardware plugin imports the Unitree SDK2 Python package only when a physical backend is opened. The normal
-workspace sync installs the pinned Motphys-maintained fork into the same environment:
-
-```bash
-sh install.sh --all
-```
-
-Inspect the artifact first. With the robot suspended, low-level/debug mode enabled, Ethernet connected, and an emergency
-stop operator ready, explicitly select the interface and confirm the hardware checklist:
-
-```bash
-motrix-deploy inspect \
-  artifact=artifacts/go2-walk-rough.deploy
-
-motrix-deploy sim2real \
-  artifact=artifacts/go2-walk-rough.deploy \
-  backend.network_interface=enp3s0 \
-  hardware.confirm=true
-```
-
-`hardware.confirm` defaults to `false`; `viewer=false` and `realtime=true` are mandatory for this backend. Before creating the `LowCmd` publisher, the backend stands down and releases the active MotionSwitcher mode (MCF), then disables the `sport_mode` service through RobotStateClient; any failure aborts startup. `StandDown` is a physical motion that occurs before the Start-button gate, so the area must be clear and an independent emergency stop must be ready. The Unitree remote is the default command source: left-stick Y controls forward velocity, left-stick X lateral velocity, and right-stick X yaw. The default mapping preserves the forward axis and inverts the lateral and yaw axes to match the policy convention. A 0.12 deadzone is applied and L1 is a deadman switch; releasing L1 immediately commands zero, while artifact bounds remain authoritative. The plugin
-publishes zero torque until Start, interpolates from the measured joints to the artifact default pose over two seconds,
-holds that pose until A, then enables policy commands. B interpolates to the configured backend-owned lie-down pose, then
-enters damping and exits with `exit_reason=lie_down`; this does not widen artifact policy limits. Select remains the
-higher-priority emergency stop. Select, Ctrl+C, stale state, or a runtime failure enters damping before both DDS channels
-are closed. Artifact order `FL, FR, RL, RR` is mapped explicitly
-to SDK motor order `FR, FL, RR, RL`. Software and injected-fake-SDK tests cover this path; a suspended real-robot smoke
-test is still required before real-world operation.
+For the training-to-hardware workflow and safety checklist, see the
+[deployment tutorial](../docs/source/en/user_guide/tutorial/advanced/motrix_deploy.md) and
+[Unitree plugin guide](../motrix_deploy_unitree/README.md).

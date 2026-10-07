@@ -13,9 +13,9 @@ license = "Apache-2.0"
 dependencies = [
     "motrix-deploy",
     "motrix-env-mujoco",
-    "motrix-envs",
+    "hydra-core>=1.3",
     "numpy>=1.26",
 ]
 
 [project.entry-points."motrix_deploy.backends"]
-mujoco = "motrix_deploy_mujoco.plugin:create_backend"
+mujoco = "motrix_deploy_mujoco.plugin:create_runtime"

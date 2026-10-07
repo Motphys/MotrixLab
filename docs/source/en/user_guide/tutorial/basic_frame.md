@@ -51,7 +51,7 @@ MotrixLab is a UV workspace. The packages are grouped by ownership rather than t
 | `motrix_deploy` | Policy deployment | Framework-independent artifacts, runtime contracts, and deployment CLI |
 | `motrix_deploy_mujoco` | Policy deployment | MuJoCo deployment backend plugin |
 | `motrix_deploy_unitree` | Policy deployment | Unitree SDK2 DDS hardware backend plugin |
-| `motrix_deploy_tasks` | Policy deployment | Versioned deployment tasks and executable bootstrap |
+| `motrix_deploy_tasks` | Policy deployment | Walking tasks, deployment scenes, and installed Hydra recipes |
 
 A simulation backend (such as `motrix_env_motrixsim`) is isolated behind the `SimBackend` interface —
 when using an environment you normally do not need to care which one it is. To select or integrate a
@@ -75,6 +75,17 @@ The same environment can have several Task recipes without touching the environm
 python scripts/train.py task=cartpole/skrl.ppo
 python scripts/train.py task=cartpole/rslrl.ppo
 ```
+
+## Run an exported policy
+
+Deployment uses an artifact rather than a training environment:
+
+```bash
+motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
+```
+
+This runs the exported policy headlessly in MuJoCo. See [Go2 deployment](advanced/motrix_deploy.md) for export,
+interactive control, and hardware operation.
 
 ## What the layering buys you
 

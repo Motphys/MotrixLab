@@ -149,8 +149,8 @@ def inspect_artifact(root: str | Path) -> dict[str, Any]:
             "joint_names": list(manifest.robot.joint_names),
         },
         "task": manifest.task.to_dict(),
-        "observation_size": manifest.task.observation_size,
-        "action_size": manifest.task.action_size,
+        "observation_size": manifest.policy.input.shape[1],
+        "action_size": manifest.policy.output.shape[1],
         "control_period_s": manifest.control.period_s,
     }
 

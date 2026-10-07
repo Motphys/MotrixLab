@@ -3,22 +3,29 @@
 
 """Deployment-specific MuJoCo specification transforms."""
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import numpy as np
+from numpy.typing import NDArray
 
 from motrix_deploy.contracts import RobotSpec
 from motrix_deploy.errors import ValidationError
 
+if TYPE_CHECKING:
+    import mujoco
 
-def convert_position_actuators_to_motors(
-    mj: Any,
-    model_spec: Any,
-    source_model: Any,
-    actuator_indices: np.ndarray,
+
+def convert_actuators_to_motors(
+    model_spec: mujoco.MjSpec,
+    source_model: mujoco.MjModel,
+    actuator_indices: NDArray[np.int64],
     robot: RobotSpec,
 ) -> list[str]:
-    """Convert canonical position actuators in an assembled MjSpec to torque motors."""
+    """Convert selected, prevalidated position servos to torque motors."""
+    import mujoco as mj
+
     actuator_names: list[str] = []
     for index in actuator_indices:
         name = mj.mj_id2name(source_model, mj.mjtObj.mjOBJ_ACTUATOR, index)
@@ -38,4 +45,4 @@ def convert_position_actuators_to_motors(
     return actuator_names
 
 
-__all__ = ["convert_position_actuators_to_motors"]
+__all__ = ["convert_actuators_to_motors"]

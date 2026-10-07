@@ -3,17 +3,16 @@
 
 """SceneCfg-backed MuJoCo deployment backend plugin."""
 
-from motrix_deploy_mujoco.config import MujocoBackendConfig
-from motrix_deploy_mujoco.interface import MujocoRobotInterface, wxyz_to_xyzw, xyzw_to_wxyz
-from motrix_deploy_mujoco.plugin import create_backend
+from motrix_deploy_mujoco.plugin import create_runtime
+from motrix_deploy_mujoco.robot import wxyz_to_xyzw, xyzw_to_wxyz
+from motrix_deploy_mujoco.runtime import MujocoRuntime
 from motrix_deploy_mujoco.viewer import MujocoGlfwViewer, MujocoKeyboardDevice
 
 __all__ = [
-    "MujocoBackendConfig",
     "MujocoGlfwViewer",
     "MujocoKeyboardDevice",
-    "MujocoRobotInterface",
-    "create_backend",
+    "MujocoRuntime",
+    "create_runtime",
     "wxyz_to_xyzw",
     "xyzw_to_wxyz",
 ]

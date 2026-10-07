@@ -81,12 +81,6 @@ def _parser() -> argparse.ArgumentParser:
     joint.add_argument("--move-duration", type=_positive_float, default=2.0)
     joint.add_argument("--hold-duration", type=_non_negative_float, default=1.0)
     joint.add_argument("--return-duration", type=_non_negative_float, default=2.0)
-    joint.add_argument(
-        "--hardware-confirm",
-        action="store_true",
-        required=True,
-        help="Confirm the robot is suspended, in low-level/debug mode, and an operator is ready",
-    )
     return parser
 
 
@@ -112,7 +106,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         move_duration=args.move_duration,
         hold_duration=args.hold_duration,
         return_duration=args.return_duration,
-        hardware_confirmed=args.hardware_confirm,
     )
     return 0
 

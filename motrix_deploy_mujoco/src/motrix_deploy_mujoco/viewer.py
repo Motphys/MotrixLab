@@ -3,7 +3,16 @@
 
 """Minimal GLFW viewer and focused keyboard device for MuJoCo deployment."""
 
-from typing import Any
+from __future__ import annotations
+
+from types import ModuleType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import ctypes
+
+    import glfw
+    import mujoco
 
 from motrix_env_core.config.scene import SystemCameraCfg
 from motrix_env_core.input import KeyboardDevice
@@ -12,7 +21,7 @@ from motrix_env_core.input import KeyboardDevice
 class MujocoKeyboardDevice(KeyboardDevice):
     """Freeze keyboard events delivered to one focused GLFW viewer window."""
 
-    def __init__(self, viewer: "MujocoGlfwViewer") -> None:
+    def __init__(self, viewer: MujocoGlfwViewer) -> None:
         self._viewer = viewer
         self._pressing: set[str] = set()
         self._pending_down: set[str] = set()
@@ -45,7 +54,9 @@ class MujocoKeyboardDevice(KeyboardDevice):
     def is_pressing(self, key: str) -> bool:
         return self._normalize_query(key) in self._frame_pressing
 
-    def _on_key(self, window: Any, key: int, scancode: int, action: int, modifiers: int) -> None:
+    def _on_key(
+        self, window: ctypes._Pointer[glfw._GLFWwindow], key: int, scancode: int, action: int, modifiers: int
+    ) -> None:
         del window, modifiers
         glfw = self._viewer._glfw
         assert glfw is not None
@@ -62,13 +73,13 @@ class MujocoKeyboardDevice(KeyboardDevice):
             self._pressing.remove(name)
             self._pending_up.add(name)
 
-    def _on_focus(self, window: Any, focused: int) -> None:
+    def _on_focus(self, window: ctypes._Pointer[glfw._GLFWwindow], focused: int) -> None:
         del window
         if not focused:
             self._pending_up.update(self._pressing)
             self._pressing.clear()
 
-    def _on_close(self, window: Any) -> None:
+    def _on_close(self, window: ctypes._Pointer[glfw._GLFWwindow]) -> None:
         del window
         self._interrupted = True
 
@@ -114,27 +125,27 @@ class MujocoGlfwViewer:
 
     def __init__(
         self,
-        mujoco_module: Any,
+        mujoco_module: ModuleType,
         camera_config: SystemCameraCfg = SystemCameraCfg(),
         *,
-        glfw_module: Any | None = None,
+        glfw_module: ModuleType | None = None,
     ) -> None:
         self._mj = mujoco_module
         self._glfw = glfw_module
         self._camera_config = camera_config
-        self._model: Any = None
-        self._data: Any = None
-        self._window: Any = None
-        self._scene: Any = None
-        self._context: Any = None
-        self._camera: Any = None
-        self._option: Any = None
-        self._perturb: Any = None
+        self._model: mujoco.MjModel | None = None
+        self._data: mujoco.MjData | None = None
+        self._window: ctypes._Pointer[glfw._GLFWwindow] | None = None
+        self._scene: mujoco.MjvScene | None = None
+        self._context: mujoco.MjrContext | None = None
+        self._camera: mujoco.MjvCamera | None = None
+        self._option: mujoco.MjvOption | None = None
+        self._perturb: mujoco.MjvPerturb | None = None
         self._glfw_initialized = False
         self._cursor_position = (0.0, 0.0)
         self.keyboard_device = MujocoKeyboardDevice(self)
 
-    def open(self, model: Any, data: Any) -> None:
+    def open(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         """Create the window and MuJoCo rendering resources."""
         if self._window is not None:
             raise RuntimeError("MuJoCo GLFW viewer is already open")
@@ -180,9 +191,13 @@ class MujocoGlfwViewer:
             raise
 
     def sync(self) -> None:
-        """Render current state without polling input or advancing physics."""
+        """Pump window events and render without consuming keyboard input or stepping."""
         window = self._require_window()
-        if self._glfw.window_should_close(window):
+        assert self._glfw is not None
+        # Window responsiveness must not depend on a keyboard command binding.
+        # Callbacks retain pending key edges until KeyboardDevice.poll freezes them.
+        self._glfw.poll_events()
+        if self.keyboard_device._interrupted or self._glfw.window_should_close(window):
             raise KeyboardInterrupt
         assert self._model is not None
         assert self._data is not None
@@ -208,7 +223,10 @@ class MujocoGlfwViewer:
             self._glfw.swap_buffers(window)
 
     def is_running(self) -> bool:
-        return self._window is not None and not self._glfw.window_should_close(self._window)
+        if self._window is None:
+            return False
+        assert self._glfw is not None
+        return not self._glfw.window_should_close(self._window)
 
     def close(self) -> None:
         """Release rendering resources and the GLFW window; safe to repeat."""
@@ -237,7 +255,8 @@ class MujocoGlfwViewer:
             self._perturb = None
             self.keyboard_device._clear()
 
-    def _on_cursor_position(self, window: Any, xpos: float, ypos: float) -> None:
+    def _on_cursor_position(self, window: ctypes._Pointer[glfw._GLFWwindow], xpos: float, ypos: float) -> None:
+        assert self._glfw is not None
         previous_x, previous_y = self._cursor_position
         self._cursor_position = (xpos, ypos)
         dx = xpos - previous_x
@@ -262,16 +281,16 @@ class MujocoGlfwViewer:
             action = self._mj.mjtMouse.mjMOUSE_ZOOM
         self._move_camera(action, dx / height, dy / height)
 
-    def _on_scroll(self, window: Any, xoffset: float, yoffset: float) -> None:
+    def _on_scroll(self, window: ctypes._Pointer[glfw._GLFWwindow], xoffset: float, yoffset: float) -> None:
         del window, xoffset
         self._move_camera(self._mj.mjtMouse.mjMOUSE_ZOOM, 0.0, -0.05 * yoffset)
 
-    def _move_camera(self, action: Any, dx: float, dy: float) -> None:
+    def _move_camera(self, action: mujoco.mjtMouse, dx: float, dy: float) -> None:
         if self._model is None or self._scene is None or self._camera is None:
             return
         self._mj.mjv_moveCamera(self._model, action, dx, dy, self._scene, self._camera)
 
-    def _require_window(self) -> Any:
+    def _require_window(self) -> ctypes._Pointer[glfw._GLFWwindow]:
         if self._window is None:
             raise RuntimeError("MuJoCo GLFW viewer is not open")
         return self._window

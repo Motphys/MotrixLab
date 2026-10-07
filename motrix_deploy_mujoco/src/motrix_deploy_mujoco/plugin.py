@@ -1,23 +1,15 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Entry-point factory for the MuJoCo deployment backend."""
+"""Typed entry-point factory for the MuJoCo simulation runtime."""
 
-from collections.abc import Mapping
-from typing import Any
-
-from motrix_deploy.backend import BackendCreateContext, RobotInterface
-from motrix_deploy_mujoco.config import MujocoBackendConfig
-from motrix_deploy_mujoco.interface import MujocoRobotInterface
+from motrix_deploy.runtime.config import SimulationRuntimeConfig
+from motrix_deploy_mujoco.runtime import MujocoRuntime
 
 
-def create_backend(config: Mapping[str, Any], context: BackendCreateContext) -> RobotInterface:
-    """Construct the MuJoCo backend selected by a deployment recipe."""
-    return MujocoRobotInterface(
-        MujocoBackendConfig.from_mapping(config),
-        control_period_s=context.control.period_s,
-        render=context.viewer,
-    )
+def create_runtime(config: SimulationRuntimeConfig) -> MujocoRuntime:
+    """Create a simulation whose robot contract is derived from its scene."""
+    return MujocoRuntime(config)
 
 
-__all__ = ["create_backend"]
+__all__ = ["create_runtime"]

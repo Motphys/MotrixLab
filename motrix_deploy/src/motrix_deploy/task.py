@@ -3,12 +3,11 @@
 
 """Runtime contract implemented by concrete deployment-task packages."""
 
-import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable
-from typing import Any, Generic, TypeVar
+from importlib import metadata
+from typing import Any, ClassVar, Generic, TypeVar
 
-from motrix_deploy.artifact import TaskSpec
+from motrix_deploy.artifact.schema import TaskSpec
 from motrix_deploy.contracts import FloatArray, RobotCommand, RobotSpec, RobotState
 from motrix_deploy.runtime.context import PolicyContext
 
@@ -16,17 +15,19 @@ CommandT = TypeVar("CommandT")
 
 
 class DeployTask(ABC, Generic[CommandT]):
-    """Own task-specific observation, action, and command semantics."""
+    """Own task-specific observation, action, command, and termination semantics.
 
-    @property
-    @abstractmethod
-    def observation_size(self) -> int:
-        """Return the flat policy observation size."""
+    ControlSession checks backend state and calls validate_command before passing
+    inputs to reset and build_observation. Tasks check optional state fields at
+    their usage sites when a feature needs them. Backend capabilities describe
+    which fields are privileged ground truth.
+    """
 
-    @property
-    @abstractmethod
-    def action_size(self) -> int:
-        """Return the flat policy action size."""
+    spec_type: ClassVar[type[TaskSpec]]
+
+    def check_termination(self, state: RobotState) -> str | None:
+        """Return a task termination reason, or None to continue, without side effects."""
+        return None
 
     @abstractmethod
     def reset(self, state: RobotState, context: PolicyContext[CommandT]) -> None:
@@ -38,46 +39,39 @@ class DeployTask(ABC, Generic[CommandT]):
 
     @abstractmethod
     def process_action(self, action: FloatArray) -> RobotCommand:
-        """Convert one raw policy action into a canonical robot command."""
+        """Convert a policy action into a servo or torque command supported by the backend."""
 
     @abstractmethod
     def validate_command(self, command: CommandT) -> None:
         """Validate one external high-level command before using it."""
 
 
-TaskFactory = Callable[[TaskSpec, RobotSpec], DeployTask[Any]]
-
-_TASK_FACTORIES: dict[str, TaskFactory] = {}
-_TASK_NAME_PATTERN = re.compile(r"[^/\s]+/v[1-9][0-9]*")
+TASK_ENTRY_POINT_GROUP = "motrix_deploy.tasks"
 
 
-def register_task(name: str) -> Callable[[TaskFactory], TaskFactory]:
-    """Register one concrete task factory when its implementation module is imported."""
-    if not isinstance(name, str) or _TASK_NAME_PATTERN.fullmatch(name) is None:
-        raise ValueError(f"task name must be a versioned identifier such as go2_walk/v1, got {name!r}")
+def available_tasks() -> tuple[str, ...]:
+    """List installed task plugins without importing their implementations."""
+    return tuple(sorted({entry.name for entry in metadata.entry_points(group=TASK_ENTRY_POINT_GROUP)}))
 
-    def register(factory: TaskFactory) -> TaskFactory:
-        if name in _TASK_FACTORIES:
-            raise ValueError(f"Deployment task {name} is already registered")
-        _TASK_FACTORIES[name] = factory
-        return factory
 
-    return register
+def load_task_type(name: str) -> type[DeployTask[Any]]:
+    """Load only the selected installed task class, shared by codec and runtime."""
+    entries = tuple(metadata.entry_points(group=TASK_ENTRY_POINT_GROUP))
+    matches = [entry for entry in entries if entry.name == name]
+    if not matches:
+        supported = ", ".join(sorted({entry.name for entry in entries})) or "none"
+        raise ValueError(f"Unsupported deployment task {name}; available tasks: {supported}")
+    if len(matches) != 1:
+        raise ValueError(f"Multiple deployment task plugins provide {name}")
+    task_type = matches[0].load()
+    if not isinstance(task_type, type) or not issubclass(task_type, DeployTask):
+        raise TypeError(f"Deployment task plugin {name} must provide a DeployTask class")
+    return task_type
 
 
 def create_task(spec: TaskSpec, robot: RobotSpec) -> DeployTask[Any]:
-    """Create the task implementation selected by an artifact."""
-    try:
-        factory = _TASK_FACTORIES[spec.name]
-    except KeyError as error:
-        supported = ", ".join(sorted(_TASK_FACTORIES)) or "none"
-        raise ValueError(f"Unsupported deployment task {spec.name}; supported tasks: {supported}") from error
-    return factory(spec, robot)
+    """Instantiate the installed task class selected by an artifact."""
+    return load_task_type(spec.name)(spec, robot)
 
 
-def registered_tasks() -> tuple[str, ...]:
-    """Return versioned task identifiers registered in the current process."""
-    return tuple(sorted(_TASK_FACTORIES))
-
-
-__all__ = ["DeployTask", "create_task", "register_task", "registered_tasks"]
+__all__ = ["DeployTask", "create_task", "available_tasks"]
