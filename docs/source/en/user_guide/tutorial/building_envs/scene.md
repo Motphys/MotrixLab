@@ -37,6 +37,48 @@ class MyTaskEnvCfg(EnvCfg):
     reset_noise_scale: float = 0.01
 ```
 
+### Actuators on imported bodies
+
+Declare actuators on `BodyCfg.actuators`, not on `UrdfFileCfg`. `RobotCfg` inherits the same field, and both MJCF and URDF
+models use the format-neutral declarations in `motrix_env_core.config.scene.actuator`:
+
+```python
+from motrix_env_core.config.scene import BodyCfg, MjcfFileCfg
+from motrix_env_core.config.scene.actuator import PositionActuatorCfg
+
+body = BodyCfg(
+    model=MjcfFileCfg(file="my_robot.xml"),
+    base_link_name="base",
+    prefix="robot_",
+    actuators={
+        "hip_position": PositionActuatorCfg(
+            joint_name="hip",
+            kp=100.0,
+            kv=2.0,
+            inherit_joint_range=True,
+        ),
+    },
+)
+```
+
+This example assumes the imported model contains a `base` link and a limited `hip` joint. The dictionary key names the
+actuator; `joint_name` uses the imported joint name **before** `prefix` / `suffix` decoration. Here, the assembled actuator
+and joint names are `robot_hip_position` and `robot_hip`. Dictionary insertion order defines actuator order.
+
+- `actuators=None` (the default) preserves the imported model's actuators.
+- `actuators={}` removes all imported actuators.
+- A non-empty dictionary replaces the entire imported actuator set, rather than appending to it. Declare every actuator
+  needed by the body.
+
+`PositionActuatorCfg` inherits `joint_name`, `ctrl_range`, and `force_range` from `ActuatorCfg`. `kp` is the position gain;
+`kv` is the absolute damping coefficient. `inherit_joint_range=True` uses the imported joint limits as the control range
+and cannot be combined with an explicit `ctrl_range`. For direct joint effort control, use `MotorActuatorCfg` from the
+same module, for example `MotorActuatorCfg(joint_name="hip", ctrl_range=(-10.0, 10.0))`; it uses unit gear and gain.
+
+Replacement or removal resets actuator control (`ctrl`) and activation (`act`, where represented) values in imported
+keyframes while preserving joint positions (`qpos`) and velocities (`qvel`). MuJoCo resets both `ctrl` and `act`;
+MotrixSim resets `ctrl` because MSD keyframes do not expose activation state.
+
 ### Recommended Directory Structure
 
 ```

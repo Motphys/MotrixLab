@@ -12,6 +12,7 @@ from omegaconf import MISSING
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene._utils import Vec3, Vec4, optional_vec, resolve_path
+from motrix_env_core.config.scene.actuator import ActuatorCfg
 
 
 @configclass(kw_only=True)
@@ -269,9 +270,12 @@ class BodyCfg(SceneObjCfg):
 
     Holds the backend-neutral contract for attaching an external MJCF/URDF
     model (a free-floating body tree): which file, which link is the attach
-    root, and optional placement/name decoration. Robots extend this with
-    key-pose and actuation semantics; prop objects (balls, boxes, ...) use
-    it directly.
+    root, placement/name decoration, and optional actuator declarations.
+    ``actuators=None`` preserves the imported model; an explicit dict replaces
+    its actuators, and an empty dict removes them. Dict keys own actuator names. Names refer to the imported
+    model before prefix/suffix decoration. Replacement resets actuator control
+    and activation keyframe state, while preserving joint pose/velocity state.
+    Robots extend this with key-pose semantics; props use it directly.
     """
 
     model: ModelFileCfg
@@ -280,6 +284,8 @@ class BodyCfg(SceneObjCfg):
     rotation: Vec4 | None = None
     prefix: str | None = None
     suffix: str | None = None
+    # None preserves imported actuators; a dict replaces them (empty removes all).
+    actuators: dict[str, ActuatorCfg] | None = None
 
     def validate(self, name: str) -> None:
         super().validate(name)
@@ -290,6 +296,13 @@ class BodyCfg(SceneObjCfg):
             raise ValueError("BodyCfg.base_link_name must not be empty")
         optional_vec("BodyCfg.translation", self.translation, 3)
         optional_vec("BodyCfg.rotation", self.rotation, 4)
+        if self.actuators is not None:
+            for actuator_name, actuator in self.actuators.items():
+                if not isinstance(actuator_name, str) or not actuator_name:
+                    raise ValueError("BodyCfg.actuators keys must be non-empty names")
+                if not isinstance(actuator, ActuatorCfg):
+                    raise TypeError(f"BodyCfg.actuators must contain ActuatorCfg, got {type(actuator).__name__}")
+                actuator.validate()
 
     def resolve_name(self, name: str) -> str:
         return f"{self.prefix or ''}{name}{self.suffix or ''}"

@@ -32,6 +32,47 @@ class MyTaskEnvCfg(EnvCfg):
     ctrl_dt: float = 0.02
 ```
 
+### 导入本体的执行器
+
+执行器通过 `BodyCfg.actuators` 声明，不属于 `UrdfFileCfg`。`RobotCfg` 继承同一字段；MJCF 和 URDF 模型均使用
+`motrix_env_core.config.scene.actuator` 中与文件格式无关的声明：
+
+```python
+from motrix_env_core.config.scene import BodyCfg, MjcfFileCfg
+from motrix_env_core.config.scene.actuator import PositionActuatorCfg
+
+body = BodyCfg(
+    model=MjcfFileCfg(file="my_robot.xml"),
+    base_link_name="base",
+    prefix="robot_",
+    actuators={
+        "hip_position": PositionActuatorCfg(
+            joint_name="hip",
+            kp=100.0,
+            kv=2.0,
+            inherit_joint_range=True,
+        ),
+    },
+)
+```
+
+示例假定导入模型包含 `base` link 和具有限位的 `hip` joint。字典键定义执行器名称；`joint_name` 使用应用
+`prefix` / `suffix` **之前**的导入关节名称。此处组装后的执行器和关节名称分别为 `robot_hip_position` 和
+`robot_hip`。字典插入顺序决定执行器顺序。
+
+- `actuators=None`（默认值）保留导入模型的执行器。
+- `actuators={}` 移除全部导入执行器。
+- 非空字典替换整个导入执行器集合，而非追加；必须声明本体需要的全部执行器。
+
+`PositionActuatorCfg` 从 `ActuatorCfg` 继承 `joint_name`、`ctrl_range` 和 `force_range`。`kp` 是位置增益，
+`kv` 是绝对阻尼系数。`inherit_joint_range=True` 将导入关节限位用作控制范围，不能与显式 `ctrl_range` 同时设置。
+直接控制关节力或力矩时，使用同一模块中的 `MotorActuatorCfg`，例如
+`MotorActuatorCfg(joint_name="hip", ctrl_range=(-10.0, 10.0))`；其传动比与增益均为 1。
+
+替换或移除执行器会重置导入关键帧中的执行器控制值（`ctrl`）与 activation 状态（后端表示该状态时的 `act`），
+保留关节位置（`qpos`）和速度（`qvel`）。MuJoCo 重置 `ctrl` 和 `act`；MotrixSim 重置 `ctrl`，因为 MSD 关键帧
+不暴露 activation 状态。
+
 ### 推荐目录结构
 
 ```

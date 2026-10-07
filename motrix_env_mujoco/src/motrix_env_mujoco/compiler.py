@@ -44,6 +44,7 @@ from motrix_env_core.config.scene.sensor import (
 from motrix_env_core.config.scene.urdf import UrdfFileCfg
 from motrix_env_core.config.scene.validation import validate_scene_cfg
 from motrix_env_core.config.sim import SimCfg
+from motrix_env_mujoco.actuators import apply_actuator_cfgs
 from motrix_env_mujoco.urdf import apply_urdf_cfgs
 
 _CONTACT_DATA_BITS = {
@@ -261,6 +262,7 @@ class MuJoCoSceneCompiler(SceneCompiler[mj.MjModel]):
             return
         if isinstance(cfg, BodyCfg):
             robot_spec = self._load_model_spec(cfg.model)
+            apply_actuator_cfgs(robot_spec, cfg.actuators)
             base_link = robot_spec.body(cfg.base_link_name)
             if base_link is None:
                 raise ValueError(f"Attached body base link {cfg.base_link_name!r} does not exist in model")

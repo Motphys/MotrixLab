@@ -39,7 +39,11 @@ motrix_envs/src/motrix_envs/robot/
 ```
 
 An MJCF file should contain only the reusable robot model, without a floor, lights, or task-specific objects. For a
-URDF robot, `UrdfFileCfg` can add simulation properties through its `geoms`, `sites`, `joints`, and `actuators` fields.
+URDF robot, `UrdfFileCfg` can add simulation properties through its `geoms`, `sites`, and `joints` fields.
+Declare MJCF and URDF actuators on the robot instance through its inherited `BodyCfg.actuators` dictionary.
+When migrating an existing declaration, import `ActuatorCfg` and `PositionActuatorCfg` from
+`motrix_env_core.config.scene.actuator` rather than `motrix_env_core.config.scene.urdf`, and move the actuator list out of
+`UrdfFileCfg` into this dictionary. Dictionary keys replace the old `name` field and `actuator_name` property.
 
 ### 2. Declare the `RobotCfg`
 
@@ -77,6 +81,7 @@ The public `RobotCfg` fields are:
 | `base_link_name`           | Root link used to attach the model to a scene                                  |
 | `translation` / `rotation` | Optional default instance pose; task configs can override it                   |
 | `prefix` / `suffix`        | Optional element-name affixes for name isolation within a scene                |
+| `actuators`                | `None` preserves imported actuators; `{}` removes them; a non-empty dictionary replaces them |
 | `key_pose`                 | Named poses that share one explicit joint order, such as `default` or `crouch` |
 
 `KeyPoseCfg.joint_names` must be unique and non-empty. Every pose must contain one finite value per joint. Keep only
@@ -99,23 +104,36 @@ class MyHumanoid(HumanoidRobotCfg):
 Both foot-link names must be non-empty and distinct. `resolved_foot_link_names` automatically applies the robot
 instance's `prefix` and `suffix`.
 
-A URDF robot uses the same config hierarchy and replaces `model` with `UrdfFileCfg`. Add position actuators or sole sites
-explicitly when the source URDF does not provide them:
+A URDF robot uses the same config hierarchy and replaces `model` with `UrdfFileCfg`. Sites remain on the model config;
+actuators belong to `RobotCfg`. This minimal example assumes `base` and `left_foot` links and a limited `left_hip` joint:
 
 ```python
-model: UrdfFileCfg = UrdfFileCfg(
-    file=MY_ROBOT_ASSET_DIR / "my_robot.urdf",
-    sites=[SiteCfg(name="left_sole", parent_link_name="left_foot")],
-    actuators=[
-        PositionActuatorCfg(
+from motrix_env_core.config.scene import RobotCfg
+from motrix_env_core.config.scene.actuator import PositionActuatorCfg
+from motrix_env_core.config.scene.urdf import SiteCfg, UrdfFileCfg
+
+robot = RobotCfg(
+    model=UrdfFileCfg(
+        file="my_robot.urdf",
+        sites=[SiteCfg(name="left_sole", parent_link_name="left_foot")],
+    ),
+    base_link_name="base",
+    actuators={
+        "left_hip_position": PositionActuatorCfg(
             joint_name="left_hip",
             kp=100.0,
             kv=2.0,
             inherit_joint_range=True,
         ),
-    ],
+    },
 )
 ```
+
+Dictionary keys name actuators; `joint_name` uses imported names before instance `prefix` / `suffix` decoration.
+Declare all controlled joints in the dictionary: it replaces rather than appends to the imported actuator set.
+Omit `actuators` or set it to `None` to preserve imported actuators; use `{}` to remove them. See
+[scene actuator configuration](tutorial/building_envs/scene.md#actuators-on-imported-bodies) for control ranges,
+actuator ordering, and keyframe behavior.
 
 ### 3. Register the robot
 

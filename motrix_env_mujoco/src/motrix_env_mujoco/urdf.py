@@ -3,41 +3,13 @@
 
 import mujoco as mj
 
-from motrix_env_core.config.scene.urdf import (
-    ActuatorCfg,
-    PositionActuatorCfg,
-    UrdfFileCfg,
-)
+from motrix_env_core.config.scene.urdf import UrdfFileCfg
 
 
 def _mujoco_quat(rotation: tuple[float, float, float, float]) -> list[float]:
     """Convert the config's xyzw quaternion to MuJoCo's wxyz order."""
     x, y, z, w = rotation
     return [w, x, y, z]
-
-
-def _build_position_actuator(spec: mj.MjSpec, cfg: PositionActuatorCfg, joint: mj.MjsJoint) -> None:
-    ctrl_range = list(joint.range) if cfg.inherit_joint_range else cfg.ctrl_range
-    spec.add_actuator(
-        name=cfg.actuator_name,
-        gaintype=mj.mjtGain.mjGAIN_FIXED,
-        gainprm=[cfg.kp, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        biastype=mj.mjtBias.mjBIAS_AFFINE,
-        biasprm=[0.0, -cfg.kp, -cfg.kv, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        trntype=mj.mjtTrn.mjTRN_JOINT,
-        target=cfg.joint_name,
-        ctrllimited=mj.mjtLimited.mjLIMITED_TRUE if ctrl_range is not None else None,
-        ctrlrange=ctrl_range,
-        forcelimited=mj.mjtLimited.mjLIMITED_TRUE if cfg.force_range is not None else None,
-        forcerange=cfg.force_range,
-    )
-
-
-def _build_actuator(spec: mj.MjSpec, cfg: ActuatorCfg, joint: mj.MjsJoint) -> None:
-    if isinstance(cfg, PositionActuatorCfg):
-        _build_position_actuator(spec, cfg, joint)
-        return
-    raise TypeError(f"MuJoCo does not support actuator config {type(cfg).__name__}")
 
 
 def apply_urdf_cfgs(spec: mj.MjSpec, cfg: UrdfFileCfg) -> None:
@@ -54,13 +26,6 @@ def apply_urdf_cfgs(spec: mj.MjSpec, cfg: UrdfFileCfg) -> None:
     if len(cfg_by_site) != len(cfg.sites):
         raise ValueError("Duplicate configured site name")
 
-    target_joints = {actuator.joint_name for actuator in cfg.actuators}
-    if len(target_joints) != len(cfg.actuators):
-        raise ValueError("Multiple actuator configs target the same joint")
-    actuator_names = {actuator.actuator_name for actuator in cfg.actuators}
-    if len(actuator_names) != len(cfg.actuators):
-        raise ValueError("Duplicate configured actuator name")
-
     existing_geom_names = {geom.name for geom in spec.geoms}
     unknown_geoms = sorted(set(cfg_by_geom).difference(existing_geom_names))
     if unknown_geoms:
@@ -70,10 +35,6 @@ def apply_urdf_cfgs(spec: mj.MjSpec, cfg: UrdfFileCfg) -> None:
     unknown_joints = sorted(set(cfg_by_joint).difference(existing_joint_names))
     if unknown_joints:
         raise ValueError(f"Configured joints do not exist in model: {unknown_joints}")
-
-    unknown_actuator_joints = sorted(target_joints.difference(existing_joint_names))
-    if unknown_actuator_joints:
-        raise ValueError(f"Configured actuator joints do not exist in model: {unknown_actuator_joints}")
 
     existing_site_names = {site.name for site in spec.sites}
     duplicate_site_names = sorted(existing_site_names.intersection(cfg_by_site))
@@ -85,20 +46,6 @@ def apply_urdf_cfgs(spec: mj.MjSpec, cfg: UrdfFileCfg) -> None:
     unknown_site_links = sorted(parent_link_names.difference(existing_body_names))
     if unknown_site_links:
         raise ValueError(f"Configured site parent links do not exist in model: {unknown_site_links}")
-
-    existing_actuator_names = {actuator.name for actuator in spec.actuators}
-    duplicate_actuator_names = sorted(existing_actuator_names.intersection(actuator_names))
-    if duplicate_actuator_names:
-        raise ValueError(f"Configured actuator names already exist in model: {duplicate_actuator_names}")
-
-    existing_actuator_joints = {
-        actuator.target
-        for actuator in spec.actuators
-        if actuator.trntype in (mj.mjtTrn.mjTRN_JOINT, mj.mjtTrn.mjTRN_JOINTINPARENT)
-    }
-    duplicate_targets = sorted(existing_actuator_joints.intersection(target_joints))
-    if duplicate_targets:
-        raise ValueError(f"Configured joints already have actuators in model: {duplicate_targets}")
 
     for name, geom_cfg in cfg_by_geom.items():
         geom = spec.geom(name)
@@ -126,8 +73,3 @@ def apply_urdf_cfgs(spec: mj.MjSpec, cfg: UrdfFileCfg) -> None:
             pos=site_cfg.position,
             quat=_mujoco_quat(site_cfg.rotation),
         )
-
-    for actuator_cfg in cfg.actuators:
-        joint = spec.joint(actuator_cfg.joint_name)
-        assert joint is not None
-        _build_actuator(spec, actuator_cfg, joint)

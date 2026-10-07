@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from motrix_env_core.config import configclass
-from motrix_env_core.config.scene._utils import Vec2, Vec3, Vec4, optional_vec, resolve_path, validate_range
+from motrix_env_core.config.scene._utils import Vec3, Vec4, optional_vec, resolve_path
 from motrix_env_core.config.scene.base import ModelFileCfg
 
 
@@ -63,53 +63,12 @@ class SiteCfg:
 
 
 @configclass(kw_only=True)
-class ActuatorCfg:
-    """An actuator added to an imported robot before scene composition."""
-
-    joint_name: str
-    name: str | None = None
-    ctrl_range: Vec2 | None = None
-    force_range: Vec2 | None = None
-
-    @property
-    def actuator_name(self) -> str:
-        return self.joint_name if self.name is None else self.name
-
-    def validate(self) -> None:
-        if not self.joint_name:
-            raise ValueError("ActuatorCfg.joint_name must not be empty")
-        if not self.actuator_name:
-            raise ValueError("ActuatorCfg.name must not be empty")
-        validate_range("ActuatorCfg.ctrl_range", self.ctrl_range)
-        validate_range("ActuatorCfg.force_range", self.force_range)
-
-
-@configclass(kw_only=True)
-class PositionActuatorCfg(ActuatorCfg):
-    """A joint position servo using absolute damping coefficient ``kv``."""
-
-    kp: float
-    kv: float = 0.0
-    inherit_joint_range: bool = False
-
-    def validate(self) -> None:
-        super().validate()
-        if self.inherit_joint_range and self.ctrl_range is not None:
-            raise ValueError("PositionActuatorCfg.inherit_joint_range is mutually exclusive with ctrl_range")
-        if self.kp <= 0.0:
-            raise ValueError(f"PositionActuatorCfg.kp must be positive, got {self.kp}")
-        if self.kv < 0.0:
-            raise ValueError(f"PositionActuatorCfg.kv must be non-negative, got {self.kv}")
-
-
-@configclass(kw_only=True)
 class UrdfFileCfg(ModelFileCfg):
-    """A URDF model augmented with simulation-only sites, joints, and actuators."""
+    """A URDF model augmented with simulation-only sites and joint properties."""
 
     geoms: list[UrdfGeomCfg] = []
     sites: list[SiteCfg] = []
     joints: list[JointCfg] = []
-    actuators: list[ActuatorCfg] = []
 
     def validate(self) -> None:
         super().validate()
@@ -123,5 +82,3 @@ class UrdfFileCfg(ModelFileCfg):
             site.validate()
         for joint in self.joints:
             joint.validate()
-        for actuator in self.actuators:
-            actuator.validate()

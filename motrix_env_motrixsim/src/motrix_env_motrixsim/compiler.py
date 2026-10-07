@@ -37,6 +37,7 @@ from motrix_env_core.config.scene.sensor import (
 from motrix_env_core.config.scene.urdf import UrdfFileCfg
 from motrix_env_core.config.scene.validation import validate_scene_cfg
 from motrix_env_core.config.sim import SimCfg
+from motrix_env_motrixsim.actuators import apply_actuator_cfgs
 from motrix_env_motrixsim.urdf import apply_urdf_cfgs
 
 _CONTACT_REDUCE = {
@@ -101,13 +102,6 @@ class MotrixSimSceneCompiler(SceneCompiler[mtx.SceneModel]):
         if isinstance(model, UrdfFileCfg):
             path = resolve_path(model.file)
             world = mtx.msd.from_str(path.read_text(), format="urdf", file_path=str(path))
-            # urdf2msd (since 0.10.1.dev120408) synthesizes a default
-            # `<joint>_motor` actuator per joint. The declarative
-            # ``UrdfFileCfg.actuators`` are the sole actuation authority, so
-            # drop the synthesized defaults before applying the config.
-            # Track merging declarative configs onto the synthesized motors
-            # in https://gitlab.mp/motphys/morphos-lab/-/issues/226.
-            world.actuators.clear()
             apply_urdf_cfgs(world, model)
             return world
         raise TypeError(f"MotrixSim does not support model file config {type(model).__name__}")
@@ -234,8 +228,10 @@ class MotrixSimSceneCompiler(SceneCompiler[mtx.SceneModel]):
             world.hierarchy.lights.append(light)
             return
         if isinstance(cfg, BodyCfg):
+            model_world = self._load_model_world(cfg.model)
+            apply_actuator_cfgs(model_world, cfg.actuators)
             world.attach(
-                self._load_model_world(cfg.model),
+                model_world,
                 other_link_name=cfg.base_link_name,
                 other_translation=cfg.translation,
                 other_rotation=cfg.rotation,

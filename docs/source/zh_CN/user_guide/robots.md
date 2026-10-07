@@ -38,7 +38,11 @@ motrix_envs/src/motrix_envs/robot/
 ```
 
 MJCF 文件应只包含可跨场景复用的机器人模型，不要把地面、灯光或任务专属物体放进机器人文件。若使用 URDF，可以通过
-`UrdfFileCfg` 的 `geoms`、`sites`、`joints` 和 `actuators` 补充 URDF 本身不包含的仿真属性。
+`UrdfFileCfg` 的 `geoms`、`sites` 和 `joints` 补充 URDF 本身不包含的仿真属性。
+MJCF 和 URDF 的执行器均通过机器人实例继承的 `BodyCfg.actuators` 字典声明。
+迁移现有声明时，改从 `motrix_env_core.config.scene.actuator` 导入 `ActuatorCfg` 和 `PositionActuatorCfg`，
+不再从 `motrix_env_core.config.scene.urdf` 导入；将执行器列表从 `UrdfFileCfg` 移到这个字典中。
+字典键取代原来的 `name` 字段和 `actuator_name` 属性。
 
 ### 2. 声明 `RobotCfg`
 
@@ -76,6 +80,7 @@ class MyRobot(RobotCfg):
 | `base_link_name`           | 模型连接到场景时使用的根链接名称                         |
 | `translation` / `rotation` | 可选的默认实例位姿；任务配置可以在实例化时覆盖           |
 | `prefix` / `suffix`        | 可选的模型元素名称前后缀，用于同一场景中的名称隔离       |
+| `actuators`                | `None` 保留导入执行器；`{}` 移除全部执行器；非空字典替换全部执行器 |
 | `key_pose`                 | 共享一套明确关节顺序的有名姿态，例如 `default`、`crouch` |
 
 `KeyPoseCfg.joint_names` 必须唯一且非空；每个姿态的数值数量必须与关节数量一致，所有值必须为有限数。这里只保存机器人
@@ -97,23 +102,35 @@ class MyHumanoid(HumanoidRobotCfg):
 
 两个脚部名称必须非空且互不相同。`resolved_foot_link_names` 会自动应用机器人实例的 `prefix` 和 `suffix`。
 
-URDF 机器人沿用相同的配置层次，并将 `model` 换成 `UrdfFileCfg`。需要 position actuator 或脚底 site 时，可以
-在模型配置中显式补充：
+URDF 机器人沿用相同的配置层次，并将 `model` 换成 `UrdfFileCfg`。site 仍属于模型配置，执行器属于 `RobotCfg`。
+下面的最小示例假定模型包含 `base` 和 `left_foot` link，以及具有限位的 `left_hip` joint：
 
 ```python
-model: UrdfFileCfg = UrdfFileCfg(
-    file=MY_ROBOT_ASSET_DIR / "my_robot.urdf",
-    sites=[SiteCfg(name="left_sole", parent_link_name="left_foot")],
-    actuators=[
-        PositionActuatorCfg(
+from motrix_env_core.config.scene import RobotCfg
+from motrix_env_core.config.scene.actuator import PositionActuatorCfg
+from motrix_env_core.config.scene.urdf import SiteCfg, UrdfFileCfg
+
+robot = RobotCfg(
+    model=UrdfFileCfg(
+        file="my_robot.urdf",
+        sites=[SiteCfg(name="left_sole", parent_link_name="left_foot")],
+    ),
+    base_link_name="base",
+    actuators={
+        "left_hip_position": PositionActuatorCfg(
             joint_name="left_hip",
             kp=100.0,
             kv=2.0,
             inherit_joint_range=True,
         ),
-    ],
+    },
 )
 ```
+
+字典键定义执行器名称；`joint_name` 使用应用实例 `prefix` / `suffix` 之前的导入名称。
+字典替换而非追加导入执行器集合，因此需声明全部受控关节。省略 `actuators` 或设为 `None` 可保留导入执行器，
+`{}` 则移除全部执行器。控制范围、执行器顺序与关键帧行为见
+[场景执行器配置](tutorial/building_envs/scene.md#导入本体的执行器)。
 
 ### 3. 注册机器人
 

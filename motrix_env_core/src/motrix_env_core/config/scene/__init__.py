@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from motrix_env_core.config.scene._utils import Vec2, Vec3, Vec4
+from motrix_env_core.config.scene.actuator import ActuatorCfg, MotorActuatorCfg, PositionActuatorCfg
 from motrix_env_core.config.scene.asset import (
     HFieldAssetCfg,
     MaterialCfg,
@@ -50,9 +51,7 @@ from motrix_env_core.config.scene.terrain import (
     grid_terrain,
 )
 from motrix_env_core.config.scene.urdf import (
-    ActuatorCfg,
     JointCfg,
-    PositionActuatorCfg,
     SiteCfg,
     UrdfFileCfg,
     UrdfGeomCfg,
@@ -82,6 +81,7 @@ __all__ = [
     "MaterialCfg",
     "MjcfFileCfg",
     "ModelFileCfg",
+    "MotorActuatorCfg",
     "NoiseTerrainGeneratorCfg",
     "PositionActuatorCfg",
     "ProceduralHFieldAssetCfg",

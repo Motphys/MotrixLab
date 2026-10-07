@@ -92,9 +92,9 @@ def _dex_evt_sites() -> list[SiteCfg]:
     ]
 
 
-def _dex_evt_actuators() -> list[PositionActuatorCfg]:
-    return [
-        PositionActuatorCfg(
+def _dex_evt_actuators() -> dict[str, PositionActuatorCfg]:
+    return {
+        name: PositionActuatorCfg(
             joint_name=name,
             kp=kp,
             kv=kv,
@@ -102,7 +102,7 @@ def _dex_evt_actuators() -> list[PositionActuatorCfg]:
             force_range=(-effort, effort),
         )
         for name, (kp, kv, effort) in _DRIVE_PARAMS.items()
-    ]
+    }
 
 
 @configclass(kw_only=True)
@@ -114,8 +114,8 @@ class DexEvt(HumanoidRobotCfg):
         geoms=_dex_evt_geoms(),
         sites=_dex_evt_sites(),
         joints=_dex_evt_joints(),
-        actuators=_dex_evt_actuators(),
     )
+    actuators: dict[str, PositionActuatorCfg] = _dex_evt_actuators()
     base_link_name: str = "pelvis"
     left_foot_link_name: str = "ankle_roll_l_link"
     right_foot_link_name: str = "ankle_roll_r_link"

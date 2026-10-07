@@ -113,7 +113,7 @@ else:
     raise AssertionError("MuJoCo backend module unexpectedly loaded")
 """
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(source_root)
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(source_root), env.get("PYTHONPATH"))))
     result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
 
     assert result.returncode == 0, result.stderr
@@ -342,20 +342,20 @@ def test_mujoco_compiler_applies_urdf_augmentations(tmp_path):
     model_cfg = UrdfFileCfg(
         file=urdf_file,
         sites=[SiteCfg(name="probe", parent_link_name="tip", position=(0.0, 0.0, 0.1))],
-        actuators=[
-            PositionActuatorCfg(
-                joint_name="hinge",
-                kp=20.0,
-                kv=2.0,
-                inherit_joint_range=True,
-                force_range=(-5.0, 5.0),
-            )
-        ],
     )
+    actuators = {
+        "hinge": PositionActuatorCfg(
+            joint_name="hinge",
+            kp=20.0,
+            kv=2.0,
+            inherit_joint_range=True,
+            force_range=(-5.0, 5.0),
+        )
+    }
 
     @configclass
     class RobotObjsCfg(SceneObjsCfg):
-        robot: RobotCfg = RobotCfg(model=model_cfg, base_link_name="base")
+        robot: RobotCfg = RobotCfg(model=model_cfg, base_link_name="base", actuators=actuators)
 
     model = MuJoCoSceneCompiler().compile(SceneCfg(objs=RobotObjsCfg()), SimCfg())
     actuator_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_ACTUATOR, "hinge")
