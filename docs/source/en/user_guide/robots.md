@@ -41,9 +41,7 @@ motrix_envs/src/motrix_envs/robot/
 An MJCF file should contain only the reusable robot model, without a floor, lights, or task-specific objects. For a
 URDF robot, `UrdfFileCfg` can add simulation properties through its `geoms`, `sites`, and `joints` fields.
 Declare MJCF and URDF actuators on the robot instance through its inherited `BodyCfg.actuators` dictionary.
-When migrating an existing declaration, import `ActuatorCfg` and `PositionActuatorCfg` from
-`motrix_env_core.config.scene.actuator` rather than `motrix_env_core.config.scene.urdf`, and move the actuator list out of
-`UrdfFileCfg` into this dictionary. Dictionary keys replace the old `name` field and `actuator_name` property.
+Import `ActuatorCfg`, `PositionActuatorCfg`, and `MotorActuatorCfg` from `motrix_env_core.config.scene.actuator`.
 
 ### 2. Declare the `RobotCfg`
 
@@ -131,9 +129,12 @@ robot = RobotCfg(
 
 Dictionary keys name actuators; `joint_name` uses imported names before instance `prefix` / `suffix` decoration.
 Declare all controlled joints in the dictionary: it replaces rather than appends to the imported actuator set.
-Omit `actuators` or set it to `None` to preserve imported actuators; use `{}` to remove them. See
-[scene actuator configuration](tutorial/building_envs/scene.md#actuators-on-imported-bodies) for control ranges,
-actuator ordering, and keyframe behavior.
+Omit `actuators` or set it to `None` to preserve imported actuators; use `{}` to remove them.
+
+`PositionActuatorCfg` uses position gain `kp` and absolute damping coefficient `kv` (default `0.0`).
+It inherits `joint_name`, `ctrl_range` (control input limits), and `force_range` (actuator output limits) from `ActuatorCfg`.
+Set `inherit_joint_range=True` to use imported joint limits as the control range; this cannot be combined with an explicit
+`ctrl_range`. For direct joint effort control with unit transmission and gain, use `MotorActuatorCfg`.
 
 ### 3. Register the robot
 

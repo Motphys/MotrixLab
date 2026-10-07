@@ -40,9 +40,7 @@ motrix_envs/src/motrix_envs/robot/
 MJCF 文件应只包含可跨场景复用的机器人模型，不要把地面、灯光或任务专属物体放进机器人文件。若使用 URDF，可以通过
 `UrdfFileCfg` 的 `geoms`、`sites` 和 `joints` 补充 URDF 本身不包含的仿真属性。
 MJCF 和 URDF 的执行器均通过机器人实例继承的 `BodyCfg.actuators` 字典声明。
-迁移现有声明时，改从 `motrix_env_core.config.scene.actuator` 导入 `ActuatorCfg` 和 `PositionActuatorCfg`，
-不再从 `motrix_env_core.config.scene.urdf` 导入；将执行器列表从 `UrdfFileCfg` 移到这个字典中。
-字典键取代原来的 `name` 字段和 `actuator_name` 属性。
+从 `motrix_env_core.config.scene.actuator` 导入 `ActuatorCfg`、`PositionActuatorCfg` 和 `MotorActuatorCfg`。
 
 ### 2. 声明 `RobotCfg`
 
@@ -129,8 +127,12 @@ robot = RobotCfg(
 
 字典键定义执行器名称；`joint_name` 使用应用实例 `prefix` / `suffix` 之前的导入名称。
 字典替换而非追加导入执行器集合，因此需声明全部受控关节。省略 `actuators` 或设为 `None` 可保留导入执行器，
-`{}` 则移除全部执行器。控制范围、执行器顺序与关键帧行为见
-[场景执行器配置](tutorial/building_envs/scene.md#导入本体的执行器)。
+`{}` 则移除全部执行器。
+
+`PositionActuatorCfg` 使用位置增益 `kp` 和绝对阻尼系数 `kv`（默认 `0.0`），并从 `ActuatorCfg` 继承
+`joint_name`、`ctrl_range`（控制输入限幅）和 `force_range`（执行器输出限幅）。
+设置 `inherit_joint_range=True` 可将导入关节限位用作控制范围，不能与显式 `ctrl_range` 同时设置。
+直接控制关节力或力矩时，使用传动比与增益均为 1 的 `MotorActuatorCfg`。
 
 ### 3. 注册机器人
 
