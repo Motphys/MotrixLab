@@ -44,24 +44,30 @@ from motrix_envs.locomotion.quadruped.velocity_command import RandomPlanarVeloci
 
 
 def _sim_data_queries(cfg: QuadrupedWalkEnvCfg):
-    base_link_name = cfg.scene.objs.robot.resolved_base_link_name
+    robot = cfg.scene.objs.robot
+    base_link_name = robot.resolved_base_link_name
+    scene_sensor_names = {name for name, _ in cfg.scene.iter_sensors()}
+
+    def resolve_sensor_name(name: str) -> str:
+        return name if name in scene_sensor_names else robot.resolve_name(name)
+
     return {
         "joint_dof_pos": BodyJointPositionQuery(body=base_link_name),
         "joint_dof_vel": BodyJointVelocityQuery(body=base_link_name),
         "dof_vel": DofVelocityQuery(),
         "actuator_ctrls": ActuatorCtrlQuery(),
-        "local_linvel": SensorValuesQuery(sensors=(cfg.sensor.local_linvel,)),
-        "gyro": SensorValuesQuery(sensors=(cfg.sensor.gyro,)),
-        "upvector": SensorValuesQuery(sensors=(cfg.sensor.upvector,)),
+        "local_linvel": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.local_linvel),)),
+        "gyro": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.gyro),)),
+        "upvector": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.upvector),)),
         "base_pos": LinkPositionQuery(link=base_link_name),
         "front_left_contact": SensorValuesQuery(sensors=("front_left_contact",)),
         "front_right_contact": SensorValuesQuery(sensors=("front_right_contact",)),
         "rear_left_contact": SensorValuesQuery(sensors=("rear_left_contact",)),
         "rear_right_contact": SensorValuesQuery(sensors=("rear_right_contact",)),
-        "FL_pos": SensorValuesQuery(sensors=(cfg.sensor.foot_positions[0],)),
-        "FR_pos": SensorValuesQuery(sensors=(cfg.sensor.foot_positions[1],)),
-        "RL_pos": SensorValuesQuery(sensors=(cfg.sensor.foot_positions[2],)),
-        "RR_pos": SensorValuesQuery(sensors=(cfg.sensor.foot_positions[3],)),
+        "FL_pos": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.foot_positions[0]),)),
+        "FR_pos": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.foot_positions[1]),)),
+        "RL_pos": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.foot_positions[2]),)),
+        "RR_pos": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.foot_positions[3]),)),
     }
 
 
@@ -378,7 +384,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._advance_phase()
         self._update_feet_buffers()
 
-        terminated = self.get_gravity()[:, 2] <= 0.5
+        terminated = self.get_gravity()[:, 2] <= self.cfg.termination_min_up_z
         reward = self._compute_reward(state, self.get_local_linvel(), self.get_gyro(), self.get_dof_pos())
         return state.replace(reward=reward, terminated=terminated)
 

@@ -8,6 +8,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from operator import attrgetter
 from typing import Any
 
 import numpy as np
@@ -16,6 +17,7 @@ from motrix_deploy.contracts import (
     HealthStatus,
     JointControlMode,
     JointServoCommand,
+    JointTorqueCommand,
     RobotCapabilities,
     RobotCommand,
     RobotSpec,
@@ -29,6 +31,13 @@ from motrix_env_core.input import GamePadDevice
 
 _POSITION_STOP = 2.146e9
 _VELOCITY_STOP = 16000.0
+
+
+def _sdk_field_reader(field: str) -> Callable[[Any], Any]:
+    """Resolve public dotted SDK attributes, never expressions or indexing."""
+    if any(not part.isidentifier() or part.startswith("_") for part in field.split(".")):
+        raise ValidationError("runtime.robot.sensors.hardware.field", "public dotted SDK attributes", field)
+    return attrgetter(field)
 
 
 @dataclass(frozen=True)
@@ -101,6 +110,7 @@ class UnitreeGo2RobotInterface(RobotInterface):
         self._state_timeout_s = float(state_timeout_s)
         self._sdk = sdk
         self._clock_ns = clock_ns
+        self._spec = spec
         self._sleep = sleep
         self._condition = threading.Condition()
         self._write_lock = threading.Lock()
@@ -109,8 +119,11 @@ class UnitreeGo2RobotInterface(RobotInterface):
         self._low_cmd: Any = None
         self._command_crc: Any = None
         self._state_crc: Any = None
-        self._spec = spec
         self._motor_indices = np.empty(0, dtype=np.int64)
+        self._motor_modes: tuple[int, ...] = ()
+        self._sensor_readers: dict[str, Callable[[Any], Any]] = {}
+        self._quaternion_indices = [1, 2, 3, 0]
+        self._lie_down_position = np.empty(0, dtype=np.float32)
         self._kp_override: np.ndarray | None = None
         self._kd_override: np.ndarray | None = None
         self._capabilities: RobotCapabilities | None = None
@@ -185,13 +198,11 @@ class UnitreeGo2RobotInterface(RobotInterface):
             raise RuntimeError(f"RobotState ServiceSwitch(sport_mode, false) failed with code {service_status}")
 
     def open(self) -> None:
-        spec = self._spec
         if self._opened and not self._closed:
             raise RuntimeError("Unitree backend is already open")
-        self._motor_indices = self.config.motor_indices(spec.joint_names)
-        self._spec = spec
-        self._kp_override = self.config.gain_override("kp", spec.joint_count)
-        self._kd_override = self.config.gain_override("kd", spec.joint_count)
+        self._resolve_hardware_bindings(self._spec)
+        self._kp_override = self.config.gain_override("kp", self._spec.joint_count)
+        self._kd_override = self.config.gain_override("kd", self._spec.joint_count)
         sdk = self._sdk or _load_sdk_bindings()
         self._sdk = sdk
         sdk.channel_factory_initialize(self.config.domain_id, self.config.network_interface)
@@ -220,7 +231,7 @@ class UnitreeGo2RobotInterface(RobotInterface):
                 len(self._low_cmd.motor_cmd),
             )
         self._capabilities = RobotCapabilities(
-            control_modes=(JointControlMode.SERVO,),
+            control_modes=(JointControlMode.SERVO, JointControlMode.TORQUE),
             state_fields=frozenset(
                 {
                     "joint_position",
@@ -242,6 +253,35 @@ class UnitreeGo2RobotInterface(RobotInterface):
         self._health_reason = ""
         self._last_communication_ns = self._latest_receive_time_ns
 
+    def _resolve_hardware_bindings(self, spec: RobotSpec) -> None:
+        robot = self.config.robot
+        assert robot is not None
+        self._motor_indices = self.config.motor_indices(spec.joint_names)
+        bindings = robot.actuation.motors
+        if set(bindings) != set(spec.joint_names):
+            raise ValidationError("runtime.robot.actuation.motors", "exactly the canonical joints", set(bindings))
+        self._motor_modes = tuple(
+            bindings[name].enabled_mode if self.config.motor_mode is None else self.config.motor_mode
+            for name in spec.joint_names
+        )
+        for role in ("base_orientation_xyzw", "base_angular_velocity", "base_linear_acceleration"):
+            sensor = getattr(robot.sensors, role)
+            if sensor is None:
+                raise ValidationError(f"runtime.robot.sensors.{role}", "a hardware binding", "missing")
+            self._sensor_readers[role] = _sdk_field_reader(sensor.field)
+        order = robot.sensors.base_orientation_xyzw.quaternion_order
+        if order not in ("wxyz", "xyzw"):
+            raise ValidationError("runtime.robot.sensors.base_orientation_xyzw", "a declared quaternion order", order)
+        self._quaternion_indices = [1, 2, 3, 0] if order == "wxyz" else [0, 1, 2, 3]
+        robot.key_pose.validate()
+        target = self.config.lie_down_position()
+        if self.config.lie_down_joint_position is None:
+            pose_by_joint = dict(zip(robot.key_pose.joint_names, target))
+            if set(pose_by_joint) != set(spec.joint_names):
+                raise ValidationError("runtime.robot.key_pose", "exactly the canonical joints", set(pose_by_joint))
+            target = np.asarray([pose_by_joint[name] for name in spec.joint_names], dtype=np.float32)
+        self._lie_down_position = target
+
     def enable(self) -> None:
         self._require_open()
         if self._enabled:
@@ -261,7 +301,6 @@ class UnitreeGo2RobotInterface(RobotInterface):
             kd=self._kd_override,
         )
         self._validate_command(initial_command)
-
         kp, kd = self._effective_gains(initial_command)
         self._last_position_kp = np.array(kp, dtype=np.float32, copy=True)
         self._last_position_kd = np.array(kd, dtype=np.float32, copy=True)
@@ -445,21 +484,23 @@ class UnitreeGo2RobotInterface(RobotInterface):
     def _state_from_message(self, message: Any, receive_time_ns: int) -> RobotState:
         position = np.asarray([message.motor_state[index].q for index in self._motor_indices], dtype=np.float32)
         velocity = np.asarray([message.motor_state[index].dq for index in self._motor_indices], dtype=np.float32)
-        quaternion_wxyz = np.asarray(message.imu_state.quaternion, dtype=np.float32)
-        if quaternion_wxyz.shape != (4,) or not np.all(np.isfinite(quaternion_wxyz)):
-            raise ValidationError("state.imu.quaternion", "four finite wxyz values", quaternion_wxyz)
-        norm = float(np.linalg.norm(quaternion_wxyz))
+        quaternion = np.asarray(self._sensor_readers["base_orientation_xyzw"](message), dtype=np.float32)
+        if quaternion.shape != (4,) or not np.all(np.isfinite(quaternion)):
+            raise ValidationError("state.base_orientation_xyzw", "four finite quaternion values", quaternion)
+        norm = float(np.linalg.norm(quaternion))
         if norm <= 1e-8:
-            raise ValidationError("state.imu.quaternion", "a non-zero quaternion", norm)
-        quaternion_xyzw = (quaternion_wxyz[[1, 2, 3, 0]] / np.float32(norm)).astype(np.float32)
+            raise ValidationError("state.base_orientation_xyzw", "a non-zero quaternion", norm)
+        quaternion_xyzw = (quaternion[self._quaternion_indices] / np.float32(norm)).astype(np.float32)
         return RobotState(
             sample_time_ns=receive_time_ns,
             receive_time_ns=receive_time_ns,
             joint_position=position,
             joint_velocity=velocity,
             base_orientation_xyzw=quaternion_xyzw,
-            base_angular_velocity=np.asarray(message.imu_state.gyroscope, dtype=np.float32),
-            base_linear_acceleration=np.asarray(message.imu_state.accelerometer, dtype=np.float32),
+            base_angular_velocity=np.asarray(self._sensor_readers["base_angular_velocity"](message), dtype=np.float32),
+            base_linear_acceleration=np.asarray(
+                self._sensor_readers["base_linear_acceleration"](message), dtype=np.float32
+            ),
         )
 
     def _validate_message_fields(self, message: Any) -> None:
@@ -469,20 +510,32 @@ class UnitreeGo2RobotInterface(RobotInterface):
                 f"at least {GO2_MOTOR_COUNT} motor states",
                 len(message.motor_state),
             )
-        for name, expected in (("quaternion", 4), ("gyroscope", 3), ("accelerometer", 3)):
-            value = np.asarray(getattr(message.imu_state, name), dtype=np.float32)
+        for role, expected in (
+            ("base_orientation_xyzw", 4),
+            ("base_angular_velocity", 3),
+            ("base_linear_acceleration", 3),
+        ):
+            value = np.asarray(self._sensor_readers[role](message), dtype=np.float32)
             if value.shape != (expected,) or not np.all(np.isfinite(value)):
-                raise ValidationError(f"state.imu.{name}", f"{expected} finite values", value)
+                raise ValidationError(f"state.{role}", f"{expected} finite values", value)
 
     def _validate_command(self, command: RobotCommand) -> None:
-        if not isinstance(command, JointServoCommand):
-            raise ValidationError("command.mode", "joint_servo", command.mode)
-        assert self._spec is not None
         expected = (self._spec.joint_count,)
-        for name in ("joint_position", "joint_velocity", "feedforward_torque", "kp", "kd"):
+        if not isinstance(command, (JointServoCommand, JointTorqueCommand)):
+            raise ValidationError("command.type", "JointServoCommand or JointTorqueCommand", type(command).__name__)
+        fields = (
+            ("torque",)
+            if isinstance(command, JointTorqueCommand)
+            else ("joint_position", "joint_velocity", "feedforward_torque", "kp", "kd")
+        )
+        for name in fields:
             value = getattr(command, name)
             if value.shape != expected or value.dtype != np.float32 or not np.all(np.isfinite(value)):
                 raise ValidationError(f"command.{name}", f"finite float32 shape {expected}", value)
+        if isinstance(command, JointTorqueCommand):
+            if np.any(np.abs(command.torque) > self._spec.torque_limit):
+                raise ValidationError("command.torque", "inside RobotSpec torque limits", command.torque.tolist())
+            return
         if np.any(command.joint_position < self._spec.position_lower) or np.any(
             command.joint_position > self._spec.position_upper
         ):
@@ -504,14 +557,29 @@ class UnitreeGo2RobotInterface(RobotInterface):
         self._low_cmd.level_flag = 0xFF
         self._low_cmd.gpio = 0
         for motor in self._low_cmd.motor_cmd:
-            motor.mode = self.config.motor_mode
+            motor.mode = 0
             motor.q = _POSITION_STOP
             motor.qd = _VELOCITY_STOP
             motor.kp = 0.0
             motor.kd = 0.0
             motor.tau = 0.0
+        for motor_index, mode in zip(self._motor_indices, self._motor_modes):
+            self._low_cmd.motor_cmd[int(motor_index)].mode = mode
 
     def _publish_robot_command(self, command: RobotCommand) -> None:
+        if isinstance(command, JointTorqueCommand):
+            # Do not replace the saved servo safety gains with torque-mode zeros.
+            with self._write_lock:
+                for canonical_index, motor_index in enumerate(self._motor_indices):
+                    motor = self._low_cmd.motor_cmd[int(motor_index)]
+                    motor.mode = self._motor_modes[canonical_index]
+                    motor.q = 0.0
+                    motor.qd = 0.0
+                    motor.kp = 0.0
+                    motor.kd = 0.0
+                    motor.tau = float(command.torque[canonical_index])
+                self._write_low_cmd_locked()
+            return
         kp, kd = self._effective_gains(command)
         self._publish_joint_fields(
             command.joint_position,
@@ -521,7 +589,7 @@ class UnitreeGo2RobotInterface(RobotInterface):
             kd,
         )
 
-    def _effective_gains(self, command: RobotCommand) -> tuple[np.ndarray, np.ndarray]:
+    def _effective_gains(self, command: JointServoCommand) -> tuple[np.ndarray, np.ndarray]:
         kp = command.kp if self._kp_override is None else self._kp_override
         kd = command.kd if self._kd_override is None else self._kd_override
         return kp, kd
@@ -539,7 +607,7 @@ class UnitreeGo2RobotInterface(RobotInterface):
         with self._write_lock:
             for canonical_index, motor_index in enumerate(self._motor_indices):
                 motor = self._low_cmd.motor_cmd[int(motor_index)]
-                motor.mode = self.config.motor_mode
+                motor.mode = self._motor_modes[canonical_index]
                 motor.q = float(position[canonical_index])
                 motor.qd = float(velocity[canonical_index])
                 motor.kp = float(kp[canonical_index])
@@ -549,9 +617,9 @@ class UnitreeGo2RobotInterface(RobotInterface):
 
     def _publish_zero_torque(self) -> None:
         with self._write_lock:
-            for motor_index in self._motor_indices:
+            for canonical_index, motor_index in enumerate(self._motor_indices):
                 motor = self._low_cmd.motor_cmd[int(motor_index)]
-                motor.mode = self.config.motor_mode
+                motor.mode = self._motor_modes[canonical_index]
                 motor.q = 0.0
                 motor.qd = 0.0
                 motor.kp = 0.0
@@ -563,7 +631,7 @@ class UnitreeGo2RobotInterface(RobotInterface):
         if self._last_position_kp.shape != (GO2_MOTOR_COUNT,) or self._last_position_kd.shape != (GO2_MOTOR_COUNT,):
             raise RuntimeError("position gains are unavailable for lie-down shutdown")
         start = self._latest_robot_state().joint_position
-        target = self.config.lie_down_position()
+        target = self._lie_down_position
         zeros = np.zeros(GO2_MOTOR_COUNT, dtype=np.float32)
         steps = max(1, math.ceil(self.config.lie_down_duration_s / self._control_period_s))
         for step in range(1, steps + 1):
@@ -572,20 +640,22 @@ class UnitreeGo2RobotInterface(RobotInterface):
                     raise EmergencyStopError(f"remote {self.config.emergency_stop_button!r} requested damping stop")
             alpha = np.float32(step / steps)
             position = ((np.float32(1.0) - alpha) * start + alpha * target).astype(np.float32)
-            self._publish_joint_fields(
-                position,
-                zeros,
-                zeros,
-                self._last_position_kp,
-                self._last_position_kd,
+            self._publish_robot_command(
+                JointServoCommand(
+                    joint_position=position,
+                    joint_velocity=zeros,
+                    feedforward_torque=zeros,
+                    kp=self._last_position_kp,
+                    kd=self._last_position_kd,
+                )
             )
             self._wait_control_period()
 
     def _publish_damping(self) -> None:
         with self._write_lock:
-            for motor_index in self._motor_indices:
+            for canonical_index, motor_index in enumerate(self._motor_indices):
                 motor = self._low_cmd.motor_cmd[int(motor_index)]
-                motor.mode = self.config.motor_mode
+                motor.mode = self._motor_modes[canonical_index]
                 motor.q = 0.0
                 motor.qd = 0.0
                 motor.kp = 0.0

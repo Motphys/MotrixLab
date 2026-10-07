@@ -14,7 +14,7 @@
 - [ONNX 模型导出设计](./onnx-export.md)
   基于 `RlFramework`/`AgentProvider` capability 的统一 ONNX policy exporter：从 metadata-backed run 恢复不同训练后端的 deterministic policy，烘焙 observation normalization，并执行 ONNX Runtime parity validation。
 - [Motrix Deploy 框架设计](./motrix-deploy.md)
-  独立策略部署包 `motrix_deploy` 的统一 ONNX export、deployment artifact、RobotState/RobotCommand/RobotInterface 契约、inference control loop、组件扩展边界与 MuJoCo sim2sim vertical slice。
+  独立策略部署包 `motrix_deploy` 的统一 ONNX export、deployment artifact、RobotState/RobotCommand/RobotInterface 契约、inference control loop、组件扩展边界、显式 runtime/control-session 组装，以及 MuJoCo 与原生 MotrixSim 仿真部署。
 - [Deploy Runtime Command Input 分层设计](./deploy-command-input.md)
   面向 Go2 的最小 command input 抽象：batch-first `PlanarVelocityCommand` 统一表达 training 与 deploy；core 内置 keyboard/gamepad/constant bindings，带 standing probability 的 `RandomPlanarVelocityBinding` 作为 task-specific 训练策略留在四足环境模块。
 - [RL 多算法架构设计](./rl-multi-algorithm-architecture.md)

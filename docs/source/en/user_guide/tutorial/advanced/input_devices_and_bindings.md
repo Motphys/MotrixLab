@@ -69,6 +69,15 @@ task.validate_command(context.command)
 observation = task.build_observation(state, context)
 ```
 
+Deployment's robot I/O boundary `RobotInterface` and optional `KeyboardDeviceProvider` / `GamePadDeviceProvider`
+capability protocols are defined in `motrix_deploy.robot.interface`; import them from that module. The providers expose
+input devices whose lifecycle they own, rather than discovering runtime plugins. Runtime discovery remains in
+`motrix_deploy.runtime.factory` through `motrix_deploy.backends`, and recipes still select plugins with `runtime.backend`.
+The prepared `runtime.robot` is available before opening. The application constructs
+`ControlSession(robot=runtime.robot, command_binding=binding, ...)` explicitly,
+binds it with `runtime.bind_control_session(control)`, and runs it inside `with runtime`.
+The factory does not construct bindings or controllers through callbacks.
+
 For example, MuJoCo deployment obtains a `MujocoKeyboardDevice` from the runtime's `KeyboardDeviceProvider` and constructs a
 `KeyboardPlanarVelocityBinding`. Training can use a random binding for the same `PlanarVelocityCommand`. Both paths end at the
 same typed task contract.

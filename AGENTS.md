@@ -11,7 +11,7 @@ MotrixLab 是构建在 MotrixSim 仿真后端之上的强化学习框架，提�
 
 项目使用 UV workspace，包含以下 package：
 
-- `motrix_env_core`：backend 无关的环境框架、配置与机器人 registry，不依赖具体 simulator
+- `motrix_env_core`：backend 无关的环境框架、配置与机器人 registry
 - `motrix_env_motrixsim`：MotrixSim 仿真后端（SimBackend、scene compiler、renderer、torch frontend）
 - `motrix_env_mujoco`：仅用于编译的 MuJoCo scene 后端
 - `motrix_robots`：可复用机器人配置、默认姿态与模型资产；仅依赖 core。框架代码从定义模块导入模型类，例如 `motrix_robots.unitree`
@@ -23,7 +23,7 @@ MotrixLab 是构建在 MotrixSim 仿真后端之上的强化学习框架，提�
 - `motrix_deploy`：框架无关的 artifact、运行时契约与部署 CLI
 - `motrix_deploy_mujoco`：SceneCfg 支撑的 MuJoCo 后端插件
 - `motrix_deploy_motrixsim`：SceneCfg 支撑的原生 MotrixSim 部署后端插件
-- `motrix_deploy_unitree`：Unitree SDK2 DDS 硬件后端插件
+- `motrix_deploy_unitree`：Unitree 硬件配置、sensor/actuation 接线与 SDK2 DDS 硬件后端插件
 - `motrix_deploy_tasks`：具体部署任务实现
 
 `scripts/` 提供训练、可视化、评估入口。内置环境由环境 package 注册并通过项目 registry 暴露；simulator backend

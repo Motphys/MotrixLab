@@ -6,11 +6,22 @@ import pytest
 
 import motrix_envs  # noqa: F401 registers built-in environments
 from motrix_env_core import registry
-from motrix_env_core.config.scene import HFieldTerrainCfg, ProceduralHFieldAssetCfg
+from motrix_env_core.config import configclass
+from motrix_env_core.config.scene import (
+    HFieldTerrainCfg,
+    KeyPoseCfg,
+    MjcfFileCfg,
+    ProceduralHFieldAssetCfg,
+    SceneCfg,
+    SceneObjsCfg,
+)
+from motrix_env_core.config.scene.base import RobotCfg
+from motrix_env_core.sim import BodyAngularVelocityWrite
 from motrix_env_core.sim.model import ActuatorType
+from motrix_env_motrixsim.runtime import MotrixSimBackend
 from motrix_envs.locomotion.quadruped.cfg import RewardScales
 from motrix_envs.locomotion.quadruped.velocity_command import RandomPlanarVelocityBinding
-from motrix_envs.locomotion.quadruped.walk_np import QuadrupedWalkTask
+from motrix_envs.locomotion.quadruped.walk_np import QuadrupedWalkTask, _sim_data_queries
 
 
 def _read_param_overrides(env):
@@ -395,6 +406,70 @@ def test_foot_position_sensor_names_belong_to_walk_task_config():
     assert anymalc.sensor.foot_positions == go1.sensor.foot_positions
 
 
+@pytest.mark.parametrize("robot_name", ["go1", "go2", "anymalc"])
+def test_walk_task_gyro_config_compiles_for_each_robot(robot_name):
+    cfg = registry.make_env_config(f"{robot_name}-walk-flat")
+    rough_cfg = registry.make_env_config(f"{robot_name}-walk-rough")
+    # Terrain variants use the same model-local gyro wiring; compile each robot only once.
+    assert _sim_data_queries(rough_cfg)["gyro"] == _sim_data_queries(cfg)["gyro"]
+    robot = cfg.scene.objs.robot
+    backend = MotrixSimBackend(cfg.scene, cfg.sim, 1)
+    reads = backend.compile_reads({"gyro": _sim_data_queries(cfg)["gyro"]})
+    reset = backend.write_compiler.compile(
+        {"angular_velocity": BodyAngularVelocityWrite((robot.resolved_base_link_name,))}, reset=True
+    )
+    velocity = np.asarray([0.4, -0.5, 0.6], dtype=np.float32)
+    reset.buffer("angular_velocity")[0, 0] = velocity
+    reset.execute(np.asarray([0], dtype=np.int64))
+    reads.execute()
+    np.testing.assert_allclose(reads["gyro"][0], velocity, atol=1e-6)
+
+
+def test_walk_task_gyro_config_is_instance_local():
+    first = registry.make_env_config("anymalc-walk-flat")
+    second = registry.make_env_config("anymalc-walk-flat")
+    unitree = registry.make_env_config("go2-walk-flat")
+    second_sensor = second.sensor.gyro
+    unitree_sensor = unitree.sensor.gyro
+    first.sensor.gyro = "custom_gyro"
+    assert second.sensor.gyro == second_sensor
+    assert unitree.sensor.gyro == unitree_sensor
+    assert _sim_data_queries(first)["gyro"].sensors == (first.scene.objs.robot.resolve_name("custom_gyro"),)
+
+
+@pytest.mark.parametrize(("prefix", "suffix"), [("robot_", None), (None, "_instance"), ("robot_", "_instance")])
+def test_walk_gyro_query_reads_renamed_model_sensor_with_scene_affixes(tmp_path, prefix, suffix):
+    # A real imported gyro with a custom name catches accidental hard-coded sensor lookup.
+    model_path = tmp_path / "robot.xml"
+    model_path.write_text(
+        '<mujoco><worldbody><body name="base"><freejoint/>'
+        '<geom type="sphere" size="0.1" mass="1"/><site name="imu"/></body></worldbody>'
+        '<sensor><gyro name="custom_gyro" site="imu"/></sensor></mujoco>'
+    )
+    robot = RobotCfg(
+        model=MjcfFileCfg(file=model_path), base_link_name="base", prefix=prefix, suffix=suffix, key_pose=KeyPoseCfg()
+    )
+
+    @configclass
+    class RobotObjsCfg(SceneObjsCfg):
+        robot: RobotCfg
+
+    cfg = registry.make_env_config("go2-walk-flat")
+    cfg.scene = SceneCfg(objs=RobotObjsCfg(robot=robot))
+    cfg.sensor.gyro = "custom_gyro"
+    queries = _sim_data_queries(cfg)
+    backend = MotrixSimBackend(cfg.scene, cfg.sim, 2)
+    reads = backend.compile_reads({"gyro": queries["gyro"]})
+    reset = backend.write_compiler.compile(
+        {"angular_velocity": BodyAngularVelocityWrite((robot.resolved_base_link_name,))}, reset=True
+    )
+    velocity = np.asarray([[0.4, -0.5, 0.6], [-0.7, 0.8, -0.9]], dtype=np.float32)
+    reset.buffer("angular_velocity")[:, 0] = velocity
+    reset.execute(np.arange(2, dtype=np.int64))
+    reads.execute()
+    np.testing.assert_allclose(reads["gyro"], velocity, atol=1e-6)
+
+
 def test_walk_task_selects_named_robot_key_pose():
     cfg = registry.make_env_config("go1-walk-flat")
     joint_count = len(cfg.scene.objs.robot.key_pose.joint_names)
@@ -447,3 +522,33 @@ def test_swing_contact_penalty_detects_dragging_feet(quadruped_env):
 
     np.testing.assert_array_equal(no_drag, np.zeros((1,), dtype=np.float32))
     np.testing.assert_array_equal(all_drag, np.ones((1,), dtype=np.float32))
+
+
+@pytest.mark.parametrize("robot_name", ["go1", "go2", "anymalc"])
+def test_walk_state_sensor_queries_resolve_model_and_scene_names(robot_name):
+    cfg = registry.make_env_config(f"{robot_name}-walk-flat")
+    robot = cfg.scene.objs.robot
+    robot.prefix = "robot_"
+    robot.suffix = "_instance"
+    # Scene sensor targets are already assembled names; update their references
+    # when changing instance affixes after scene construction.
+    for _, sensor in cfg.scene.iter_sensors():
+        if hasattr(sensor, "geom2"):
+            sensor.geom2 = robot.resolve_name(sensor.geom2)
+        else:
+            sensor.object_name = robot.resolve_name(sensor.object_name)
+            if sensor.ref_object_name is not None:
+                sensor.ref_object_name = robot.resolve_name(sensor.ref_object_name)
+    queries = _sim_data_queries(cfg)
+    names = ("gyro", "local_linvel", "upvector", "FL_pos", "FR_pos", "RL_pos", "RR_pos")
+    scene_names = {name for name, _ in cfg.scene.iter_sensors()}
+    for name in names:
+        sensor_name = cfg.sensor.gyro if name == "gyro" else name
+        expected = sensor_name if sensor_name in scene_names else robot.resolve_name(sensor_name)
+        assert queries[name].sensors == (expected,)
+    backend = MotrixSimBackend(cfg.scene, cfg.sim, 1)
+    reads = backend.compile_reads({name: queries[name] for name in names})
+    reads.execute()
+    for name in names:
+        assert reads[name].shape == (1, 3)
+        assert np.isfinite(reads[name]).all()

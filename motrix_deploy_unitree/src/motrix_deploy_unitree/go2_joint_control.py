@@ -16,10 +16,14 @@ from motrix_deploy_unitree import UnitreeGo2DirectInterface
 def _build_robot(
     artifact: str | Path,
     network_interface: str,
+    *,
+    kp: float,
+    kd: float,
 ) -> UnitreeGo2DirectInterface:
     return UnitreeGo2DirectInterface.from_artifact(
         artifact,
         network_interface=network_interface,
+        backend_options={"kp": kp, "kd": kd},
     )
 
 
@@ -69,6 +73,8 @@ def run_joint_control(
     network_interface: str,
     joint_name: str,
     target_position: float,
+    kp: float,
+    kd: float,
     move_duration: float,
     hold_duration: float,
     return_duration: float,
@@ -79,7 +85,7 @@ def run_joint_control(
     if not math.isfinite(target_position):
         raise ValueError(f"target_position must be finite, got {target_position!r}")
 
-    robot = _build_robot(artifact, network_interface)
+    robot = _build_robot(artifact, network_interface, kp=kp, kd=kd)
     joint_names: Sequence[str] = robot.robot.joint_names
     if joint_name not in joint_names:
         raise ValueError(f"unknown joint {joint_name!r}; expected one of {list(joint_names)}")

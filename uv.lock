@@ -996,14 +996,18 @@ name = "motrix-deploy-unitree"
 version = "0.4.0b0"
 source = { editable = "motrix_deploy_unitree" }
 dependencies = [
+    { name = "hydra-core" },
     { name = "motrix-deploy" },
+    { name = "motrix-env-core" },
     { name = "numpy" },
     { name = "unitree-sdk2py" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "hydra-core", specifier = ">=1.3,<1.4" },
     { name = "motrix-deploy", editable = "motrix_deploy" },
+    { name = "motrix-env-core", editable = "motrix_env_core" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "unitree-sdk2py", git = "https://github.com/motphys-developers/unitree_sdk2_python?rev=ff87e731174f7258e0d09980897c55116634939a" },
 ]

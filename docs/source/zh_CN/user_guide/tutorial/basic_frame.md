@@ -45,8 +45,9 @@ MotrixLab 是一个 UV workspace。下面按所有权而不是按单一整体运
 | `configs/`、`scripts/` | 配置与编排 | Hydra 算法配置与 Task 配方；train / play / view / export 入口 |
 | `motrix_deploy` | 策略的部署 | 框架无关 artifact、运行时契约与部署 CLI |
 | `motrix_deploy_mujoco` | 策略的部署 | MuJoCo 部署 backend plugin |
-| `motrix_deploy_unitree` | 策略的部署 | Unitree SDK2 DDS 硬件 backend plugin |
-| `motrix_deploy_tasks` | 策略的部署 | 行走任务、部署场景与安装的 Hydra 配方 |
+| `motrix_deploy_motrixsim` | 策略的部署 | MotrixSim 部署 backend plugin |
+| `motrix_deploy_unitree` | 策略的部署 | Unitree 硬件配置、sensor/actuation 接线与 SDK2 DDS backend plugin |
+| `motrix_deploy_tasks` | 策略的部署 | 通过 `motrix_deploy.tasks` 发现版本化任务；通过 `motrix_deploy.envs` 发现无机器人世界；已安装 Hydra 运行 recipe |
 
 仿真后端（如 `motrix_env_motrixsim`）通过 `SimBackend` 接口隔离在环境框架之下，使用环境时通常
 无需关心它；需要选择或接入仿真后端时，见[SimBackend：与仿真器解耦](building_envs/sim_backend.md)。

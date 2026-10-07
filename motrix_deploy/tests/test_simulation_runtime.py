@@ -58,6 +58,34 @@ def test_simulation_factory_uses_installed_plugin_and_public_config(monkeypatch,
     assert not runtime.opened
 
 
+def test_simulation_config_from_mapping_preserves_scene_and_decodes_runtime_recipe():
+    scene = SceneCfg()
+    values = {
+        "scene": scene,
+        "physics": {"dt": 0.01, "solver_iterations": 50},
+        "sensor_bindings": {"base_angular_velocity": "gyro"},
+    }
+
+    config = SimulationRuntimeConfig.from_mapping(values, render=True, realtime=False)
+
+    assert config.scene is scene
+    assert config.physics.dt == values["physics"]["dt"]
+    assert config.physics.solver_iterations == values["physics"]["solver_iterations"]
+    assert config.sensor_bindings.base_angular_velocity == "gyro"
+    assert config.sensor_bindings.base_linear_velocity is None
+    assert config.render is True
+    assert config.realtime is False
+    assert values["sensor_bindings"] == {"base_angular_velocity": "gyro"}
+
+
+def test_simulation_config_from_mapping_allows_implicit_sensor_bindings():
+    config = SimulationRuntimeConfig.from_mapping(
+        {"scene": SceneCfg(), "physics": {"dt": 0.01, "solver_iterations": 50}}
+    )
+
+    assert config.sensor_bindings == SensorBindings()
+
+
 def test_simulation_config_uses_independent_typed_sensor_defaults():
     first = SimulationRuntimeConfig(scene=SceneCfg())
     second = SimulationRuntimeConfig(scene=SceneCfg())

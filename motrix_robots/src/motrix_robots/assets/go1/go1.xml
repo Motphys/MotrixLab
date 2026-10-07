@@ -190,6 +190,7 @@
 
   <sensor>
     <gyro site="imu" name="gyro"/>
+    <accelerometer site="imu" name="accelerometer"/>
     <velocimeter site="imu" name="local_linvel"/>
     <framepos objtype="site" objname="imu" name="position"/>
     <framezaxis objtype="site" objname="imu" name="upvector"/>

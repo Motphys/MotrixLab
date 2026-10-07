@@ -8,19 +8,33 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
 from motrix_deploy.artifact import read_artifact
-from motrix_deploy.contracts import HealthStatus, JointServoCommand, RobotSpec, RobotState
+from motrix_deploy.contracts import HealthStatus, JointServoCommand, RobotCommand, RobotSpec, RobotState
 from motrix_deploy.errors import ValidationError
 from motrix_deploy.profile import DeploymentProfile
-from motrix_deploy_unitree.config import (
-    GO2_JOINT_NAME_TO_MOTOR_INDEX,
-    UnitreeGo2BackendConfig,
-)
+from motrix_deploy_unitree.config import UnitreeGo2BackendConfig
 from motrix_deploy_unitree.interface import UnitreeGo2RobotInterface, UnitreeSdkBindings
+
+
+@runtime_checkable
+class _JointGainSpec(Protocol):
+    """Structural task contract needed by direct joint control, not a task runtime."""
+
+    @property
+    def kp(self) -> list[float]: ...
+
+    @property
+    def kd(self) -> list[float]: ...
+
+
+def _joint_gains(task: object) -> _JointGainSpec:
+    if not isinstance(task, _JointGainSpec):
+        raise ValidationError("task", "a typed task spec with kp and kd joint vectors", type(task).__name__)
+    return task
 
 
 class UnitreeGo2DirectInterface:
@@ -35,8 +49,8 @@ class UnitreeGo2DirectInterface:
     def __init__(
         self,
         *,
-        robot: RobotSpec,
-        task_config: Mapping[str, Any],
+        kp: list[float],
+        kd: list[float],
         control_period_s: float,
         state_timeout_s: float,
         backend: UnitreeGo2RobotInterface,
@@ -47,17 +61,20 @@ class UnitreeGo2DirectInterface:
         ):
             if not isinstance(value, (int, float)) or isinstance(value, bool) or not np.isfinite(value) or value <= 0:
                 raise ValidationError(path, "a positive finite number", value)
-        self.robot = robot
-        self.task_config = dict(task_config)
+        self.robot = backend.spec
+        self._kp = self._command_array(kp, "kp")
+        self._kd = self._command_array(kd, "kd")
         self.control_period_s = float(control_period_s)
         self.state_timeout_s = float(state_timeout_s)
         self.backend = backend
         self._opened = False
         self._closed = False
+        # Direct callers provide explicit typed gains; preserve the main direct API's
+        # startup fallback without changing policy runtime gain requirements.
         backend.config = replace(
             backend.config,
-            kp=self._task_gain("kp") if backend.config.kp is None else backend.config.kp,
-            kd=self._task_gain("kd") if backend.config.kd is None else backend.config.kd,
+            kp=self._kp.copy() if backend.config.kp is None else backend.config.kp,
+            kd=self._kd.copy() if backend.config.kd is None else backend.config.kd,
         )
 
     @classmethod
@@ -66,16 +83,18 @@ class UnitreeGo2DirectInterface:
         profile: DeploymentProfile,
         *,
         network_interface: str,
-        joint_name_to_motor_index: Mapping[str, int] = GO2_JOINT_NAME_TO_MOTOR_INDEX,
+        joint_name_to_motor_index: Mapping[str, int] | None = None,
         backend_options: Mapping[str, Any] | None = None,
         sdk: UnitreeSdkBindings | None = None,
         clock_ns: Callable[[], int] = time.monotonic_ns,
         sleep: Callable[[float], None] = time.sleep,
     ) -> "UnitreeGo2DirectInterface":
         """Build the direct API from an explicit robot, gain, and timing profile."""
+        gains = _joint_gains(profile.task)
         return cls._from_contract(
             robot=profile.robot,
-            task_config=profile.task.model_dump(mode="python"),
+            kp=gains.kp,
+            kd=gains.kd,
             control_period_s=profile.control.period_s,
             state_timeout_s=profile.control.state_timeout_s,
             network_interface=network_interface,
@@ -92,7 +111,7 @@ class UnitreeGo2DirectInterface:
         artifact_path: str | Path,
         *,
         network_interface: str,
-        joint_name_to_motor_index: Mapping[str, int] = GO2_JOINT_NAME_TO_MOTOR_INDEX,
+        joint_name_to_motor_index: Mapping[str, int] | None = None,
         backend_options: Mapping[str, Any] | None = None,
         sdk: UnitreeSdkBindings | None = None,
         clock_ns: Callable[[], int] = time.monotonic_ns,
@@ -101,9 +120,11 @@ class UnitreeGo2DirectInterface:
         """Build the direct API from the same artifact and settings as deployment."""
         artifact = read_artifact(artifact_path)
         manifest = artifact.manifest
+        gains = _joint_gains(manifest.task)
         return cls._from_contract(
             robot=manifest.robot,
-            task_config=manifest.task.model_dump(mode="python"),
+            kp=gains.kp,
+            kd=gains.kd,
             control_period_s=manifest.control.period_s,
             state_timeout_s=manifest.control.state_timeout_s,
             network_interface=network_interface,
@@ -119,11 +140,12 @@ class UnitreeGo2DirectInterface:
         cls,
         *,
         robot: RobotSpec,
-        task_config: Mapping[str, Any],
+        kp: list[float],
+        kd: list[float],
         control_period_s: float,
         state_timeout_s: float,
         network_interface: str,
-        joint_name_to_motor_index: Mapping[str, int],
+        joint_name_to_motor_index: Mapping[str, int] | None,
         backend_options: Mapping[str, Any] | None,
         sdk: UnitreeSdkBindings | None,
         clock_ns: Callable[[], int],
@@ -131,10 +153,9 @@ class UnitreeGo2DirectInterface:
     ) -> "UnitreeGo2DirectInterface":
         """Construct the production backend from validated control contracts."""
         options = dict(backend_options or {})
-        options.update(
-            network_interface=network_interface,
-            joint_name_to_motor_index=dict(joint_name_to_motor_index),
-        )
+        options["network_interface"] = network_interface
+        if joint_name_to_motor_index is not None:
+            options["joint_name_to_motor_index"] = dict(joint_name_to_motor_index)
         config = UnitreeGo2BackendConfig.from_mapping(options)
         backend = UnitreeGo2RobotInterface(
             config,
@@ -146,8 +167,8 @@ class UnitreeGo2DirectInterface:
             sleep=sleep,
         )
         return cls(
-            robot=robot,
-            task_config=task_config,
+            kp=kp,
+            kd=kd,
             control_period_s=control_period_s,
             state_timeout_s=state_timeout_s,
             backend=backend,
@@ -181,8 +202,8 @@ class UnitreeGo2DirectInterface:
             joint_position=np.array(self.robot.default_joint_position, copy=True),
             joint_velocity=zeros,
             feedforward_torque=zeros,
-            kp=self._task_gain("kp"),
-            kd=self._task_gain("kd"),
+            kp=self._kp.copy(),
+            kd=self._kd.copy(),
         )
 
     def enable_command_output(self) -> None:
@@ -207,11 +228,11 @@ class UnitreeGo2DirectInterface:
             feedforward_torque=(
                 zeros if feedforward_torque is None else self._command_array(feedforward_torque, "feedforward_torque")
             ),
-            kp=self._task_gain("kp") if kp is None else self._command_array(kp, "kp"),
-            kd=self._task_gain("kd") if kd is None else self._command_array(kd, "kd"),
+            kp=self._kp.copy() if kp is None else self._command_array(kp, "kp"),
+            kd=self._kd.copy() if kd is None else self._command_array(kd, "kd"),
         )
 
-    def send_command(self, command: JointServoCommand) -> None:
+    def send_command(self, command: RobotCommand) -> None:
         """Send one canonical command through the production LowCmd writer."""
         self._require_open()
         self.backend.write_command(command)
@@ -268,15 +289,6 @@ class UnitreeGo2DirectInterface:
     ) -> None:
         del exception_type, exception, traceback
         self.close()
-
-    def _task_gain(self, name: str) -> np.ndarray:
-        if name not in self.task_config:
-            raise ValidationError(
-                f"task.config.{name}",
-                f"{self.robot.joint_count} joint gains",
-                "missing",
-            )
-        return self._command_array(self.task_config[name], name)
 
     def _command_array(self, value: object, name: str) -> np.ndarray:
         try:

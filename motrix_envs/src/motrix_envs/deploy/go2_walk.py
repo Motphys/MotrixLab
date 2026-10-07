@@ -61,8 +61,8 @@ def build_go2_walk_profile(env_name: str) -> DeploymentProfile:
         feet_phase_offsets=feet_offsets.tolist(),
         gait_frequency_hz=env_cfg.gait_frequency,
         standing_threshold=env_cfg.commands.velocity.standing_threshold,
-        # Match QuadrupedWalkEnv.compute_transition: orientation-only falls.
-        termination_min_up_z=0.5,
+        # Match training's orientation-only fall termination.
+        termination_min_up_z=env_cfg.termination_min_up_z,
         termination_min_base_height=None,
         kp=kp.tolist(),
         kd=kd.tolist(),

@@ -46,7 +46,7 @@ _使用 MotrixLab 训练的 microduck 行走策略，由 MotrixRender 实时渲�
 - **统一接口**: 提供简洁统一的强化学习训练和评估接口
 - **多框架支持**: 支持 SKRL（JAX/PyTorch）、RSLRL（PyTorch）和内置 FastSAC 实现
 - **丰富环境**: 包含基础控制、运动、操作等多种机器人仿真环境
-- **Sim-to-Real 部署**: 同一套策略代码，通过部署 CLI Sim2Sim 到 MuJoCo 或原生 MotrixSim 仿真、Sim2Real 到真实硬件
+- **Sim-to-Real 部署**: 同一套策略代码，通过部署 CLI 部署到 MuJoCo 或原生 MotrixSim 仿真，以及 Unitree Go2 真机
 - **高精度高性能仿真**: 基于 [MotrixSim](https://motrixsim.readthedocs.io/) 高精度、高性能物理仿真引擎
 - **可视化训练**: 支持实时渲染和训练过程可视化
 
@@ -181,7 +181,7 @@ MotrixLab 是一个 [uv](https://docs.astral.sh/uv/) workspace，包含以下 pa
 | **motrix_deploy** | `motrix-deploy` | artifact、控制会话、运行时契约与部署 CLI |
 | **motrix_deploy_mujoco** | `motrix-deploy-mujoco` | MuJoCo 部署 backend plugin |
 | **motrix_deploy_motrixsim** | `motrix-deploy-motrixsim` | 原生 MotrixSim 部署 backend plugin |
-| **motrix_deploy_unitree** | `motrix-deploy-unitree` | Unitree SDK2 DDS 硬件 backend plugin |
+| **motrix_deploy_unitree** | `motrix-deploy-unitree` | 独立于资产的 Unitree 硬件配置、sensor/actuation 接线与 SDK2 DDS backend plugin |
 | **motrix_deploy_tasks** | `motrix-deploy-tasks` | 行走任务、部署场景与安装的 Hydra 配方 |
 | **motrix_env_core** | `motrix-env-core` | backend 无关的环境框架、配置、registry 与渲染 |
 | **motrix_env_motrixsim** | `motrix-env-motrixsim` | MotrixSim 实时仿真 backend、renderer 与 Torch frontend |

@@ -66,7 +66,16 @@ task.validate_command(context.command)
 observation = task.build_observation(state, context)
 ```
 
-例如 MuJoCo deployment 从运行时的 `KeyboardDeviceProvider` 取得 `MujocoKeyboardDevice`，再创建
+部署的机器人 I/O 边界 `RobotInterface` 与可选的 `KeyboardDeviceProvider` / `GamePadDeviceProvider`
+capability protocol 定义在 `motrix_deploy.robot.interface`，使用方从该模块导入。provider 提供由自身管理生命周期的
+输入设备，不负责 runtime 插件发现。runtime discovery 仍由 `motrix_deploy.runtime.factory` 通过
+`motrix_deploy.backends` 完成，recipe 仍用 `runtime.backend` 选择插件。
+准备好的 `runtime.robot` 在打开前即可使用。应用显式构造
+`ControlSession(robot=runtime.robot, command_binding=binding, ...)`，
+通过 `runtime.bind_control_session(control)` 绑定，再在 `with runtime` 内运行。
+Factory 不通过回调构造 binding 或控制器。
+
+例如 MuJoCo deployment 从 runtime 的 `KeyboardDeviceProvider` 取得 `MujocoKeyboardDevice`，再创建
 `KeyboardPlanarVelocityBinding`。训练环境则可以为同一个 `PlanarVelocityCommand` 使用 random binding。两条路径最终
 进入同一个 typed task contract。
 

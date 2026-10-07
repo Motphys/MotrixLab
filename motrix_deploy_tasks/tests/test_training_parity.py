@@ -38,12 +38,11 @@ def test_go2_training_and_deployment_task_golden_probe(env_name: str) -> None:
     np.testing.assert_allclose(task.command_upper, env.cfg.commands.velocity.upper * command_scale)
     task.validate_command(context.command)
     task.reset(robot_state, context)
-    # Mainline training's compute_transition uses orientation-only up_z <= 0.5;
-    # these probes reproduce that behavior rather than require new training config.
+    assert profile.task.termination_min_up_z == env.cfg.termination_min_up_z
     for up_z in (-1.0, 0.0, 1.0):
         angle = np.arccos(up_z)
         robot_state.base_orientation_xyzw = np.array([np.sin(angle / 2), 0.0, 0.0, np.cos(angle / 2)], dtype=np.float32)
-        assert (task.check_termination(robot_state) is not None) == (up_z <= 0.5)
+        assert (task.check_termination(robot_state) is not None) == (up_z <= env.cfg.termination_min_up_z)
     robot_state = _robot_state_from_env(env, env_state, probe)
 
     np.testing.assert_allclose(

@@ -342,15 +342,19 @@ class PolicyContext(Generic[CommandT]):
 `input_error` 结束 rollout；`KeyboardInterrupt` 映射为 `interrupted`。更细的 timeout、disconnect、stale input
 错误等真实设备需要区分时再加入。
 
-realtime/fixed-step scheduler 由 runtime recipe 显式选择，不从 device capabilities 推断。
+仿真 realtime/fixed-step scheduler 由 `runtime.realtime` 选择，`null` 跟随 `runtime.viewer`；硬件内部始终实时调度，不从 device capabilities 推断。
 
 ## 7. 配置与创建
 
-deploy application factory 从 backend 的可选 `KeyboardDeviceProvider` 取得 GLFW keyboard device 并创建 binding，
-不建立 input registry，也不暴露 input type、scale 或 constant command 配置。Go2 task 从 artifact 读取
+`KeyboardDeviceProvider` 与 `GamePadDeviceProvider` 定义在 `motrix_deploy.robot.interface`，是可选输入设备
+capability protocol，不是 runtime 插件 factory；返回设备的生命周期由 provider 管理。
+deploy 应用在 runtime factory 返回 prepared host 后，从 runtime 的可选 `KeyboardDeviceProvider` 取得 GLFW keyboard device 并创建 binding，
+再显式构造 `ControlSession(robot=runtime.robot, ...)`，通过 `runtime.bind_control_session(control)` 绑定；
+`with runtime` 打开资源后调用 `runtime.run(steps=...)`。Runtime factory 不承担控制器构造。应用
+不建立 input registry；headless CLI 使用 `command.velocity` 配置 constant command。Go2 task 从 artifact 读取
 `command_lower`、`command_upper` 和与 `[vx, vy, yaw_rate]` 对齐的三维 `command_scale`，向 factory 暴露逐元素
 `range * scale` 后的映射端点；scale 属于 artifact 的 task contract，不在 runtime recipe 重复配置。内置交互式
-keyboard path 要求 backend 提供具有焦点的 viewer window；headless 调用须由程序传入其他 binding。
+keyboard path 要求 backend 提供具有焦点的 viewer window；headless CLI 使用 constant binding，程序化调用也可传入其他 binding。
 
 training command sampling 使用：
 
@@ -362,8 +366,8 @@ command_binding:
   standing_probability: 0.1
 ```
 
-deploy application factory 只创建 core 的 keyboard binding；GLFW device 和 window 的生命周期由 MuJoCo backend
-持有，binding 不负责关闭 device。当前 keyboard 是唯一的 deployment device，不另设 device type。
+deploy application 使用 core 的 keyboard、constant 或 bounded gamepad binding；viewer device 和 window 的生命周期由仿真 runtime
+持有，Unitree gamepad 由硬件端口提供，binding 不负责关闭 device。
 training task 直接创建自己的 `RandomPlanarVelocityBinding`，RNG 由训练入口按现有 seed 机制注入。等第二个外部
 package 确实需要独立注册 device/binding 时，再引入 entry point 或 registry。
 
@@ -381,7 +385,8 @@ motrix_deploy/src/motrix_deploy/
 └── runtime/                    # PolicyContext；调用 CommandBinding.read_command()
 
 motrix_deploy_tasks/src/motrix_deploy_tasks/
-└── go2_walk.py                 # 直接消费 PlanarVelocityCommand
+└── tasks/
+    └── go2_walk.py             # Go2WalkTaskSpec 与 task 同置；直接消费 PlanarVelocityCommand
 
 motrix_envs/src/motrix_envs/locomotion/quadruped/
 └── velocity_command.py         # task-specific RandomPlanarVelocityBinding、standing sampling
@@ -395,7 +400,10 @@ motrix_env_core <- motrix_envs
 ```
 
 `motrix_env_core.input` 不 import deploy runtime 或具体 task。`motrix_deploy` 复用 input contract；
-`motrix_deploy_tasks.go2_walk` 直接消费公共 command，不重复实现 device 或 core binding。`motrix_envs` 复用公共
+`motrix_deploy_tasks.tasks.go2_walk` 中的 task 直接消费公共 command，不重复实现 device 或 core binding。
+其 `Go2WalkTaskSpec` 持有 typed command range/scale，由 task 类的 `spec_type` 关联；manifest 保持
+`{name, config}`，具体 spec 解码与 task class discovery 的边界见
+[Manifest 内容](./motrix-deploy.md#82-manifest-内容)。`motrix_envs` 复用公共
 contract，并在四足训练模块中实现带训练分布语义的 random binding。
 
 ## 9. 第一版测试边界
@@ -449,7 +457,7 @@ contract，并在四足训练模块中实现带训练分布语义的 random bind
 - device/binding plugin registry；
 - 公共 command ABC、独立 command schema 与 schema version；
 - 通用 declarative mapping DSL；
-- ROS 2、vendor remote 和多设备组合。
+- ROS 2 和多设备组合；Unitree remote 已通过 gamepad provider 接入。
 
 新增这些能力前必须先有当前最小接口无法表达的真实 consumer，并保持现有 `poll()`、边沿/持续状态查询与
 `read_command(batch_size=...)` 语义可兼容演进。

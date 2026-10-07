@@ -46,7 +46,7 @@ _Microduck locomotion policies trained with MotrixLab, rendered in MotrixRender 
 - **Unified Interface**: Provides a concise and unified reinforcement learning training and evaluation interface
 - **Multi-framework Support**: Supports SKRL (JAX/PyTorch), RSLRL (PyTorch), and the built-in FastSAC implementation
 - **Rich Environments**: Includes various robot simulation environments such as basic control, locomotion, and manipulation tasks
-- **Sim-to-Real Deployment**: The same policy code deploys via the deploy CLI — Sim2Sim to MuJoCo or native MotrixSim, Sim2Real to real hardware
+- **Sim-to-Real Deployment**: The same policy code deploys via the deploy CLI — simulation deployment to MuJoCo or native MotrixSim, hardware deployment to Unitree Go2
 - **High-precision, High-performance Simulation**: Built on [MotrixSim](https://motrixsim.readthedocs.io/), a high-precision, high-performance physics engine
 - **Visual Training**: Supports real-time rendering and training process visualization
 
@@ -181,7 +181,7 @@ MotrixLab is a [uv](https://docs.astral.sh/uv/) workspace with the following pac
 | **motrix_deploy** | `motrix-deploy` | Artifacts, control sessions, runtime contracts, and deployment CLI |
 | **motrix_deploy_mujoco** | `motrix-deploy-mujoco` | MuJoCo deployment backend plugin |
 | **motrix_deploy_motrixsim** | `motrix-deploy-motrixsim` | Native MotrixSim deployment backend plugin |
-| **motrix_deploy_unitree** | `motrix-deploy-unitree` | Unitree SDK2 DDS hardware backend plugin |
+| **motrix_deploy_unitree** | `motrix-deploy-unitree` | Asset-free Unitree hardware configuration, sensor/actuation wiring, and SDK2 DDS backend plugin |
 | **motrix_deploy_tasks** | `motrix-deploy-tasks` | Walking tasks, deployment scenes, and installed Hydra recipes |
 | **motrix_env_core** | `motrix-env-core` | Backend-agnostic environment framework, configuration, registry, and rendering |
 | **motrix_env_motrixsim** | `motrix-env-motrixsim` | Live MotrixSim backend, renderer, and Torch frontend |

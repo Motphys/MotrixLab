@@ -4,45 +4,21 @@
 """Unitree Go2 hardware backend configuration."""
 
 from collections.abc import Mapping
-from dataclasses import MISSING, dataclass, field
+from dataclasses import MISSING, dataclass
 from types import MappingProxyType
 from typing import Any
 
 import numpy as np
+from hydra.utils import instantiate
 
 from motrix_deploy.errors import ValidationError
+from motrix_deploy_unitree.hardware import HardwareRobotCfg, UnitreeGo2HardwareCfg
 from motrix_deploy_unitree.remote import BUTTON_NAMES
 
 GO2_MOTOR_COUNT = 12
+_DEFAULT_GO2_ROBOT = UnitreeGo2HardwareCfg()
 GO2_JOINT_NAME_TO_MOTOR_INDEX: Mapping[str, int] = MappingProxyType(
-    {
-        "FL_hip_joint": 3,
-        "FL_thigh_joint": 4,
-        "FL_calf_joint": 5,
-        "FR_hip_joint": 0,
-        "FR_thigh_joint": 1,
-        "FR_calf_joint": 2,
-        "RL_hip_joint": 9,
-        "RL_thigh_joint": 10,
-        "RL_calf_joint": 11,
-        "RR_hip_joint": 6,
-        "RR_thigh_joint": 7,
-        "RR_calf_joint": 8,
-    }
-)
-GO2_LIE_DOWN_JOINT_POSITION = (
-    0.05175,
-    1.238835,
-    -2.74427,
-    -0.0608,
-    1.24118,
-    -2.7375,
-    0.31617,
-    1.26637,
-    -2.79547,
-    -0.310495,
-    1.266385,
-    -2.80177,
+    {name: binding.index for name, binding in _DEFAULT_GO2_ROBOT.actuation.motors.items()}
 )
 
 
@@ -51,7 +27,7 @@ class UnitreeGo2BackendConfig:
     """Strict DDS, motor mapping, enable-transition, and stop settings."""
 
     network_interface: str
-    joint_name_to_motor_index: Mapping[str, int] = field(default_factory=lambda: GO2_JOINT_NAME_TO_MOTOR_INDEX)
+    joint_name_to_motor_index: Mapping[str, int] | None = None
     domain_id: int = 0
     lowcmd_topic: str = "rt/lowcmd"
     lowstate_topic: str = "rt/lowstate"
@@ -67,10 +43,11 @@ class UnitreeGo2BackendConfig:
     emergency_stop_button: str = "select"
     lie_down_button: str = "B"
     lie_down_duration_s: float = 2.0
-    lie_down_joint_position: object = GO2_LIE_DOWN_JOINT_POSITION
+    lie_down_joint_position: object | None = None
     validate_crc: bool = True
     subscriber_queue_depth: int = 10
-    motor_mode: int = 0x0A
+    motor_mode: int | None = None
+    robot: HardwareRobotCfg | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.network_interface, str) or not self.network_interface:
@@ -105,7 +82,8 @@ class UnitreeGo2BackendConfig:
             raise ValidationError("runtime.damping", "non-negative duration and kd", "invalid value")
         if self.lie_down_duration_s <= 0:
             raise ValidationError("runtime.lie_down_duration_s", "a positive duration", self.lie_down_duration_s)
-        self.lie_down_position()
+        if self.lie_down_joint_position is not None:
+            self.lie_down_position()
         self._validate_gain_override("kp", self.kp)
         self._validate_gain_override("kd", self.kd)
         if not isinstance(self.domain_id, int) or isinstance(self.domain_id, bool) or self.domain_id < 0:
@@ -120,7 +98,7 @@ class UnitreeGo2BackendConfig:
                 "a positive integer",
                 self.subscriber_queue_depth,
             )
-        if (
+        if self.motor_mode is not None and (
             not isinstance(self.motor_mode, int)
             or isinstance(self.motor_mode, bool)
             or not 0 <= self.motor_mode <= 0xFF
@@ -133,12 +111,16 @@ class UnitreeGo2BackendConfig:
         buttons = (self.start_button, self.enable_button, self.emergency_stop_button, self.lie_down_button)
         if len(set(buttons)) != len(buttons):
             raise ValidationError("runtime.remote_buttons", "four distinct buttons", "duplicate button")
-        if not isinstance(self.joint_name_to_motor_index, Mapping):
+        if self.joint_name_to_motor_index is not None and not isinstance(self.joint_name_to_motor_index, Mapping):
             raise ValidationError(
                 "runtime.joint_name_to_motor_index",
                 "a joint-name to motor-index mapping",
                 type(self.joint_name_to_motor_index).__name__,
             )
+        if self.robot is not None and not isinstance(self.robot, HardwareRobotCfg):
+            raise ValidationError("runtime.robot", "a HardwareRobotCfg config", type(self.robot).__name__)
+        if self.robot is None:
+            object.__setattr__(self, "robot", UnitreeGo2HardwareCfg())
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "UnitreeGo2BackendConfig":
@@ -159,6 +141,10 @@ class UnitreeGo2BackendConfig:
         mapping = values.get("joint_name_to_motor_index")
         if isinstance(mapping, Mapping):
             values["joint_name_to_motor_index"] = dict(mapping)
+        robot = values.get("robot")
+        if isinstance(robot, Mapping):
+            # Deployment recipes are trusted local configuration, like other Hydra targets.
+            values["robot"] = instantiate(robot, _convert_="object")
         return cls(**values)
 
     @staticmethod
@@ -183,22 +169,29 @@ class UnitreeGo2BackendConfig:
             )
 
     def lie_down_position(self) -> np.ndarray:
-        """Return the backend-owned shutdown pose in canonical joint order."""
+        """Return the named shutdown pose or an explicit canonical override."""
+        if self.lie_down_joint_position is not None:
+            try:
+                position = np.asarray(self.lie_down_joint_position, dtype=np.float32)
+            except (TypeError, ValueError) as error:
+                raise ValidationError(
+                    "runtime.lie_down_joint_position",
+                    "12 finite canonical joint positions",
+                    self.lie_down_joint_position,
+                ) from error
+            if position.shape != (GO2_MOTOR_COUNT,) or not np.all(np.isfinite(position)):
+                raise ValidationError(
+                    "runtime.lie_down_joint_position",
+                    "12 finite canonical joint positions",
+                    self.lie_down_joint_position,
+                )
+            return position.copy()
+        assert self.robot is not None
         try:
-            position = np.asarray(self.lie_down_joint_position, dtype=np.float32)
-        except (TypeError, ValueError) as error:
-            raise ValidationError(
-                "runtime.lie_down_joint_position",
-                "12 finite canonical joint positions",
-                self.lie_down_joint_position,
-            ) from error
-        if position.shape != (GO2_MOTOR_COUNT,) or not np.all(np.isfinite(position)):
-            raise ValidationError(
-                "runtime.lie_down_joint_position",
-                "12 finite canonical joint positions",
-                self.lie_down_joint_position,
-            )
-        return np.array(position, dtype=np.float32, copy=True)
+            pose = self.robot.key_pose.poses["lie_down"]
+        except KeyError as error:
+            raise ValidationError("runtime.robot.key_pose", "a named lie_down pose", "missing") from error
+        return np.asarray(pose, dtype=np.float32).copy()
 
     def gain_override(self, name: str, joint_count: int) -> np.ndarray | None:
         """Expand an optional scalar or canonical per-joint gain override."""
@@ -214,15 +207,19 @@ class UnitreeGo2BackendConfig:
 
     def motor_indices(self, joint_names: tuple[str, ...]) -> np.ndarray:
         """Return motor indices in artifact canonical joint order."""
+        mapping = self.joint_name_to_motor_index
+        if mapping is None:
+            assert self.robot is not None
+            mapping = {name: binding.index for name, binding in self.robot.actuation.motors.items()}
         expected = set(joint_names)
-        actual = set(self.joint_name_to_motor_index)
+        actual = set(mapping)
         if actual != expected:
             raise ValidationError(
                 "runtime.joint_name_to_motor_index",
                 f"exactly joints {sorted(expected)}",
                 f"missing={sorted(expected - actual)}, unknown={sorted(actual - expected)}",
             )
-        values = tuple(self.joint_name_to_motor_index[name] for name in joint_names)
+        values = tuple(mapping[name] for name in joint_names)
         if any(not isinstance(index, int) or isinstance(index, bool) for index in values):
             raise ValidationError("runtime.motor_indices", "integer motor indices", values)
         if len(set(values)) != len(values) or any(not 0 <= index < GO2_MOTOR_COUNT for index in values):
@@ -236,7 +233,6 @@ class UnitreeGo2BackendConfig:
 
 __all__ = [
     "GO2_JOINT_NAME_TO_MOTOR_INDEX",
-    "GO2_LIE_DOWN_JOINT_POSITION",
     "GO2_MOTOR_COUNT",
     "UnitreeGo2BackendConfig",
 ]

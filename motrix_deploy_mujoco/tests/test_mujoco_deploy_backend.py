@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 import pytest
-from motrix_robots.unitree import UnitreeGo2Robot
+from motrix_robots.unitree import UnitreeGo1Robot, UnitreeGo2Robot
 from omegaconf import OmegaConf
 from scene_helpers import AdapterSceneObjsCfg, build_scene
 
@@ -481,7 +481,7 @@ def test_direct_scene_cfg_headless_uses_supplied_robot_floor_and_placement() -> 
         backend.close()
 
 
-@pytest.mark.parametrize("robot_type", [UnitreeGo2Robot])
+@pytest.mark.parametrize("robot_type", [UnitreeGo1Robot, UnitreeGo2Robot])
 def test_robot_description_switch_needs_no_backend_specific_wiring(robot_type) -> None:
     robot = robot_type()
     scene = SceneCfg(objs=AdapterSceneObjsCfg(robot=robot, floor=FlatTerrainCfg()))

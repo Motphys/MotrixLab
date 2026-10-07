@@ -50,8 +50,9 @@ MotrixLab is a UV workspace. The packages are grouped by ownership rather than t
 | `configs/`, `scripts/` | Configuration and orchestration | Hydra algorithm configs and Task recipes; train / play / view / export entry points |
 | `motrix_deploy` | Policy deployment | Framework-independent artifacts, runtime contracts, and deployment CLI |
 | `motrix_deploy_mujoco` | Policy deployment | MuJoCo deployment backend plugin |
-| `motrix_deploy_unitree` | Policy deployment | Unitree SDK2 DDS hardware backend plugin |
-| `motrix_deploy_tasks` | Policy deployment | Walking tasks, deployment scenes, and installed Hydra recipes |
+| `motrix_deploy_motrixsim` | Policy deployment | MotrixSim deployment backend plugin |
+| `motrix_deploy_unitree` | Policy deployment | Unitree hardware configs, sensor/actuation wiring, and SDK2 DDS backend plugin |
+| `motrix_deploy_tasks` | Policy deployment | Versioned tasks via `motrix_deploy.tasks`; robot-free worlds via `motrix_deploy.envs`; installed Hydra runtime recipes |
 
 A simulation backend (such as `motrix_env_motrixsim`) is isolated behind the `SimBackend` interface —
 when using an environment you normally do not need to care which one it is. To select or integrate a

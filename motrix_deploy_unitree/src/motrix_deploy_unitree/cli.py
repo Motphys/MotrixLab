@@ -78,6 +78,8 @@ def _parser() -> argparse.ArgumentParser:
     joint.add_argument("joint_name", help="Canonical joint name, for example FL_thigh_joint")
     joint.add_argument("target_position", type=_finite_float, help="Absolute target position in radians")
     joint.add_argument("--artifact", type=Path, required=True, help="Frozen Go2 deployment artifact")
+    joint.add_argument("--kp", type=_non_negative_float, required=True, help="Explicit backend servo safety stiffness")
+    joint.add_argument("--kd", type=_non_negative_float, required=True, help="Explicit backend servo safety damping")
     joint.add_argument("--move-duration", type=_positive_float, default=2.0)
     joint.add_argument("--hold-duration", type=_non_negative_float, default=1.0)
     joint.add_argument("--return-duration", type=_non_negative_float, default=2.0)
@@ -103,6 +105,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         network_interface=args.network_interface,
         joint_name=args.joint_name,
         target_position=args.target_position,
+        kp=args.kp,
+        kd=args.kd,
         move_duration=args.move_duration,
         hold_duration=args.hold_duration,
         return_duration=args.return_duration,

@@ -180,9 +180,9 @@ class Commands:
 
 @configclass
 class Sensor:
-    # General-purpose sensors exposed by the assembled scene.
-    local_linvel: str = "local_linvel"
+    # Scene-declared names are used directly; model-local names follow robot affixes.
     gyro: str = "gyro"
+    local_linvel: str = "local_linvel"
     upvector: str = "upvector"
     foot_positions: tuple[str, str, str, str] = ("FL_pos", "FR_pos", "RL_pos", "RR_pos")
 
@@ -229,6 +229,8 @@ class QuadrupedWalkEnvCfg(DirectEnvCfg):
     spawn_xy_range: float = 0.0
     trot_pairs: tuple[tuple[int, int], ...] = ((0, 3), (1, 2))
     gait_frequency: float = 2.0
+    # Shared by training and the compiled deployment task, not backend recipes.
+    termination_min_up_z: float = 0.5
     sim: SimCfg = SimCfg(dt=0.01, solver_iterations=1)
     ctrl_dt: float = 0.02
 
@@ -236,6 +238,8 @@ class QuadrupedWalkEnvCfg(DirectEnvCfg):
         super().validate()
         self.randomization.validate()
         self.commands.velocity.validate()
+        if not np.isfinite(self.termination_min_up_z) or not -1.0 <= self.termination_min_up_z <= 1.0:
+            raise ValueError("termination_min_up_z must be finite and inside [-1, 1]")
         if (
             self.randomization.enabled
             and any(self.randomization.action_delay_steps)
