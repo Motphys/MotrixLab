@@ -32,7 +32,7 @@ _Microduck locomotion policies trained with MotrixLab, rendered in MotrixRender 
 
 ## What is MotrixLab?
 
-**MotrixLab** is an open-source reinforcement learning framework for robot training, built on the high-performance [MotrixSim](https://github.com/Motphys/motrixsim-docs) physics engine. Define an environment once, train it with thousands of parallel environment instances using SKRL, RSL-RL, or the built-in FastSAC, and deploy the resulting policy to MuJoCo or Unitree hardware — all through a single command-line interface.
+**MotrixLab** is an open-source reinforcement learning framework for robot training, built on the high-performance [MotrixSim](https://github.com/Motphys/motrixsim-docs) physics engine. Define an environment once, train it with thousands of parallel environment instances using SKRL, RSL-RL, or the built-in FastSAC, and deploy the resulting policy to MuJoCo, native MotrixSim, or Unitree hardware — all through a single command-line interface.
 
 <div align="center">
   <picture>
@@ -46,7 +46,7 @@ _Microduck locomotion policies trained with MotrixLab, rendered in MotrixRender 
 - **Unified Interface**: Provides a concise and unified reinforcement learning training and evaluation interface
 - **Multi-framework Support**: Supports SKRL (JAX/PyTorch), RSLRL (PyTorch), and the built-in FastSAC implementation
 - **Rich Environments**: Includes various robot simulation environments such as basic control, locomotion, and manipulation tasks
-- **Sim-to-Real Deployment**: The same policy code deploys via the deploy CLI — Sim2Sim to MuJoCo, Sim2Real to real hardware
+- **Sim-to-Real Deployment**: The same policy code deploys via the deploy CLI — Sim2Sim to MuJoCo or native MotrixSim, Sim2Real to real hardware
 - **High-precision, High-performance Simulation**: Built on [MotrixSim](https://motrixsim.readthedocs.io/), a high-precision, high-performance physics engine
 - **Visual Training**: Supports real-time rendering and training process visualization
 
@@ -180,6 +180,7 @@ MotrixLab is a [uv](https://docs.astral.sh/uv/) workspace with the following pac
 | --- | --- | --- |
 | **motrix_deploy** | `motrix-deploy` | Artifacts, control sessions, runtime contracts, and deployment CLI |
 | **motrix_deploy_mujoco** | `motrix-deploy-mujoco` | MuJoCo deployment backend plugin |
+| **motrix_deploy_motrixsim** | `motrix-deploy-motrixsim` | Native MotrixSim deployment backend plugin |
 | **motrix_deploy_unitree** | `motrix-deploy-unitree` | Unitree SDK2 DDS hardware backend plugin |
 | **motrix_deploy_tasks** | `motrix-deploy-tasks` | Walking tasks, deployment scenes, and installed Hydra recipes |
 | **motrix_env_core** | `motrix-env-core` | Backend-agnostic environment framework, configuration, registry, and rendering |

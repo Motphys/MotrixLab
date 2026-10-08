@@ -1,0 +1,20 @@
+[build-system]
+requires = ["uv_build>=0.11.23,<0.12"]
+build-backend = "uv_build"
+
+[project]
+name = "motrix-deploy-motrixsim"
+version = "0.4.0b0"
+description = "Native SceneCfg-backed MotrixSim deployment runtime plugin."
+authors = [{ name = "Motphys", email = "developers@motphys.com" }]
+requires-python = "==3.10.*"
+readme = "README.md"
+license = "Apache-2.0"
+dependencies = [
+    "motrix-deploy",
+    "motrix-env-motrixsim",
+    "numpy>=1.26",
+]
+
+[project.entry-points."motrix_deploy.backends"]
+motrixsim = "motrix_deploy_motrixsim.plugin:create_runtime"

@@ -19,6 +19,7 @@ conflicts = [[
 [manifest]
 members = [
     "motrix-deploy",
+    "motrix-deploy-motrixsim",
     "motrix-deploy-mujoco",
     "motrix-deploy-tasks",
     "motrix-deploy-unitree",
@@ -934,6 +935,23 @@ requires-dist = [
 ]
 
 [[package]]
+name = "motrix-deploy-motrixsim"
+version = "0.4.0b0"
+source = { editable = "motrix_deploy_motrixsim" }
+dependencies = [
+    { name = "motrix-deploy" },
+    { name = "motrix-env-motrixsim" },
+    { name = "numpy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "motrix-deploy", editable = "motrix_deploy" },
+    { name = "motrix-env-motrixsim", editable = "motrix_env_motrixsim" },
+    { name = "numpy", specifier = ">=1.26" },
+]
+
+[[package]]
 name = "motrix-deploy-mujoco"
 version = "0.4.0b0"
 source = { editable = "motrix_deploy_mujoco" }
@@ -1109,6 +1127,7 @@ version = "0.4.0b0"
 source = { virtual = "." }
 dependencies = [
     { name = "motrix-deploy" },
+    { name = "motrix-deploy-motrixsim" },
     { name = "motrix-deploy-mujoco" },
     { name = "motrix-deploy-tasks" },
     { name = "motrix-env-motrixsim" },
@@ -1178,6 +1197,7 @@ requires-dist = [
     { name = "amdsmi", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm'" },
     { name = "autodocsumm", marker = "extra == 'docs'" },
     { name = "motrix-deploy", editable = "motrix_deploy" },
+    { name = "motrix-deploy-motrixsim", editable = "motrix_deploy_motrixsim" },
     { name = "motrix-deploy-mujoco", editable = "motrix_deploy_mujoco" },
     { name = "motrix-deploy-tasks", editable = "motrix_deploy_tasks" },
     { name = "motrix-deploy-unitree", marker = "extra == 'unitree'", editable = "motrix_deploy_unitree" },

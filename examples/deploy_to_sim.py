@@ -35,7 +35,9 @@ class ExampleSceneObjsCfg(SceneObjsCfg):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend", choices=("mujoco",), default="mujoco", help="Simulation runtime plugin")
+    parser.add_argument(
+        "--backend", choices=("mujoco", "motrixsim"), default="mujoco", help="Simulation runtime plugin"
+    )
     parser.add_argument("--headless", action="store_true", help="No window; run fixed-step without wall-clock pacing")
     parser.add_argument("--steps", type=int, help="Headless control ticks; GUI mode runs until the window closes")
     args = parser.parse_args()
@@ -65,7 +67,7 @@ def main() -> int:
             haze=(0.1, 0.1, 0.1, 1.0),
             tone_mapping="none",
         ),
-        system_camera=SystemCameraCfg(distance=3.0, elevation=-20.0, azimuth=90.0),
+        system_camera=SystemCameraCfg(lookat=(0.0, 0.0, 0.3), distance=3.0, elevation=-20.0, azimuth=90.0),
     )
     config = SimulationRuntimeConfig(
         scene=scene,

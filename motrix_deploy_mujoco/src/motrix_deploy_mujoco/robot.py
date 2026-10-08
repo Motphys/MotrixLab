@@ -96,7 +96,6 @@ class Robot(RobotInterface):
                     "base_linear_velocity",
                 }
             ),
-            privileged_state_fields=frozenset({"base_position", "base_linear_velocity"}),
             supports_rendering=True,
             max_command_rate_hz=1.0 / self._runtime.sim.dt,
             stop_semantics="zero_torque",

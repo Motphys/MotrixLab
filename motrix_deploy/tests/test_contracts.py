@@ -131,31 +131,6 @@ def test_robot_spec_rejects_invalid_arrays(field: str, value: np.ndarray, error_
         robot_spec(**{field: value})
 
 
-def test_privileged_capabilities_default_empty_and_require_available_fields() -> None:
-    capabilities = RobotCapabilities(control_modes=("joint_servo",), state_fields=frozenset({"base_position"}))
-    assert capabilities.privileged_state_fields == frozenset()
-    privileged = RobotCapabilities(
-        control_modes=("joint_servo",),
-        state_fields=frozenset({"base_position"}),
-        privileged_state_fields=frozenset({"base_position"}),
-    )
-    assert privileged.privileged_state_fields <= privileged.state_fields
-    with pytest.raises(ValidationError, match="capabilities.privileged_state_fields"):
-        RobotCapabilities(
-            control_modes=("joint_servo",),
-            state_fields=frozenset(),
-            privileged_state_fields=frozenset({"base_position"}),
-        )
-
-
-@pytest.mark.parametrize("value", [{"base_position"}, frozenset({"unavailable"})])
-def test_invalid_privileged_state_fields_are_rejected(value: object) -> None:
-    with pytest.raises(ValidationError, match="capabilities.privileged_state_fields"):
-        RobotCapabilities(
-            control_modes=("joint_servo",), state_fields=frozenset({"base_position"}), privileged_state_fields=value
-        )
-
-
 def test_tensor_spec_requires_float32_fixed_shape() -> None:
     with pytest.raises(ValidationError, match="tensor.dtype"):
         TensorSpec(name="input", shape=(1, 4), dtype="float64")

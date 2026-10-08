@@ -258,7 +258,7 @@ def test_hardware_hydra_config_accepts_explicit_gain_overrides() -> None:
     assert list(cfg.runtime.kd) == pytest.approx([0.4, 0.4, 0.4, 0.5, 0.5, 0.5, 0.6, 0.6, 0.6, 0.7, 0.7, 0.7])
 
 
-@pytest.mark.parametrize("backend", ["mujoco"])
+@pytest.mark.parametrize("backend", ["mujoco", "motrixsim"])
 @pytest.mark.parametrize("task", ["go2-walk-flat", "go2-walk-rough"])
 def test_headless_simulation_cli_runs_deterministic_onnx_fixture(tmp_path: Path, task: str, backend: str) -> None:
     policy_path = tmp_path / "fixture.onnx"

@@ -38,7 +38,7 @@ runtime plugin for the target. The recipes work outside the repository without a
 Task defaults select the Hydra runtime group (`sim` or `hardware`); you do not need a separate runtime override.
 Common top-level settings are `artifact`, `duration_s`, and `command`. All target-specific settings live directly under
 `runtime`. `runtime.kind` selects the simulation or hardware path; `runtime.backend` selects the plugin (`mujoco`
-for simulation or `unitree_go2` for hardware). `runtime.backend` is a scalar string selector, not a nested configuration
+or `motrixsim` for simulation, or `unitree_go2` for hardware). `runtime.backend` is a scalar string selector, not a nested configuration
 mapping or Hydra group.
 
 ## 3. Check in MuJoCo
@@ -71,6 +71,21 @@ It creates a MuJoCo runtime with `create_simulation_runtime`, attaches a `Contro
 `runtime.bind_control_session(control)`, and runs inside `with runtime:`. The control session handles input, observations,
 inference, and robot commands; the runtime handles physics, timing, and the viewer. A raw ONNX file needs explicit task
 preprocessing and action settings, whereas the artifact carries those settings for the CLI.
+
+### Select native MotrixSim
+
+With `motrix-deploy-motrixsim` installed, switch the backend to `motrixsim` to reuse the same artifact and scene recipe:
+
+```bash
+motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+  runtime.backend=motrixsim runtime.viewer=true
+```
+
+The Python example also supports native MotrixSim:
+
+```bash
+python examples/deploy_to_sim.py --backend motrixsim
+```
 
 ## 4. Run on the real robot
 

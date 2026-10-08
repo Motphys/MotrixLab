@@ -696,26 +696,6 @@ def test_task_termination_hook_failure_has_task_error_and_cleanup(
     assert backend.events[-2:] == ["stop", "close"]
 
 
-@pytest.mark.parametrize("privileged", [False, True])
-def test_backend_state_metadata_does_not_gate_task_execution(
-    manifest_factory: Callable[[], DeploymentManifest], privileged: bool
-) -> None:
-    manifest = manifest_factory()
-    backend = EnablingBackend(manifest.robot)
-    backend._capabilities = RobotCapabilities(
-        control_modes=("joint_servo",),
-        state_fields=frozenset({"joint_position", "joint_velocity", "base_linear_velocity"}),
-        privileged_state_fields=frozenset({"base_linear_velocity"}) if privileged else frozenset(),
-        requires_enable=True,
-    )
-    runtime, control = _loop(manifest, backend)
-    result = runtime.run(control, steps=1)
-    assert result.success
-    assert len(backend.commands) == 1
-    assert backend.events.index("enable") < backend.events.index("write")
-    assert backend.events[-2:] == ["stop", "close"]
-
-
 def test_required_enable_completes_before_first_policy_write(
     manifest_factory: Callable[[], DeploymentManifest],
 ) -> None:

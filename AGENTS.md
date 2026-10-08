@@ -22,6 +22,7 @@ MotrixLab 是构建在 MotrixSim 仿真后端之上的强化学习框架，提�
 - `motrix_rl_rslrl`：RSLRL PPO provider 插件（Torch）
 - `motrix_deploy`：框架无关的 artifact、运行时契约与部署 CLI
 - `motrix_deploy_mujoco`：SceneCfg 支撑的 MuJoCo 后端插件
+- `motrix_deploy_motrixsim`：SceneCfg 支撑的原生 MotrixSim 部署后端插件
 - `motrix_deploy_unitree`：Unitree SDK2 DDS 硬件后端插件
 - `motrix_deploy_tasks`：具体部署任务实现
 

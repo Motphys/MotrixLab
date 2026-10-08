@@ -470,9 +470,6 @@ def test_direct_scene_cfg_headless_uses_supplied_robot_floor_and_placement() -> 
     backend.open()
     try:
         state = backend.robot.read_state(0.1)
-        assert backend.robot.capabilities.privileged_state_fields == frozenset(
-            {"base_position", "base_linear_velocity"}
-        )
         np.testing.assert_allclose(state.base_position, backend.model.qpos0[:3])
         np.testing.assert_allclose(state.base_orientation_xyzw, robot.rotation)
         floor_id = backend.mj.mj_name2id(backend.model, backend.mj.mjtObj.mjOBJ_GEOM, "floor")

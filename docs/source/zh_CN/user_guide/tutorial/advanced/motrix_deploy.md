@@ -34,7 +34,7 @@ artifact 包含 ONNX 策略、机器人与控制设置，以及任务规格。�
 部署场景和 Hydra 配方，以及目标对应的运行时插件。配方安装在插件中，在仓库外运行也不需要 workspace 配置路径。
 任务 defaults 选择 Hydra 运行时组（`sim` 或 `hardware`），无需另行覆盖运行时组。
 顶层公共设置为 `artifact`、`duration_s` 和 `command`。所有目标专用设置直接位于 `runtime` 下；
-`runtime.kind` 选择仿真或硬件执行路径；`runtime.backend` 选择插件（仿真为 `mujoco`，硬件为 `unitree_go2`）。
+`runtime.kind` 选择仿真或硬件执行路径；`runtime.backend` 选择插件（仿真为 `mujoco` 或 `motrixsim`，硬件为 `unitree_go2`）。
 `runtime.backend` 是标量字符串选择器，不是嵌套配置映射或 Hydra 配置组。
 
 ## 3. 在 MuJoCo 中检查
@@ -66,6 +66,21 @@ python examples/deploy_to_sim.py --headless --steps 100
 它通过 `create_simulation_runtime` 创建 MuJoCo 运行时，用 `runtime.bind_control_session(control)` 连接
 `ControlSession`，并在 `with runtime:` 中运行。控制会话负责输入、观察、推理和机器人指令；运行时负责物理推进、
 调度和 viewer。直接使用 ONNX 文件时需要显式指定任务预处理和动作设置；artifact 则为 CLI 携带这些设置。
+
+### 选择原生 MotrixSim
+
+安装 `motrix-deploy-motrixsim` 后，将 backend 切换为 `motrixsim`，即可复用同一 artifact 和场景配方：
+
+```bash
+motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+  runtime.backend=motrixsim runtime.viewer=true
+```
+
+Python 示例同样支持原生 MotrixSim：
+
+```bash
+python examples/deploy_to_sim.py --backend motrixsim
+```
 
 ## 4. 运行真机
 

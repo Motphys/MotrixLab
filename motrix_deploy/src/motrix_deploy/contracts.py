@@ -257,8 +257,6 @@ class RobotCapabilities:
     Attributes:
         control_modes: Canonical joint command modes accepted by the backend.
         state_fields: ``RobotState`` fields populated by every state sample.
-        privileged_state_fields: Subset of state_fields supplied as privileged simulator ground truth,
-            not measurements guaranteed to be available on hardware.
         extra_sensors: Additional entries available in ``RobotState.extras``, mapped to their fixed shapes.
         supports_rendering: Whether the backend can present a live viewer.
         max_command_rate_hz: Highest command update rate accepted by the backend, or ``None`` when unconstrained.
@@ -273,7 +271,6 @@ class RobotCapabilities:
     max_command_rate_hz: float | None = None
     requires_enable: bool = False
     stop_semantics: str = "hold_position"
-    privileged_state_fields: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         _validate_names(self.control_modes, path="capabilities.control_modes")
@@ -288,15 +285,6 @@ class RobotCapabilities:
             not isinstance(name, str) or not name for name in self.state_fields
         ):
             raise ValidationError("capabilities.state_fields", "a frozenset of non-empty names", self.state_fields)
-        if (
-            not isinstance(self.privileged_state_fields, frozenset)
-            or not self.privileged_state_fields <= self.state_fields
-        ):
-            raise ValidationError(
-                "capabilities.privileged_state_fields",
-                "a frozenset subset of state_fields",
-                self.privileged_state_fields,
-            )
         if self.max_command_rate_hz is not None and self.max_command_rate_hz <= 0:
             raise ValidationError("capabilities.max_command_rate_hz", "a positive value", self.max_command_rate_hz)
         if not self.stop_semantics:
