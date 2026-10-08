@@ -3,8 +3,8 @@
 
 """Task-agnostic result of compiling one training environment for deployment."""
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 
 from motrix_deploy.artifact.schema import ControlSpec, TaskSpec
 from motrix_deploy.contracts import RobotSpec
@@ -20,6 +20,8 @@ class DeploymentProfile:
     # Training-space dimensions used only to validate ONNX export, not serialized in TaskSpec.
     observation_size: int
     action_size: int
+    # Task-owned binary payloads (path -> bytes) written into the artifact next to the policy.
+    payloads: Mapping[str, bytes] = field(default_factory=dict)
 
 
 ProfileCompiler = Callable[[str], DeploymentProfile]

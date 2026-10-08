@@ -27,13 +27,14 @@ def _mapping(value: object, path: str) -> Mapping[str, Any]:
     return value
 
 
-def _keys(value: Mapping[str, Any], *, path: str, required: set[str]) -> None:
+def _keys(value: Mapping[str, Any], *, path: str, required: set[str], optional: set[str] | None = None) -> None:
     missing = sorted(required - value.keys())
     if missing:
         raise ValidationError(path, f"required fields {sorted(required)}", f"missing {missing}")
-    unknown = sorted(value.keys() - required)
+    allowed = required | (optional or set())
+    unknown = sorted(value.keys() - allowed)
     if unknown:
-        raise ValidationError(path, f"only fields {sorted(required)}", f"unknown {unknown}")
+        raise ValidationError(path, f"only fields {sorted(allowed)}", f"unknown {unknown}")
 
 
 def _string(value: object, path: str) -> str:
@@ -280,6 +281,14 @@ class ControlSpec:
 
 
 @dataclass(frozen=True)
+class PayloadSpec:
+    """A task-owned binary payload (e.g. a motion-clip NPZ) with its checksum."""
+
+    path: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class DeploymentManifest:
     """Top-level deployment manifest with strict v1 component versions."""
 
@@ -289,6 +298,7 @@ class DeploymentManifest:
     robot: RobotSpec
     task: TaskSpec
     control: ControlSpec
+    payloads: tuple[PayloadSpec, ...] = ()
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION:
@@ -306,13 +316,19 @@ class DeploymentManifest:
             "robot": _robot_to_dict(self.robot),
             "task": self.task.to_dict(),
             "control": self.control.to_dict(),
+            "payloads": [payload.__dict__ for payload in self.payloads],
         }
 
     @classmethod
     def from_dict(cls, value: object) -> "DeploymentManifest":
         data = _mapping(value, "manifest")
         required = {"schema_version", "source", "policy", "robot", "task", "control"}
-        _keys(data, path="manifest", required=required)
+        _keys(data, path="manifest", required=required, optional={"payloads"})
+        payloads = []
+        for entry in data.get("payloads", ()):
+            payload = _mapping(entry, "manifest.payloads")
+            _keys(payload, path="manifest.payloads", required={"path", "sha256"})
+            payloads.append(PayloadSpec(path=payload["path"], sha256=payload["sha256"]))
         return cls(
             schema_version=data["schema_version"],
             source=SourceSpec.from_dict(data["source"]),
@@ -320,4 +336,5 @@ class DeploymentManifest:
             robot=_robot_from_dict(data["robot"]),
             task=TaskSpec.from_dict(data["task"]),
             control=ControlSpec.from_dict(data["control"]),
+            payloads=tuple(payloads),
         )

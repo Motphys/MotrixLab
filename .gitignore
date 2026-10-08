@@ -1,7 +1,6 @@
 __pycache__
 runs
 outputs
-/artifacts/
 .pdm-python
 logs
 .idea

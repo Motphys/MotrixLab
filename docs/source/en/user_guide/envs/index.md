@@ -58,7 +58,8 @@ python scripts/view.py env=<env-id>
 | <img src="../../_static/images/poster/g1-29dof-wbt-largebox.jpg" alt="g1-29dof-wbt-largebox" width="240"> | `g1-29dof-wbt-largebox` | Track a large-box carrying reference motion with Unitree G1. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/g1-walk-flat.jpg" alt="g1-walk-flat" width="240"> | `g1-walk-flat` | Track walking commands with Unitree G1 on flat ground. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/g1-walk-rough.jpg" alt="g1-walk-rough" width="240"> | `g1-walk-rough` | Track walking commands with Unitree G1 over uneven terrain. | `motrix.fastsac` |
-| <img src="../../_static/images/poster/g1-wbt-dance.jpg" alt="g1-wbt-dance" width="240"> | `g1-wbt-dance` | Track the bundled G1 dance motion with the manager-based environment. | `motrix.fastsac` |
+| <img src="../../_static/images/poster/g1-wbt-backflip.jpg" alt="g1-wbt-backflip" width="240"> | `g1-wbt-backflip` | Track the bundled G1 backflip reference motion. | `motrix.fastsac` |
+| <img src="../../_static/images/poster/g1-wbt-dance.jpg" alt="g1-wbt-dance" width="240"> | `g1-wbt-dance` | Track the G1 dance motion corpus with the manager-based environment. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/go1-stairs-terrain-walk.jpg" alt="go1-stairs-terrain-walk" width="240"> | `go1-stairs-terrain-walk` | Control Unitree Go1 to walk over stair terrain. | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/go1-walk-flat.jpg" alt="go1-walk-flat" width="240"> | `go1-walk-flat` | Track walking commands with Unitree Go1 on flat ground. | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/go1-walk-rough.jpg" alt="go1-walk-rough" width="240"> | `go1-walk-rough` | Track walking commands with Unitree Go1 on a procedural rough height field. | `rslrl.ppo`, `skrl.ppo` |

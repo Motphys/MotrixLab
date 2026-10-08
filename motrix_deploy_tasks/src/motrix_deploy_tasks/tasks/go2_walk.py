@@ -11,7 +11,11 @@ from pydantic import Field, model_validator
 from motrix_deploy.artifact.schema import TaskSpec
 from motrix_deploy.contracts import FloatArray, JointServoCommand, RobotSpec, RobotState, float32_array
 from motrix_deploy.errors import ValidationError
-from motrix_deploy.runtime import PolicyContext
+from motrix_deploy.policy import Policy
+from motrix_deploy.policy.processing import PolicyProcessor
+from motrix_deploy.runtime.context import ControlContext
+from motrix_deploy.runtime.control import PolicyController
+from motrix_deploy.runtime.lifecycle import ControllerStep
 from motrix_deploy.task import DeployTask
 from motrix_env_core.input import PlanarVelocityCommand
 
@@ -45,7 +49,6 @@ class Go2WalkTaskSpec(TaskSpec):
     gait_frequency_hz: PositiveFloat
     standing_threshold: NonNegativeFloat
     termination_min_up_z: Annotated[FiniteFloat, Field(ge=-1, le=1)]
-    termination_min_base_height: FiniteFloat | None
 
     @model_validator(mode="after")
     def validate_joint_vectors_and_ranges(self) -> "Go2WalkTaskSpec":
@@ -60,15 +63,11 @@ class Go2WalkTaskSpec(TaskSpec):
         return self
 
 
-class Go2WalkDeployTaskV1(DeployTask[PlanarVelocityCommand]):
+class Go2WalkPolicyProcessor(PolicyProcessor[PlanarVelocityCommand]):
     """Go2 walking policy I/O and artifact-owned fall termination.
 
     Orientation termination is supported by both simulated and real IMU state.
-    Optional world-frame base-height termination requires base_position when
-    enabled; no height is invented when the backend cannot provide it.
     """
-
-    spec_type = Go2WalkTaskSpec
 
     def __init__(self, spec: Go2WalkTaskSpec, robot: RobotSpec) -> None:
         if len(spec.action_scale) != robot.joint_count:
@@ -89,7 +88,6 @@ class Go2WalkDeployTaskV1(DeployTask[PlanarVelocityCommand]):
         self._gait_frequency_hz = spec.gait_frequency_hz
         self._standing_threshold = spec.standing_threshold
         self._termination_min_up_z = spec.termination_min_up_z
-        self._termination_min_base_height = spec.termination_min_base_height
         self._previous_action: FloatArray = np.zeros(self.robot.joint_count, dtype=np.float32)
 
     @property
@@ -105,19 +103,14 @@ class Go2WalkDeployTaskV1(DeployTask[PlanarVelocityCommand]):
         up_z = 1.0 - 2.0 * (x * x + y * y)
         if up_z <= self._termination_min_up_z:
             return "fall_orientation"
-        if self._termination_min_base_height is not None:
-            if state.base_position is None:
-                raise ValidationError("state.base_position", "available for enabled base-height termination", "missing")
-            if state.base_position[2] <= self._termination_min_base_height:
-                return "fall_height"
         return None
 
-    def reset(self, state: RobotState, context: PolicyContext[PlanarVelocityCommand]) -> None:
+    def reset(self, state: RobotState, context: ControlContext[PlanarVelocityCommand]) -> None:
         """Reset action history; callers provide validated state and command."""
         self._previous_action.fill(0)
 
-    def build_observation(self, state: RobotState, context: PolicyContext[PlanarVelocityCommand]) -> FloatArray:
-        """Consume state and command validated by ControlSession or the caller."""
+    def build_observation(self, state: RobotState, context: ControlContext[PlanarVelocityCommand]) -> FloatArray:
+        """Consume runtime-validated state and PolicyController-validated input commands."""
         velocity = context.command.values[0, :]
         phase = np.zeros(4, dtype=np.float32)
         if context.step > 0 and np.linalg.norm(velocity) >= self._standing_threshold:
@@ -153,7 +146,7 @@ class Go2WalkDeployTaskV1(DeployTask[PlanarVelocityCommand]):
             kd=self._kd,
         )
 
-    def validate_command(self, command: PlanarVelocityCommand) -> None:
+    def validate_command(self, command: PlanarVelocityCommand | None) -> None:
         if not isinstance(command, PlanarVelocityCommand):
             raise ValidationError("command.type", "PlanarVelocityCommand", type(command).__name__)
         if command.batch_size != 1:
@@ -178,3 +171,37 @@ def _projected_gravity(orientation_xyzw: FloatArray) -> FloatArray:
         dtype=np.float32,
     )
     return rotation @ np.array([0.0, 0.0, -1.0], dtype=np.float32)
+
+
+class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
+    """Complete Go2 walking task; its single policy phase handles normal stopping."""
+
+    spec_type = Go2WalkTaskSpec
+
+    def __init__(
+        self, spec: Go2WalkTaskSpec, robot: RobotSpec, policy: Policy, steps: int | None = None, artifact=None
+    ):
+        self.spec = spec
+        self.robot = robot
+        self.policy_io = Go2WalkPolicyProcessor(spec, robot)
+        self.policy_controller = PolicyController(self.policy_io, policy, steps=steps)
+
+    @property
+    def command_lower(self) -> FloatArray:
+        return self.policy_io.command_lower
+
+    @property
+    def command_upper(self) -> FloatArray:
+        return self.policy_io.command_upper
+
+    def validate_command(self, command: PlanarVelocityCommand | None) -> None:
+        self.policy_io.validate_command(command)
+
+    def reset(self, state: RobotState) -> None:
+        self.policy_controller.reset(state)
+
+    def step(self, state: RobotState, context: ControlContext[PlanarVelocityCommand]) -> ControllerStep:
+        return self.policy_controller.step(state, context)
+
+    def request_stop(self) -> None:
+        self.policy_controller.request_stop()

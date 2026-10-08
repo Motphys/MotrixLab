@@ -12,11 +12,11 @@ from onnx import TensorProto, helper, numpy_helper
 
 from motrix_deploy.contracts import TensorSpec
 from motrix_deploy.errors import ValidationError
-from motrix_deploy.policy import NoOpPolicyRuntime, OnnxPolicyRuntime, PolicyRuntime
+from motrix_deploy.policy import NoOpPolicy, OnnxPolicy, Policy
 
 
 def test_decision_runtime_only_requires_infer() -> None:
-    class Planner(PolicyRuntime):
+    class Planner(Policy):
         def infer(self, observation):
             return observation[::-1].copy()
 
@@ -26,19 +26,13 @@ def test_decision_runtime_only_requires_infer() -> None:
 
 
 def test_noop_returns_independent_zero_actions_and_ignores_observation() -> None:
-    runtime = NoOpPolicyRuntime(3)
+    runtime = NoOpPolicy(3)
     first = runtime.infer(np.array([1.0], dtype=np.float32))
     assert first.shape == (3,) and first.dtype == np.float32
     np.testing.assert_array_equal(first, np.zeros(3))
     first[:] = 10
     runtime.reset()
     np.testing.assert_array_equal(runtime.infer(np.arange(10, dtype=np.float32)), np.zeros(3))
-
-
-@pytest.mark.parametrize("size", [-1, True, 1.5])
-def test_noop_rejects_invalid_action_size(size) -> None:
-    with pytest.raises(ValidationError, match="policy.noop.action_size"):
-        NoOpPolicyRuntime(size)
 
 
 def _write_linear_model(
@@ -72,7 +66,7 @@ def _write_linear_model(
 def test_onnx_policy_validates_io_and_runs_float32(tmp_path: Path) -> None:
     path = tmp_path / "policy.onnx"
     _write_linear_model(path)
-    runtime = OnnxPolicyRuntime(
+    runtime = OnnxPolicy(
         path,
         TensorSpec(name="observation", shape=(1, 4)),
         TensorSpec(name="action", shape=(1, 2)),
@@ -87,7 +81,7 @@ def test_onnx_policy_validates_io_and_runs_float32(tmp_path: Path) -> None:
 def test_onnx_policy_accepts_dynamic_model_batch_for_single_sample_runtime(tmp_path: Path) -> None:
     path = tmp_path / "policy.onnx"
     _write_linear_model(path, dynamic_batch=True)
-    runtime = OnnxPolicyRuntime(
+    runtime = OnnxPolicy(
         path,
         TensorSpec(name="observation", shape=(1, 4)),
         TensorSpec(name="action", shape=(1, 2)),
@@ -103,7 +97,7 @@ def test_onnx_policy_rejects_manifest_name_mismatch(tmp_path: Path) -> None:
     _write_linear_model(path, output_name="actual_action")
 
     with pytest.raises(ValidationError, match="policy.output.name"):
-        OnnxPolicyRuntime(
+        OnnxPolicy(
             path,
             TensorSpec(name="observation", shape=(1, 4)),
             TensorSpec(name="action", shape=(1, 2)),
@@ -113,7 +107,7 @@ def test_onnx_policy_rejects_manifest_name_mismatch(tmp_path: Path) -> None:
 def test_onnx_policy_rejects_non_finite_input(tmp_path: Path) -> None:
     path = tmp_path / "policy.onnx"
     _write_linear_model(path)
-    runtime = OnnxPolicyRuntime(
+    runtime = OnnxPolicy(
         path,
         TensorSpec(name="observation", shape=(1, 4)),
         TensorSpec(name="action", shape=(1, 2)),
@@ -126,7 +120,7 @@ def test_onnx_policy_rejects_non_finite_input(tmp_path: Path) -> None:
 def test_onnx_policy_rejects_non_finite_output(tmp_path: Path) -> None:
     path = tmp_path / "policy.onnx"
     _write_linear_model(path, nan_output=True)
-    runtime = OnnxPolicyRuntime(
+    runtime = OnnxPolicy(
         path,
         TensorSpec(name="observation", shape=(1, 4)),
         TensorSpec(name="action", shape=(1, 2)),

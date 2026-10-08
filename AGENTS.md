@@ -61,6 +61,16 @@ Review 或修改 initializer 时：
 - 检查仓库使用方、文档、环境/插件注册和 import 环风险；
 - 清理后验证 package import 与注册行为。
 
+### Package README
+
+README 从宏观上说明 package：它提供什么能力、如何安装与使用、以及该 package 特有的契约与边界。不要把 README
+写成实现文档——内部数值（增益、维度、阈值列表）、actor 数学公式、逐字段契约说明、调度器/时钟语义等应留在代码、
+设计文档（`wiki/`）或用户教程（`docs/`）中，README 最多以一两句话概括并链接过去。不要叙述修改历史、调试过程或
+对旧实现/历史报告作辩护。
+
+框架级契约（Runtime/ControlSession/Controller 语义、rollout result 口径等）只在一处维护——对应框架 package 的
+README 或教程；插件与任务 package 的 README 不重复这些内容，只描述本 package 特有的部分。
+
 ### Manager Kernel 入口方法
 
 Manager fused-kernel 入口方法必须用 `@dispatch` 装饰，绝不使用 `@njit`——Numba 编译、缓存和内联由 manager

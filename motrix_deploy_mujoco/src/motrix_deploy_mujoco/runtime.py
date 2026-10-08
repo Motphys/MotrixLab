@@ -9,9 +9,8 @@ import logging
 import time
 from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import replace
 from types import ModuleType
-from typing import TYPE_CHECKING, TypeVar, cast
+from typing import TYPE_CHECKING, cast
 
 from motrix_deploy.contracts import RobotSpec
 from motrix_deploy.robot.interface import RobotInterface
@@ -22,21 +21,18 @@ from motrix_env_core.input import KeyboardDevice
 if TYPE_CHECKING:
     import mujoco
 
-    from motrix_deploy.runtime.control import ControlSession
 
 import numpy as np
 from numpy.typing import NDArray
 
 from motrix_deploy.errors import ValidationError
-from motrix_deploy.runtime.result import RolloutResult
+from motrix_deploy.runtime.result import SimulationRolloutResult
 from motrix_deploy.runtime.scheduler import FixedStepScheduler, RealtimeScheduler
 from motrix_deploy_mujoco.robot import Robot
 from motrix_deploy_mujoco.viewer import MujocoGlfwViewer
 from motrix_env_core.config.scene import SystemCameraCfg
 from motrix_env_core.config.scene.base import RobotCfg
 from motrix_env_mujoco.compiler import MuJoCoSceneCompiler
-
-CommandT = TypeVar("CommandT")
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +63,7 @@ class MujocoRuntime(SimulationRuntime):
         self.config = config
         self.control_period_s: float | None = None
         if control_period_s is not None:
-            self._configure_control_period(control_period_s)
+            self._configure_session_period(control_period_s)
         self.realtime = config.realtime
         self._closed = False
         self._source_spec: mujoco.MjSpec | None = None
@@ -78,19 +74,12 @@ class MujocoRuntime(SimulationRuntime):
     def robot(self) -> RobotInterface:
         return self._robot
 
-    def _configure_control_period(self, period_s: float) -> None:
+    def _configure_session_period(self, period_s: float) -> None:
         ratio = period_s / self.sim.dt
         if not np.isfinite(ratio) or ratio < 1 or not np.isclose(ratio, round(ratio), atol=1e-9):
-            raise ValidationError("control.period_s", "an integer multiple of physics.dt", period_s)
+            raise ValidationError("session.period_s", "an integer multiple of physics.dt", period_s)
         self.control_period_s = period_s
         self.physics_substeps = round(ratio)
-
-    def bind_control_session(self, control: ControlSession[CommandT]) -> None:
-        """Bind control ownership and derive physics cadence from the session."""
-        # Resolve identity conflicts before changing the runtime's timing.
-        self._resolve_control(control)
-        self._configure_control_period(control.period_s)
-        super().bind_control_session(control)
 
     def _derive_robot_spec(self) -> RobotSpec:
         """Inspect physical limits, never controller gains, before binding robot I/O."""
@@ -172,72 +161,26 @@ class MujocoRuntime(SimulationRuntime):
         self.data.ctrl.fill(0.0)
         self.mj.mj_forward(self.model, self.data)
 
-    def run(
-        self,
-        control: ControlSession[CommandT] | None = None,
-        *,
-        steps: int | None = None,
-        realtime: bool | None = None,
-    ) -> RolloutResult:
-        """Drive shared control at physics boundaries inside an already-open world.
+    def _physics_time_s(self) -> float:
+        return float(self.data.time)
 
-        Control writes cached commands only. This owner re-evaluates robot PD on
-        every physics substep, and paces complete control intervals independently
-        of the shared control lifecycle. Stopping control leaves this world open.
-        """
+    def run(self, *, realtime: bool | None = None) -> SimulationRolloutResult:
         if not self._opened:
             raise RuntimeError("MuJoCo simulation with a registered robot is not open")
-        control = self._resolve_control(control)
-        if steps is not None and (not isinstance(steps, int) or isinstance(steps, bool) or steps <= 0):
-            raise ValidationError("steps", "a positive integer", steps)
-        self._configure_control_period(control.period_s)
-        if realtime is None:
-            realtime = self.realtime
-        paced = self.viewer is not None if realtime is None else realtime
-        assert self.physics_substeps is not None and self.control_period_s is not None
-        scheduler = (RealtimeScheduler if paced else FixedStepScheduler)(self.control_period_s)
-        assert self.data is not None and self.model is not None
-        initial_time_s = float(self.data.time)
-        simulation_time_s = 0.0
-        try:
-            if control.start():
-                # Establish relative simulation time after control initialization.
-                initial_time_s = float(self.data.time)
-                scheduler.reset()
-                substep = 0
-                while control.active:
-                    if substep % self.physics_substeps == 0:
-                        if steps is not None and control.completed_steps >= steps:
-                            break
-                        self.check_viewer_running()
-                        if not control.tick(elapsed_time_s=float(self.data.time) - initial_time_s):
-                            break
-                    self._robot.apply_control()
-                    self.mj.mj_step(self.model, self.data)
-                    substep += 1
-                    if substep % self.physics_substeps == 0:
-                        self.sync_viewer()
-                        # Absolute deadlines avoid accumulated wall-clock drift,
-                        # and include the final interval without an extra tick.
-                        scheduler.wait(substep // self.physics_substeps)
-        except (Exception, KeyboardInterrupt) as error:
-            control.fail(error)
-        finally:
-            simulation_time_s = float(self.data.time) - initial_time_s
-            control.stop()
-        result = control.result(steps=steps, overrun_count=scheduler.overrun_count)
-        return replace(
-            result,
-            simulation_time_s=simulation_time_s,
-            real_time_factor=simulation_time_s / result.wall_time_s if result.wall_time_s > 0 else 0.0,
-        )
+        if self.session is None:
+            raise ValidationError("runtime.session", "a bound control session", None)
+        paced = self.realtime if realtime is None else realtime
+        if paced is None:
+            paced = self.viewer is not None
+        scheduler = (RealtimeScheduler if paced else FixedStepScheduler)(self.session.period_s)
+        return self._run_session(scheduler)
 
     def advance_control_period(self) -> None:
         """Advance physics, re-evaluating cached robot PD at every substep."""
         if not self._opened:
             raise RuntimeError("MuJoCo simulation with a registered robot is not open")
         if self.physics_substeps is None:
-            raise RuntimeError("Bind a control session before advancing a control period")
+            raise RuntimeError("Bind a session before advancing a session period")
         self.check_viewer_running()
         for _ in range(self.physics_substeps):
             self._robot.apply_control()
@@ -257,8 +200,6 @@ class MujocoRuntime(SimulationRuntime):
         if self._closed:
             return
         try:
-            if self.control is not None and self.control.active:
-                self.control.stop()
             if self.viewer is not None:
                 self.viewer.close()
                 deadline = time.monotonic() + 2.0

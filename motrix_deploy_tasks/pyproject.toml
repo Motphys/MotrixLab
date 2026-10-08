@@ -19,7 +19,8 @@ dependencies = [
 ]
 
 [project.entry-points."motrix_deploy.tasks"]
-"go2_walk/v1" = "motrix_deploy_tasks.tasks.go2_walk:Go2WalkDeployTaskV1"
+"go2_walk/v1" = "motrix_deploy_tasks.tasks.go2_walk:Go2WalkDeployTask"
+"g1_wbt/v1" = "motrix_deploy_tasks.tasks.g1_wbt:G1WbtDeployTask"
 
 [project.entry-points."motrix_deploy.envs"]
 flat = "motrix_deploy_tasks.envs.flat:build_scene"

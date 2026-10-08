@@ -26,6 +26,7 @@ from motrix_deploy.artifact import (
     sha256_bytes,
     write_artifact,
 )
+from motrix_deploy.artifact.schema import PayloadSpec
 from motrix_deploy.contracts import RobotSpec, TensorSpec
 from motrix_deploy.env import assemble_deploy_scene, create_deploy_env
 from motrix_deploy_tasks.tasks.go2_walk import Go2WalkTaskSpec
@@ -200,6 +201,7 @@ def test_installed_go2_task_can_be_created_without_preimport(tmp_path: Path) -> 
         "from motrix_deploy.artifact import TaskSpec; "
         "from motrix_deploy.contracts import RobotSpec; "
         "from motrix_deploy.task import create_task; "
+        "from motrix_deploy.policy import NoOpPolicy; "
         "specs = json.load(open(sys.argv[1])); "
         "specs['robot']['joint_names'] = tuple(specs['robot']['joint_names']); "
         "specs['robot'].update({key: np.asarray(value, dtype=np.float32) "
@@ -208,9 +210,9 @@ def test_installed_go2_task_can_be_created_without_preimport(tmp_path: Path) -> 
         "assert type(spec).__name__ == 'Go2WalkTaskSpec'; "
         "assert type(spec).__module__ == 'motrix_deploy_tasks.tasks.go2_walk'; "
         "assert not any(name in sys.modules for name in ('motrix_envs', 'motrixsim', 'mujoco', 'torch')); "
-        "task = create_task(spec, RobotSpec(**specs['robot'])); "
+        "task = create_task(spec, RobotSpec(**specs['robot']), NoOpPolicy(12)); "
         "assert type(task).__module__ == 'motrix_deploy_tasks.tasks.go2_walk'; "
-        "assert type(task).__name__ == 'Go2WalkDeployTaskV1'"
+        "assert type(task).__name__ == 'Go2WalkDeployTask'"
     )
 
     result = subprocess.run(
@@ -329,6 +331,64 @@ def test_headless_simulation_cli_runs_deterministic_onnx_fixture(tmp_path: Path,
             assert "duration_s" in invalid_bound.stderr
 
 
+@pytest.mark.parametrize("backend,solver_iterations", [("mujoco", 100), ("motrixsim", 3)])
+def test_standard_cli_completes_four_phase_flow(tmp_path, backend, solver_iterations):
+    """Standing preparation, frozen-reference hold, then the requested playback budget."""
+    pytest.importorskip(backend)
+    pytest.importorskip("onnxruntime")
+    from motrix_envs.deploy.g1_wbt import build_g1_wbt_profile
+
+    profile = build_g1_wbt_profile("g1-wbt-dance")
+    graph = helper.make_graph(
+        [helper.make_node("MatMul", ["obs", "weight"], ["actions"])],
+        "zero_wbt_policy",
+        [helper.make_tensor_value_info("obs", TensorProto.FLOAT, [1, 154])],
+        [helper.make_tensor_value_info("actions", TensorProto.FLOAT, [1, 29])],
+        [numpy_helper.from_array(np.zeros((154, 29), dtype=np.float32), name="weight")],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model.ir_version = 10
+    payload = model.SerializeToString()
+    manifest = DeploymentManifest(
+        schema_version="motrix-deploy/v1",
+        source=SourceSpec("test", "wbt-smoke", "fixture"),
+        policy=PolicySpec(
+            "onnx/v1",
+            "policy/model.onnx",
+            sha256_bytes(payload),
+            TensorSpec("obs", (1, 154)),
+            TensorSpec("actions", (1, 29)),
+        ),
+        robot=profile.robot,
+        task=profile.task,
+        control=profile.control,
+        payloads=tuple(PayloadSpec(path, sha256_bytes(data)) for path, data in sorted(profile.payloads.items())),
+    )
+    artifact = tmp_path / "wbt.deploy"
+    write_artifact(artifact, manifest, {"policy/model.onnx": payload, **profile.payloads})
+    command = [
+        sys.executable,
+        "-c",
+        "from motrix_deploy.cli import main; main()",
+        "task=g1-wbt-dance/sim",
+        f"artifact={artifact}",
+        "runtime.viewer=false",
+        f"runtime.backend={backend}",
+        f"runtime.physics.solver_iterations={solver_iterations}",
+        # The default zero hold plus the task's mandatory held-reference interval
+        # make the takeover-to-playback distance deterministic.
+        "duration_s=0.04",
+    ]
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    report = _rollout_result(result.stdout)
+    assert report["success"]
+    assert report["exit_reason"] == "completed"
+    # One mandatory hold interval plus the two-tick playback budget.
+    assert report["completed_steps"] == 3
+    assert report["policy_simulation_time_s"] == pytest.approx(3 * profile.control.period_s)
+
+
 def _robot_spec() -> RobotSpec:
     return RobotSpec(
         base_link_name="base",
@@ -366,7 +426,6 @@ def _task_spec() -> Go2WalkTaskSpec:
         gait_frequency_hz=2.0,
         standing_threshold=0.05,
         termination_min_up_z=0.25,
-        termination_min_base_height=None,
         kp=[35.0] * 12,
         kd=[0.5] * 12,
         action_lower=[-1.0] * 12,

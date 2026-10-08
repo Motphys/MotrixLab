@@ -30,7 +30,16 @@ motrix-deploy inspect artifact=artifacts/go2-walk-flat.deploy
 导出会选择最近一次 run，并创建 `artifacts/go2-walk-flat.deploy/`。用 `run=<run-dir>` 替代 `env` 可选择指定 run，
 `output=<new-artifact-dir>` 可更改输出位置。已有 artifact 目录不会被覆盖。确认检查结果为 `valid: true`。
 
-artifact 包含 ONNX 策略、机器人与控制设置，以及任务规格。部署还需要安装 `motrix_deploy_tasks` 插件，提供行走任务实现、
+artifact 目录自包含：
+
+```text
+go2-walk-flat.deploy/
+├── manifest.json        # 机器人/控制/任务设置与 payload 校验和
+├── policy/model.onnx    # 导出的 actor（含输入归一化）
+└── task/                # 任务自有 payload（例如 G1 的 motion NPZ）
+```
+
+部署还需要安装 `motrix_deploy_tasks` 插件，提供行走任务实现、
 部署场景和 Hydra 配方，以及目标对应的运行时插件。配方安装在插件中，在仓库外运行也不需要 workspace 配置路径。
 任务 defaults 选择 Hydra 运行时组（`sim` 或 `hardware`），无需另行覆盖运行时组。
 顶层公共设置为 `artifact`、`duration_s` 和 `command`。所有目标专用设置直接位于 `runtime` 下；
@@ -63,9 +72,9 @@ motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
 python examples/deploy_to_sim.py --headless --steps 100
 ```
 
-它通过 `create_simulation_runtime` 创建 MuJoCo 运行时，用 `runtime.bind_control_session(control)` 连接
-`ControlSession`，并在 `with runtime:` 中运行。控制会话负责输入、观察、推理和机器人指令；运行时负责物理推进、
-调度和 viewer。直接使用 ONNX 文件时需要显式指定任务预处理和动作设置；artifact 则为 CLI 携带这些设置。
+示例在外部加载模型并注入 task；task 计算机器人命令，control session 负责机器人 I/O 与执行统计，
+runtime 负责物理推进、调度与 viewer。[进阶的显式组装](#显式组装-runtime-与任务)一节逐步展示同样的组合方式。
+直接使用 ONNX 文件时需要显式指定任务预处理和动作设置；artifact 则为 CLI 携带这些设置。
 
 ### 选择原生 MotrixSim
 
@@ -116,12 +125,41 @@ motrix-deploy-unitree joint-control enp5s0 FL_thigh_joint 0.9 \
 该工具使用 artifact 中的机器人、增益、时序和限位设置。等待 Start 和 A 后，移动关节、保持、返回默认姿态，
 最后以阻尼模式关闭。
 
-## 进阶说明
+## 部署 G1 WBT 舞蹈
 
-Artifact 检查通过 `motrix_deploy.tasks` 解析版本化 task 类并校验其 Pydantic `spec_type`，
-不构造 task，也不 import 训练环境或仿真后端。JSON wire format 保持 `{name, config}`。
-Python 使用 `spec.kp`、`spec.action_scale` 等直接属性；action scale 与上下界是规范关节顺序的向量。
-Policy action 上下界先于缩放和默认姿态偏移生效；机器人 position limits 约束最终关节目标。
+G1 全身跟踪舞蹈任务使用同样的导出 → artifact → `motrix-deploy` 流程。artifact 内嵌伺服增益、action scale、
+preparation 增益与时序、安全阈值以及完整的 motion 片段（以 `payloads/motion.npz` payload 形式，校验和记录在
+manifest 中），部署既不需要 Torch 也不需要 RL 环境。导出需要训练 provider 与任务环境包，但**不**执行训练：
+
+```bash
+source .venv/bin/activate
+RUN=runs/g1-wbt-dance/motrix/torch/fastsac/<run-dir>
+python scripts/export_deploy.py run="$RUN" \
+  output=artifacts/g1-wbt-dance-software-pd.deploy validation.atol=3e-5
+
+motrix-deploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy
+```
+
+无窗口验证与 artifact 检查：
+
+```bash
+motrix-deploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy \
+  runtime.viewer=false
+motrix-deploy inspect artifact=artifacts/g1-wbt-dance.deploy
+```
+
+默认时长来自内嵌的 motion 片段；更短的运行用 `duration_s` 缩短，超长时长会在打开 backend 前被拒绝，
+不会循环或保持。无需速度指令：motion 由 artifact 持有。同一 artifact 可运行在 MuJoCo 与 MotrixSim
+（`runtime.backend=motrixsim`，配合训练预算使用 `runtime.physics.solver_iterations=3`）。
+它不是真机部署 recipe：当前 Unitree 传输仅支持 Go2，且 sim2sim 成功不代表真机安全。
+
+任务按真实部署实践编排四个阶段：`prepare`（实测关节 ramp 到默认站立位，就绪门连续满足）、`policy_hold`、
+`playback` 与 `damping`。默认就绪后自动接管；程序化应用可用 `automatic_start=False`、请求方法或附加键盘
+（`p` 启动 policy、`m` 提前启动 motion、`o` 停止）手动分步。注意舞蹈以后倾姿态结束，该姿态只有跟踪中的
+policy 能维持平衡：播放预算完成后 task 直接进入实测 damping 收尾，若要以站立收场，应让 motion 本身以
+站立姿态结束。
+
+## 进阶说明
 
 ### 从 YAML 加载 task spec
 
@@ -139,33 +177,15 @@ spec = Go2WalkTaskSpec.model_validate(OmegaConf.to_container(cfg, resolve=True))
 `Go2WalkTaskSpec` 使用字段约束和 model validator 校验关节向量长度及上下界顺序，无需单独调用 `validate()`。
 完整 deployment manifest 应通过 artifact reader 读取。
 
-### 启动与数组校验
-
-`RobotInterface.enable()` 不接收初始命令。Unitree 自行过渡到 `RobotSpec.default_joint_position`，
-目标速度和 feedforward torque 为零，使用解析后的启动增益。`runtime.kp` / `runtime.kd` 覆盖 artifact 增益；
-`null` 保留 artifact 增益。启动不通过 task `process_action()` 转换零动作。
-初始状态 safety 与 task termination 检查仍先于 enable，之后重新检查新状态；Start/A 门控不变。
-
-`DeployTask` 不声明 `observation_size` 或 `action_size`。policy 输入边界校验实际 observation，
-task action 转换边界校验实际 policy 输出。CLI 组装不提前比较 task 维度。manifest tensor specs
-保持模型元数据；`DeploymentProfile` 维度仅用于导出时与编译环境交叉校验。
-
 ### 真机传感器与电机接线
 
 `motrix_deploy_unitree.hardware.UnitreeGo2HardwareCfg` 独立持有不依赖资产的硬件姿态与接线。
 `HardwareSensorBinding` 映射 SDK IMU 字段，包括将 `wxyz` 四元数转换为规范 `xyzw`；
-`UnitreeMotorBinding` 将规范关节名映射到 SDK 电机索引。这些定义属于硬件插件的 `sensor` 和
-`actuation` 模块，而不是仿真机器人模型。artifact 仍拥有策略关节顺序、默认姿态和限幅。
-导入硬件配置不会提前加载模型资产、仿真器或 SDK，也不伪造 base position 或 linear velocity。
+`UnitreeMotorBinding` 将规范关节名映射到 SDK 电机索引。artifact 仍拥有策略关节顺序、默认姿态和限幅。
 
 ### 选择部署世界
 
 通过 `runtime.deploy_env_id` 选择世界，通过现有 registry ID `runtime.robot_id` 选择机器人。
-CLI 调用 `motrix_deploy.env.assemble_deploy_scene(deploy_env_id, robot_id)`：创建无机器人世界，
-通过 `motrix_env_core.registry.make_robot_config(robot_id)` 填入 `scene.objs.robot`。
-core registry 惰性发现已安装的 `motrix_env_core.robots` entry points，训练与部署复用同一机制。部署世界 `flat` 和 `rough` 位于独立的
-`motrix_deploy_tasks.envs` 模块，使用 core 地面/高度场配置，不 import 训练任务、机器人模型或训练 contact 配置。
-
 保留同一 Go2 recipe 和 artifact，仅切换世界：
 
 ```bash
@@ -175,6 +195,9 @@ motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
 
 仅覆写世界不会改变机器人 attachment placement。新地形需要不同净空时应调整 `runtime.robot_translation`；
 完整的 `task=go2-walk-rough/sim` recipe 自带对应的 attachment 默认值。
+`RobotCfg.translation`/`rotation` 是与模型固有 base pose 组合一次的 attachment transform：
+Go2 固有 base 高度为 0.445 m，identity rotation 下，平地 recipe 的 -0.114 m 偏移得到 0.331 m，
+粗糙地形 recipe 的 -0.025 m 偏移得到 0.42 m。
 
 已安装的平地 recipe 使用 ID 选择世界和机器人：
 
@@ -188,32 +211,15 @@ runtime:
   robot_rotation: [0.0, 0.0, 0.0, 1.0]
 ```
 
-`runtime.physics` 与 `runtime.sensor_bindings` 仍是独立设置。MuJoCo 只接收完整 `SceneCfg`，
-不选择环境/机器人组合，不组装场景，也不查询训练 registry。程序化 `SimulationRuntimeConfig.scene` 接收同一个完整场景，
-机器人只在 `scene.objs.robot` 中声明一次。
+`runtime.physics` 使用共享的 `SimCfg`（`dt`、`solver_iterations`、`solver_tolerance`、`gravity`，
+默认 `dt=0.002, solver_iterations=100`）；可选字段设为 `None` 时保留模型来源中的值。
+物理参数应在 runtime 构造前设置——不支持编译后修改 `dt` 动态调参。
 
-Placement 只有一个来源：`RobotCfg.translation`（Vec3）与 `rotation`（xyzw）是 attachment transform，
-与模型固有 base pose 组合一次，并非绝对世界 root 位姿。Go2 固有 base 高度为 0.445 m；identity rotation 下，
-平地 recipe 的 -0.114 m 偏移得到 0.331 m，粗糙地形 recipe 的 -0.025 m 偏移得到 0.42 m。
-runtime 在复制的场景中保留这些变换。`mj_resetData` 恢复编译后的 `model.qpos0`，包括组合后的 root placement；
-初始化只用绑定 `RobotSpec` 的关键姿态覆写 articulation 关节。
+`runtime.sensor_bindings` 把状态角色映射到模型内 sensor 名称，只支持 `base_angular_velocity`、
+`base_linear_acceleration` 与 `base_linear_velocity`（`str | None`）。MuJoCo 要求绑定角速度和加速度；
+可选的 `base_linear_velocity` 未绑定时保持 `None`。
 
-外部世界插件在 `motrix_deploy.envs` entry-point group 中声明零参数 `SceneCfg` factory。
-`motrix_deploy.env.available_deploy_envs()` 无需加载 factory 即可列出已安装 ID；
-`create_deploy_env(id)` 只加载选中的 factory，并要求 `scene.objs.robot` 为空。
-core 组装 helper 添加由现有 robot registry 选择的机器人；不引入通用 scene-factory registry，也不通过
-Hydra 实例化场景。CLI 消费 `deploy_env_id`、`robot_id` 与可选 `robot_translation` / `robot_rotation`，
-把 attachment overrides 写入 `scene.objs.robot.translation` / `.rotation` 后，再把完整场景传给仿真插件。
-这些应用层选项不是 runtime backend 字段。
-
-`SimulationRuntimeConfig` 负责场景、渲染、实时节奏与状态来源设置；其 `physics` 字段使用共享的
-`motrix_env_core.config.sim.SimCfg` 配置 `dt`、`solver_iterations`、`solver_tolerance` 与 `gravity`，
-默认值为 `SimCfg(dt=0.002, solver_iterations=100)`。两个 backend compiler 直接消费该字段：
-可选 solver/gravity 字段为 `None` 时保留模型来源中的值，显式配置则覆盖。
-YAML 仍使用 `runtime.physics`，与场景、state sensors 保持独立。
-物理参数应在 runtime 构造前设置：runtime 读取编译使用的共享 `SimCfg`；不支持编译后修改 `dt` 来动态调参。
-
-程序化应用使用同一 helper，并把结果传给 `SimulationRuntimeConfig`：
+程序化应用组装同一场景并传给 `SimulationRuntimeConfig`：
 
 ```python
 from motrix_deploy.env import assemble_deploy_scene
@@ -234,48 +240,42 @@ config = SimulationRuntimeConfig(
 )
 ```
 
-`SimulationRuntimeConfig.sensor_bindings` 使用 frozen dataclass `SensorBindings`，
-而非 Python 字典。它只支持 `base_angular_velocity`、`base_linear_acceleration` 与
-`base_linear_velocity`，类型均为 `str | None`，默认为 `None`。名称必须非空且至少包含
-一个非空白字符；未知角色与非字符串值均被拒绝。YAML `runtime.sensor_bindings` 保留同样的
-映射键，在配置边界通过 `SensorBindings(**mapping)` 转换。字段缺省或显式 `None` 表示
-没有绑定；MuJoCo 在打开机器人时会拒绝这三个必需角色的任一种未绑定状态。
-Backend 仍校验 sensor 是否存在、类型、维度与坐标系；不会为其他角色合成状态，
-也不是每个 `RobotState` 字段都通过 sensor 绑定。
+更多世界来自已安装的插件：在 `motrix_deploy.envs` entry-point group 中声明零参数 `SceneCfg` factory，
+`motrix_deploy.env.available_deploy_envs()` 可列出已安装 ID。
 
-### 显式组装 runtime 与控制器
+### 显式组装 runtime 与任务
 
-Runtime factory 选择 backend 并准备 `runtime.robot`；绑定的 `RobotSpec` 在 `open()` 之前即可读取。
-应用自行创建 task、policy 与 command binding，再显式构造并绑定 control session。
-沿用上面的 `config` 以及应用持有的 `task`、`policy`、`command_binding`：
+Runtime factory 选择 backend 并准备 `runtime.robot`；`RobotSpec` 在 `open()` 前即可读取。
+在外部加载模型，然后构造并绑定 session。沿用上面的 `config` 以及应用持有的
+`task_spec`、`model` 与 Go2 `command_binding`：
 
 ```python
 from motrix_deploy.runtime.control import ControlSession
 from motrix_deploy.runtime.factory import create_simulation_runtime
+from motrix_deploy.task import create_task
 
 runtime = create_simulation_runtime("mujoco", config)
 robot = runtime.robot
-control = ControlSession(
+task = create_task(task_spec, robot.spec, model, steps=50)
+session = ControlSession(
     robot=robot,
-    task=task,
-    policy=policy,
+    controller=task,
     command_binding=command_binding,
     period_s=0.02,
+    state_timeout_s=0.1,
 )
-runtime.bind_control_session(control)
+runtime.bind_session(session)
 with runtime:
-    result = runtime.run(steps=50)
+    result = runtime.run()
 ```
 
-依赖机器人契约的 task 应在 runtime 创建后从 `robot.spec` 构造。仿真 runtime 只从 scene 派生
-`RobotSpec`，不接收外部 spec。Artifact 部署由 CLI 在组装 control 前，将 artifact 的机器人契约
-与 `runtime.robot.spec` 对照校验。
-`ControlSession.period_s` 是控制周期的
-唯一配置位置，`SimulationRuntimeConfig` 不重复声明；仿真 runtime 在绑定或解析 session 时校验该周期与 physics timestep
-的关系。Runtime 创建不接收控制器构造回调。
-Runtime context 持有世界资源并推进仿真；`ControlSession` 执行共享控制逻辑；`RobotInterface`
-负责机器人 I/O，不推进或关闭世界。硬件应用先调用 `create_hardware_runtime(name, config, context)`，
-再使用同样的显式构造与绑定流程。直接调用方也可向 `runtime.run(control, steps=...)` 传入 session。
+`create_task(spec, robot, policy, steps=None)` 根据 spec 的任务名解析具体 task class；引用 artifact payload 的
+任务（例如 G1 的 motion NPZ）也通过同一调用获得 artifact。控制周期必须是 physics timestep 的整数倍。
+`command_binding` 默认值为 `None`：G1 舞蹈这类自主任务可省略，Go2 行走则需要外部组装速度 binding，
+其值由 task 按速度上下界校验。硬件应用使用 `create_hardware_runtime(name, config, context)` 并按同样方式组装 session。
+
+`runtime.run()` 返回 rollout 结果，包含成功标志、退出原因、模型完成步数、墙钟耗时与延迟统计；
+仿真运行额外报告 `real_time_factor`。
 
 ### 选择原生 MotrixSim 部署
 
@@ -288,10 +288,9 @@ motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
 ```
 
 同样的 override 适用于 `task=go2-walk-rough/sim`，无需复制 task recipe。程序化应用调用
-`create_simulation_runtime("motrixsim", config)`，然后沿用上面的显式 session 绑定流程。
+`create_simulation_runtime("motrixsim", config)`，然后沿用上面的显式 session 组装流程。
 Go2 state mappings 仍为 `gyro`、`accelerometer` 与 `global_linvel`：原生 sensor 校验 local angular
-velocity/acceleration 与 world-frame linear velocity。Runtime 持有原生 MSD 编译、model/data、reset、physics
-与可选 SDK `RenderApp` 渲染，不创建 MuJoCo runtime 或训练环境。在可用的图形环境中移除 `runtime.viewer=false`
+velocity/acceleration 与 world-frame linear velocity。在可用的图形环境中移除 `runtime.viewer=false`
 即可启用原生 viewer 与其 keyboard provider。
 
 程序化 ONNX 示例可运行

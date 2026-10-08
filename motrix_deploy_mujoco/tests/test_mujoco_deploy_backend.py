@@ -208,7 +208,7 @@ def test_state_sensor_mapping_rejects_unknown_roles() -> None:
         SimulationRuntimeConfig.from_mapping(values)
 
 
-@pytest.mark.parametrize("role", ["base_angular_velocity", "base_linear_acceleration", "base_linear_velocity"])
+@pytest.mark.parametrize("role", ["base_angular_velocity", "base_linear_acceleration"])
 def test_missing_state_sensor_fails_at_model_binding(role: str) -> None:
     config = _config()
     config = replace(config, sensor_bindings=replace(config.sensor_bindings, **{role: None}))
@@ -414,7 +414,7 @@ def test_sensor_bindings_resolve_robot_names_and_are_cached(monkeypatch: pytest.
     state = backend.robot.read_state(0.1)
     for role in ("base_angular_velocity", "base_linear_acceleration", "base_linear_velocity"):
         np.testing.assert_allclose(getattr(state, role), backend.data.sensordata[backend.robot._sensor_slices[role]])
-    np.testing.assert_allclose(state.base_position, backend.model.qpos0[:3])
+    np.testing.assert_allclose(backend.data.xpos[backend.robot._base_body_id], backend.model.qpos0[:3])
     np.testing.assert_allclose(state.base_angular_velocity, [0.4, -0.5, 0.6], atol=1e-6)
     backend.close()
 
@@ -470,7 +470,7 @@ def test_direct_scene_cfg_headless_uses_supplied_robot_floor_and_placement() -> 
     backend.open()
     try:
         state = backend.robot.read_state(0.1)
-        np.testing.assert_allclose(state.base_position, backend.model.qpos0[:3])
+        np.testing.assert_allclose(backend.data.xpos[backend.robot._base_body_id], backend.model.qpos0[:3])
         np.testing.assert_allclose(state.base_orientation_xyzw, robot.rotation)
         floor_id = backend.mj.mj_name2id(backend.model, backend.mj.mjtObj.mjOBJ_GEOM, "floor")
         assert backend.model.geom_pos[floor_id, 2] == pytest.approx(0.2)

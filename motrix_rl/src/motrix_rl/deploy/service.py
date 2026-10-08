@@ -13,6 +13,7 @@ from motrix_deploy.artifact import (
     sha256_bytes,
     write_artifact,
 )
+from motrix_deploy.artifact.schema import PayloadSpec
 from motrix_deploy.contracts import TensorSpec
 from motrix_deploy.profile import DeploymentProfile
 from motrix_rl import checkpoints
@@ -80,8 +81,11 @@ def export_deploy_run(
         robot=profile.robot,
         task=profile.task,
         control=profile.control,
+        payloads=tuple(
+            PayloadSpec(path=path, sha256=sha256_bytes(data)) for path, data in sorted(profile.payloads.items())
+        ),
     )
-    artifact = write_artifact(output, manifest, {"policy/model.onnx": policy_bytes})
+    artifact = write_artifact(output, manifest, {"policy/model.onnx": policy_bytes, **profile.payloads})
     return DeploymentExportResult(
         artifact=artifact,
         validation_samples=exported.report.parity.samples,

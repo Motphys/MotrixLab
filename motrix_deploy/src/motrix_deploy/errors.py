@@ -24,3 +24,9 @@ class EmergencyStopError(RuntimeError):
 
 class LieDownRequestedError(RuntimeError):
     """A physical input requested the backend's configured lie-down shutdown."""
+
+
+class ControlFailure(RuntimeError):
+    def __init__(self, reason: str, message: str) -> None:
+        self.reason = reason
+        super().__init__(message)

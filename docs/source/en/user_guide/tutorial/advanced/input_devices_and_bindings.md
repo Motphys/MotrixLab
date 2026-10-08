@@ -29,9 +29,20 @@ input_devices_and_bindings/extending
 Backend-neutral InputDevice, binding, and task-command pipeline
 ```
 
-`ControlSession` combines a binding, task, policy, and `RobotInterface`. It reads the command, builds the task observation,
-runs the policy, and writes a `RobotCommand`. A simulation runtime advances physics and manages the viewer; a hardware
-runtime schedules control against live robot state. Both use the same task-command semantics.
+Policy means observation → action: `Policy` runs the model. Controller means robot
+state plus control input → `RobotCommand`. `DeployTask` is the complete task Controller;
+the execution hierarchy is Runtime → ControlSession → DeployTask → phase controllers.
+
+ControlSession reads an optional binding (or uses `None` for autonomous operation), constructs
+`ControlContext`, then calls `task.step(state, context)`. The task owns preparation, model
+execution and normal-stop behavior as required by that task. Its `PolicyController` uses a
+`PolicyProcessor` adapter for observation processing, inference and action conversion, without
+robot/backend handles or a reference back to the complete task. ControlSession writes
+`ControllerStep.command` and owns open/enable, state validation, health checks, cleanup
+and statistics. Runtime owns session scheduling and host lifecycle; only SimulationRuntime
+owns physics/viewer and simulation world resources. Hardware uses the same control path
+against live state; neither ControlSession nor Runtime interprets task phases. Faults bypass
+normal task stopping and invoke the backend fallback immediately.
 
 A simulation and a physical robot can select different concrete devices. For example, simulation can use a GLFW keyboard
 while a physical robot uses a remote controller or network input; both reuse the same binding and task-command semantics.
@@ -54,29 +65,12 @@ A high-level task command also has the opposite direction from `RobotCommand`:
 
 ## How a Binding Reaches the Task
 
-The runtime obtains a typed task command through `CommandBinding`:
-
-```python
-from motrix_deploy.runtime.context import PolicyContext
-
-command = command_binding.read_command(batch_size=1)
-context = PolicyContext(
-    step=step,
-    elapsed_time_s=elapsed_time_s,
-    command=command,
-)
-task.validate_command(context.command)
-observation = task.build_observation(state, context)
-```
-
-Deployment's robot I/O boundary `RobotInterface` and optional `KeyboardDeviceProvider` / `GamePadDeviceProvider`
-capability protocols are defined in `motrix_deploy.robot.interface`; import them from that module. The providers expose
-input devices whose lifecycle they own, rather than discovering runtime plugins. Runtime discovery remains in
-`motrix_deploy.runtime.factory` through `motrix_deploy.backends`, and recipes still select plugins with `runtime.backend`.
-The prepared `runtime.robot` is available before opening. The application constructs
-`ControlSession(robot=runtime.robot, command_binding=binding, ...)` explicitly,
-binds it with `runtime.bind_control_session(control)`, and runs it inside `with runtime`.
-The factory does not construct bindings or controllers through callbacks.
+In a training environment, the environment reads one command batch through the binding before
+each step and hands it to the task to build observations. In deployment, the `ControlSession`
+holds the same optional `CommandBinding` (`None` for autonomous tasks) and passes the read
+command to the task inside `ControlContext.command` — both sides consume the same typed
+command. See the {doc}`deployment tutorial <motrix_deploy>` for the complete session and
+runtime assembly.
 
 For example, MuJoCo deployment obtains a `MujocoKeyboardDevice` from the runtime's `KeyboardDeviceProvider` and constructs a
 `KeyboardPlanarVelocityBinding`. Training can use a random binding for the same `PlanarVelocityCommand`. Both paths end at the

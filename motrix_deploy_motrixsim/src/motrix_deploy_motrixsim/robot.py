@@ -47,6 +47,7 @@ class Robot(RobotInterface):
         self._last_communication_ns = 0
         self._health_reason = "simulation is not open"
         self._read: mtx.query.QueryProgram | None = None
+        self._read_fields: tuple[str, ...] = ()
         self._joint_read: mtx.query.QueryProgram | None = None
         self._write: mtx.write.WriteProgram | None = None
         self._joint_names = tuple(self._robot.resolve_name(name) for name in spec.joint_names)
@@ -62,7 +63,6 @@ class Robot(RobotInterface):
                     "base_orientation_xyzw",
                     "base_angular_velocity",
                     "base_linear_acceleration",
-                    "base_position",
                     "base_linear_velocity",
                 }
             ),
@@ -102,6 +102,8 @@ class Robot(RobotInterface):
         ):
             path = f"backend.sensor_bindings.{role}"
             local_name = getattr(self._runtime.config.sensor_bindings, role)
+            if local_name is None and role == "base_linear_velocity":
+                continue
             if local_name is None:
                 raise ValidationError(path, "an explicit model-local sensor name", local_name)
             name = self._robot.resolve_name(local_name)
@@ -128,11 +130,9 @@ class Robot(RobotInterface):
         self._runtime.reset()
         self.refresh_reads()
         self._command = None
-        assert self._write is not None
-        self._write["torque"][:] = 0
-        self._write.execute(self._runtime.data)
         self._opened = True
         self._closed = False
+        self.stop()
         self._health_reason = ""
         self._last_communication_ns = time.monotonic_ns()
 
@@ -146,11 +146,11 @@ class Robot(RobotInterface):
         self._joint_read = model.compile_query(joint_queries).allocate(data)
         queries = {
             **joint_queries,
-            "base_position": mtx.query.LinkPosition((self._robot.resolved_base_link_name,)),
             "base_orientation_xyzw": mtx.query.LinkRotation((self._robot.resolved_base_link_name,)),
         }
         queries.update({role: mtx.query.SensorValues((name,)) for role, name in self._sensor_names.items()})
         self._read = model.compile_query(queries).allocate(data)
+        self._read_fields = tuple(queries)
         self._write = model.compile_write({"torque": mtx.write.ActuatorCtrls(self._actuator_names)}).allocate(data)
 
     def open(self) -> None:
@@ -167,16 +167,7 @@ class Robot(RobotInterface):
         # Native programs reuse their buffers; public samples must own snapshots.
         # RobotState validates the canonical shapes, dtype and finite values.
         fields = {
-            name: np.array(self._read[name].reshape(-1), dtype=np.float32, copy=True)
-            for name in (
-                "joint_position",
-                "joint_velocity",
-                "base_position",
-                "base_orientation_xyzw",
-                "base_angular_velocity",
-                "base_linear_acceleration",
-                "base_linear_velocity",
-            )
+            name: np.array(self._read[name].reshape(-1), dtype=np.float32, copy=True) for name in self._read_fields
         }
         return RobotState(
             sample_time_ns=round(self._runtime.simulation_time_s * 1e9),
@@ -250,6 +241,7 @@ class Robot(RobotInterface):
         )
 
     def stop(self) -> None:
+        """Clear the command and apply zero torque immediately."""
         self._command = None
         if self._opened and not self._closed and self._write is not None:
             self._write["torque"][:] = 0

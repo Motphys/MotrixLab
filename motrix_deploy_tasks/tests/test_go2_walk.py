@@ -11,9 +11,11 @@ from pydantic import ValidationError as PydanticValidationError
 
 from motrix_deploy.artifact.schema import TaskSpec
 from motrix_deploy.contracts import RobotSpec, RobotState
-from motrix_deploy.errors import ValidationError
-from motrix_deploy.runtime import PolicyContext
-from motrix_deploy_tasks.tasks.go2_walk import Go2WalkDeployTaskV1, Go2WalkTaskSpec
+from motrix_deploy.errors import ControlFailure, ValidationError
+from motrix_deploy.policy import NoOpPolicy
+from motrix_deploy.runtime import ControlContext
+from motrix_deploy.runtime.control import PolicyController
+from motrix_deploy_tasks.tasks.go2_walk import Go2WalkDeployTask, Go2WalkPolicyProcessor, Go2WalkTaskSpec
 from motrix_env_core.input import PlanarVelocityCommand
 
 
@@ -21,11 +23,12 @@ def _replace_spec(spec: Go2WalkTaskSpec, **overrides: object) -> Go2WalkTaskSpec
     return type(spec).model_validate({**spec.model_dump(), **overrides})
 
 
-def _context(step: int, elapsed_time_s: float, velocity: list[float] | np.ndarray) -> PolicyContext:
-    return PolicyContext(
+def _context(step: int, elapsed_time_s: float, velocity: list[float] | np.ndarray) -> ControlContext:
+    return ControlContext(
         step=step,
         elapsed_time_s=elapsed_time_s,
         command=PlanarVelocityCommand(np.asarray(velocity, dtype=np.float32)[None, :]),
+        dt_s=0.02,
     )
 
 
@@ -62,12 +65,27 @@ def _task_spec() -> Go2WalkTaskSpec:
         gait_frequency_hz=2.0,
         standing_threshold=0.05,
         termination_min_up_z=0.25,
-        termination_min_base_height=None,
         kp=[35.0] * 12,
         kd=[0.5] * 12,
         action_lower=[-1.0] * 12,
         action_upper=[1.0] * 12,
     )
+
+
+def test_go2_missing_command_is_rejected_before_policy_and_action(monkeypatch):
+    robot = _robot()
+    task = Go2WalkPolicyProcessor(_task_spec(), robot)
+    policy = NoOpPolicy(robot.joint_count)
+    controller = PolicyController(task, policy, steps=1)
+    calls = []
+    monkeypatch.setattr(policy, "infer", lambda observation: calls.append("infer"))
+    monkeypatch.setattr(task, "process_action", lambda action: calls.append("action"))
+    state = _state(robot)
+    controller.reset(state)
+    with pytest.raises(ControlFailure) as failure:
+        controller.step(state, ControlContext(0, 0.0, None, dt_s=0.02))
+    assert failure.value.reason == "input_error"
+    assert not calls
 
 
 @pytest.mark.parametrize("up_z", [-1.0, 0.0, 0.75, 1.0])
@@ -77,7 +95,7 @@ def test_fall_orientation_uses_artifact_threshold(up_z: float) -> None:
     angle = np.arccos(up_z)
     state.base_orientation_xyzw = np.array([np.sin(angle / 2), 0.0, 0.0, np.cos(angle / 2)], dtype=np.float32)
     spec = _task_spec()
-    task = Go2WalkDeployTaskV1(spec, robot)
+    task = Go2WalkPolicyProcessor(spec, robot)
     reason = task.check_termination(state)
     assert (reason == "fall_orientation") == (up_z <= spec.termination_min_up_z)
 
@@ -85,29 +103,11 @@ def test_fall_orientation_uses_artifact_threshold(up_z: float) -> None:
 def test_fall_orientation_includes_threshold_boundary() -> None:
     spec = _task_spec()
     robot = _robot()
-    task = Go2WalkDeployTaskV1(_replace_spec(spec, termination_min_up_z=1.0), robot)
+    task = Go2WalkPolicyProcessor(_replace_spec(spec, termination_min_up_z=1.0), robot)
     assert task.check_termination(_state(robot)) == "fall_orientation"
 
 
-def test_enabled_fall_height_requires_position_and_uses_artifact_threshold() -> None:
-    robot = _robot()
-    state = _state(robot)
-    spec = _task_spec()
-    threshold = 0.25  # Exactly representable synthetic cutoff, not a tuned task default.
-    task = Go2WalkDeployTaskV1(_replace_spec(spec, termination_min_base_height=threshold), robot)
-    assert Go2WalkDeployTaskV1(spec, robot).check_termination(state) is None
-    with pytest.raises(ValidationError, match="state.base_position.*enabled base-height termination"):
-        task.check_termination(state)
-    state.base_position = np.array([0.0, 0.0, threshold - 0.1], dtype=np.float32)
-    assert task.check_termination(state) == "fall_height"
-    assert Go2WalkDeployTaskV1(spec, robot).check_termination(state) is None
-    state.base_position[2] = threshold
-    assert task.check_termination(state) == "fall_height"
-    state.base_position[2] = threshold + 0.1
-    assert task.check_termination(state) is None
-
-
-@pytest.mark.parametrize("key", ["termination_min_up_z", "termination_min_base_height", "standing_threshold"])
+@pytest.mark.parametrize("key", ["termination_min_up_z", "standing_threshold"])
 def test_missing_required_artifact_field_is_rejected_during_decoding(key: str) -> None:
     wire = _task_spec().to_dict()
     del wire["config"][key]
@@ -125,7 +125,7 @@ def test_typed_task_spec_roundtrips_through_common_codec() -> None:
 
 @pytest.mark.parametrize(
     ("key", "value"),
-    [("termination_min_up_z", 2.0), ("termination_min_up_z", True), ("termination_min_base_height", float("nan"))],
+    [("termination_min_up_z", 2.0), ("termination_min_up_z", True)],
 )
 def test_termination_config_is_validated(key: str, value: object) -> None:
     with pytest.raises(PydanticValidationError, match=key):
@@ -194,7 +194,7 @@ def test_invalid_wire_types_are_rejected_by_common_codec(key: str, value: object
         TaskSpec.from_dict(wire)
 
 
-@pytest.mark.parametrize("key", ["gait_frequency_hz", "standing_threshold", "termination_min_base_height"])
+@pytest.mark.parametrize("key", ["gait_frequency_hz", "standing_threshold"])
 def test_programmatic_numeric_fields_reject_booleans(key: str) -> None:
     with pytest.raises(PydanticValidationError, match=key):
         _replace_spec(_task_spec(), **{key: True})
@@ -283,7 +283,7 @@ def test_runtime_checks_robot_joint_count() -> None:
         torque_limit=robot.torque_limit[:-1],
     )
     with pytest.raises(ValidationError, match="task.config.action_scale"):
-        Go2WalkDeployTaskV1(_task_spec(), short_robot)
+        Go2WalkPolicyProcessor(_task_spec(), short_robot)
 
     joint_count = short_robot.joint_count
     spec = _replace_spec(
@@ -294,7 +294,7 @@ def test_runtime_checks_robot_joint_count() -> None:
         action_lower=[-1.0] * joint_count,
         action_upper=[1.0] * joint_count,
     )
-    task = Go2WalkDeployTaskV1(spec, short_robot)
+    task = Go2WalkPolicyProcessor(spec, short_robot)
     command = task.process_action(np.zeros(joint_count, dtype=np.float32))
     assert command.joint_position.shape == (joint_count,)
     assert command.joint_velocity.shape == (joint_count,)
@@ -305,7 +305,7 @@ def test_runtime_checks_robot_joint_count() -> None:
 def test_go2_observation_has_exact_49_element_contract() -> None:
     robot = _robot()
     state = _state(robot)
-    task = Go2WalkDeployTaskV1(_task_spec(), robot)
+    task = Go2WalkPolicyProcessor(_task_spec(), robot)
     context = _context(0, 0.0, [0.5, 0.0, -0.2])
     task.validate_command(context.command)
     task.reset(state, context)
@@ -324,7 +324,7 @@ def test_go2_observation_has_exact_49_element_contract() -> None:
 def test_previous_action_and_trot_phase_advance_after_first_tick() -> None:
     robot = _robot()
     state = _state(robot)
-    task = Go2WalkDeployTaskV1(_task_spec(), robot)
+    task = Go2WalkPolicyProcessor(_task_spec(), robot)
     reset_context = _context(0, 0.0, [0.5, 0.0, 0.0])
     task.validate_command(reset_context.command)
     task.reset(state, reset_context)
@@ -340,7 +340,7 @@ def test_previous_action_and_trot_phase_advance_after_first_tick() -> None:
 
 def test_standing_command_freezes_deployment_gait_phase() -> None:
     robot = _robot()
-    task = Go2WalkDeployTaskV1(_task_spec(), robot)
+    task = Go2WalkPolicyProcessor(_task_spec(), robot)
 
     context = _context(10, 0.2, np.zeros(3, dtype=np.float32))
     task.validate_command(context.command)
@@ -364,7 +364,7 @@ def test_action_processing_applies_clip_scale_and_position_limits() -> None:
         action_lower=[-2.0] * 12,
         action_upper=[0.5] * 12,
     )
-    task = Go2WalkDeployTaskV1(spec, robot)
+    task = Go2WalkPolicyProcessor(spec, robot)
     reset_context = _context(0, 0.0, np.zeros(3, dtype=np.float32))
     task.validate_command(reset_context.command)
     task.reset(state, reset_context)
@@ -382,15 +382,35 @@ def test_action_processing_applies_clip_scale_and_position_limits() -> None:
 
 
 def test_go2_task_rejects_non_singleton_command_batch() -> None:
-    task = Go2WalkDeployTaskV1(_task_spec(), _robot())
+    task = Go2WalkPolicyProcessor(_task_spec(), _robot())
 
     with pytest.raises(ValidationError, match="command.batch_size"):
         task.validate_command(PlanarVelocityCommand(np.zeros((2, 3), dtype=np.float32)))
 
 
 def test_go2_task_scales_command_range_for_deployment_input_mapping() -> None:
-    task = Go2WalkDeployTaskV1(_task_spec(), _robot())
+    task = Go2WalkPolicyProcessor(_task_spec(), _robot())
 
     np.testing.assert_array_equal(task.command_lower, [-0.5, -0.5, -0.5])
     np.testing.assert_array_equal(task.command_upper, [0.5, 0.5, 0.5])
     task.validate_command(PlanarVelocityCommand(np.array([[0.75, 0.0, 0.0]], dtype=np.float32)))
+
+
+def test_go2_root_task_executes_policy_budget_and_normal_stop():
+    robot = _robot()
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), steps=2)
+    state = _state(robot)
+    task.reset(state)
+    for step in range(2):
+        decision = task.step(state, _context(step, step * 0.02, np.zeros(3, dtype=np.float32)))
+        assert decision.command is not None and decision.policy_tick
+    completed = task.step(state, _context(2, 0.04, np.zeros(3, dtype=np.float32)))
+    assert completed.complete and completed.success
+    assert task.policy_controller.completed_steps == 2
+
+    task.reset(state)
+    assert task.step(state, _context(0, 0.0, np.zeros(3, dtype=np.float32))).policy_tick
+    task.request_stop()
+    stopped = task.step(state, _context(1, 0.02, np.zeros(3, dtype=np.float32)))
+    assert stopped.complete and not stopped.success
+    assert task.policy_controller.completed_steps == 1

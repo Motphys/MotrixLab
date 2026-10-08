@@ -28,14 +28,14 @@ class TestDeployTask(DeployTask):
     __test__ = False
     spec_type = TestTaskSpec
 
-    def reset(self, state, context) -> None:
+    def reset(self, state) -> None:
         pass
 
-    def build_observation(self, state, context):
+    def step(self, state, context):
         raise NotImplementedError
 
-    def process_action(self, action):
-        raise NotImplementedError
+    def request_stop(self) -> None:
+        pass
 
     def validate_command(self, command) -> None:
         pass
@@ -67,6 +67,7 @@ def _profile() -> DeploymentProfile:
         ),
         task=TestTaskSpec(),
         control=ControlSpec(period_s=0.02, state_timeout_s=0.1),
+        payloads={"payloads/motion.npz": b"motion-clip-npz-bytes"},
         observation_size=4,
         action_size=2,
     )
@@ -137,6 +138,10 @@ def test_deployment_export_injects_profile_builder_selected_by_run_metadata(
     assert result.artifact.manifest.policy.input.shape == (1, _profile().observation_size)
     assert result.artifact.manifest.policy.output.shape == (1, _profile().action_size)
     assert result.artifact.manifest.source.framework == "skrl.ppo/torch"
+    # Task payloads are declared in the manifest and written next to the policy.
+    (payload,) = result.artifact.manifest.payloads
+    assert payload.path == "payloads/motion.npz"
+    assert (result.artifact.root / "payloads" / "motion.npz").read_bytes() == b"motion-clip-npz-bytes"
     assert result.artifact.policy_path.read_bytes() == model.model_bytes
     assert result.validation_samples == 8
     assert not checkpoint.with_name("policy.onnx").exists()

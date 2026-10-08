@@ -6,17 +6,12 @@
 from motrix_deploy.errors import ValidationError
 from motrix_deploy.robot.interface import RobotInterface
 from motrix_deploy.runtime.base import DeploymentRuntime
-from motrix_deploy.runtime.control import ControlSession
 from motrix_deploy.runtime.result import RolloutResult
 from motrix_deploy.runtime.scheduler import FixedStepScheduler, LoopScheduler, RealtimeScheduler
 
 
 class HardwareRuntime(DeploymentRuntime):
-    """Drive a control session without owning or advancing robot physics.
-
-    The control session owns robot open/stop/close. This runtime only owns the
-    scheduler and ensures an active session is stopped when its lifecycle closes.
-    """
+    """Own the hardware host and pace bound control session without advancing physics."""
 
     def __init__(
         self,
@@ -34,35 +29,21 @@ class HardwareRuntime(DeploymentRuntime):
     def robot(self) -> RobotInterface:
         return self._robot
 
-    def close(self) -> None:
-        control = self.control
-        if control is not None and control.active:
-            control.stop()
-        super().close()
-
-    def run(self, control: ControlSession | None = None, *, steps: int | None = None) -> RolloutResult:
-        control = self._resolve_control(control)
-        if steps is not None and (not isinstance(steps, int) or isinstance(steps, bool) or steps <= 0):
-            raise ValidationError("steps", "a positive integer", steps)
+    def run(self) -> RolloutResult:
+        if self.session is None:
+            raise ValidationError("runtime.session", "a bound control session", None)
         scheduler = self.scheduler
         if scheduler is None:
-            scheduler = RealtimeScheduler(control.period_s) if self.realtime else FixedStepScheduler(control.period_s)
-        elif scheduler.period_s != control.period_s:
-            raise ValidationError("runtime.scheduler.period_s", control.period_s, scheduler.period_s)
+            scheduler = (
+                RealtimeScheduler(self.session.period_s) if self.realtime else FixedStepScheduler(self.session.period_s)
+            )
+        elif scheduler.period_s != self.session.period_s:
+            raise ValidationError("runtime.scheduler.period_s", self.session.period_s, scheduler.period_s)
         self.open()
         try:
-            if control.start():
-                scheduler.reset()
-                while control.active and (steps is None or control.completed_steps < steps):
-                    step = control.completed_steps
-                    scheduler.wait(step)
-                    control.tick(elapsed_time_s=scheduler.elapsed_time_s(step))
-        except (Exception, KeyboardInterrupt) as error:
-            control.fail(error)
+            return self._run_session(scheduler)
         finally:
-            control.stop()
             self.close()
-        return control.result(steps=steps, overrun_count=scheduler.overrun_count)
 
 
 __all__ = ["HardwareRuntime"]

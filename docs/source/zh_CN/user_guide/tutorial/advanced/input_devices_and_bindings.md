@@ -27,9 +27,16 @@ input_devices_and_bindings/extending
 InputDevice、Binding 与 backend-neutral task command 控制链路
 ```
 
-`ControlSession` 组合 binding、任务、策略和 `RobotInterface`，读取指令、构造任务观察、运行策略，并写入
-`RobotCommand`。仿真运行时推进物理并管理 viewer；硬件运行时根据实时机器人状态调度控制。
-两者使用相同的任务指令语义。
+Policy 表示 observation → action：`Policy` 执行模型。Controller 表示机器人状态与控制输入
+→ `RobotCommand`。`DeployTask` 是完整任务 Controller，执行层级为 Runtime → ControlSession → DeployTask → phase controllers。
+
+ControlSession 读取可选 binding（自主运行时直接使用 `None`），构造 `ControlContext`，再调用
+`task.step(state, context)`。Task 按自身需求编排准备、模型执行与正常停止；其 `PolicyController`
+使用 `PolicyProcessor` 适配器进行 observation 处理、推理与动作转换，不持有机器人/backend handle，
+也不反向引用完整 task。ControlSession 写入 `ControllerStep.command`，负责 open/enable、状态校验、
+health、清理和统计；Runtime 负责会话调度与宿主生命周期，只有 SimulationRuntime 负责 physics/viewer
+与仿真世界资源。硬件沿同一路径处理实测状态；ControlSession 与 Runtime 均不解释 task 阶段。
+故障绕过正常 task 停止阶段，立即执行 backend fallback。
 
 仿真和真机可以选择各自合适的具体 device。例如，仿真使用 GLFW keyboard，真机使用遥控器或网络输入；两端
 复用同一个 binding 和任务指令语义。
@@ -51,29 +58,10 @@ InputDevice、Binding 与 backend-neutral task command 控制链路
 
 ## Binding 如何进入 Task
 
-运行时通过 `CommandBinding` 获取强类型任务指令：
-
-```python
-from motrix_deploy.runtime.context import PolicyContext
-
-command = command_binding.read_command(batch_size=1)
-context = PolicyContext(
-    step=step,
-    elapsed_time_s=elapsed_time_s,
-    command=command,
-)
-task.validate_command(context.command)
-observation = task.build_observation(state, context)
-```
-
-部署的机器人 I/O 边界 `RobotInterface` 与可选的 `KeyboardDeviceProvider` / `GamePadDeviceProvider`
-capability protocol 定义在 `motrix_deploy.robot.interface`，使用方从该模块导入。provider 提供由自身管理生命周期的
-输入设备，不负责 runtime 插件发现。runtime discovery 仍由 `motrix_deploy.runtime.factory` 通过
-`motrix_deploy.backends` 完成，recipe 仍用 `runtime.backend` 选择插件。
-准备好的 `runtime.robot` 在打开前即可使用。应用显式构造
-`ControlSession(robot=runtime.robot, command_binding=binding, ...)`，
-通过 `runtime.bind_control_session(control)` 绑定，再在 `with runtime` 内运行。
-Factory 不通过回调构造 binding 或控制器。
+训练环境中，环境在每个 step 前通过 binding 读取一个指令 batch，交给任务构造观察。部署时，`ControlSession`
+持有同一个可选的 `CommandBinding`（自主任务直接传 `None`），把读到的指令放入 `ControlContext.command`
+传给任务——两侧消费的是同一种强类型指令。session 与 runtime 的完整组装见
+{doc}`部署教程 <motrix_deploy>`。
 
 例如 MuJoCo deployment 从 runtime 的 `KeyboardDeviceProvider` 取得 `MujocoKeyboardDevice`，再创建
 `KeyboardPlanarVelocityBinding`。训练环境则可以为同一个 `PlanarVelocityCommand` 使用 random binding。两条路径最终

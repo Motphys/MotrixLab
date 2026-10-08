@@ -1,0 +1,26 @@
+# @package _global_
+defaults:
+  - /runtime: sim
+  - _self_
+
+# Task-owned default model: the compiler-validated 400k-iteration FastSAC dance
+# checkpoint. Override with an explicit artifact=... to deploy another export.
+artifact: artifacts/g1-wbt-dance.deploy
+
+runtime:
+  backend: mujoco
+  sensor_bindings:
+    base_angular_velocity: base_gyro
+    base_linear_acceleration: base_accel
+    base_linear_velocity: null
+  deploy_env_id: flat
+  robot_id: g1-29dof
+  physics:
+    # 0.002 s (10 substeps per 0.02 s control tick) keeps the stiff standing-hold
+    # preparation PD free of the discrete contact limit cycle seen at 0.005 s in
+    # MuJoCo; both backends complete the full four-phase flow at this dt.
+    dt: 0.002
+    # Use runtime.physics.solver_iterations=3 to match MotrixSim training.
+    solver_iterations: 100
+
+command: null

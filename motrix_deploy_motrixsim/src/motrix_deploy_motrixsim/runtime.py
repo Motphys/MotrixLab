@@ -4,7 +4,6 @@
 """Native world owner: scene compilation, lifecycle and physics advancement."""
 
 from copy import deepcopy
-from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import motrixsim as mtx
@@ -21,8 +20,7 @@ from motrix_env_core.config.scene.base import RobotCfg
 from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler
 
 if TYPE_CHECKING:
-    from motrix_deploy.runtime.control import ControlSession
-    from motrix_deploy.runtime.result import RolloutResult
+    from motrix_deploy.runtime.result import SimulationRolloutResult
 
 
 class MotrixSimRuntime(SimulationRuntime):
@@ -94,7 +92,7 @@ class MotrixSimRuntime(SimulationRuntime):
             physical_range = np.asarray(joint.range).reshape(2)
             if limits[0] < physical_range[0] - 1e-6 or limits[1] > physical_range[1] + 1e-6:
                 raise ValidationError(
-                    f"backend.joints.{name}.range", "control limits inside physical joint range", limits
+                    f"backend.joints.{name}.range", "session limits inside physical joint range", limits
                 )
             actuator_names.append(actuator.name)
             lower.append(limits[0])
@@ -127,16 +125,6 @@ class MotrixSimRuntime(SimulationRuntime):
                 raise ValidationError(
                     f"backend.actuators.{actuator.name}.ctrl_range", [-limit, limit], native.ctrl_range
                 )
-            if isinstance(native, mtx.PositionActuator) and (
-                not np.isfinite(native.kp)
-                or native.kp < 0
-                or native.kd is None
-                or not np.isfinite(native.kd)
-                or native.kd < 0
-            ):
-                raise ValidationError(
-                    f"backend.actuators.{actuator.name}.gains", "finite non-negative kp/kd", (native.kp, native.kd)
-                )
             actuator.actuator_type = mtx.msd.ActuatorType.motor()
             actuator.ctrlrange = mtx.msd.Range(-limit, limit)
             actuator.forcerange = mtx.msd.Range(-limit, limit)
@@ -144,11 +132,10 @@ class MotrixSimRuntime(SimulationRuntime):
         for keyframe in self.world.keyframes:
             keyframe.ctrl = [0.0] * len(self.world.actuators)
 
-    def bind_control_session(self, control: "ControlSession") -> None:
-        ratio = control.period_s / self.config.physics.dt
+    def _configure_session_period(self, period_s: float) -> None:
+        ratio = period_s / self.config.physics.dt
         if not np.isfinite(ratio) or not np.isclose(ratio, round(ratio), atol=1e-9, rtol=0) or round(ratio) < 1:
-            raise ValidationError("control.period_s", "an integer multiple of physics.dt", control.period_s)
-        super().bind_control_session(control)
+            raise ValidationError("session.period_s", "an integer multiple of physics.dt", period_s)
         self.physics_substeps = round(ratio)
 
     def open(self) -> None:
@@ -158,10 +145,10 @@ class MotrixSimRuntime(SimulationRuntime):
             self.model = self.world.build()
         try:
             self._robot.bind()
+            self._opened = True
             if self.viewer is not None:
                 self.viewer.open(self.model)
                 self.sync_viewer()
-            self._opened = True
         except BaseException:
             self.close()
             raise
@@ -193,49 +180,25 @@ class MotrixSimRuntime(SimulationRuntime):
         if not self._opened:
             raise RuntimeError("MotrixSim simulation is not open")
         if self.physics_substeps is None:
-            raise RuntimeError("Bind a control session before advancing a control period")
+            raise RuntimeError("Bind a session before advancing a session period")
         self.check_viewer_running()
         for _ in range(self.physics_substeps):
             self._step()
         self.sync_viewer()
 
-    def run(
-        self, control: "ControlSession | None" = None, *, steps: int | None = None, realtime: bool | None = None
-    ) -> "RolloutResult":
+    def _physics_time_s(self) -> float:
+        return self.simulation_time_s
+
+    def run(self, *, realtime: bool | None = None) -> "SimulationRolloutResult":
         if not self._opened:
             raise RuntimeError("MotrixSim simulation is not open")
-        control = self._resolve_control(control)
-        self.bind_control_session(control)
-        if steps is not None and (not isinstance(steps, int) or isinstance(steps, bool) or steps <= 0):
-            raise ValidationError("steps", "a positive integer", steps)
+        if self.session is None:
+            raise ValidationError("runtime.session", "a bound control session", None)
         paced = self.realtime if realtime is None else realtime
         if paced is None:
             paced = self.viewer is not None
-        scheduler = (RealtimeScheduler if paced else FixedStepScheduler)(control.period_s)
-        initial_time_s = self.simulation_time_s
-        try:
-            if control.start():
-                initial_time_s = self.simulation_time_s
-                scheduler.reset()
-                while control.active:
-                    if steps is not None and control.completed_steps >= steps:
-                        break
-                    self.check_viewer_running()
-                    if not control.tick(elapsed_time_s=self.simulation_time_s - initial_time_s):
-                        break
-                    self.advance_control_period()
-                    scheduler.wait(control.completed_steps)
-        except (Exception, KeyboardInterrupt) as error:
-            control.fail(error)
-        finally:
-            control.stop()
-        result = control.result(steps=steps, overrun_count=scheduler.overrun_count)
-        elapsed = self.simulation_time_s - initial_time_s
-        return replace(
-            result,
-            simulation_time_s=elapsed,
-            real_time_factor=elapsed / result.wall_time_s if result.wall_time_s > 0 else 0.0,
-        )
+        scheduler = (RealtimeScheduler if paced else FixedStepScheduler)(self.session.period_s)
+        return self._run_session(scheduler)
 
     def check_viewer_running(self) -> None:
         if self.viewer is not None and not self.viewer.is_running():
@@ -253,8 +216,6 @@ class MotrixSimRuntime(SimulationRuntime):
 
     def close(self) -> None:
         try:
-            if self.control is not None and self.control.active:
-                self.control.stop()
             if self.viewer is not None:
                 self.viewer.close()
         finally:

@@ -20,14 +20,14 @@ from motrix_deploy.config import DeployRunConfig
 from motrix_deploy.errors import ArtifactError, ValidationError
 from motrix_deploy.robot.interface import GamePadDeviceProvider, KeyboardDeviceProvider
 from motrix_deploy.runtime.config import SimulationRuntimeConfig
+from motrix_deploy.runtime.control import ControlSession
 from motrix_deploy.runtime.factory import RuntimeCreateContext, create_hardware_runtime, create_simulation_runtime
-from motrix_deploy.task import create_task
+from motrix_deploy.task import create_task, load_task_type
 
 
 def run(cfg: DeployRunConfig) -> int:
     """Run one deployment rollout from typed application configuration."""
-    from motrix_deploy.policy import OnnxPolicyRuntime
-    from motrix_deploy.runtime.control import ControlSession
+    from motrix_deploy.policy import OnnxPolicy
     from motrix_env_core.input import (
         BoundedGamePadPlanarVelocityBinding,
         ConstantPlanarVelocityBinding,
@@ -36,8 +36,17 @@ def run(cfg: DeployRunConfig) -> int:
 
     artifact = read_artifact(Path(cfg.artifact))
     manifest = artifact.manifest
-    steps = _duration_steps(cfg.duration_s, manifest.control.period_s)
-    task = create_task(manifest.task, manifest.robot)
+    task_type = load_task_type(manifest.task.name)
+    default_duration_s = task_type.default_duration_s(manifest.task)
+    duration_s = cfg.duration_s if cfg.duration_s is not None else default_duration_s
+    steps = _duration_steps(duration_s, manifest.control.period_s)
+    if default_duration_s is not None and duration_s > default_duration_s + 1e-9:
+        raise ValueError("duration_s exceeds the task's finite playback budget")
+    task_period = getattr(manifest.task, "period_s", manifest.control.period_s)
+    if not math.isclose(task_period, manifest.control.period_s, rel_tol=0, abs_tol=1e-9):
+        raise ValueError("task period_s must equal control.period_s")
+    policy = OnnxPolicy(artifact.policy_path, manifest.policy.input, manifest.policy.output)
+    task = create_task(manifest.task, manifest.robot, policy, steps=steps, artifact=artifact)
     simulation = cfg.runtime["kind"] == "simulation"
     viewer = cfg.runtime["viewer"] if simulation else False
     realtime = cfg.runtime["realtime"] if simulation else True
@@ -76,13 +85,18 @@ def run(cfg: DeployRunConfig) -> int:
     except ValidationError:
         runtime.close()
         raise
+    command_binding = None
     command_lower = getattr(task, "command_lower", None)
     command_upper = getattr(task, "command_upper", None)
-    if command_lower is None or command_upper is None:
-        raise ValueError(f"Task {manifest.task.name!r} does not provide planar velocity command bounds")
     command_config = cfg.command or {}
     command_source = command_config.get("source", "constant")
-    if viewer and isinstance(runtime, KeyboardDeviceProvider):
+    if command_lower is None and command_upper is None:
+        if command_config:
+            raise ValueError("Autonomous task playback does not accept planar velocity commands")
+        task.validate_command(None)
+    elif command_lower is None or command_upper is None:
+        raise ValueError(f"Task {manifest.task.name!r} must provide both velocity bounds")
+    elif viewer and isinstance(runtime, KeyboardDeviceProvider):
         command_binding = KeyboardPlanarVelocityBinding(
             runtime.get_keyboard_device(),
             command_lower=command_lower,
@@ -113,17 +127,16 @@ def run(cfg: DeployRunConfig) -> int:
         task.validate_command(command_binding.read_command())
     else:
         raise ValueError(f"Unsupported command source {command_source!r}; use gamepad or configure command.velocity")
-    control = ControlSession(
+    session = ControlSession(
+        controller=task,
         robot=backend,
-        task=task,
-        policy=OnnxPolicyRuntime(artifact.policy_path, manifest.policy.input, manifest.policy.output),
         command_binding=command_binding,
         period_s=manifest.control.period_s,
         state_timeout_s=manifest.control.state_timeout_s,
     )
-    runtime.bind_control_session(control)
+    runtime.bind_session(session)
     with runtime:
-        result = runtime.run(steps=steps)
+        result = runtime.run()
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     return 0 if result.success else 1
 

@@ -6,7 +6,7 @@
 sim2real vertical slice。`motrix_deploy` 是独立于训练框架的策略部署包：训练侧先通过统一的
 [ONNX policy exporter](./onnx-export.md) 把 metadata-backed run 转换为经过 parity 验证的自包含 ONNX，
 再由 `motrix_envs.deploy` compiler 补全 robot、task 和 control 契约并写出 artifact。部署侧使用带版本的
-`DeployTask`、`PolicyRuntime` 和通用控制循环驱动仿真或真实机器人。运行时 command input 的
+`DeployTask`、`Policy` 和通用控制循环驱动仿真或真实机器人。运行时 command input 的
 `InputDevice`、公共 `PlanarVelocityCommand` 和 `CommandBinding` 契约由独立的
 [Deploy Runtime Command Input 分层设计](./deploy-command-input.md) 定义。sim2sim 与 sim2real 只替换
 `RobotInterface`，不得分别维护 policy tensor 拼接、command mapping 或 action 后处理逻辑。
@@ -38,12 +38,12 @@ motrix_rl checkpoint + run metadata + task snapshot
  CommandBinding.read_command(batch_size=1) -> PlanarVelocityCommand
                                                        |
                                                        v
-                                                  PolicyContext
+                                                  ControlContext
                                                        |
-     RobotState ----------------------------+----> DeployTask.build_observation
+     RobotState ----------------------------+----> PolicyProcessor.build_observation
                                                    |
                                                    v
-                          DeployTask -> PolicyRuntime -> DeployTask.process_action
+                          DeployTask -> Policy -> PolicyProcessor.process_action
                                ^                                      |
                                |                                      v
                                +----- RobotInterface <---------- RobotCommand
@@ -190,10 +190,10 @@ motrix_deploy/
 │   ├── profile.py          # DeploymentProfile、compiler registry 和统一 build 入口
 │   ├── task.py             # DeployTask 接口与版本化 task entry-point discovery
 │   ├── env.py              # robot-free 世界 discovery 与 assemble_deploy_scene(env ID, robot ID)
-│   ├── policy/             # PolicyRuntime 与 runtime registry
-│   ├── runtime/            # PolicyContext、lifecycle、control loop、scheduler、result/metrics
-│   │   ├── base.py         # DeploymentRuntime / SimulationRuntime、bind_control_session
-│   │   ├── control.py      # ControlSession：共享 start/tick/stop
+│   ├── policy/             # Policy 与 runtime registry
+│   ├── runtime/            # ControlContext、lifecycle、control loop、scheduler、result/metrics
+│   │   ├── base.py         # DeploymentRuntime / SimulationRuntime、bind_session
+│   │   ├── control.py      # ControlSession 执行器与 PolicyController 策略控制器
 │   │   ├── hardware.py     # HardwareRuntime：墙钟 scheduler
 │   │   └── factory.py      # motrix_deploy.backends discovery；返回 prepared runtime
 │   ├── robot/              # robot I/O 与可选 input-device capability；精简 initializer
@@ -223,7 +223,7 @@ motrix_deploy_unitree/
 motrix_deploy_tasks/
 ├── src/motrix_deploy_tasks/
 │   ├── tasks/
-│   │   └── go2_walk.py     # Go2WalkTaskSpec 与 Go2WalkDeployTaskV1 同置
+│   │   └── go2_walk.py     # Go2WalkTaskSpec 与 Go2WalkDeployTask 同置
 │   ├── envs/               # flat.py / rough.py：独立、robot-free 部署世界
 │   ├── config/task/        # go2-walk-flat/{sim,hardware}.yaml、go2-walk-rough/sim.yaml
 │   └── __init__.py         # 精简 package initializer；task 类由 entry point 声明
@@ -282,28 +282,26 @@ class RobotState:
     base_orientation_xyzw: np.ndarray
     base_angular_velocity: np.ndarray
     base_linear_acceleration: np.ndarray
-    base_position: np.ndarray | None = None
     base_linear_velocity: np.ndarray | None = None
-    extras: Mapping[str, np.ndarray] = field(default_factory=dict)
 ```
 
 - joint 数组使用 `RobotSpec.joint_names` 顺序。
 - `sample_time_ns` 表示底层采样时间；没有可靠设备时钟时可等于本机接收时间。
 - `receive_time_ns` 使用本机单调时钟，用于 timeout 判断。
-- optional 字段只有在 observation 或 metric 需要时才成为 backend 必需能力。
-- `extras` 用稳定名称承载足底力、里程计等扩展；artifact 必须声明实际消费的 key、shape、dtype 和单位。
+- `base_linear_velocity` 是可选 world-frame sensor/estimator 输出；当前 Unitree 接口不提供，样本保持 `None`，Go2/G1 部署 task 不依赖它。
+- world-frame base position 不属于通用 `RobotState`；Go2 fall termination 使用 IMU 姿态，不使用世界高度。仿真 ground truth 只能保留在 simulator-specific diagnostics。
 
 ### 6.3 Command input
 
 机器人状态不是 observation 的唯一输入。Go2 速度跟踪策略还需要平面目标速度。runtime 使用以下单向数据流：
 
 ```text
-CommandBinding.read_command(batch_size=1) -> PlanarVelocityCommand -> PolicyContext -> DeployTask
+CommandBinding.read_command(batch_size=1) -> PlanarVelocityCommand -> ControlContext -> DeployTask
 ```
 
 最小 device/binding 接口、包归属、配置和测试边界统一由
 [Deploy Runtime Command Input 分层设计](./deploy-command-input.md) 定义。本框架只要求 `ControlLoop` 调用已经装配的
-binding，不直接读取 device，也不解释 `PlanarVelocityCommand` 字段。公共 command 始终携带显式 batch 维；当前
+可选 binding；未提供 binding 的自主控制会话直接将 `ControlContext.command=None` 交给 controller，不创建占位输入对象。Go2 等需要外部输入的 task 在输入边界拒绝缺失 command，不能静默补零。Session 不直接读取 device，也不解释 `PlanarVelocityCommand` 字段。公共 command 始终携带显式 batch 维；当前
 deploy runtime 只接受 `values.shape == (1, 3)`，Go2 task 校验 batch size 后取出唯一一行。
 
 ### 6.4 RobotCommand
@@ -325,7 +323,7 @@ tau = kp * (q_target - q) + kd * (qd_target - qd) + tau_ff
 ```
 
 backend 可以把该命令传给原生 hybrid controller，也可以在本地计算 torque，但必须声明相应 capability。
-`DeployTask.process_action()` 在写入 backend 前完成 action 和目标 position 裁剪，并生成显式 gain。backend 仍需执行最后
+`PolicyProcessor.process_action()` 在写入 backend 前完成 action 和目标 position 裁剪，并生成显式 gain。backend 仍需执行最后
 一道设备级硬限制，不能扩大 artifact 的限幅。
 
 ### 6.5 RobotInterface 与 capability
@@ -360,7 +358,7 @@ class RobotInterface(ABC):
 `RobotCapabilities` 至少声明：
 
 - 支持的控制模式；
-- 可用 state 字段和 extra sensors；
+- 支持的 state 字段；
 - 是否支持渲染；
 - 最大推荐 command rate；
 - 是否需要显式 enable，以及 stop 的安全语义。
@@ -368,8 +366,28 @@ class RobotInterface(ABC):
 仿真 backend 在 `open()` 中完成自身的确定性初始化；真机 backend 建立通信后由 `read_state()` 返回当前状态。
 `enable()` 不接收 initial command；Unitree backend 自行构造到 `RobotSpec.default_joint_position` 的姿态过渡，
 目标速度与 feedforward torque 为零，使用解析后的 `runtime.kp` / `runtime.kd`，`null` 时保留 artifact 增益。
-不通过 task action 推导启动命令。`ControlSession.start()` 不调用 task `process_action()` 生成零动作启动命令；
-初始状态的 safety/termination 检查仍先于 enable，Start/A 门控与 enable 后新状态检查保持有效。
+不通过 task action 推导启动命令。Runtime 不调用 task `process_action()` 生成零动作启动命令；
+无 task 准备阶段时，初始状态的 termination 检查先于 enable；有准备阶段时使用 enable 后的实测状态准备，准备完成后才检查 policy 接管条件。Start/A 门控保持有效。
+
+#### Runtime 驱动的控制生命周期
+
+Policy 专指 observation → action 的映射，模型运行接口为 `Policy`。Controller 指实测 `RobotState` + 外部输入 → `RobotCommand`，控制级 `Controller` 返回 `ControllerStep` 命令、完成状态及指标；共享输入上下文为 `ControlContext`。
+DeployTask 是完整任务控制入口，满足 Controller 契约，拥有任务阶段和正常停止逻辑。应用加载 Policy 后注入 task 构造函数；Session 直接执行 task。G1 task 按 `prepare → policy_hold → playback → damping` 编排，对齐真实部署流程；Go2 task 内部委托 PolicyController，通用 Task 不固定阶段序列，不引入状态机 registry 或 DSL。
+`PolicyController` 包装独立 PolicyProcessor 的 observation/action 语义与 Policy 推理，只生成命令，不持有完整 Task、robot handle 或 backend；Task → PolicyController → PolicyProcessor 避免 Task 与策略控制器的循环依赖。prepare 与 damping 是确定性 controller，不伪造 observation/action。
+
+G1 四阶段语义：
+
+- **prepare**：从实测关节姿态 ramp 到独立站立姿态（robot 默认站立位，非 motion 第 0 帧），使用 artifact 中独立的 preparation kp/kd（训练增益是动态跟踪增益，过软无法静态保持）与时序（spec 字段 `preparation_ramp_duration_s`/`preparation_settle_duration_s`/`preparation_timeout_s`，profile 编译期定值）。就绪门（误差/速度/倾角连续满足 settle 时长）不变；首次就绪后超时解除但每 tick 重新评估，倾角故障立即失败。就绪后按接管模式决定是否等待：默认自动接管，manual 模式保持等待操作员请求。
+- **policy_hold**：实测就绪且接管请求置位（默认 `automatic_start=True` 时就绪后下一 tick 自动置位；manual 模式由显式 `request_policy_start()` 置位）后，同一份实测状态立即切换；policy 以冻结的 motion 起始帧推理，更新 action 历史，不消耗 playback 预算。至少执行一个 hold 周期后才可能进入 playback。
+- **playback**：motion 参考帧在 hold 驻留目标到达或显式 `request_motion_start()` 后开始推进；policy 历史连续不重置，仅将剩余播放预算设为有限值。playback 步数由 task 单独统计（`playback_steps`），通用 `completed_steps` 包含 hold 推理。舞蹈以后倾姿态结束，只有跟踪中的 policy 能维持平衡，播放预算完成后直接进入 damping；以站立收场需要 motion 本身以站立姿态结束。
+- **damping/complete**：播放预算完成前仍执行最终实测状态检查；正常停止请求立即进入 damping，故障由 Session 兜底绕过正常停止。
+
+操作员输入是任务语义，由 task 自身响应，CLI 不路由任何任务特有选项（`DeployRunConfig` 不含任务选项通道）。G1 task 构造时以 `automatic_start` 选择接管模式：默认 `True`，实测就绪后下一 tick 自动置位接管请求；`False` 为 manual 模式，阶段切换完全由请求方法驱动。程序化应用可通过 `attach_keyboard(keyboard, hold_ticks=...)` 接入 viewer 键盘（`p` 接管 / `m` 提前播放 / `o` 停止，在 `step()` 开头翻译为内部请求标志）或 `enable_automatic_start(hold_ticks=...)` 脚本化驻留接管。请求只置位，实际切换在下一个控制 tick 由 task 依据实测就绪状态决定；不引入通用 phase command registry。
+采用 Runtime → ControlSession → Controller：Runtime 持有世界/宿主、scheduler、物理推进和 viewer，bind_session(session)；阶段无关的 ControlSession 表示一次控制执行会话，构造时接收必需的 Controller，持有机器人 I/O、binding、状态与命令边界校验、命令写入、故障停机及统计。Session 不存在未绑定 controller 的中间状态，不识别 ready/model/damping，不创建 task controller，不自行等待或推进物理。DeploymentRuntime 的共享循环只通过 `_check_running()` 检查宿主是否允许继续，并通过窄的 `_advance_interval()` 执行宿主区间扩展；不查询或累计物理时间。物理推进、physics timestep 比例校验、物理时钟与 viewer 检查接口属于 SimulationRuntime，HardwareRuntime 不暴露这些仿真方法。
+现有任务插件 entry point 直接关联 DeployTask 类型，codec 使用 task_type.spec_type；CLI 调用 create_task(spec, robot_spec, policy, steps=...) 得到完整任务控制入口，不需要外部 controller builder 或插件描述对象。Controller 契约不要求持有 Policy：纯确定性 controller 同样可由 ControlSession 执行。
+子 controller 完成时，复合 controller 用同一份实测状态切换并执行下一 controller，不消耗空周期；最终 controller 完成后退出。每个未完成的控制决策经历一个控制周期。阶段诊断仅由具体复合 controller 持有，不进入 ControllerStep、ControlSession 或通用 RolloutResult；通用执行器不透传状态机历史。
+最后一个模型命令作用周期结束后，PolicyController 检查实际状态，再转入 damping。准备/停止命令不计 policy budget。执行 period_s 仅由 ControlSession 持有，并通过 ControlContext.dt_s 与 elapsed_time_s 提供给 controller；Controller 不保存执行周期、不按 steps × 自己的周期重算时间。各子 controller 以进入时刻为原点建立局部时钟，history 在进入时归零，runtime deadline 连续。Task/artifact 的参考采样周期保留为模型或 motion 数据语义，不是 controller 的调度配置。
+故障由 ControlSession 执行 backend 停机，Runtime 清理世界/宿主资源，跳过正常 damping；正常停止请求由复合 controller 决定具体转换。Controller 不保存 runtime 回调，不创建 scheduler 或调用 sleep。
 `stop()` 和 `close()` 必须幂等，任何启动后异常都按 `stop -> close` 收尾。`HealthStatus` 包含状态、原因和最后
 成功通信时间，不能只返回无语义的 bool。
 
@@ -379,39 +397,53 @@ class RobotInterface(ABC):
 class DeployTask(ABC, Generic[CommandT]):
     spec_type: ClassVar[type[TaskSpec]]
 
-    def reset(self, state: RobotState, context: PolicyContext[CommandT]) -> None: ...
-    def build_observation(self, state: RobotState, context: PolicyContext[CommandT]) -> np.ndarray: ...
+    @classmethod
+    def default_duration_s(cls, spec: TaskSpec) -> float | None: ...
+    def reset(self, state: RobotState) -> None: ...
+    def step(self, state: RobotState, context: ControlContext[CommandT]) -> ControllerStep: ...
+    def request_stop(self) -> None: ...
+    def validate_command(self, command: CommandT | None) -> None: ...
+
+class PolicyProcessor(ABC, Generic[CommandT]):
+    @abstractmethod
+    def reset(self, state: RobotState, context: ControlContext[CommandT]) -> None: ...
+    @abstractmethod
+    def build_observation(self, state: RobotState, context: ControlContext[CommandT]) -> np.ndarray: ...
+    @abstractmethod
     def process_action(self, action: np.ndarray) -> RobotCommand: ...
-    def validate_command(self, command: CommandT) -> None: ...
+    @abstractmethod
+    def validate_command(self, command: CommandT | None) -> None: ...
+    def check_termination(self, state: RobotState) -> str | None:
+        return None
 ```
 
 artifact 的 task wire format 只记录版本化 task 标识和 config；内存中的 `TaskSpec` 是具体任务的 Pydantic model，
 其 codec 与 class discovery 见 [Manifest 内容](#82-manifest-内容)。observation/action 维度只记录在 `policy.input/output.shape`。
 `DeployTask` 不声明 `observation_size` 或 `action_size`；实际 observation 数组由 policy 输入边界校验，
-实际 action 数组由 task 的 `process_action()` 边界校验，CLI 不提前比较 task 维度。具体 observation 顺序、
+实际 action 数组由 PolicyProcessor 的 `process_action()` 边界校验，CLI 不提前比较 task 维度。具体 observation 顺序、
 previous action、phase 与 action 后处理算法由 `motrix_deploy_tasks` 中一个带版本的 task 类直接实现，不在 manifest
 中构造通用计算 DSL。修改已有语义必须新增 task version，不能静默改变旧实现。部署时关闭训练 observation noise；
 训练框架的 observation normalizer 必须烘焙进 ONNX。
 
-### 6.7 PolicyRuntime
+### 6.7 Policy
 
 ```python
-class PolicyRuntime(ABC):
+class Policy(ABC):
     def reset(self) -> None: ...
     def infer(self, observation: np.ndarray) -> np.ndarray: ...
 ```
 
-第一版内置 `OnnxPolicyRuntime`，使用确定性 action 输出。runtime 创建时验证模型输入输出名称、dtype 和 shape；
+第一版内置 `OnnxPolicy`，使用确定性 action 输出。runtime 创建时验证模型输入输出名称、dtype 和 shape；
 每次 `infer()` 验证输出无 NaN/Inf。接口保留 `reset()` 以支持未来 recurrent policy，但第一版 artifact 只接受
 单输入、单输出、无隐藏状态的 ONNX policy。
 
-`DeployTask.build_observation()` 的输出是训练环境的原始 actor observation。训练框架的 observation normalizer 和 deterministic
+`PolicyProcessor.build_observation()` 的输出是训练环境的原始 actor observation。训练框架的 observation normalizer 和 deterministic
 policy head 必须烘焙进 ONNX，不能在 runtime 外保留 framework-specific preprocessor；不满足自包含约束的模型
 拒绝导出为第一版 artifact。
 
 ### 6.8 Task-specific action
 
-第一版 `go2_walk/v1` 在自己的 `DeployTask` 中实现 joint-position target：raw action 经过 finite check、clip、
+第一版 `go2_walk/v1` 在自己的 `Go2WalkPolicyProcessor` 中实现 joint-position target：raw action 经过 finite check、clip、
 per-joint scale 和 default pose offset，再应用 position limit，生成零目标速度、零 feed-forward torque 和配置的
 KP/KD。task 同时保存 previous action；sim2sim 与 sim2real 必须复用同一版本化 task 标识及 config。
 
@@ -430,13 +462,13 @@ event-based device 执行一次 `poll()`。`ControlLoop.run()` 的单步顺序�
 
 ```text
 1. LoopScheduler 到达当前 tick deadline
-2. CommandBinding.read_command(batch_size=1) 产生 PlanarVelocityCommand，并构造经过 task 校验的 PolicyContext
+2. CommandBinding.read_command(batch_size=1) 产生 PlanarVelocityCommand，并构造经过 task 校验的 ControlContext
 3. 从 RobotInterface 读取 RobotState，检查 backend health、状态时效、shape 和 finite values
-4. DeployTask.build_observation(state, context)
-5. PolicyRuntime.infer(obs)
-6. DeployTask.process_action(action)
-7. safety limiter 验证 RobotCommand，RobotInterface.write_command(command)
-8. 记录 input / binding / read / obs / inference / action / write / loop timing
+4. DeployTask.step(state, context) 选择当前 controller 并返回 ControllerStep
+   policy phase 内部执行 PolicyProcessor.build_observation → Policy.infer → PolicyProcessor.process_action
+5. Session 验证 RobotCommand，RobotInterface.write_command(command)
+6. Runtime 执行宿主区间并等待下一 deadline（仿真推进物理，硬件仅等待）
+7. 记录 input / read / observation / inference / action / write / loop timing
 ```
 
 `ControlLoop` 接收 `LoopScheduler`，但不判断当前是否为仿真：
@@ -445,7 +477,7 @@ event-based device 执行一次 `poll()`。`ControlLoop.run()` 的单步顺序�
 - `FixedStepScheduler` 每次推进 artifact 定义的固定 `dt`，不执行 wall-clock sleep，用于默认 headless sim2sim
   和确定性 CI。
 
-两种 scheduler 向 `PolicyContext` 提供相同的 step 和 elapsed control time；wall-clock latency 单独计量。
+两种 scheduler 向 `ControlContext` 提供相同的 step 和 elapsed control time；wall-clock latency 单独计量。
 仿真的 realtime/fixed-step scheduler 由 `runtime.realtime` 选择；`null` 跟随 `runtime.viewer`。硬件始终在内部实时调度，不从 device 推断。
 Fixed-step 模式记录“若实时运行是否 overrun”，但默认不因此终止 rollout。第一版 policy rate 与 command rate
 相同；未来需要多速率时通过 scheduler 扩展，不能由 backend 私自重复或插值 policy action。
@@ -541,10 +573,10 @@ manifest 至少包含以下部分。下面是结构节选，为便于阅读省�
   frozen 字段赋值和有限数值约束；提供公共 `to_dict()` / `from_dict()` codec。具体 spec 声明
   `task_name: ClassVar[str]`，通过 `Annotated` / `Field` 约束字段，通过 `model_validator` 约束跨字段关系。
   构造与 `model_validate()` 自动校验，不另设手写 `validate()` 或 dataclass `__post_init__`。
-- `Go2WalkTaskSpec` 与 `Go2WalkDeployTaskV1` 同置于 `motrix_deploy_tasks.tasks.go2_walk`；task 类通过
+- `Go2WalkTaskSpec` 与 `Go2WalkDeployTask` 同置于 `motrix_deploy_tasks.tasks.go2_walk`；task 类通过
   `spec_type = Go2WalkTaskSpec` 关联配置类型。`action_scale` 是按 canonical joint order 排列的
   `list[float]` 向量；训练侧 compiler 在导出时把 scalar scale 展开为逐关节向量，codec 不接受 scalar fallback。
-- manifest 读取按 `task.name` 加载唯一 `motrix_deploy.tasks` entry point 指向的 task **类**，不构造 runtime task，
+- manifest 读取按 `task.name` 加载唯一 `motrix_deploy.tasks` entry point 的 entry point 关联的 task **类**，不构造 runtime task，
   再按其 `spec_type.model_validate()` 解码、校验具体 model。只使用这一组 task entry points，不增加独立 spec entry point，
   也不保留原始 dict fallback。未知或重复插件、未知字段、缺少必需字段和非法类型在读取边界拒绝。
 
@@ -574,7 +606,7 @@ deployment export 不得再按 `(rllib, train_backend, algo)` 实现 `export_rsl
 task/robot/action 语义时，在 `motrix_envs.deploy` 增加 profile compiler，在 `motrix_deploy_tasks` 增加 task 实现，
 compiler 通过 import-time 注册接入 profile registry，并直接构造该 task 的具体 spec；task 类通过唯一的
 `motrix_deploy.tasks` entry point 接入，如
-`"go2_walk/v1" = "motrix_deploy_tasks.tasks.go2_walk:Go2WalkDeployTaskV1"`，由类上的 `spec_type` 同时支持
+`"go2_walk/v1" = "motrix_deploy_tasks.tasks.go2_walk:Go2WalkDeployTask"`，由类上的 `spec_type` 同时支持
 manifest 解码和运行时构造，不另设 spec 插件。
 
 组合导出接口直接消费经过验证的 ONNX model bytes 和 `OnnxExportReport`。独立导出 `.onnx` 的用户入口继续
@@ -849,7 +881,7 @@ profile compiler registry；`motrix_envs.deploy` import 具体 compiler 时通�
 `register_profile_compiler()` 装饰器按环境名自动注册。task runtime 通过 `motrix_deploy.tasks` Python entry-point
 group 按版本化 task 标识发现。`available_tasks()` 只读取已安装插件元数据；`load_task_type()` 懒加载唯一
 `DeployTask` 类，manifest codec 读取其 `spec_type` 而不实例化 task。`create_task()` 再将已解码的具体
-`TaskSpec` 和 `RobotSpec` 传给该类构造运行时 task。未知名称或重复插件报错，不按 import 顺序选择实现。
+`TaskSpec`、`RobotSpec`、已加载的 `Policy` 和可选 `steps` 传给该类构造完整 task controller。未知名称或重复插件报错，不按 import 顺序选择实现。
 `motrix_deploy` core 发布指向 `motrix_deploy.cli:main` 的 console script，不反向 import 具体环境、task 或 SDK；
 具体部署 recipe 通过已安装 Hydra search-path plugin 提供的 `task` group 选择；外部应用也可显式指定 Hydra config path/name。
 
@@ -862,7 +894,7 @@ policy runtime 由 CLI 装配；observation 与 action 语义由具体 `DeployTa
 term/processor registry。
 
 注册冲突、未知组件和版本不兼容在 artifact validation 阶段报错。注册的具体实现只获得公共 contract，不获得
-`PolicyRuntime` 或 raw observation，因此无法绕过统一 task 路径。
+`Policy` 或 raw observation，因此无法绕过统一 task 路径。
 
 ## 11. MuJoCo sim2sim 设计
 
@@ -878,8 +910,8 @@ rollout 支持平地与确定性 procedural height-field 世界，分别通过�
 ```text
 CommandBinding.read_command(batch_size=1) -> PlanarVelocityCommand --+
                                                                    v
-MuJoCo state -> RobotState -> Go2WalkDeployTaskV1 -> ONNX PolicyRuntime
-             -> Go2WalkDeployTaskV1 -> RobotCommand -> MuJoCo torque/actuator
+MuJoCo state -> RobotState -> Go2WalkDeployTask -> ONNX Policy
+             -> Go2WalkDeployTask -> RobotCommand -> MuJoCo torque/actuator
 ```
 
 不允许为了尽快跑通而直接调用 `QuadrupedWalkTask._compute_obs()` 或 `apply_action()`；deployment
@@ -964,32 +996,30 @@ config = SimulationRuntimeConfig(
 ```
 
 Runtime factory 只选择并准备宿主，不通过回调构造控制器。创建返回后，`runtime.robot` 及其只读
-`spec` 在 `open()` 之前已可用；应用显式构造自己的 task、policy、binding 和 `ControlSession`：
+`spec` 在 `open()` 之前已可用；应用显式构造自己的 task、policy、binding 和控制器：
 
 ```python
 from motrix_deploy.runtime.control import ControlSession
+from motrix_deploy.task import create_task
 from motrix_deploy.runtime.factory import create_simulation_runtime
 
 runtime = create_simulation_runtime("mujoco", config)
 robot = runtime.robot
-control = ControlSession(
-    robot=robot,
-    task=task,
-    policy=policy,
-    command_binding=command_binding,
-    period_s=0.02,
+task = create_task(task_spec, robot.spec, policy, steps=50)
+session = ControlSession(
+    robot=robot, controller=task, command_binding=command_binding,
+    period_s=0.02, state_timeout_s=0.1,
 )
-runtime.bind_control_session(control)
+runtime.bind_session(session)
 with runtime:
-    result = runtime.run(steps=50)
+    result = runtime.run()
 ```
 
 这里的 task、policy 与 command_binding 由应用持有；依赖机器人契约的 task 可在 runtime 创建后从
 `robot.spec` 构造。硬件由 `create_hardware_runtime(name, config, context)` 返回 prepared host 后，使用同样的
-显式组装和绑定流程。`run(control, steps=...)` 仍可直接接收 session；绑定和传入的 session 必须属于该
-runtime 的 robot，不能覆盖另一个已绑定的 session。`ControlSession.period_s` 是控制周期的唯一来源；
-`SimulationRuntimeConfig` 不重复声明控制周期，仿真宿主在绑定或解析 session 时校验它与 physics timestep 的整数倍关系。
-Task 只由 control session 持有，不重复传给 runtime。
+显式组装和绑定流程。Runtime 只绑定属于自身 robot 的 ControlSession；ControlSession 在构造时接收必需的 controller 与可选输入 binding。G1 自主播放不传 binding；task 不创建输入适配器，应用仅为需要外部命令的 task 组装 binding。
+预算在创建 Task 时传入并交给内部 PolicyController，不重复传给 run。ControlSession.period_s 是调度周期，仿真绑定时验证其为 physics timestep 的整数倍。
+Task 作为 session.controller 执行；PolicyController 只使用 PolicyProcessor。
 
 `motrix_deploy` core 不查询训练环境 registry，也不依赖仿真器。MuJoCo plugin 将完整场景与
 `config.physics` 直接传给 `MuJoCoSceneCompiler.create_spec()`，编译 terrain、robot、sensor 与视觉配置，
@@ -1028,14 +1058,14 @@ sim2sim 的 Hydra 配置将 artifact、duration_s 和 command 放在顶层，仿
 - 使用 task 从 artifact 读取的 command range 乘以 scale 后创建 keyboard binding；
 - reset 后从 step 0 重新初始化 phase、previous action 和 scheduler；
 - 用户中断时受控停止；
-- 输出 JSON-compatible `RolloutResult`；
-- 可配置任务指标：base height、fall、速度跟踪误差等，但这些指标不进入通用控制循环。
+- 硬件输出通用 `RolloutResult`：成功状态、退出原因、完成步数、墙钟时间、overrun、trace、错误和 latency；ControlSession 只构造此通用结果；
+- 仿真输出 `SimulationRolloutResult`，额外携带 `policy_simulation_time_s` 和 `real_time_factor`。前者只累计模型命令作用期间实际推进的物理时间（包括失败前的部分区间），不包含 ready/damping；后者为此时间与墙钟运行时间之比。SimulationRuntime 独立累计并添加这些指标，硬件不生成仿真指标；
+- 可配置任务指标：IMU fall、速度跟踪误差等，但这些指标不进入通用控制循环，也不引入不可观测的世界高度。
 
 deployment backend 使用最小 GLFW viewer：每次 `sync()` 只更新 MuJoCo scene 并 render，不拥有仿真步进；同一
 window 的 callbacks 提供 keyboard event frame 与 mouse camera control，失焦后立即释放 held keys。viewer 模式默认使用
 realtime scheduler，可通过 `runtime.realtime=false` 关闭实时节奏控制。headless CLI 使用配方中的 constant command，可通过 `command.velocity` 覆盖；
-`runtime.realtime=null` 时跟随 `runtime.viewer`，也可显式配置实时节奏。`ControlLoop.run(steps=...)` 保留为
-程序化确定步数运行能力，不进入 CLI 配置。
+`runtime.realtime=null` 时跟随 `runtime.viewer`，也可显式配置实时节奏。程序化确定步数运行在 Task 构造时传入 `steps=...` 设置内部模型控制器预算，随后由 `runtime.run()` 执行。
 
 ### 11.5 原生 MotrixSim runtime
 
@@ -1048,8 +1078,8 @@ motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
 ```
 
 粗糙地形同样使用 `task=go2-walk-rough/sim`，不复制 backend-specific recipe。程序化 factory 使用
-`create_simulation_runtime("motrixsim", config)`，返回 prepared `runtime.robot` 后显式构造并绑定 session。
-`ControlSession.period_s` 是唯一控制周期来源，绑定或解析 session 时验证 physics timestep 的整数倍关系。
+`create_simulation_runtime("motrixsim", config)`，返回 prepared `runtime.robot` 后显式构造并绑定 ControlSession。
+绑定 ControlSession 时确定控制周期并验证 physics timestep 的整数倍关系。
 
 `MotrixSimRuntime` 持有 `MotrixSimSceneCompiler` 产生的 MSD world、原生 model/data、reset、physics loop 与
 SDK `RenderApp` viewer，不借用 MuJoCo runtime，不实例化训练环境。Native robot port 只读状态、缓存控制目标，
@@ -1071,7 +1101,7 @@ receive timestamp 与 realtime pacing 使用 monotonic clock。Native viewer 提
 ```text
 motrix_deploy_motrixsim/src/motrix_deploy_motrixsim/
 ├── plugin.py       # motrixsim entry point；共享 SimulationRuntimeConfig / artifact context
-├── runtime.py      # native world/model/data、physics、reset 与 ControlSession 调度
+├── runtime.py      # native world/model/data、physics、reset 与 Controller 调度
 ├── interface.py    # semantic sensor binding、query/write、非 owning RobotInterface
 └── viewer.py       # SDK RenderApp 与 viewer-owned KeyboardDevice
 ```
@@ -1106,7 +1136,7 @@ Hydra 配置的公共执行字段是 artifact、duration_s 和 command；task �
 不是嵌套配置映射或 Hydra 配置组；场景、physics、sensor_bindings、network_interface、kp、kd 等字段也直接位于 runtime 下。viewer 和 realtime 仅用于仿真，硬件由 runtime 在内部强制实时调度。
 application 从 runtime 的可选 keyboard device capability 创建 binding。真机不使用静态确认布尔值，
 必须保留 adapter 的启动等待、enable、急停和安全停止流程；默认配置等待操作员按下启动和使能按钮。
-duration_s 换算为控制 tick 上限，不是墙钟超时；程序化 runtime.run(steps=...) 保留确定步数运行。
+duration_s 换算为模型 policy 的控制 tick 预算，不是墙钟超时；程序化创建 Task 时用 steps 设置内部模型决策预算，runtime.run() 不重复接收步数。
 
 具体 task/runtime recipe 属于应用层，由 `motrix_deploy_tasks` 插件安装，提供 flat/rough 场景、机器人和 command 默认值。
 `motrix_deploy` 包内保留通用配置；任务 defaults 选择 runtime/sim 或 runtime/hardware 配置组。
@@ -1149,7 +1179,7 @@ deployment-enabled task 必须在 `motrix_deploy_tasks` 提供一个带版本的
 标识和 config。profile 单独保留编译环境的 observation/action 维度供导出校验，不写入 task serialization；
 artifact 的维度以 policy tensor shapes 为唯一来源。compiler 不恢复 policy checkpoint，也不执行 ONNX 导出。
 每个 task version 至少有一组 golden state/context/action probe，
-同时在训练环境和具体 `DeployTask` 上运行，断言 observation 和 command 数值一致。
+同时在训练环境和具体 `PolicyProcessor` 上运行，断言 observation 和 command 数值一致。
 
 这项一致性检查防止训练环境继续演进后 deployment profile 静默落后。reward、critic observation 和训练噪声
 不属于部署 profile；训练框架的 observation normalizer 已由 policy exporter 烘焙进 ONNX，`DeployTask`
@@ -1219,7 +1249,7 @@ Go2 vertical slice 的验收基线为：确定性初始化的 1000-tick headless
 1. 建立包含通用 CLI 的 `motrix_deploy` library，以及通过 `motrix_deploy.tasks` entry points 提供具体任务类的
    `motrix_deploy_tasks` workspace package。
 2. 实现公共 contracts、artifact schema/reader/validator 和 component registry。
-3. 实现 `DeployTask` 接口、ONNX `PolicyRuntime` 和直接编码 obs/action 的 `go2_walk/v1`。
+3. 实现 `DeployTask` 接口、ONNX `Policy` 和直接编码 obs/action 的 `go2_walk/v1`。
 4. 实现统一 control loop、scheduler、metrics、fake backend 与 contract tests。
 5. 为一个现有 `go2-walk-rough/rslrl.ppo` checkpoint 生成可验证 artifact，并完成训练/部署 golden probe。
 6. 实现 entry-point MuJoCo backend plugin、SceneCfg backend config，以及 headless/GLFW-viewer deployment run。

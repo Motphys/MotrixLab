@@ -32,40 +32,38 @@ MotrixSim is supplied by `motrix-env-motrixsim`, using the workspace's pinned SD
 
 ## Explicit runtime and controller assembly
 
-`create_simulation_runtime("motrixsim", config)` accepts a complete `SimulationRuntimeConfig`.
-The factory returns a prepared host with `runtime.robot` and its read-only `spec`
-available before opening. Construct the task, policy, command binding, and control
-session in the application:
+`create_simulation_runtime("motrixsim", config)` accepts a complete `SimulationRuntimeConfig`
+and returns a prepared host with `runtime.robot` and its read-only `spec` available before
+opening. Task, model, and command binding are application-owned components assembled
+explicitly:
 
 ```python
 from motrix_deploy.runtime.control import ControlSession
 from motrix_deploy.runtime.factory import create_simulation_runtime
+from motrix_deploy.task import create_task
 
 runtime = create_simulation_runtime("motrixsim", config)
 robot = runtime.robot
-control = ControlSession(
+task = create_task(task_spec, robot.spec, model, steps=50)
+session = ControlSession(
     robot=robot,
-    task=task,
-    policy=policy,
+    controller=task,
     command_binding=command_binding,
     period_s=0.02,
+    state_timeout_s=0.1,
 )
-runtime.bind_control_session(control)
+runtime.bind_session(session)
 with runtime:
-    result = runtime.run(steps=50)
+    result = runtime.run()
 ```
 
-Here `config` contains the complete scene, physics, state sources, and rendering
-settings; `task`, `policy`, and `command_binding` are application-owned components.
-A robot-dependent task can be built from `robot.spec` after creation. Runtime factories
-do not construct controllers through callbacks. Direct callers can also pass a
-session to `runtime.run(control, steps=...)`.
-
-`ControlSession.period_s` is the single control-period setting. Binding or resolving
-the session validates that it is an integer multiple of `config.physics.dt`.
-The runtime owns the compiled MSD world, model, data, optional viewer, and physics
-advancement. Robot ports delegate I/O only: `open()` takes no spec, writes cache targets,
-and neither reads nor writes advance physics or close the world.
+`config` contains the complete scene, physics, state sources, and rendering settings. The
+control period must be an integer multiple of `config.physics.dt` and is validated when
+the session is bound. The runtime owns the compiled MSD world, model, data, optional
+viewer, and physics advancement; robot ports delegate I/O only. See the
+[deployment tutorial](../docs/source/en/user_guide/tutorial/advanced/motrix_deploy.md)
+for the framework contracts (ControlSession, DeployTask, controller lifecycle, rollout
+result semantics).
 
 ## Model, placement, and state contract
 
@@ -94,13 +92,16 @@ sensor_bindings:
 For Go2 these names select local `FrameAngVel`, local `FrameLinAcc`, and world
 `FrameLinVel` sensors. IMU sites must belong to the base body and align with its body
 frame; the velocity source must target the base link or an aligned base-body site.
-Missing or incompatible sources fail rather than fabricating state. Base position and
-linear velocity come from the simulation; tasks check optional fields
-at their usage sites. Public state reads own snapshots of native query buffers.
+Missing or incompatible sources fail rather than fabricating state. Public `RobotState`
+does not expose world base position. Optional linear velocity comes only from its bound
+sensor and remains `None` when unbound; tasks check optional fields at their usage sites. Public state reads own snapshots of native query buffers.
 
 ## Control timing and viewer
 
-Each control tick uses shared `ControlSession.start/tick/stop` logic. Every physics
+ControlSession calls `Controller` with validated state and context and writes its command;
+runtime advances one control interval using one scheduler.
+Completion consumes no extra interval; task-specific ready and normal exit actions
+are decisions of the concrete task, not runtime phases. Every physics
 substep recomputes servo torque from current joint state:
 
 ```text

@@ -30,7 +30,13 @@ def test_simulation_factory_uses_installed_plugin_and_public_config(monkeypatch,
         def robot(self):
             return self._robot
 
-        def run(self, control, *, steps=None):
+        def advance_control_period(self):
+            pass
+
+        def _physics_time_s(self):
+            return 0.0
+
+        def run(self):
             raise NotImplementedError
 
     calls = []

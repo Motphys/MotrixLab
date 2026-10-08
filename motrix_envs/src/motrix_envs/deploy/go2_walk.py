@@ -63,7 +63,6 @@ def build_go2_walk_profile(env_name: str) -> DeploymentProfile:
         standing_threshold=env_cfg.commands.velocity.standing_threshold,
         # Match training's orientation-only fall termination.
         termination_min_up_z=env_cfg.termination_min_up_z,
-        termination_min_base_height=None,
         kp=kp.tolist(),
         kd=kd.tolist(),
         action_lower=action_lower.tolist(),

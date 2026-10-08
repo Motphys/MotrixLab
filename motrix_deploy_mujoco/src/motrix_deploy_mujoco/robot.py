@@ -92,7 +92,6 @@ class Robot(RobotInterface):
                     "base_orientation_xyzw",
                     "base_angular_velocity",
                     "base_linear_acceleration",
-                    "base_position",
                     "base_linear_velocity",
                 }
             ),
@@ -129,8 +128,10 @@ class Robot(RobotInterface):
             if value.shape != (joint_count,) or not np.isfinite(value).all():
                 raise ValidationError(f"command.{field_name}", f"finite shape ({joint_count},)", value)
         if isinstance(command, JointServoCommand):
-            if np.any(command.joint_position < self._spec.position_lower) or np.any(
-                command.joint_position > self._spec.position_upper
+            # Independently imported model/task limits can round differently at float32 boundaries.
+            position_tolerance = 1e-6
+            if np.any(command.joint_position < self._spec.position_lower - position_tolerance) or np.any(
+                command.joint_position > self._spec.position_upper + position_tolerance
             ):
                 raise ValidationError(
                     "command.joint_position", "inside RobotSpec position range", command.joint_position
@@ -147,6 +148,13 @@ class Robot(RobotInterface):
 
         # Snapshot the command: the caller may reuse or mutate its arrays afterwards.
         self._command = type(command)(**{name: getattr(command, name).copy() for name in fields})
+        if isinstance(self._command, JointServoCommand):
+            np.clip(
+                self._command.joint_position,
+                self._spec.position_lower,
+                self._spec.position_upper,
+                out=self._command.joint_position,
+            )
         self._last_communication_ns = time.monotonic_ns()
 
     def apply_control(self) -> None:
@@ -177,11 +185,11 @@ class Robot(RobotInterface):
         )
 
     def stop(self) -> None:
+        """Clear the cached command and zero actuator torque."""
         self._command = None
         if not self._opened or self._closed or self._runtime.data is None:
             return
-        if self._joint_qpos_indices.size:
-            self._runtime.data.ctrl[self._actuator_indices] = 0.0
+        self._runtime.data.ctrl[self._actuator_indices] = 0.0
 
     def open(self) -> None:
         """Check that the owning runtime has prepared and bound robot I/O."""
@@ -333,6 +341,8 @@ class Robot(RobotInterface):
             path = f"runtime.sensor_bindings.{role}"
             local_name = getattr(self.config.sensor_bindings, role)
             if local_name is None:
+                if role == "base_linear_velocity":
+                    continue
                 raise ValidationError(path, "an explicit model-local sensor name", "missing")
             sensor_name = self._cfg.resolve_name(local_name)
             sensor_id = self._name_id(self._runtime.mj.mjtObj.mjOBJ_SENSOR, sensor_name, f"sensor_bindings.{role}")
@@ -379,8 +389,9 @@ class Robot(RobotInterface):
             base_orientation_xyzw=orientation_xyzw,
             base_angular_velocity=self._sensor("base_angular_velocity"),
             base_linear_acceleration=self._sensor("base_linear_acceleration"),
-            base_position=np.asarray(self._runtime.data.xpos[self._base_body_id], dtype=np.float32),
-            base_linear_velocity=self._sensor("base_linear_velocity"),
+            base_linear_velocity=(
+                self._sensor("base_linear_velocity") if "base_linear_velocity" in self._sensor_slices else None
+            ),
         )
 
     def _sensor(self, role: str) -> NDArray[np.float32]:
