@@ -44,14 +44,19 @@ class KernelSourceGenerator:
         return evaluate_source, observe_source, reset_source
 
     def interval_event(self, context: ResolvedManagerContext, event: ResolvedSimReset) -> str:
-        """Emit an original-row write kernel, also used to resample episode timers."""
+        """Emit an original-row write kernel, also used to resample episode timers.
+
+        The loop stays serial: interval events are selected-row kernels that touch a
+        handful of rows per step, and the parallel-launch overhead of ``prange``
+        dominates the actual work on many-core machines.
+        """
         lines = [
             "def generated_interval_event_kernel(inputs, env_ids, event_buffers, remaining, low, high, reset):",
         ]
         lines.extend(f"    input_{index} = inputs[{index}]" for index in range(self.flat_input_count))
         lines.extend(
             [
-                "    for row in numba.prange(env_ids.shape[0]):",
+                "    for row in range(env_ids.shape[0]):",
                 "        env_id = env_ids[row]",
                 f"        ctx = {context.expression}",
                 "        if not reset:",

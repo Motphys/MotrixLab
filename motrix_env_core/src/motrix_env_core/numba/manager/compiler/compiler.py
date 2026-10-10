@@ -1008,7 +1008,9 @@ class NumbaKernelCompiler:
         module.__dict__.update({"numba": numba, "np": np, **self._term_functions, **self._prepared_types})
         sys.modules[module_name] = module
         spec.loader.exec_module(module)
-        options = {"cache": True, "nogil": True, "parallel": True}
+        options: dict[str, Any] = {"cache": True, "nogil": True}
+        if kind != "interval_event":
+            options["parallel"] = True
         return numba.njit(**options)(getattr(module, f"generated_{kind}_kernel"))
 
     @staticmethod
