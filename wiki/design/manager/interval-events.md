@@ -22,7 +22,7 @@ IntervalEvent 为 Manager 环境提供逐环境独立的周期性 simulator 写�
 
 ## Velocity kick
 
-RandomVelocityKickCfg 声明目标 body、interval_range_s 和 world XYZ velocity_delta_range。每次触发独立均匀采样各轴，填写 AddBodyLinearVelocityWrite 的 (N, B, 3) float32 buffer。它表示 velocity += delta，不是 absolute velocity、force 或 impulse。首版不为其他模式建立通用事件抽象。
+RandomVelocityKickCfg 声明目标 body、interval_range_s 和 world XYZ 的 velocity_delta_x/y/z（每轴独立 (low, high)，默认 (0.0, 0.0)）。每次触发独立均匀采样各轴，填写 AddBodyLinearVelocityWrite 的 (N, B, 3) float32 buffer。它表示 velocity += delta，不是 absolute velocity、force 或 impulse。首版不为其他模式建立通用事件抽象。
 
 ## 配置示例
 
@@ -33,7 +33,8 @@ cfg.interval_events = {
     "push": RandomVelocityKickCfg(
         interval_range_s=(5.0, 10.0),
         body=cfg.scene.objs.robot.resolved_base_link_name,
-        velocity_delta_range=((-1.0, 1.0), (-1.0, 1.0), (0.0, 0.0)),
+        velocity_delta_x=(-1.0, 1.0),
+        velocity_delta_y=(-1.0, 1.0),
     ),
 }
 ```
@@ -43,3 +44,5 @@ cfg.interval_events = {
 ## 验证
 
 验证空触发、selected-row 写入隔离、重复累加、多事件独立触发、partial reset、sim-only reset、seed 可复现与 warmup 随机状态不变。前端集成测试验证 kick 影响当前 physics step 的 reward/termination/observation；backend 保持中立。
+
+manager 侧开销的实测数据与后续优化计划见 [interval-events-optimization](../../plan/interval-events-optimization.md)；可用 `scripts/bench_interval_events.py` 在目标硬件上复测。

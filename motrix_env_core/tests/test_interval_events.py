@@ -126,8 +126,10 @@ class _PositionTerminationCfg(TerminationTermCfg):
         return TerminationTerm(_position_termination, self.threshold)
 
 
-def _kick(interval=(0.1, 0.3), delta=((-2.0, 2.0), (-3.0, 3.0), (-4.0, 4.0))):
-    return RandomVelocityKickCfg(interval_range_s=interval, body="robot", velocity_delta_range=delta)
+def _kick(interval=(0.1, 0.3), x=(-2.0, 2.0), y=(-3.0, 3.0), z=(-4.0, 4.0)):
+    return RandomVelocityKickCfg(
+        interval_range_s=interval, body="robot", velocity_delta_x=x, velocity_delta_y=y, velocity_delta_z=z
+    )
 
 
 def _make_env(events, *, seed=17, rewards=None, terminations=None):
@@ -149,13 +151,10 @@ def test_interval_bounds_are_validated_at_configuration_boundary(interval):
         _make_env({"kick": _kick(interval=interval)})
 
 
-@pytest.mark.parametrize(
-    "bounds",
-    [((1.0, -1.0), (0.0, 0.0), (0.0, 0.0)), ((0.0, np.inf), (0.0, 0.0), (0.0, 0.0))],
-)
+@pytest.mark.parametrize("bounds", [(1.0, -1.0), (0.0, np.inf)])
 def test_velocity_delta_bounds_are_validated_at_configuration_boundary(bounds):
-    with pytest.raises(ValueError, match="Velocity delta ranges"):
-        _make_env({"kick": _kick(delta=bounds)})
+    with pytest.raises(ValueError, match="velocity_delta_z"):
+        _make_env({"kick": _kick(x=(0.0, 0.0), y=(0.0, 0.0), z=bounds)})
 
 
 def test_interval_scheduling_dispatches_only_due_rows_and_resamples_their_timers():
@@ -253,8 +252,8 @@ def test_random_kicks_and_timers_are_seeded_and_lane_independent():
 def test_multiple_events_on_same_body_accumulate_without_replacing_velocity():
     env = _make_env(
         {
-            "first": _kick(interval=(0.5, 0.5), delta=((1.0, 1.0), (2.0, 2.0), (3.0, 3.0))),
-            "second": _kick(interval=(0.75, 0.75), delta=((4.0, 4.0), (-2.0, -2.0), (1.0, 1.0))),
+            "first": _kick(interval=(0.5, 0.5), x=(1.0, 1.0), y=(2.0, 2.0), z=(3.0, 3.0)),
+            "second": _kick(interval=(0.75, 0.75), x=(4.0, 4.0), y=(-2.0, -2.0), z=(1.0, 1.0)),
         }
     )
     env.sim.body_velocity[:] = [10.0, 20.0, 30.0]
@@ -295,7 +294,7 @@ def test_warmup_and_compile_preserve_event_rng_timers_and_write_buffers():
 
 
 def test_events_run_before_physics_and_feed_reward_observation_and_termination():
-    cfg_event = _kick(interval=(1.0, 1.0), delta=((2.0, 2.0), (3.0, 3.0), (0.0, 0.0)))
+    cfg_event = _kick(interval=(1.0, 1.0), x=(2.0, 2.0), y=(3.0, 3.0), z=(0.0, 0.0))
     # One kicked lane terminates; another survives to expose its post-physics observation.
     probe = _FakeManagerCfg()
     env = _make_env(

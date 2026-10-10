@@ -27,11 +27,20 @@ class RandomVelocityKickCfg(IntervalEventCfg):
     """Sample a world XYZ velocity delta for one floating body's root."""
 
     body: str
-    velocity_delta_range: tuple[tuple[float, float], tuple[float, float], tuple[float, float]]
+    velocity_delta_x: tuple[float, float] = (0.0, 0.0)
+    velocity_delta_y: tuple[float, float] = (0.0, 0.0)
+    velocity_delta_z: tuple[float, float] = (0.0, 0.0)
 
     def __call__(self, ctx: BuildContext) -> IntervalEvent:
         del ctx
-        bounds = np.asarray(self.velocity_delta_range, dtype=np.float32)
-        if bounds.shape != (3, 2) or not np.all(np.isfinite(bounds)) or np.any(bounds[:, 0] > bounds[:, 1]):
-            raise ValueError("Velocity delta ranges must be three finite (low, high) pairs with low <= high.")
+        ranges = []
+        for axis, delta_range in (
+            ("x", self.velocity_delta_x),
+            ("y", self.velocity_delta_y),
+            ("z", self.velocity_delta_z),
+        ):
+            if len(delta_range) != 2 or not all(np.isfinite(delta_range)) or delta_range[0] > delta_range[1]:
+                raise ValueError(f"velocity_delta_{axis} must be a finite (low, high) pair with low <= high.")
+            ranges.append(delta_range)
+        bounds = np.asarray(ranges, dtype=np.float32)
         return IntervalEvent(random_velocity_kick, bounds, writes={"delta": AddBodyLinearVelocityWrite((self.body,))})
