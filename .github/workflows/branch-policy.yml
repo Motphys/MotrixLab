@@ -22,11 +22,11 @@ jobs:
           case "$BASE_BRANCH" in
             main)
               if [[ "$HEAD_BRANCH" == hotfix/* ]]; then
-                echo "Hotfix branches must target stable first; back-merge stable into main after release."
+                echo "Stable patch branches must target stable first; back-merge stable into main after release."
                 exit 1
               fi
               if [[ "$HEAD_BRANCH" == stable && "$HEAD_REPOSITORY" != "Motphys/MotrixLab" ]]; then
-                echo "The post-hotfix stable-to-main back-merge must come from the upstream repository."
+                echo "The stable-patch back-merge must come from the upstream repository."
                 exit 1
               fi
               ;;

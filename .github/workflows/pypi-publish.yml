@@ -1,0 +1,171 @@
+name: Publish Python Packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      index:
+        description: Target package index for manual runs
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+
+permissions: {}
+
+env:
+  PYPI_URL: https://upload.pypi.org/legacy/
+  TESTPYPI_URL: https://test.pypi.org/legacy/
+
+jobs:
+  build:
+    name: Build release distributions
+    # Trusted Publishing credentials are bound to this repository; never
+    # build or publish package distributions from a fork.
+    if: github.repository == 'Motphys/MotrixLab'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Required to verify that the release commit is on stable.
+          fetch-depth: 0
+
+      - name: Verify the production release commit is on stable
+        if: >
+          github.event_name == 'release' ||
+          (github.event_name == 'workflow_dispatch' && inputs.index == 'pypi')
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          git fetch origin stable --tags
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/stable; then
+            echo "Production publishing requires $GITHUB_SHA to be reachable from origin/stable." >&2
+            exit 1
+          fi
+
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -1)
+          tag="v$version"
+          if ! tagged=$(git rev-parse -q --verify "refs/tags/$tag^{commit}" 2>/dev/null); then
+            echo "Production publishing requires tag $tag to exist." >&2
+            exit 1
+          fi
+          if [ "$tagged" != "$GITHUB_SHA" ]; then
+            echo "Tag $tag points at $tagged, but the selected production commit is $GITHUB_SHA." >&2
+            exit 1
+          fi
+          if [ "$EVENT_NAME" = "release" ]; then
+            echo "Release event and stable tag checks passed for $tag."
+          else
+            echo "Manual production recovery checks passed for $tag."
+          fi
+
+      - name: Verify package versions
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          versions=$(
+            for f in pyproject.toml */pyproject.toml; do
+              sed -n 's/^version = "\(.*\)"$/\1/p' "$f" | head -1
+            done | sort -u
+          )
+          if [ "$(printf '%s\n' "$versions" | wc -l)" != 1 ] || [ -z "$versions" ]; then
+            echo "Workspace package versions diverged: $versions" >&2
+            exit 1
+          fi
+          core=$(printf '%s\n' "$versions" | head -1)
+          if [ "$EVENT_NAME" = "release" ] && [ "v$core" != "$REF_NAME" ]; then
+            echo "Release tag '$REF_NAME' does not match package version 'v$core'." >&2
+            exit 1
+          fi
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.14"
+
+      - name: Set up Python
+        run: uv python install 3.10
+
+      - name: Build distribution wheels
+        run: |
+          uv build --wheel motrix_env_core --out-dir dist/env-core
+          uv build --wheel motrix_deploy --out-dir dist/deploy
+          uv build --wheel motrix_rl --out-dir dist/rl
+
+      - name: Upload distribution packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-dists
+          path: dist/
+          if-no-files-found: error
+
+  publish-env-core:
+    name: Publish motrix-env-core
+    needs: build
+    if: github.repository == 'Motphys/MotrixLab'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # PyPI Trusted Publishing OIDC token.
+    steps:
+      - name: Download distribution packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dists
+          path: dist/
+      - name: Publish to the target index
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/env-core
+          repository-url: ${{ (github.event_name == 'release' || inputs.index == 'pypi') && env.PYPI_URL || env.TESTPYPI_URL }}
+          skip-existing: true
+
+  publish-deploy:
+    name: Publish motrix-deploy
+    needs: publish-env-core
+    if: github.repository == 'Motphys/MotrixLab'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # PyPI Trusted Publishing OIDC token.
+    steps:
+      - name: Download distribution packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dists
+          path: dist/
+      - name: Publish to the target index
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/deploy
+          repository-url: ${{ (github.event_name == 'release' || inputs.index == 'pypi') && env.PYPI_URL || env.TESTPYPI_URL }}
+          skip-existing: true
+
+  publish-rl:
+    name: Publish motrix-rl
+    needs: publish-deploy
+    if: github.repository == 'Motphys/MotrixLab'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # PyPI Trusted Publishing OIDC token.
+    steps:
+      - name: Download distribution packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dists
+          path: dist/
+      - name: Publish to the target index
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/rl
+          repository-url: ${{ (github.event_name == 'release' || inputs.index == 'pypi') && env.PYPI_URL || env.TESTPYPI_URL }}
+          skip-existing: true

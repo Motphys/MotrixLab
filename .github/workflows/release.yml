@@ -1,0 +1,495 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Version selection for the release
+        type: choice
+        options: [auto, patch, minor, major, beta, stable]
+        default: auto
+      version:
+        description: Explicit version (overrides mode); e.g. 0.5.0b0
+        type: string
+      open_release_pr:
+        description: Open the current main-to-stable release PR without preparing a bump
+        type: boolean
+        default: false
+  push:
+    branches: [main, stable]
+
+permissions: {}
+
+concurrency:
+  group: release-automation
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare version bump pull request
+    # The job commits to temporary release branches and opens reviewed pull
+    # requests; it must never run anywhere else.
+    if: >
+      github.repository == 'Motphys/MotrixLab' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.open_release_pr != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Create release app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Commitizen derives the next version from the full history and the
+          # most recent v-prefixed release tag.
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Resolve the release branch
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          case "$REF_NAME" in
+            main)
+              echo "BASE=main" >> "$GITHUB_ENV"
+              echo "PATCH_RELEASE=false" >> "$GITHUB_ENV"
+              echo "ALREADY_PREPARED=false" >> "$GITHUB_ENV"
+              ;;
+            hotfix/*)
+              # A stable branch patch must be based on the current stable tip.
+              # Requiring merge-base equality permits fix commits and a merge
+              # from updated stable, but rejects a stale patch branch.
+              git fetch origin stable --no-tags
+              stable_sha=$(git rev-parse origin/stable)
+              base_sha=$(git merge-base HEAD origin/stable)
+              if [ "$base_sha" != "$stable_sha" ]; then
+                echo "$REF_NAME is stale or was not created from stable." >&2
+                echo "Recreate it from origin/stable, or merge origin/stable into it first." >&2
+                exit 1
+              fi
+
+              release_commits=$(
+                git log --format=%s origin/stable..HEAD |
+                  grep -Ec '^chore\(release\): bump version to v' || true
+              )
+              if [ "$release_commits" -gt 1 ]; then
+                echo "$REF_NAME contains multiple release version bumps." >&2
+                exit 1
+              fi
+              if [ "$release_commits" -eq 1 ]; then
+                if ! git log -1 --format=%s | grep -q '^chore(release): bump version to v'; then
+                  echo "The release bump on $REF_NAME must be its latest commit." >&2
+                  echo "Add a new patch branch and bump instead of modifying a prepared release." >&2
+                  exit 1
+                fi
+                echo "ALREADY_PREPARED=true" >> "$GITHUB_ENV"
+              else
+                echo "ALREADY_PREPARED=false" >> "$GITHUB_ENV"
+              fi
+
+              echo "BASE=stable" >> "$GITHUB_ENV"
+              echo "PATCH_RELEASE=true" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "Release preparation must run on main or a hotfix/* branch, got '$REF_NAME'." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.14"
+
+      - name: Set up Python
+        run: uv python install 3.10
+
+      - name: Select and validate the release version
+        env:
+          MODE: ${{ inputs.mode }}
+          EXPLICIT_VERSION: ${{ inputs.version }}
+          PATCH_RELEASE: ${{ env.PATCH_RELEASE }}
+          ALREADY_PREPARED: ${{ env.ALREADY_PREPARED }}
+        run: |
+          uv sync --frozen --only-group dev --no-install-project --no-install-workspace
+
+          if [ "$PATCH_RELEASE" = true ]; then
+            CURRENT_VERSION=$(git show origin/stable:pyproject.toml |
+              sed -n 's/^version = "\(.*\)"$/\1/p' | head -1)
+          else
+            CURRENT_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -1)
+          fi
+          if [ -z "$CURRENT_VERSION" ]; then
+            echo "Unable to resolve the current version." >&2
+            exit 1
+          fi
+
+          args=(--yes --version-files-only --check-consistency)
+          if [ "$ALREADY_PREPARED" = true ]; then
+            prepared_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -1)
+            VERSION=$(.venv/bin/python .github/scripts/validate_release_version.py \
+              --current "$CURRENT_VERSION" \
+              --target "$prepared_version" \
+              --release-kind stable-patch)
+          elif [ -n "$EXPLICIT_VERSION" ]; then
+            VERSION=$(.venv/bin/python .github/scripts/validate_release_version.py \
+              --current "$CURRENT_VERSION" \
+              --target "$EXPLICIT_VERSION" \
+              --release-kind "$([ "$PATCH_RELEASE" = true ] && echo stable-patch || echo normal)")
+            args+=("$VERSION")
+          else
+            if [ "$PATCH_RELEASE" = true ]; then
+              case "$MODE" in
+                auto|patch) MODE="patch" ;;
+                *)
+                  echo "Stable branch patch releases only accept mode=auto or mode=patch." >&2
+                  exit 1
+                  ;;
+              esac
+            fi
+
+            current_major="${CURRENT_VERSION%%.*}"
+            if [ "$current_major" = 0 ]; then
+              # Keep breaking changes below 1.0 while the project is in initial
+              # development. Commitizen does not allow this option to be
+              # combined with an explicit target version.
+              args+=(--major-version-zero)
+            fi
+            case "$MODE" in
+              auto) ;;
+              patch) args+=(--increment PATCH) ;;
+              minor) args+=(--increment MINOR) ;;
+              major) args+=(--increment MAJOR) ;;
+              beta) args+=(--prerelease beta) ;;
+              stable)
+                # Commitizen's linear prerelease behavior stabilizes a pending
+                # release, for example 0.4.0b0 -> 0.4.0.
+                args+=(--increment PATCH)
+                ;;
+              *)
+                echo "Unsupported release mode: $MODE" >&2
+                exit 1
+                ;;
+            esac
+
+            candidate=$(.venv/bin/cz bump --dry-run --get-next "${args[@]}")
+            if [ -z "$candidate" ]; then
+              echo "Commitizen did not produce a version." >&2
+              exit 1
+            fi
+            VERSION=$(.venv/bin/python .github/scripts/validate_release_version.py \
+              --current "$CURRENT_VERSION" \
+              --target "$candidate" \
+              --release-kind "$([ "$PATCH_RELEASE" = true ] && echo stable-patch || echo normal)")
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "Tag v$VERSION already exists." >&2
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          if [ "$ALREADY_PREPARED" != true ]; then
+            .venv/bin/cz bump "${args[@]}"
+            uv lock
+
+            bumped=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -1)
+            if [ "$bumped" != "$VERSION" ]; then
+              echo "Commitizen predicted v$VERSION but bumped v$bumped." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Verify workspace version consistency
+        run: |
+          versions=$(
+            {
+              sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -1
+              for f in */pyproject.toml; do
+                sed -n 's/^version = "\(.*\)"$/\1/p' "$f" | head -1
+              done
+            } | sort -u
+          )
+          if [ "$(printf '%s\n' "$versions" | wc -l)" != 1 ] || [ -z "$versions" ]; then
+            echo "Workspace package versions diverged: $versions" >&2
+            exit 1
+          fi
+          version=$(printf '%s\n' "$versions" | head -1)
+          if [ "$version" != "$VERSION" ]; then
+            echo "Workspace version $version does not match the selected version $VERSION." >&2
+            exit 1
+          fi
+
+      - name: Verify workspace dependency pins
+        run: .venv/bin/python -m pytest tests/test_workspace_versions.py
+
+      - name: Publish the version bump
+        if: env.ALREADY_PREPARED != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REF_NAME: ${{ github.ref_name }}
+          BASE: ${{ env.BASE }}
+        run: |
+          git config user.name "Motrix Release Bot"
+          git config user.email "noreply@motphys.com"
+          git add pyproject.toml ./*/pyproject.toml uv.lock
+          git commit -m "chore(release): bump version to v$VERSION"
+          if [ "$BASE" = main ]; then
+            branch="release/v$VERSION"
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+              echo "Branch $branch already exists; inspect its pull request before retrying." >&2
+              exit 1
+            fi
+            git checkout -b "$branch"
+            git push origin "$branch"
+            gh pr create \
+              --base main \
+              --head "$branch" \
+              --title "chore(release): bump version to v$VERSION" \
+              --body "Bumps every workspace package and \`uv.lock\` to **v$VERSION**.
+
+          Merge this pull request with squash or rebase, then merge the automatically created \`main → stable\` release pull request to cut the release."
+          else
+            git push origin "HEAD:$REF_NAME"
+            if [ -z "$(gh pr list --head "$REF_NAME" --base stable --state open --json number --jq '.[].number')" ]; then
+              gh pr create \
+                --base stable \
+                --head "$REF_NAME" \
+                --title "chore(release): bump version to v$VERSION" \
+                --body "Stable branch patch release **v$VERSION**: fixes plus the workspace version bump."
+            fi
+          fi
+
+  open-release-pr:
+    name: Open main to stable release pull request
+    if: >
+      github.repository == 'Motphys/MotrixLab' && (
+        (
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          startsWith(github.event.head_commit.message, 'chore(release):')
+        ) || (
+          github.event_name == 'workflow_dispatch' &&
+          github.ref_name == 'main' &&
+          inputs.open_release_pr
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Create release app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags are required to test whether the version
+          # has already been released.
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Open or refresh the release pull request
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "No version found in the root pyproject.toml." >&2
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "v$VERSION has already been tagged; nothing to release."
+            exit 0
+          fi
+
+          title="Release v$VERSION"
+          for number in $(gh pr list --base stable --head main --state open --json number --jq '.[].number'); do
+            gh pr close "$number" --comment "Superseded by $title."
+          done
+          gh pr create \
+            --base stable \
+            --head main \
+            --title "$title" \
+            --body "Merging this pull request publishes **v$VERSION**: the release workflow tags the reviewed commit, creates the GitHub release, and triggers PyPI publishing. Run the Docker workflow manually from **stable** after this release is complete.
+
+          Review the changelog since the previous release before merging."
+
+  tag-release:
+    name: Tag the stable release commit
+    if: >
+      github.repository == 'Motphys/MotrixLab' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/stable'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Create release app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Verify all workspace package versions
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "No version found in the root pyproject.toml." >&2
+            exit 1
+          fi
+          versions=$(
+            for f in pyproject.toml */pyproject.toml; do
+              sed -n 's/^version = "\(.*\)"$/\1/p' "$f" | head -1
+            done | sort -u
+          )
+          if [ "$(printf '%s\n' "$versions" | wc -l)" != 1 ] || [ -z "$versions" ]; then
+            echo "Workspace package versions diverged: $versions" >&2
+            exit 1
+          fi
+          if [ "$(printf '%s\n' "$versions" | head -1)" != "$VERSION" ]; then
+            echo "Workspace packages do not match the root version $VERSION." >&2
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.14"
+
+      - name: Set up Python
+        run: uv python install 3.10
+
+      - name: Verify workspace release contracts
+        run: |
+          uv sync --frozen --only-group dev --no-install-project --no-install-workspace
+          .venv/bin/python -m pytest tests/test_workspace_versions.py
+
+      - name: Create the release tag
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          tag="v$VERSION"
+          if git rev-parse -q --verify "refs/tags/$tag^{commit}" >/dev/null; then
+            tagged=$(git rev-parse "refs/tags/$tag^{commit}")
+            if [ "$tagged" = "$GITHUB_SHA" ]; then
+              echo "v$VERSION was already released from this commit; nothing to do."
+              exit 0
+            fi
+            echo "Stable HEAD carries version $VERSION, but tag $tag points at commit $tagged," >&2
+            echo "not at $GITHUB_SHA. A stable patch or release merge reached stable without a" >&2
+            echo "version bump. Add a chore(release) bump commit and merge it to stable." >&2
+            exit 1
+          fi
+
+          gh auth setup-git
+          git config user.name "Motrix Release Bot"
+          git config user.email "noreply@motphys.com"
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "refs/tags/$tag"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          tag="v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; skipping creation."
+            exit 0
+          fi
+          args=(--target "$GITHUB_SHA" --title "$tag" --generate-notes)
+          case "$VERSION" in
+            *b[0-9]*) args+=(--prerelease) ;;
+          esac
+          gh release create "$tag" "${args[@]}"
+
+  backmerge-stable-patch:
+    name: Open the stable patch back-merge pull request
+    needs: tag-release
+    if: >
+      github.repository == 'Motphys/MotrixLab' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/stable'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Create release app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Open the back-merge pull request
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          is_patch_release=$(
+            gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+              --jq 'map(select(.base.ref == "stable" and (.head.ref | startswith("hotfix/")))) | length > 0'
+          )
+          if [ "$is_patch_release" != true ]; then
+            echo "This stable release was not merged from hotfix/*; no back-merge is needed."
+            exit 0
+          fi
+
+          VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -1)
+          tag="v$VERSION"
+          tagged=$(git rev-parse -q --verify "refs/tags/$tag^{commit}" 2>/dev/null || true)
+          if [ -z "$tagged" ] || [ "$tagged" != "$GITHUB_SHA" ]; then
+            echo "Refusing to open the back-merge before $tag points at $GITHUB_SHA." >&2
+            exit 1
+          fi
+
+          existing=$(gh pr list --base main --head stable --state open --json number --jq '.[].number')
+          if [ -n "$existing" ]; then
+            echo "Stable-to-main pull request #$existing already exists."
+            exit 0
+          fi
+          gh pr create \
+            --base main \
+            --head stable \
+            --title "Back-merge stable v$VERSION to main" \
+            --body "Synchronizes the released stable patch and version bump to main.
+
+          This pull request was opened automatically after **v$VERSION** was tagged on stable."
