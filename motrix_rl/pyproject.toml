@@ -7,16 +7,34 @@ name = "motrix-rl"
 version = "0.4.0b0"
 description = "Reinforcement learning training framework with multi-backend unified training interface."
 authors = [{ name = "Motphys", email = "developers@motphys.com" }]
-requires-python = "==3.10.*"
+requires-python = ">=3.10,<3.14"
 readme = "README.md"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = [
+    "reinforcement-learning",
+    "robotics",
+    "training",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 dependencies = [
     "gymnasium==1.1.1",
-    "python-abc>=0.2.0",
-    "motrix-env-core[numba,video]",
+    "motrix-env-core[numba,video]==0.4.0b0",
     "rich>=13",
     "hydra-core>=1.3,<1.4",
-    "motrix-deploy",
+    "motrix-deploy==0.4.0b0",
     "numpy>=1.26",
     "omegaconf>=2.3,<2.4",
     "nvidia-ml-py>=13.610.43",
@@ -28,3 +46,9 @@ dependencies = [
     # extras (see the root pyproject.toml tool.uv.sources).
     "torch>=2.7,<3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Motphys/MotrixLab"
+Repository = "https://github.com/Motphys/MotrixLab"
+Issues = "https://github.com/Motphys/MotrixLab/issues"
+Changelog = "https://github.com/Motphys/MotrixLab/releases"

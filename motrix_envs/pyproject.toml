@@ -12,12 +12,12 @@ readme = "README.md"
 license = "Apache-2.0"
 dependencies = [
     "gymnasium==1.1.1",
-    "motrix-env-core[numba,video]",
-    "motrix-env-motrixsim",
-    "motrix-robots",
+    "motrix-env-core[numba,video]==0.4.0b0",
+    "motrix-env-motrixsim==0.4.0b0",
+    "motrix-robots==0.4.0b0",
     "numpy>=1.26",
     "omegaconf>=2.3,<2.4",
 ]
 
 [project.optional-dependencies]
-deploy = ["motrix-deploy", "motrix-deploy-tasks"]
+deploy = ["motrix-deploy==0.4.0b0", "motrix-deploy-tasks==0.4.0b0"]

@@ -7,9 +7,29 @@ name = "motrix-env-core"
 version = "0.4.0b0"
 description = "Backend-neutral framework APIs and runtime facilities for building reinforcement learning environments."
 authors = [{ name = "Motphys", email = "developers@motphys.com" }]
-requires-python = "==3.10.*"
+requires-python = ">=3.10,<3.14"
 readme = "README.md"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = [
+    "reinforcement-learning",
+    "robotics",
+    "simulation",
+    "environment",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 # Heavy runtime deps (numba/scipy for manager kernel compilation, imageio for
 # video recording) are optional extras so deployment-side installs
 # (motrix-deploy and its backend plugins) only pull the lightweight config,
@@ -46,3 +66,9 @@ all = [
 # short kernels. The wheel drops libtbb.so.12 into <venv>/lib, so the runtime
 # preloads it by full path (see motrix_env_core.numba.threading).
 tbb = ["tbb==2021.13.0"]
+
+[project.urls]
+Homepage = "https://github.com/Motphys/MotrixLab"
+Repository = "https://github.com/Motphys/MotrixLab"
+Issues = "https://github.com/Motphys/MotrixLab/issues"
+Changelog = "https://github.com/Motphys/MotrixLab/releases"
