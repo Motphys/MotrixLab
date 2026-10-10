@@ -48,6 +48,7 @@ def run(cfg: DeployRunConfig) -> int:
     policy = OnnxPolicy(artifact.policy_path, manifest.policy.input, manifest.policy.output)
     task = create_task(manifest.task, manifest.robot, policy, steps=steps, artifact=artifact)
     simulation = cfg.runtime["kind"] == "simulation"
+    task.configure_run(cfg.task_options or {}, simulation=simulation)
     viewer = cfg.runtime["viewer"] if simulation else False
     realtime = cfg.runtime["realtime"] if simulation else True
     if realtime is None:
@@ -62,6 +63,8 @@ def run(cfg: DeployRunConfig) -> int:
         deploy_env_id = runtime_options.pop("deploy_env_id")
         robot_id = runtime_options.pop("robot_id")
         scene = assemble_deploy_scene(deploy_env_id, robot_id)
+        if "robot_init_key_pose" in runtime_options:
+            scene.objs.robot.init_key_pose = runtime_options.pop("robot_init_key_pose")
         for field in ("translation", "rotation"):
             option = f"robot_{field}"
             if option in runtime_options:
@@ -135,6 +138,12 @@ def run(cfg: DeployRunConfig) -> int:
         state_timeout_s=manifest.control.state_timeout_s,
     )
     runtime.bind_session(session)
+    if viewer and isinstance(runtime, KeyboardDeviceProvider):
+        hint = task.attach_operator(
+            runtime.get_keyboard_device(), polled_by_command=isinstance(command_binding, KeyboardPlanarVelocityBinding)
+        )
+        if hint:
+            print(hint)
     with runtime:
         result = runtime.run()
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))

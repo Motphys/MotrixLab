@@ -59,6 +59,7 @@ def _mapping(config_path: Path = CONFIG_PATH) -> dict[str, Any]:
     values["scene"] = build_scene()
     values["scene"].objs.robot.translation = tuple(values.pop("robot_translation"))
     values["scene"].objs.robot.rotation = tuple(values.pop("robot_rotation"))
+    values["scene"].objs.robot.init_key_pose = values.pop("robot_init_key_pose", "default")
     return values
 
 
@@ -553,6 +554,7 @@ def test_direct_scene_recipe_runs_with_training_imports_blocked() -> None:
         robot = UnitreeGo2Robot(
             translation=tuple(values.pop('robot_translation')),
             rotation=tuple(values.pop('robot_rotation')),
+            init_key_pose=values.pop('robot_init_key_pose', 'default'),
         )
         values['scene'] = SceneCfg(objs=FlatWorldObjsCfg(robot=robot, floor=FlatTerrainCfg()))
         config = SimulationRuntimeConfig.from_mapping(values)

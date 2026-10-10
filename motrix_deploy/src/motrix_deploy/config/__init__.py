@@ -15,6 +15,7 @@ class DeployRunConfig:
     runtime: dict[str, Any]
     duration_s: float | None = None
     command: dict[str, Any] | None = None
+    task_options: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.artifact:

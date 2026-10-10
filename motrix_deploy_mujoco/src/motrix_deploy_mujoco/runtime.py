@@ -103,11 +103,16 @@ class MujocoRuntime(SimulationRuntime):
         return RobotSpec(
             base_link_name=robot.base_link_name,
             joint_names=joint_names,
-            default_joint_position=np.asarray(robot.key_pose.poses[robot.init_key_pose], dtype=np.float32),
+            default_joint_position=np.asarray(robot.key_pose.poses["default"], dtype=np.float32),
             position_lower=position_range[:, 0].astype(np.float32),
             position_upper=position_range[:, 1].astype(np.float32),
             torque_limit=model.actuator_forcerange[indices, 1].astype(np.float32),
         )
+
+    def initial_joint_position(self, spec: RobotSpec) -> NDArray[np.float32]:
+        robot = cast(RobotCfg, self.scene.objs.robot)
+        pose = np.asarray(robot.key_pose.poses[robot.init_key_pose], dtype=np.float32)
+        return np.clip(pose, spec.position_lower, spec.position_upper)
 
     def get_keyboard_device(self) -> KeyboardDevice:
         """Return keyboard input owned by this simulation's viewer."""

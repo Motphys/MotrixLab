@@ -81,7 +81,7 @@ class Robot(RobotInterface):
         self._bind_joints_and_actuators(spec)
         self._validate_torque_actuator_contract(spec)
         self._bind_sensors()
-        self._runtime.reset(self._joint_qpos_indices, spec.default_joint_position)
+        self._runtime.reset(self._joint_qpos_indices, self._runtime.initial_joint_position(spec))
         self._command = None
         self._capabilities = RobotCapabilities(
             control_modes=(JointControlMode.SERVO, JointControlMode.TORQUE),

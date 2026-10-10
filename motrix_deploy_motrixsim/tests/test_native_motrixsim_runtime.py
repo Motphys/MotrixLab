@@ -46,6 +46,19 @@ def config(**kwargs):
     )
 
 
+def test_native_scene_init_pose_preserves_artifact_default_and_clips_servo_limits():
+    cfg = config()
+    cfg.scene.objs.robot.init_key_pose = "lie_down"
+    runtime = MotrixSimRuntime(cfg)
+    with runtime:
+        spec = runtime.robot.spec
+        pose = runtime.scene.objs.robot.key_pose.poses["lie_down"]
+        expected = np.clip(pose, spec.position_lower, spec.position_upper)
+        np.testing.assert_allclose(runtime.robot.read_state(0.1).joint_position, expected, atol=1e-6)
+        np.testing.assert_allclose(spec.default_joint_position, runtime.scene.objs.robot.key_pose.poses["default"])
+        assert runtime.scene.objs.robot.init_key_pose == "lie_down"
+
+
 class HoldPolicyProcessor(PolicyProcessor):
     def __init__(self, spec):
         self.spec = spec

@@ -1,7 +1,13 @@
 # @package _global_
+# Go2 flat sim starts crouched and requires R then P in the viewer.
 defaults:
   - /runtime: sim
   - _self_
+
+artifact: artifacts/go2-walk-flat.deploy
+
+task_options:
+  preparation: lie_down
 
 runtime:
   backend: mujoco
@@ -11,8 +17,10 @@ runtime:
     base_linear_velocity: global_linvel
   deploy_env_id: flat
   robot_id: go2
-  # Attach offset from the model's root height (0.445), keeping the default stance clear of the floor.
-  robot_translation: [0.0, 0.0, -0.114]
+  robot_init_key_pose: lie_down
+  # Imported root starts at 0.445 m; place clipped crouch close to floor
+  # without an initial penetration in the flat MuJoCo scene.
+  robot_translation: [0.0, 0.0, -0.32]
   robot_rotation: [0.0, 0.0, 0.0, 1.0]
   physics:
     dt: 0.002

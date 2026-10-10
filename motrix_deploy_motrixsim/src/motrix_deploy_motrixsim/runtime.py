@@ -101,7 +101,7 @@ class MotrixSimRuntime(SimulationRuntime):
         spec = RobotSpec(
             base_link_name=robot.base_link_name,
             joint_names=names,
-            default_joint_position=np.asarray(robot.key_pose.poses[robot.init_key_pose], dtype=np.float32),
+            default_joint_position=np.asarray(robot.key_pose.poses["default"], dtype=np.float32),
             position_lower=np.asarray(lower, dtype=np.float32),
             position_upper=np.asarray(upper, dtype=np.float32),
             torque_limit=np.asarray(torque, dtype=np.float32),
@@ -132,6 +132,11 @@ class MotrixSimRuntime(SimulationRuntime):
         for keyframe in self.world.keyframes:
             keyframe.ctrl = [0.0] * len(self.world.actuators)
 
+    def initial_joint_position(self, spec: RobotSpec) -> np.ndarray:
+        robot = self.scene.objs.robot
+        pose = np.asarray(robot.key_pose.poses[robot.init_key_pose], dtype=np.float32)
+        return np.clip(pose, spec.position_lower, spec.position_upper)
+
     def _configure_session_period(self, period_s: float) -> None:
         ratio = period_s / self.config.physics.dt
         if not np.isfinite(ratio) or not np.isclose(ratio, round(ratio), atol=1e-9, rtol=0) or round(ratio) < 1:
@@ -158,7 +163,7 @@ class MotrixSimRuntime(SimulationRuntime):
         if self.model is None:
             raise RuntimeError("MotrixSim model is not available")
         position = np.asarray(self.model.compute_init_dof_pos(), dtype=np.float32).copy()
-        position[self._robot.joint_dof_pos_indices] = self.robot.spec.default_joint_position
+        position[self._robot.joint_dof_pos_indices] = self.initial_joint_position(self.robot.spec)
         self.data = mtx.SceneData(self.model, batch=[1])
         self.data.reset(
             self.model,

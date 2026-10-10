@@ -108,12 +108,29 @@ def test_installed_recipes_compose_outside_workspace(tmp_path, task, runtime_kin
     )
     assert result.returncode == 0, result.stderr
     assert f"backend: {backend}" in result.stdout
-    assert "artifact: ???" in result.stdout
+    expected_artifact = (
+        "artifact: artifacts/go2-walk-flat.deploy" if task.startswith("go2-walk-flat/sim") else "artifact: ???"
+    )
+    assert expected_artifact in result.stdout
     assert f"kind: {runtime_kind}" in result.stdout
     if runtime_kind == "simulation":
         assert "sensor_bindings:" in result.stdout
         assert "viewer: true" in result.stdout
         assert "realtime: null" in result.stdout
+
+
+def test_go2_sim_recipe_uses_clipped_crouch_without_changing_policy_default() -> None:
+    with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
+        cfg = compose(config_name="deploy", overrides=["task=go2-walk-flat/sim"])
+
+    assert cfg.task_options.preparation == "lie_down"
+    assert cfg.runtime.robot_init_key_pose == "lie_down"
+    assert cfg.artifact == "artifacts/go2-walk-flat.deploy"
+    scene = assemble_deploy_scene(cfg.runtime.deploy_env_id, cfg.runtime.robot_id)
+    assert scene.objs.robot.init_key_pose == "default"
+    scene.objs.robot.init_key_pose = cfg.runtime.robot_init_key_pose
+    assert scene.objs.robot.init_key_pose == "lie_down"
+    assert scene.objs.robot.key_pose.poses["default"] != scene.objs.robot.key_pose.poses["lie_down"]
 
 
 def test_deployment_plugin_preserves_other_app_task_discovery(tmp_path: Path) -> None:
@@ -309,6 +326,9 @@ def test_headless_simulation_cli_runs_deterministic_onnx_fixture(tmp_path: Path,
     first_result = _rollout_result(first.stdout)
     assert first_result["success"] is True
     assert first_result["completed_steps"] == 5
+
+    if task == "go2-walk-flat":
+        assert first_result["policy_simulation_time_s"] == pytest.approx(0.1)
 
     # Both worlds smoke-test each backend; repeat only one world per backend.
     if task == "go2-walk-flat":

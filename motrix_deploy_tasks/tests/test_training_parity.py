@@ -69,6 +69,32 @@ def test_go2_training_and_deployment_task_golden_probe(env_name: str) -> None:
     )
 
 
+@pytest.mark.parametrize("env_name", ["go2-walk-flat", "go2-walk-rough"])
+def test_go2_gait_phase_matches_training_across_standing_and_restart(env_name: str) -> None:
+    profile = build_deployment_profile(env_name)
+    env = registry.make(env_name, num_envs=1, mode="play")
+    env.cfg.spawn_xy_range = 0.0
+    env.init_state()
+    probe = _make_env_probe(env)
+    task = Go2WalkPolicyProcessor(profile.task, profile.robot)
+    moving = np.array([[0.2, 0.0, 0.0]], dtype=np.float32)
+    standing = np.zeros((1, 3), dtype=np.float32)
+    env._commands[:] = moving
+    task.reset(
+        _robot_state_from_env(env, env.state, probe),
+        ControlContext(0, 0.0, PlanarVelocityCommand(moving), profile.control.period_s),
+    )
+    actions = np.zeros((1, profile.action_size), dtype=np.float32)
+    for step, command in enumerate((moving, standing, standing, moving, moving), start=1):
+        env._commands[:] = command
+        stepped = env.step(actions)
+        context = ControlContext(
+            step, step * profile.control.period_s, PlanarVelocityCommand(command), profile.control.period_s
+        )
+        observed = task.build_observation(_robot_state_from_env(env, stepped, probe), context)
+        np.testing.assert_allclose(observed[-4:], stepped.obs.policy[0, -4:], atol=1e-6)
+
+
 def test_g1_profile_uses_config_not_environment_and_embeds_named_motion(monkeypatch):
     pytest.importorskip("motrix_envs")
     from motrix_envs.deploy.g1_wbt import build_g1_wbt_profile

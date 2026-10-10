@@ -39,6 +39,15 @@ class DeployTask(ABC, Generic[CommandT]):
     def validate_command(self, command: CommandT | None) -> None:
         """Validate external input at the application assembly boundary."""
 
+    def configure_run(self, options: dict[str, Any], *, simulation: bool) -> None:
+        """Accept task-specific execution options without teaching the CLI task semantics."""
+        if options:
+            raise ValueError(f"Task {self.spec_type.task_name!r} does not accept task_options: {sorted(options)}")
+
+    def attach_operator(self, keyboard: Any, *, polled_by_command: bool) -> str | None:
+        """Optionally bind a shared viewer keyboard and return an operator hint."""
+        return None
+
 
 TASK_ENTRY_POINT_GROUP = "motrix_deploy.tasks"
 
