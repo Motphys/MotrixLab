@@ -53,6 +53,7 @@ from motrix_env_core.sim.read import (
     SiteQuaternionQuery,
 )
 from motrix_env_core.sim.write import (
+    AddBodyLinearVelocityWrite,
     BodyAngularVelocityWrite,
     BodyJointPositionWrite,
     BodyJointVelocityWrite,
@@ -64,6 +65,7 @@ from motrix_env_core.sim.write import (
 )
 
 __all__ = [
+    "AddBodyLinearVelocityWrite",
     "ActuatorCtrlQuery",
     "ActuatorKdQuery",
     "ActuatorKpQuery",

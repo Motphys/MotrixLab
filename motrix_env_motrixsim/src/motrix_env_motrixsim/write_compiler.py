@@ -12,6 +12,7 @@ from motrixsim import write as mtx_write
 from motrix_env_core.sim.write import (
     ActuatorDampingWrite,
     ActuatorKpWrite,
+    AddBodyLinearVelocityWrite,
     BodyAngularVelocityWrite,
     BodyJointPositionWrite,
     BodyJointVelocityWrite,
@@ -205,6 +206,20 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
                 _CompiledWrite(
                     vel_indices=indices.ravel(),
                     native=mtx_write.BodyLinearVelocity(list(write.bodies)),
+                ),
+            )
+        )
+
+    def compile_add_body_linear_velocity(self, name: str, write: AddBodyLinearVelocityWrite) -> None:
+        bases = self._floating_bases(name, write.bodies, type(write).__name__)
+        indices = np.asarray([base.dof_vel_indices[:3] for base in bases], dtype=np.int64)
+        self._pending.append(
+            (
+                name,
+                _CompiledWrite(
+                    vel_indices=indices.ravel(),
+                    refresh_kinematics=True,
+                    native=mtx_write.AddBodyLinearVelocity(list(write.bodies)),
                 ),
             )
         )

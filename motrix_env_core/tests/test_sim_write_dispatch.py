@@ -8,6 +8,7 @@ import numpy as np
 from motrix_env_core.sim.write import (
     ActuatorDampingWrite,
     ActuatorKpWrite,
+    AddBodyLinearVelocityWrite,
     BodyAngularVelocityWrite,
     BodyJointPositionWrite,
     BodyJointVelocityWrite,
@@ -90,6 +91,10 @@ class _DispatchCompiler(SimWriteCompiler):
         del name, write
         self.dispatched.append("body_linear_velocity")
 
+    def compile_add_body_linear_velocity(self, name, write) -> None:
+        del name, write
+        self.dispatched.append("add_body_linear_velocity")
+
     def compile_body_angular_velocity(self, name, write) -> None:
         del name, write
         self.dispatched.append("body_angular_velocity")
@@ -136,6 +141,7 @@ def test_sim_write_compiler_dispatches_each_write_to_its_typed_compiler() -> Non
     BodyPositionWrite(("body",)).compile_with(compiler, "write")
     BodyRotationWrite(("body",)).compile_with(compiler, "write")
     BodyLinearVelocityWrite(("body",)).compile_with(compiler, "write")
+    AddBodyLinearVelocityWrite(("body",)).compile_with(compiler, "write")
     BodyAngularVelocityWrite(("body",)).compile_with(compiler, "write")
     KinematicBodyPositionWrite(("body",)).compile_with(compiler, "write")
     KinematicBodyRotationWrite(("body",)).compile_with(compiler, "write")
@@ -156,6 +162,7 @@ def test_sim_write_compiler_dispatches_each_write_to_its_typed_compiler() -> Non
         "body_position",
         "body_rotation",
         "body_linear_velocity",
+        "add_body_linear_velocity",
         "body_angular_velocity",
         "kinematic_body_position",
         "kinematic_body_rotation",

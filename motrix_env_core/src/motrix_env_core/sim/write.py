@@ -144,6 +144,20 @@ class BodyLinearVelocityWrite(SimWrite):
 
 
 @dataclass(frozen=True)
+class AddBodyLinearVelocityWrite(SimWrite):
+    """Add world linear velocity deltas to floating bodies: ``(N, B, 3)`` float32.
+
+    Each execution adds the buffer values to the current velocity of selected
+    rows; it does not replace velocities or apply an external force.
+    """
+
+    bodies: tuple[str, ...]
+
+    def compile_with(self, compiler: SimWriteCompiler, name: str) -> None:
+        compiler.compile_add_body_linear_velocity(name, self)
+
+
+@dataclass(frozen=True)
 class BodyAngularVelocityWrite(SimWrite):
     """Floating-base world angular velocities in body order: ``(N, B, 3)``."""
 
@@ -299,6 +313,10 @@ class SimWriteCompiler(abc.ABC):
     @abc.abstractmethod
     def compile_body_linear_velocity(self, name: str, write: BodyLinearVelocityWrite) -> None:
         """Record floating-body world linear velocity writes."""
+
+    @abc.abstractmethod
+    def compile_add_body_linear_velocity(self, name: str, write: AddBodyLinearVelocityWrite) -> None:
+        """Record floating-body world linear velocity increments."""
 
     @abc.abstractmethod
     def compile_body_angular_velocity(self, name: str, write: BodyAngularVelocityWrite) -> None:

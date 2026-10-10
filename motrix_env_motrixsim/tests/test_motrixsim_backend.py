@@ -35,7 +35,12 @@ from motrix_env_core.sim import (
 )
 from motrix_env_core.sim.model import SimModel
 from motrix_env_core.sim.registry import create_sim_backend, list_sim_backends
-from motrix_env_core.sim.write import BodyJointVelocityWrite, CtrlTargetsWrite, JointVelocityWrite
+from motrix_env_core.sim.write import (
+    AddBodyLinearVelocityWrite,
+    BodyJointVelocityWrite,
+    CtrlTargetsWrite,
+    JointVelocityWrite,
+)
 from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler
 from motrix_env_motrixsim.runtime import MotrixSimBackend
 
@@ -384,6 +389,70 @@ def test_body_state_reset_is_visible_to_link_queries():
     np.testing.assert_allclose(read["rotation"][0], [0.0, 0.0, 0.0, 1.0])
     np.testing.assert_allclose(read["linear_velocity"][0], [0.1, 0.2, 0.3])
     np.testing.assert_allclose(read["angular_velocity"][0], [0.4, 0.5, 0.6])
+
+
+@pytest.mark.parametrize("forward_kinematics", [True, False])
+def test_add_body_linear_velocity_accumulates_only_on_selected_rows(forward_kinematics):
+    import motrix_envs  # noqa: F401
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("dm-humanoid-walk", mode="play")
+    backend = MotrixSimBackend(cfg.scene, cfg.sim, 3)
+    initial = backend.write_compiler.compile({"velocity": BodyLinearVelocityWrite(("torso",))}, reset=True)
+    initial.buffer("velocity")[:] = [0.25, -0.5, 0.75]
+    initial.execute()
+    kick = backend.write_compiler.compile(
+        {"delta": AddBodyLinearVelocityWrite(("torso",))},
+        reset=False,
+        forward_kinematics=forward_kinematics,
+    )
+    assert kick.buffer("delta").shape == (3, 1, 3)
+    assert kick.buffer("delta").dtype == np.float32
+    kick.buffer("delta")[:] = [1.0, -0.25, 0.0]
+    read = backend.compile_reads(
+        {
+            "velocity": DofVelocityQuery(),
+            "position": DofPositionQuery(),
+            "angular": LinkAngularVelocityQuery(link="torso"),
+        }
+    )
+    read.execute()
+    velocity_before = read["velocity"].copy()
+    position_before = read["position"].copy()
+    angular_before = read["angular"].copy()
+    base = backend._model.get_body("torso").floatingbase
+    linear_indices = np.asarray(base.dof_vel_indices[:3], dtype=np.int64)
+    selected = np.asarray([2, 0], dtype=np.int64)
+
+    for count in (1, 2):
+        kick.execute(selected)
+        read.execute()
+        expected = velocity_before.copy()
+        expected[np.ix_(selected, linear_indices)] += count * np.asarray([1.0, -0.25, 0.0])
+        np.testing.assert_allclose(read["velocity"], expected)
+        np.testing.assert_array_equal(read["position"], position_before)
+        np.testing.assert_allclose(read["angular"], angular_before)
+
+    kick.execute(np.asarray([], dtype=np.int64))
+    read.execute()
+    np.testing.assert_allclose(read["velocity"], expected)
+    if forward_kinematics:
+        link_read = backend.compile_reads({"velocity": LinkLinearVelocityQuery(link="torso")})
+        link_read.execute()
+        np.testing.assert_allclose(link_read["velocity"], expected[:, linear_indices])
+
+
+@pytest.mark.parametrize("other_write", [BodyLinearVelocityWrite, AddBodyLinearVelocityWrite])
+def test_add_body_linear_velocity_rejects_conflicting_targets(other_write):
+    import motrix_envs  # noqa: F401
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("dm-humanoid-walk", mode="play")
+    backend = MotrixSimBackend(cfg.scene, cfg.sim, 1)
+    with pytest.raises(ValueError, match="conflict"):
+        backend.write_compiler.compile(
+            {"delta": AddBodyLinearVelocityWrite(("torso",)), "other": other_write(("torso",))}
+        )
 
 
 def test_named_joint_queries_reject_unknown_joints():

@@ -115,10 +115,16 @@ url = "https://download.pytorch.org/whl/rocm7.2"
 explicit = true
 
 [[tool.uv.index]]
+name = "motphys"
+url = "https://pypi.motphys.com/simple/"
+explicit = true
+
+[[tool.uv.index]]
 name = "pypi"
 url = "https://pypi.org/simple"
 
 [tool.uv.sources]
+motrixsim-core = { index = "motphys" }
 motrix-robots = { workspace = true }
 motrix-env-core = { workspace = true }
 motrix-deploy = { workspace = true }
