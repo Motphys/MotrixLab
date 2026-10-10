@@ -15,3 +15,4 @@
 
 - [fastsac-async-multi-learner.md](fastsac-async-multi-learner.md) — FastSAC 单机多卡（多 learner × DDP）实施计划
 - [motion-multi-clip-infra.md](motion-multi-clip-infra.md) — 多 motion clip 训练基础设施（MotionLibrary + WbtMotionCommand 原地泛化）分阶段实施计划
+- [interval-events-optimization.md](interval-events-optimization.md) — Interval events 性能优化计划（实测结论、两档优化设计、benchmark 判读标准）
