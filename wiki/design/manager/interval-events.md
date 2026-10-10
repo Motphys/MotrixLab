@@ -45,4 +45,25 @@ cfg.interval_events = {
 
 验证空触发、selected-row 写入隔离、重复累加、多事件独立触发、partial reset、sim-only reset、seed 可复现与 warmup 随机状态不变。前端集成测试验证 kick 影响当前 physics step 的 reward/termination/observation；backend 保持中立。
 
-manager 侧开销的实测数据与后续优化计划见 [interval-events-optimization](../../plan/interval-events-optimization.md)；可用 `scripts/bench_interval_events.py` 在目标硬件上复测。
+## 性能
+
+`apply()` 每事件依次执行：timer 递减与 `flatnonzero` 到期扫描 → 串行 njit kernel 只遍历 due 行（重采样 interval、采样 delta、累加写入 buffer）→ `program.execute(due)` 提交 backend。事件 kernel 是 **selected-row 串行 kernel**：每步只处理少量 due 行，若以 `numba.prange` 编译，parallel 启动开销随线程池规模线性增长（192 核机器上每次调用固定 ~150 μs，即使 0 行 due），远超实际计算量，因此 manager 编译器对 interval event kernel 强制串行编译。
+
+实测数据（`scripts/bench_interval_events.py`，fake write backend，仅 manager 侧开销，192 核 EPYC 9J14，dt=0.02s，staggered 场景）：
+
+| 事件数 | num_envs | 串行化前 (μs/step) | 串行化后 (μs/step) |
+|---|---|---|---|
+| 1 | 4096 | 198 | 31 |
+| 2 | 4096 | 368 | 63 |
+| 8 | 4096 | 1602 | 262 |
+| 16 | 4096 | — | 520 |
+
+串行化后成本随事件数线性（~32 μs/事件 @4096 envs），其中 timer 扫描 ~4.6 μs、kernel 与提交占其余；纯扫描（无到期）~3.7 μs/事件。毫秒级 physics step 下典型 1-2 个事件的开销占比 <1%。
+
+已验证的负结果与边界：
+
+- 将逐事件 timer 扫描批量化为 2D `nonzero` + `bincount` + `cumsum` 是负优化（慢 2-6 倍）；flat 批量在 ≥8 事件时快约 2 倍，但绝对收益仅 ~16 μs/step，未达实施阈值。
+- 事件间共享 WriteProgram（按 writes 签名分组，E 次 execute → G 次）预估仅省 ~5 μs × (E−G)/步，未达整步 5% 阈值，不实施。
+- timer 融入 action kernel（消除 host 侧扫描）收益上限只剩 ~30 μs/step，且代价是 action kernel 编译指纹耦合事件配置，不实施。
+
+可在目标硬件上用 `scripts/bench_interval_events.py` 复测（脚本开头默认设置 `OMP_WAIT_POLICY=PASSIVE`、`GOMP_SPINCOUNT=0`，避免 OpenMP 自旋干扰微秒级计时）。
