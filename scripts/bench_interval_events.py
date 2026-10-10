@@ -26,6 +26,12 @@ Examples:
 
 from __future__ import annotations
 
+import os
+
+# Avoid OpenMP busy-wait spinning in BLAS/OpenMP pools that distorts μs-scale timing.
+os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+os.environ.setdefault("GOMP_SPINCOUNT", "0")
+
 import argparse
 import statistics
 import sys
