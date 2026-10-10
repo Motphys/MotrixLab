@@ -273,17 +273,29 @@ class NumbaKernelCompiler:
             context=context,
         )
 
+    def build_interval_event(self, name: str, term: Any) -> tuple[Any, tuple[Any, ...]]:
+        """Compile a selected-row event independently of the task/reset kernels."""
+        context = self._resolve_manager_context({}, {}, {})
+        resolved = self._resolve_write_dispatch(
+            name, term, 0, 0, tuple(term.writes), term.writes, group="interval_event"
+        )
+        source = KernelSourceGenerator(self._flat_input_count).interval_event(context, resolved)
+        key = plan_key([("kernel_kind", "interval_event")] + self._shared_parts + self._reset_parts)
+        kernel, _ = self._load_kernel("interval_event", source, key)
+        inputs = tuple(value for prepared in self._prepared_terms for value in prepared.values)
+        return kernel, inputs
+
     def _resolve_resets(self) -> tuple[ResolvedSimReset, ...]:
         resolved = []
         output_offset = 0
         for index, (name, term) in enumerate(self._env.sim_reset_terms.items()):
             writes = self._env.sim_reset_writes[name]
             outputs = tuple(writes)
-            resolved.append(self._resolve_reset(name, term, index, output_offset, outputs, writes))
+            resolved.append(self._resolve_write_dispatch(name, term, index, output_offset, outputs, writes))
             output_offset += len(outputs)
         return tuple(resolved)
 
-    def _resolve_reset(
+    def _resolve_write_dispatch(
         self,
         name: str,
         term: Any,
@@ -291,41 +303,44 @@ class NumbaKernelCompiler:
         output_offset: int,
         fields: tuple[str, ...],
         descriptors: object,
+        *,
+        group: str = "sim_reset",
     ) -> ResolvedSimReset:
+        kind = "reset" if group == "sim_reset" else "interval_event"
         function = term.dispatch
         parameters = tuple(inspect.signature(function).parameters.values())
         if any(
             parameter.kind not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
             for parameter in parameters
         ):
-            raise TypeError(f"Manager simulator reset term {name!r} dispatch args must be positional parameters.")
+            raise TypeError(f"Manager {group} term {name!r} dispatch args must be positional parameters.")
         if len(parameters) != 2 + len(term.args):
             raise TypeError(
-                f"Manager simulator reset term {name!r} dispatch must take a ManagerContext parameter, a "
+                f"Manager {group} term {name!r} dispatch must take a ManagerContext parameter, a "
                 f"Map[np.ndarray] sim-writes parameter, and {len(term.args)} positional args; got "
                 f"{tuple(parameter.name for parameter in parameters)}."
             )
         annotations = get_type_hints(function, include_extras=True)
         if annotations.get(parameters[0].name) is not ManagerContext:
             raise TypeError(
-                f"Manager simulator reset term {name!r} dispatch must annotate its first parameter as "
+                f"Manager {group} term {name!r} dispatch must annotate its first parameter as "
                 f"ManagerContext (conventionally named ctx)."
             )
         sim_writes_annotation = annotations.get(parameters[1].name)
         if get_origin(sim_writes_annotation) is not Map or get_args(sim_writes_annotation) != (np.ndarray,):
             raise TypeError(
-                f"Manager simulator reset term {name!r} dispatch must annotate its second parameter as "
+                f"Manager {group} term {name!r} dispatch must annotate its second parameter as "
                 f"Map[np.ndarray] (conventionally named sim_writes)."
             )
         sim_writes_proxy = map_proxy(
-            f"sim_reset_{name}_writes",
+            f"{group}_{name}_writes",
             fields,
             module_name=__name__,
             schema_fingerprint=hashlib.sha256(repr(descriptors).encode()).hexdigest(),
         )
         self._prepared_types[proxy_symbol(sim_writes_proxy)] = sim_writes_proxy
         dispatcher = self._compile_term(function)
-        symbol = f"term_reset_{term_index}"
+        symbol = f"term_{kind}_{term_index}"
         self._term_functions[symbol] = self._generated_term(function, dispatcher)
         expressions = []
         plan_expressions = []
@@ -335,25 +350,25 @@ class NumbaKernelCompiler:
                 _, tree_def = flatten_kernel_data(value)
                 layout = self._kernel_data_lowering.lower(
                     tree_def,
-                    context=f"Simulator reset {name} args[{index}]",
+                    context=f"{group} {name} args[{index}]",
                     force_shared=True,
                 )
                 prepared_index, expression = self._register_prepared(
-                    f"sim_reset.{name}.args[{index}]", value, type(value), layout
+                    f"{group}.{name}.args[{index}]", value, type(value), layout
                 )
                 prepared_indices.append(prepared_index)
                 expressions.append(expression)
                 plan_expressions.append(expression)
             else:
                 expression, _, plan_part, prepared_index = self._resolve_plain_arg(
-                    f"sim_reset.{name}.args[{index}]", value
+                    f"{group}.{name}.args[{index}]", value
                 )
                 prepared_indices.append(prepared_index)
                 expressions.append(expression)
                 plan_expressions.append(plan_part)
         self._reset_parts.append(
             (
-                "sim_reset",
+                group,
                 name,
                 self._function_fingerprint(function),
                 plan_expressions,
@@ -362,8 +377,8 @@ class NumbaKernelCompiler:
             )
         )
         invocation = PreparedInvocation(
-            "sim_reset." + name,
-            "reset",
+            group + "." + name,
+            kind,
             dispatcher,
             None,
             args_expressions=tuple(expressions),

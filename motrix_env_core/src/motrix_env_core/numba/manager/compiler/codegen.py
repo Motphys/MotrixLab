@@ -43,6 +43,26 @@ class KernelSourceGenerator:
         reset_source = self._reset_module(context, command_resets, reset)
         return evaluate_source, observe_source, reset_source
 
+    def interval_event(self, context: ResolvedManagerContext, event: ResolvedSimReset) -> str:
+        """Emit an original-row write kernel, also used to resample episode timers."""
+        lines = [
+            "def generated_interval_event_kernel(inputs, env_ids, event_buffers, remaining, low, high, reset):",
+        ]
+        lines.extend(f"    input_{index} = inputs[{index}]" for index in range(self.flat_input_count))
+        lines.extend(
+            [
+                "    for row in numba.prange(env_ids.shape[0]):",
+                "        env_id = env_ids[row]",
+                f"        ctx = {context.expression}",
+                "        if not reset:",
+            ]
+        )
+        outputs = ", ".join(f"event_buffers[{index}][env_id]" for index in range(event.output_count))
+        lines.append(f"            writes = {event.sim_writes_type}({outputs})")
+        lines.append(f"            {self._term_call(event.invocation, 0, 'ctx', 'writes')}")
+        lines.append("        remaining[env_id] = ctx.rand.uniform_range(low, high)")
+        return "\n".join(lines) + "\n"
+
     def _evaluate_module(self, evaluate_lane_body: list[str], context: ResolvedManagerContext) -> str:
         lines = [
             "def generated_evaluate_kernel(inputs, reward_weights, buffers, outputs):",

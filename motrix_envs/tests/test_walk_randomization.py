@@ -13,6 +13,7 @@ import pytest
 import motrix_envs  # noqa: F401 registers built-in environments
 from motrix_env_core.manager import ManagerEnv
 from motrix_env_core.mdp.action import JointPositionActionCfg, JointPositionActionState, JointPositionActionTerm
+from motrix_env_core.numba.manager.events import IntervalEventManager
 from motrix_envs.locomotion.humanoid.g1 import make_g129dof_walk_flat_cfg
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.randomization import WalkRandomizationCfg
 
@@ -55,6 +56,7 @@ def _tiny_delay_manager(num_envs: int = 2, num_actuators: int = 3, lo: int = 0, 
     controls = np.empty((num_envs, num_actuators), dtype=np.float32)
     env._action_writes = SimpleNamespace(buffer=lambda name: controls, execute=lambda: None)
     env._command_terms = {}
+    env.interval_event_manager = IntervalEventManager()
     env._state = SimpleNamespace()
     env._compiled_manager_program = SimpleNamespace(read_plan=SimpleNamespace(flat_inputs=()))
     env.perf = SimpleNamespace(scope=lambda name: nullcontext())

@@ -36,6 +36,7 @@ from motrix_env_core.numba.kernel_data import (
 from motrix_env_core.numba.manager.actions import ActionCfg, ActionTerm, ManagerActionsCfg
 from motrix_env_core.numba.manager.commands import CommandCfg, CommandTerm, ManagerCommandsCfg, ResetContext
 from motrix_env_core.numba.manager.compiler.plan import ManagerLayout
+from motrix_env_core.numba.manager.events import IntervalEventCfg, IntervalEventManager
 from motrix_env_core.numba.manager.metrics import collect_metrics, materialize_metrics
 from motrix_env_core.numba.manager.observations import (
     ManagerObservationGroupCfg,
@@ -127,6 +128,7 @@ class ManagerBasedEnvCfg(EnvCfg):
     """Complete environment config with manager groups at the top level."""
 
     sim_reset: ManagerResetCfg = ManagerResetCfg()
+    interval_events: dict[str, IntervalEventCfg] = field(default_factory=dict)
     commands: dict[str, CommandCfg] = field(default_factory=dict)
     actions: dict[str, ActionCfg] = field(default_factory=dict)
     queries: SimQueriesCfg = SimQueriesCfg()
@@ -410,6 +412,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
             for name, command_cfg in self._command_cfgs.items()
         }
         self._rand = canonicalize_kernel_data(_create_rand_value(self), context="Manager random state")
+        self.interval_event_manager = IntervalEventManager.create(self, cfg.interval_events)
         self._action_space, self._action_slices = self._build_action_space()
         self._reward_terms = create_reward_terms(cfg.reward_cfgs(), self)
         self.termination_manager = TerminationManager(cfg.termination_cfgs(), self)
@@ -424,6 +427,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
             (term for term in self._reward_terms.values()),
             (term for term in self.termination_manager.terms.values()),
             (entry.term for group in self._observation_groups.values() for entry in group.terms),
+            (event.term for event in self.interval_event_manager.events.values()),
         ):
             for term in terms:
                 for arg in term.args:
@@ -483,6 +487,8 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         return self.sim.num_actuators
 
     def physics_step(self) -> None:
+        with self.perf.scope("interval_events"):
+            self.interval_event_manager.apply(self.cfg.ctrl_dt)
         self.sim.step(self._cfg.sim_substeps)
 
     def init_state(self) -> ArrayEnvState:
@@ -496,6 +502,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
             # first reset does not pay its compilation as a hidden stall.
             self._refresh_sim_reads()
             self._precompile_reset_kernel()
+            self.interval_event_manager.compile(self)
         state = super().init_state()
         self._kernel_buffers = self._make_kernel_buffers(state)
         state.metrics = self._make_metrics_view()
@@ -723,6 +730,8 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
             with self.perf.scope("action_reset"):
                 for action_term in self._action_terms.values():
                     action_term.reset(env_ids)
+            with self.perf.scope("interval_event_reset"):
+                self.interval_event_manager.reset(env_ids)
         if sim_reset_ids is not None and sim_reset_ids.size:
             env_ids = np.concatenate([env_ids, sim_reset_ids])
         if env_ids.size:
@@ -801,6 +810,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         from motrix_env_core.numba.manager.compiler import NumbaKernelCompiler
 
         NumbaKernelCompiler(self).compile_specializations(inputs)
+        self.interval_event_manager.compile(self)
 
     def compile(self) -> float:
         """Compile all manager term and kernel specializations for this environment."""
@@ -914,6 +924,11 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
             tuple(getattr(self._task_program.evaluate_kernel, "nopython_signatures", ()))
             + tuple(getattr(self._task_program.observe_kernel, "nopython_signatures", ()))
             + tuple(getattr(self._task_program.reset_kernel, "nopython_signatures", ()))
+            + tuple(
+                signature
+                for event in self.interval_event_manager.events.values()
+                for signature in event.kernel.nopython_signatures
+            )
         )
         if not signatures:
             raise RuntimeError(f"{type(self).__name__} manager kernels did not produce nopython signatures.")

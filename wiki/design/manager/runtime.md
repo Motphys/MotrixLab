@@ -74,6 +74,12 @@ Manager group 的顺序是行为契约的一部分：action slice、observation 
 6. fused kernel 执行 command evaluation、observation、reward 和 termination；
 7. host 折叠 command 统计（`on_transition()`），`ArrayEnv` 处理 truncation 和 done reset；`state.metrics` 是常驻活视图（kernel 原地写），跨步持有走 `process_metrics()` 归约快照。
 
+### Interval events
+
+`ManagerBasedEnvCfg.interval_events` 声明 interval 专用事件。action 写入后、backend physics 推进前，IntervalEventManager 按 control dt 推进每项事件的逐环境 timer，并仅对到期行执行独立的数值 kernel 与 `WriteProgram(reset=False, forward_kinematics=False)`。physics 后沿用正常 read；不为事件增加 simulator read。
+
+只有 episode reset 行重采样 timer，sim-only reset 不改变 timer；初始化编译与 warmup 不消耗真实事件随机状态。事件按配置顺序执行，详细协议见 [Interval Events](./interval-events.md)。
+
 ### Partial reset
 
 reset 只处理指定的原始 `env_ids`：

@@ -26,6 +26,9 @@
 
 ### 专题设计
 
+- [Interval Events](./interval-events.md)
+  定义 interval 专用事件协议、逐环境 timer、pre-physics 写入和 episode reset 生命周期。
+
 - [Term 自声明 Sim Query 设计](./term-required-queries.md)
   定义 observation term 的 `required_queries()`、任务声明与 term 贡献的合并和冲突规则。
 - [IsaacLab ManagerCfg Adapter 设计](./isaaclab-manager-cfg-adapter.md)
