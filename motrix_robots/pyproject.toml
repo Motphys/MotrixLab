@@ -10,7 +10,7 @@ authors = [{ name = "Motphys", email = "developers@motphys.com" }]
 requires-python = "==3.10.*"
 readme = "README.md"
 license = "Apache-2.0"
-dependencies = ["motrix-env-core"]
+dependencies = ["motrix-env-core==0.4.0b0"]
 
 [project.entry-points."motrix_env_core.robots"]
 builtin = "motrix_robots.registration:register"

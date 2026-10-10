@@ -89,35 +89,26 @@ scheduled scan. Review results under the repository's **Security** tab.
 ### File: `branch-policy.yml`
 
 Checks pull request metadata without checking out contributor code. Normal PRs
-must target `main`; a post-hotfix back-merge may use upstream `stable → main`.
-Only a release PR from the upstream `main` branch or a `hotfix/*` PR may target
-`stable`. Add `Branch policy / validate` as a required status check on both
+must target `main`; a post-patch back-merge may use upstream `stable → main`.
+Only a release PR from the upstream `main` branch or a `hotfix/*` stable patch
+PR may target `stable`. Add `Branch policy / validate` as a required status check on both
 protected branches.
 
 ## Docker Image Build Workflow
 
 ### File: `docker-build.yml`
 
-Automatically builds and pushes Docker images to Docker Hub when a new version
-tag pointing to the `stable` release branch is pushed.
+Manually builds and pushes Docker images to Docker Hub after a release.
 
 #### Trigger Conditions
 
-The workflow is triggered when you push a git tag that matches the pattern `v*`.
-The job then verifies that the tagged commit is reachable from `stable`:
-
-```bash
-git switch stable
-git pull --ff-only upstream stable
-git tag -a v0.3.0 -m "Release v0.3.0"
-git push upstream v0.3.0
-```
-
-Tags whose commit is not reachable from `stable` are rejected by the
-verification step and are not published. Git tags do not retain the branch on
-which they were created, so the tag ruleset and maintainer-only permissions
-remain the authoritative control for requiring that tags are created from
+The workflow is triggered only by manual dispatch. Run it from the `stable`
+branch after the release workflow has created the matching `v*` tag and GitHub
+Release. The job verifies that the dispatched commit is reachable from
 `stable`.
+
+Commits that are not reachable from `stable` are rejected by the verification
+step and are not published.
 
 #### What It Does
 
@@ -145,21 +136,10 @@ To add secrets:
 
 #### Usage Example
 
-```bash
-# 1. Update version in pyproject.toml if needed
-# 2. Commit your changes
-git add .
-git commit -m "Release v0.3.0"
-
-# 3. From the upstream stable commit, create and push an annotated version tag
-git switch stable
-git pull --ff-only upstream stable
-git tag -a v0.3.0 -m "Release v0.3.0"
-git push upstream v0.3.0
-
-# 4. The workflow will automatically build and push the Docker image
-# 5. Monitor the build at: https://github.com/Motphys/MotrixLab/actions
-```
+1. Complete the release pipeline and wait for the GitHub Release.
+2. Open **Actions → Build and Push Docker Image → Run workflow**.
+3. Select the `stable` branch and run the workflow.
+4. Monitor the run at <https://github.com/Motphys/MotrixLab/actions>.
 
 #### Built Image Tags
 
@@ -182,7 +162,7 @@ docker pull motphys/motrixlab:v0.3
 - ✅ **Multi-tag Support**: Automatically tags with version, major.minor, and latest
 - ✅ **Version Extraction**: Automatically reads version from pyproject.toml
 - ✅ **Docker Layer Caching**: Uses UV cache mounts for faster dependency installation
-- ✅ **Tag-based Trigger**: Only builds on version tags, not on every commit
+- ✅ **Manual Trigger**: Does not run automatically when a release tag is pushed
 
 #### Docker Image Contents
 
@@ -217,14 +197,64 @@ docker run --gpus all motphys/motrixlab:test scripts/view.py env=cartpole
 - Ensure `pyproject.toml` has a valid `version = "x.y.z"` line
 - Check the workflow logs for the exact extraction command output
 
-**Tag not triggering the workflow:**
+**Workflow rejecting the dispatched commit:**
 
-- Ensure the tag starts with `v` (e.g., `v0.3.0`, not `0.3.0`)
-- Confirm that the tag points to a commit on `stable`, then push it from the
-  upstream repository (for example, `git push upstream v0.3.0`)
+- Dispatch the workflow from the upstream `stable` branch after the release
+  pull request has been merged.
+- Confirm that the selected commit is reachable from `stable`; the ancestry
+  check intentionally rejects manual runs from unreleased `main` commits.
 
 #### See Also
 
 - [Docker Hub Repository](https://hub.docker.com/r/motphys/motrixlab)
 - [Container Deployment Documentation](../../docs/source/zh_CN/user_guide/getting_started/container_deployment.md)
 - [Dockerfile](../../docker/Dockerfile)
+
+# Python Package Publishing
+
+### File: `pypi-publish.yml`
+
+Publishes the `motrix-env-core`, `motrix-deploy`, and `motrix-rl` distributions
+(the dependency closure of the public packages) to a Python package index.
+
+- **Release trigger**: publishing a GitHub Release whose `v`-prefixed tag matches the
+  workspace package version uploads all three packages to pypi.org.
+- **Manual trigger**: `workflow_dispatch` uploads to TestPyPI by default, or to
+  pypi.org with `index=pypi`. Use a TestPyPI run to verify the full install
+  closure before creating the production release. A manual formal-PyPI run has
+  the same stable ancestry, exact-tag, and workspace-version guards as a Release
+  event.
+
+For production publication, the selected commit must be an ancestor of `stable`
+and the matching immutable tag must point exactly at that commit. Every workspace
+package must carry the same version before any distribution is built. A dedicated
+build job uploads one wheel per package as a workflow artifact, and one publishing
+job per package then uploads them in dependency order (env-core → deploy → rl).
+Existing immutable distributions are skipped during recovery, so a partial
+failure can be retried without replacing an already-published package.
+
+Authentication uses PyPI Trusted Publishing (OIDC) — no API tokens are stored
+in repository secrets. Before the first run, a maintainer must register a
+pending publisher for each of the three project names on both pypi.org and
+test.pypi.org, pointing at `Motphys/MotrixLab` with the workflow file
+`pypi-publish.yml`.
+
+# Release Pipeline
+
+### File: `release.yml`
+
+Automates version bumps, release pull requests, stable tags, and GitHub
+Releases while preserving human review at both governance points: the version
+bump merge into `main` and the release merge into `stable`.
+
+See the dedicated [Release Workflow Guide](RELEASE.md) for:
+
+- one-time setup,
+- normal release instructions,
+- stable branch patch release instructions,
+- version selection rules,
+- release App setup,
+- TestPyPI validation,
+- package publishing order,
+- automatic stable-patch back-merge,
+- failure recovery.
