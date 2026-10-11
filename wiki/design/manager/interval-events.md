@@ -70,14 +70,15 @@ cfg.interval_events = {
 
 ### 真实 motrixsim 后端实测（g1-wbt-dance，motrixsim-core 0.10.2.dev126386）
 
-fake backend 只覆盖 manager 侧开销；真实后端下 `apply()` 的成本由 native 写入主导（interval 0.1-0.3s，每事件每步 ~10% 行到期）：
+fake backend 只覆盖 manager 侧开销；真实后端下事件的成本由 native 写入主导。用 `scripts/bench_interval_events_real.py`（真实 env 正常 step，physics 消费写入，经 env 自带 `interval_events` perf scope 在生产路径上计时）测得（interval 0.1-0.3s，每事件每步 ~10% 行到期）：
 
-| 配置 | apply() μs/step | 整步 ms（无事件 → 有事件） |
+| 配置 | 事件管道 μs/step | 整步 ms（无事件 → 有事件） |
 |---|---|---|
-| 1 事件 @4096 | 577 | 19.7 → 20.1 |
-| 8 事件 @4096 | 4602 | 19.7 → 22.0（+12%） |
+| 1 事件 @4096 | 233 | 19.9 → 20.3 |
+| 2 事件 @4096 | 516 | 19.9 → 20.5 |
+| 8 事件 @4096 | 2306 | 19.9 → 22.2（+12%） |
 
-组件分解（与 num_envs 无关，与到期行数弱相关）：
+成本随事件数线性（~230-290 μs/事件），其中 manager 侧（扫描 + 串行 kernel）仅 ~10 μs/事件。组件分解（隔离测量，与 num_envs 无关、随到期行数伸缩）：
 
 | 组件 | 成本 |
 |---|---|
@@ -85,4 +86,4 @@ fake backend 只覆盖 manager 侧开销；真实后端下 `apply()` 的成本�
 | WriteProgram wrapper（校验 + 排序） | ~34 μs/次 |
 | native `WriteProgram.execute` | **~21 μs（1 行）→ ~226 μs（13 行）→ ~390 μs（410 行），≈16.5 μs/到期行** |
 
-结论：manager 侧开销已可忽略（<10 μs/事件）；真实热点是 motrixsim native write 的逐行成本（~16.5 μs/行，禁用 CUDA 不变，排除 GPU 同步），在 MotrixLab 侧无法消除。若需要降低高频事件的整步开销，应在 motrixsim 引擎内向量化 selected-row 写入路径。MotrixLab 侧可选的缓解是控制事件频率（interval 下限）与数量。
+结论：manager 侧开销已可忽略（<10 μs/事件）；真实热点是 motrixsim native write 的逐行成本（~16.5 μs/行，禁用 CUDA 不变，排除 GPU 同步），在 MotrixLab 侧无法消除。若需要降低高频事件的整步开销，应在 motrixsim 引擎内向量化 selected-row 写入路径。MotrixLab 侧可选的缓解是控制事件频率（interval 下限）与数量。生产路径复测用 `scripts/bench_interval_events_real.py`（`--task` 换任务、`--interval` 换触发频率）。
