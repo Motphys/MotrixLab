@@ -67,3 +67,22 @@ cfg.interval_events = {
 - timer 融入 per-env parallel kernel（消除 host 侧扫描）的收益上限实测为 ~5.7 μs/事件（扫描 3.9 + kernel dispatch 1.8）；剩余 ~70% 成本是 `program.execute` 的 backend 写入（~23 μs/事件，需压缩 due_ids 后 host 侧提交，无法移入 kernel）。且该方案要求一个 physics step 之前的 per-env kernel 作为融合宿主——action term 是 host 侧可扩展 Python 管线（`ActionTerm.process`），不是 Numba kernel；evaluate/observe kernel 又在 physics 之后运行，时序不匹配。综合收益（8 事件@4096 约 262→210 μs/step）与代价（action/event 边界消失、编译指纹耦合、RNG 消耗顺序改为 env-major）不成比例，不实施。
 
 可在目标硬件上用 `scripts/bench_interval_events.py` 复测（脚本开头默认设置 `OMP_WAIT_POLICY=PASSIVE`、`GOMP_SPINCOUNT=0`，避免 OpenMP 自旋干扰微秒级计时）。
+
+### 真实 motrixsim 后端实测（g1-wbt-dance，motrixsim-core 0.10.2.dev126386）
+
+fake backend 只覆盖 manager 侧开销；真实后端下 `apply()` 的成本由 native 写入主导（interval 0.1-0.3s，每事件每步 ~10% 行到期）：
+
+| 配置 | apply() μs/step | 整步 ms（无事件 → 有事件） |
+|---|---|---|
+| 1 事件 @4096 | 577 | 19.7 → 20.1 |
+| 8 事件 @4096 | 4602 | 19.7 → 22.0（+12%） |
+
+组件分解（与 num_envs 无关，与到期行数弱相关）：
+
+| 组件 | 成本 |
+|---|---|
+| timer 扫描 + 串行 kernel | ~10 μs/事件（kernel 5-8 μs 含数百行采样） |
+| WriteProgram wrapper（校验 + 排序） | ~34 μs/次 |
+| native `WriteProgram.execute` | **~21 μs（1 行）→ ~226 μs（13 行）→ ~390 μs（410 行），≈16.5 μs/到期行** |
+
+结论：manager 侧开销已可忽略（<10 μs/事件）；真实热点是 motrixsim native write 的逐行成本（~16.5 μs/行，禁用 CUDA 不变，排除 GPU 同步），在 MotrixLab 侧无法消除。若需要降低高频事件的整步开销，应在 motrixsim 引擎内向量化 selected-row 写入路径。MotrixLab 侧可选的缓解是控制事件频率（interval 下限）与数量。
