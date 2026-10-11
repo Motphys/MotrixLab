@@ -365,16 +365,21 @@ class _MotrixSimWriteProgram(WriteProgram):
 
     def execute(self, env_ids: np.ndarray | None = None) -> None:
         if env_ids is not None:
-            if not isinstance(env_ids, np.ndarray) or env_ids.dtype != np.int64 or env_ids.ndim != 1:
-                raise TypeError("Simulator write env_ids must be a one-dimensional int64 ndarray.")
-            if np.any(env_ids < 0) or np.any(env_ids >= self._data.shape[0]):
-                raise IndexError("Simulator write env_ids are out of range.")
-            if np.unique(env_ids).size != env_ids.size:
-                raise ValueError("Simulator write env_ids must not contain duplicates.")
+            if __debug__:
+                # Contract checks cost ~100 us per call on large id sets (measured
+                # on 4096-env scenes); run production training with `python -O`
+                # to strip them. Internal callers pass well-formed ids already.
+                if not isinstance(env_ids, np.ndarray) or env_ids.dtype != np.int64 or env_ids.ndim != 1:
+                    raise TypeError("Simulator write env_ids must be a one-dimensional int64 ndarray.")
+                if np.any(env_ids < 0) or np.any(env_ids >= self._data.shape[0]):
+                    raise IndexError("Simulator write env_ids are out of range.")
+                if np.unique(env_ids).size != env_ids.size:
+                    raise ValueError("Simulator write env_ids must not contain duplicates.")
             if env_ids.size == 0:
                 return
+            env_ids = np.sort(env_ids)
         if self._native_program is not None:
-            self._native_program.execute(self._data, env_ids=None if env_ids is None else np.sort(env_ids))
+            self._native_program.execute(self._data, env_ids)
 
 
 def _named_body(model: mtx.SceneModel, body_name: str):
