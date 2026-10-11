@@ -64,6 +64,6 @@ cfg.interval_events = {
 
 - 将逐事件 timer 扫描批量化为 2D `nonzero` + `bincount` + `cumsum` 是负优化（慢 2-6 倍）；flat 批量在 ≥8 事件时快约 2 倍，但绝对收益仅 ~16 μs/step，未达实施阈值。
 - 事件间共享 WriteProgram（按 writes 签名分组，E 次 execute → G 次）预估仅省 ~5 μs × (E−G)/步，未达整步 5% 阈值，不实施。
-- timer 融入 action kernel（消除 host 侧扫描）收益上限只剩 ~30 μs/step，且代价是 action kernel 编译指纹耦合事件配置，不实施。
+- timer 融入 per-env parallel kernel（消除 host 侧扫描）的收益上限实测为 ~5.7 μs/事件（扫描 3.9 + kernel dispatch 1.8）；剩余 ~70% 成本是 `program.execute` 的 backend 写入（~23 μs/事件，需压缩 due_ids 后 host 侧提交，无法移入 kernel）。且该方案要求一个 physics step 之前的 per-env kernel 作为融合宿主——action term 是 host 侧可扩展 Python 管线（`ActionTerm.process`），不是 Numba kernel；evaluate/observe kernel 又在 physics 之后运行，时序不匹配。综合收益（8 事件@4096 约 262→210 μs/step）与代价（action/event 边界消失、编译指纹耦合、RNG 消耗顺序改为 env-major）不成比例，不实施。
 
 可在目标硬件上用 `scripts/bench_interval_events.py` 复测（脚本开头默认设置 `OMP_WAIT_POLICY=PASSIVE`、`GOMP_SPINCOUNT=0`，避免 OpenMP 自旋干扰微秒级计时）。
