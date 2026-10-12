@@ -175,6 +175,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             velocity_cfg.upper,
             rng=self._command_rng,
             standing_probability=velocity_cfg.standing_probability,
+            single_axis_probability=velocity_cfg.single_axis_probability,
+            boundary_probability=velocity_cfg.boundary_probability,
         )
         if not np.isfinite(velocity_cfg.standing_threshold) or velocity_cfg.standing_threshold < 0.0:
             raise ValueError(
@@ -235,6 +237,9 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._feet_phase = np.zeros((num_envs, self._num_feet), dtype=np.float32)
         self._current_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
         self._last_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
+        self._last_last_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
+        self._previous_dof_vel = np.zeros((num_envs, self._num_action), dtype=np.float32)
+        self._previous_feet_pos = np.zeros((num_envs, self._num_feet, 3), dtype=np.float32)
         self._action_delay_steps = np.zeros(num_envs, dtype=np.int32)
 
     # ---- obs/action space plumbing ----------------------------------------
@@ -330,6 +335,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
 
     def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
         actions = np.asarray(actions, dtype=np.float32)
+        self._last_last_actions[:] = self._last_actions
         self._last_actions[:] = self._current_actions
         self._current_actions[:] = actions
         if self._randomize_action_delay:
@@ -404,6 +410,11 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             "contact": self._reward_contact,
             "swing_feet_z": self._reward_swing_feet_z,
             "swing_contact": self._reward_swing_contact,
+            "flat_orientation": self._reward_flat_orientation,
+            "stand_still": self._reward_stand_still,
+            "feet_slide": self._reward_feet_slide,
+            "dof_acc": self._reward_dof_acc,
+            "action_smoothness": self._reward_action_smoothness,
         }
         reward_items = {}
         for name, reward_fn in reward_fns.items():
@@ -416,6 +427,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             reward_items[name] = weighted
 
         state.reward_terms = reward_items
+        self._previous_dof_vel[:] = self.get_dof_vel()[:, -self._num_action :]
+        self._previous_feet_pos[:] = self.feet_pos
         return reward * self.cfg.ctrl_dt
 
     def reset(self, env_ids: np.ndarray) -> None:
@@ -455,6 +468,9 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._feet_phase[env_ids] = 0.0
         self._current_actions[env_ids] = 0.0
         self._last_actions[env_ids] = 0.0
+        self._last_last_actions[env_ids] = 0.0
+        self._previous_dof_vel[env_ids] = 0.0
+        self._previous_feet_pos[env_ids] = self.feet_pos[env_ids]
 
     def resample_commands(self, num_envs: int) -> np.ndarray:
         return self._velocity_command_binding.read_command(batch_size=num_envs).values.copy()
@@ -639,6 +655,34 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         is_swing = self._feet_phase >= 0.6
         swing_contacts = self.feet_contact & is_swing
         return np.sum(swing_contacts, axis=1) / self._num_feet
+
+    def _reward_flat_orientation(self, linvel, gyro, dof_pos) -> np.ndarray:
+        del linvel, gyro, dof_pos
+        gravity = self.get_gravity()
+        return np.sum(np.square(gravity[:, :2]), axis=1)
+
+    def _reward_stand_still(self, linvel, gyro, dof_pos) -> np.ndarray:
+        del linvel, gyro
+        standing = np.linalg.norm(self._commands, axis=1) < self.cfg.reward_config.stand_still_threshold
+        return np.sum(np.abs(dof_pos - self.default_angles), axis=1) * standing
+
+    def _reward_feet_slide(self, linvel, gyro, dof_pos) -> np.ndarray:
+        del linvel, gyro, dof_pos
+        support = self.feet_contact
+        speed = np.linalg.norm((self.feet_pos - self._previous_feet_pos) / self.cfg.ctrl_dt, axis=2)
+        return np.sum(speed * support, axis=1) / self._num_feet
+
+    def _reward_dof_acc(self, linvel, gyro, dof_pos) -> np.ndarray:
+        del linvel, gyro, dof_pos
+        dof_vel = self.get_dof_vel()[:, -self._num_action :]
+        acceleration = (dof_vel - self._previous_dof_vel) / self.cfg.ctrl_dt
+        return np.sum(np.square(acceleration), axis=1)
+
+    def _reward_action_smoothness(self, linvel, gyro, dof_pos) -> np.ndarray:
+        del linvel, gyro, dof_pos
+        return np.sum(
+            np.square(self._current_actions - 2.0 * self._last_actions + self._last_last_actions), axis=1
+        )
 
 
 __all__ = ["QuadrupedWalkTask"]

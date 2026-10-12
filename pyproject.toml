@@ -15,6 +15,7 @@ dependencies = [
     "motrix-rl",
     "motrix-rl-builtin",
     "motrix-rl-skrl",
+    "matplotlib===3.10.9",
 ]
 
 [project.optional-dependencies]

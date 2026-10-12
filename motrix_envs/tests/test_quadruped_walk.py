@@ -258,6 +258,19 @@ def test_random_planar_velocity_binding_can_sample_a_standing_batch():
     np.testing.assert_array_equal(binding.read_command(batch_size=5).values, np.zeros((5, 3), dtype=np.float32))
 
 
+def test_random_planar_velocity_binding_covers_single_axis_and_boundaries():
+    binding = RandomPlanarVelocityBinding(
+        np.array([-1.0, -0.5, -0.5], dtype=np.float32),
+        np.array([1.0, 0.5, 0.5], dtype=np.float32),
+        rng=np.random.default_rng(9),
+        single_axis_probability=1.0,
+        boundary_probability=1.0,
+    )
+    commands = binding.read_command(batch_size=32).values
+    assert np.all(np.sum(np.abs(commands) > 1e-6, axis=1) == 1)
+    assert np.all(np.isin(commands, [-1.0, -0.5, 0.0, 0.5, 1.0]))
+
+
 def test_go2_partial_reset_only_resamples_finished_environments(monkeypatch: pytest.MonkeyPatch):
     env = registry.make("go2-walk-flat", num_envs=3, mode="train")
     state = env.init_state()

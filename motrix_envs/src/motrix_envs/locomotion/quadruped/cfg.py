@@ -160,10 +160,19 @@ class VelocityCommandCfg:
     lower: NDArray[np.float32] = np.array([0.5, 0.0, 0.0], dtype=np.float32)
     upper: NDArray[np.float32] = np.array([0.5, 0.0, 0.0], dtype=np.float32)
     standing_probability: float = 0.0
+    single_axis_probability: float = 0.0
+    boundary_probability: float = 0.0
     standing_threshold: float = 0.05
     resampling_seconds_range: tuple[float, float] | None = None
 
     def validate(self) -> None:
+        for name, value in {
+            "standing_probability": self.standing_probability,
+            "single_axis_probability": self.single_axis_probability,
+            "boundary_probability": self.boundary_probability,
+        }.items():
+            if not np.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be finite and inside [0, 1], got {value}")
         if self.resampling_seconds_range is not None:
             low, high = self.resampling_seconds_range
             if not np.isfinite(low) or not np.isfinite(high) or low <= 0.0 or low > high:
@@ -199,6 +208,11 @@ class RewardScales:
     contact: float = 0.24
     swing_feet_z: float = 2.0
     swing_contact: float = -1.0
+    flat_orientation: float = 0.0
+    stand_still: float = 0.0
+    feet_slide: float = 0.0
+    dof_acc: float = 0.0
+    action_smoothness: float = 0.0
 
 
 @configclass
@@ -209,6 +223,7 @@ class RewardConfig:
     target_foot_height: float = 0.1
     swing_feet_height_sigma: float = 0.05
     base_height_target: float = 0.3
+    stand_still_threshold: float = 0.05
 
 
 @configclass
