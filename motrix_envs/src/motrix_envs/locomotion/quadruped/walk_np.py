@@ -68,6 +68,10 @@ def _sim_data_queries(cfg: QuadrupedWalkEnvCfg):
         "FR_pos": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.foot_positions[1]),)),
         "RL_pos": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.foot_positions[2]),)),
         "RR_pos": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.foot_positions[3]),)),
+        "front_left_world_pos": SensorValuesQuery(sensors=("front_left_world_pos",)),
+        "front_right_world_pos": SensorValuesQuery(sensors=("front_right_world_pos",)),
+        "rear_left_world_pos": SensorValuesQuery(sensors=("rear_left_world_pos",)),
+        "rear_right_world_pos": SensorValuesQuery(sensors=("rear_right_world_pos",)),
     }
 
 
@@ -165,6 +169,28 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             "rear_right_contact",
         )
         self._feet_position_sensors = foot_position_sensors
+        self._feet_world_position_sensors = (
+            "front_left_world_pos",
+            "front_right_world_pos",
+            "rear_left_world_pos",
+            "rear_right_world_pos",
+        )
+        foot_indices = {
+            "front_left": 0,
+            "front_right": 1,
+            "rear_left": 2,
+            "rear_right": 3,
+        }
+        try:
+            self._foot_lateral_terms = tuple(
+                (
+                    term,
+                    np.asarray([foot_indices[foot] for foot in term.feet], dtype=np.intp),
+                )
+                for term in cfg.reward_config.foot_lateral_terms
+            )
+        except KeyError as error:
+            raise ValueError(f"unknown foot lateral reward foot {error.args[0]!r}") from error
         velocity_cfg = cfg.commands.velocity
         root_seed = int(np.random.randint(0, np.iinfo(np.uint32).max, dtype=np.uint32))
         command_seed, randomization_seed = np.random.SeedSequence(root_seed).spawn(2)
@@ -175,6 +201,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             velocity_cfg.upper,
             rng=self._command_rng,
             standing_probability=velocity_cfg.standing_probability,
+            single_axis_probability=velocity_cfg.single_axis_probability,
+            boundary_probability=velocity_cfg.boundary_probability,
         )
         if not np.isfinite(velocity_cfg.standing_threshold) or velocity_cfg.standing_threshold < 0.0:
             raise ValueError(
@@ -226,6 +254,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
 
         self.feet_contact = np.zeros((num_envs, self._num_feet), dtype=bool)
         self.feet_pos = np.zeros((num_envs, self._num_feet, 3), dtype=np.float32)
+        self._feet_world_pos = np.zeros((num_envs, self._num_feet, 3), dtype=np.float32)
 
         # Episode-scoped task state: full-batch buffers, reset writes the done
         # rows in place.
@@ -235,6 +264,10 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._feet_phase = np.zeros((num_envs, self._num_feet), dtype=np.float32)
         self._current_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
         self._last_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
+        self._last_last_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
+        self._previous_dof_vel = np.zeros((num_envs, self._num_action), dtype=np.float32)
+        self._previous_feet_pos = np.zeros((num_envs, self._num_feet, 3), dtype=np.float32)
+        self._previous_feet_world_pos = np.zeros((num_envs, self._num_feet, 3), dtype=np.float32)
         self._action_delay_steps = np.zeros(num_envs, dtype=np.int32)
 
     # ---- obs/action space plumbing ----------------------------------------
@@ -309,6 +342,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self.feet_contact[rows, :] = contacts[rows, :]
         for i, name in enumerate(self._feet_position_sensors):
             self.feet_pos[rows, i, :] = self.sim_data[name][rows]
+        for i, name in enumerate(self._feet_world_position_sensors):
+            self._feet_world_pos[rows, i, :] = self.sim_data[name][rows]
 
     def _advance_phase(self):
         commands = self._commands
@@ -330,6 +365,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
 
     def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
         actions = np.asarray(actions, dtype=np.float32)
+        self._last_last_actions[:] = self._last_actions
         self._last_actions[:] = self._current_actions
         self._current_actions[:] = actions
         if self._randomize_action_delay:
@@ -384,8 +420,17 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._advance_phase()
         self._update_feet_buffers()
 
+        linvel = self.get_local_linvel()
+        gyro = self.get_gyro()
         terminated = self.get_gravity()[:, 2] <= self.cfg.termination_min_up_z
-        reward = self._compute_reward(state, self.get_local_linvel(), self.get_gyro(), self.get_dof_pos())
+        reward = self._compute_reward(state, linvel, gyro, self.get_dof_pos())
+        state.metrics.update(
+            {
+                "Tracking/vx_mae": np.abs(linvel[:, 0] - self._commands[:, 0]),
+                "Tracking/vy_mae": np.abs(linvel[:, 1] - self._commands[:, 1]),
+                "Tracking/yaw_rate_mae": np.abs(gyro[:, 2] - self._commands[:, 2]),
+            }
+        )
         return state.replace(reward=reward, terminated=terminated)
 
     def _compute_reward(
@@ -404,6 +449,11 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             "contact": self._reward_contact,
             "swing_feet_z": self._reward_swing_feet_z,
             "swing_contact": self._reward_swing_contact,
+            "flat_orientation": self._reward_flat_orientation,
+            "stand_still": self._reward_stand_still,
+            "feet_slide": self._reward_feet_slide,
+            "dof_acc": self._reward_dof_acc,
+            "action_smoothness": self._reward_action_smoothness,
         }
         reward_items = {}
         for name, reward_fn in reward_fns.items():
@@ -416,6 +466,10 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             reward_items[name] = weighted
 
         state.reward_terms = reward_items
+        reward += self._reward_foot_lateral_terms(reward_items)
+        self._previous_dof_vel[:] = self.get_dof_vel()[:, -self._num_action :]
+        self._previous_feet_pos[:] = self.feet_pos
+        self._previous_feet_world_pos[:] = self._feet_world_pos
         return reward * self.cfg.ctrl_dt
 
     def reset(self, env_ids: np.ndarray) -> None:
@@ -455,6 +509,10 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._feet_phase[env_ids] = 0.0
         self._current_actions[env_ids] = 0.0
         self._last_actions[env_ids] = 0.0
+        self._last_last_actions[env_ids] = 0.0
+        self._previous_dof_vel[env_ids] = 0.0
+        self._previous_feet_pos[env_ids] = self.feet_pos[env_ids]
+        self._previous_feet_world_pos[env_ids] = self._feet_world_pos[env_ids]
 
     def resample_commands(self, num_envs: int) -> np.ndarray:
         return self._velocity_command_binding.read_command(batch_size=num_envs).values.copy()
@@ -640,5 +698,70 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         swing_contacts = self.feet_contact & is_swing
         return np.sum(swing_contacts, axis=1) / self._num_feet
 
+    def _reward_flat_orientation(self, linvel, gyro, dof_pos) -> np.ndarray:
+        del linvel, gyro, dof_pos
+        gravity = self.get_gravity()
+        return np.sum(np.square(gravity[:, :2]), axis=1)
+
+    def _reward_stand_still(self, linvel, gyro, dof_pos) -> np.ndarray:
+        del linvel, gyro
+        standing = np.linalg.norm(self._commands, axis=1) < self.cfg.reward_config.stand_still_threshold
+        return np.sum(np.abs(dof_pos - self.default_angles), axis=1) * standing
+
+    def _reward_feet_slide(self, linvel, gyro, dof_pos) -> np.ndarray:
+        del linvel, gyro, dof_pos
+        support = self.feet_contact
+        # ``feet_pos`` is body-relative (the frame-position sensor uses the IMU
+        # as reference).  Sliding is a world/contact-frame quantity, so use the
+        # horizontal world displacement; otherwise normal forward motion makes
+        # a stationary support foot appear to move backwards.
+        world_delta = (self._feet_world_pos - self._previous_feet_world_pos) / self.cfg.ctrl_dt
+        speed = np.linalg.norm(world_delta[:, :, :2], axis=2)
+        return np.sum(speed * support, axis=1) / self._num_feet
+
+    def _reward_dof_acc(self, linvel, gyro, dof_pos) -> np.ndarray:
+        del linvel, gyro, dof_pos
+        dof_vel = self.get_dof_vel()[:, -self._num_action :]
+        acceleration = (dof_vel - self._previous_dof_vel) / self.cfg.ctrl_dt
+        return np.sum(np.square(acceleration), axis=1)
+
+    def _reward_action_smoothness(self, linvel, gyro, dof_pos) -> np.ndarray:
+        del linvel, gyro, dof_pos
+        return np.sum(np.square(self._current_actions - 2.0 * self._last_actions + self._last_last_actions), axis=1)
+
+    def _reward_foot_lateral_terms(self, reward_items: dict[str, np.ndarray]) -> np.ndarray:
+        reward = np.zeros((self._num_envs,), dtype=np.float32)
+        for term, foot_ids in self._foot_lateral_terms:
+            abs_y = np.abs(self.feet_pos[:, foot_ids, 1])
+            if term.phase == "swing":
+                active = self._feet_phase[:, foot_ids] >= 0.6
+            else:
+                active = self.feet_contact[:, foot_ids]
+
+            if term.target_abs_y is not None:
+                width_error = np.square((abs_y - term.target_abs_y) / term.width_tolerance)
+                outside_band = np.ones_like(active)
+            else:
+                outer = np.maximum(abs_y - term.max_abs_y, 0.0)
+                inner = np.maximum(term.min_abs_y - abs_y, 0.0)
+                width_error = np.square(outer / term.width_tolerance) + np.square(inner / term.width_tolerance)
+                outside_band = (outer > 0.0) | (inner > 0.0)
+
+            width = np.sum(width_error * active, axis=1) / len(foot_ids)
+            weighted_width = (width * term.width_scale).astype(np.float32, copy=False)
+            reward_items[term.name] = weighted_width
+            reward += weighted_width
+
+            if term.lateral_speed_scale == 0.0:
+                continue
+            lateral_speed = (self.feet_pos[:, foot_ids, 1] - self._previous_feet_pos[:, foot_ids, 1]) / self.cfg.ctrl_dt
+            speed_active = active & outside_band if term.speed_only_outside_band else active
+            speed = np.sum(np.square(lateral_speed / term.lateral_speed_tolerance) * speed_active, axis=1) / len(
+                foot_ids
+            )
+            weighted_speed = (speed * term.lateral_speed_scale).astype(np.float32, copy=False)
+            reward_items[f"{term.name}_lateral_speed"] = weighted_speed
+            reward += weighted_speed
+        return reward
 
 __all__ = ["QuadrupedWalkTask"]

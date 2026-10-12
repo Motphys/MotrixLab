@@ -219,12 +219,13 @@ def test_quadruped_scene_derives_contact_sensors_from_robot():
         )
     )
 
-    assert list(scene.sensors) == [
+    contact_sensors = {name for name in scene.sensors if name.endswith("_contact")}
+    assert contact_sensors == {
         "front_left_contact",
         "front_right_contact",
         "rear_left_contact",
         "rear_right_contact",
-    ]
+    }
     assert scene.sensors.front_left_contact.geom2 == "robot_FL_foot"
     assert scene.sensors.rear_right_contact.geom2 == "robot_RR_foot"
 
