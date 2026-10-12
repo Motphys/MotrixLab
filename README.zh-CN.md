@@ -25,6 +25,8 @@ _使用 MotrixLab 训练的 microduck 行走策略，由 MotrixRender 实时渲�
 - [主要特性](#主要特性)
 - [快速开始](#-快速开始)
 - [任务环境](#-任务环境)
+- [Go2 平地直行第一版算法](#go2-平地直行第一版算法)
+- [Go2 平地直行修改版](#go2-平地直行修改版)
 - [内置机器人模型](#-内置机器人模型)
 - [项目组成](#-项目组成)
 - [参与贡献](#-参与贡献)
@@ -142,6 +144,61 @@ python scripts/view.py env=go2-walk-rough
 ```
 
 完整环境列表与各环境支持的训练算法见[环境总览](https://motrixlab.readthedocs.io/zh-cn/latest/user_guide/envs/index.html)。
+
+## Go2 平地直行第一版算法
+
+第一版 `go2-walk-flat` 使用 MotrixSim、`QuadrupedWalkTask` 和 RSL-RL PPO。策略输出 12 维关节位置残差，经 `action_scale=0.25` 转换为关节目标角；Actor 使用 49 维观测，Critic 使用 Actor 观测加 3 维局部线速度的 52 维 value observation。
+
+观测由角速度（3）、投影重力（3）、关节位置偏差（12）、关节速度（12）、上一动作（12）、速度命令（3）和四脚 trot 相位（4）组成。命令为 `[vx, vy, yaw]`，范围分别是 `[-1, 1]`、`[-0.5, 0.5]` 和 `[-0.5, 0.5]`；10% 概率采样零命令，5–10 秒重新采样一次。
+
+奖励包括线速度/角速度跟踪、垂向速度、横滚俯仰角速度、机体高度、动作变化、默认姿态、足端摆动高度、接触相位和摆动期误触地。训练时启用关节/状态噪声、摩擦、质量、质心、PD 增益和 0–1 步动作延迟随机化。
+
+算法和代码对应关系：
+
+| 组件 | 文件 |
+| --- | --- |
+| Go2 平地任务配置与注册 | `motrix_envs/src/motrix_envs/locomotion/quadruped/go2.py` |
+| 环境循环、观测、动作、相位和奖励 | `motrix_envs/src/motrix_envs/locomotion/quadruped/walk_np.py` |
+| 命令、随机化和奖励配置结构 | `motrix_envs/src/motrix_envs/locomotion/quadruped/cfg.py` |
+| 速度命令采样 | `motrix_envs/src/motrix_envs/locomotion/quadruped/velocity_command.py` |
+| Go2 模型、关节顺序和默认姿态 | `motrix_robots/src/motrix_robots/unitree.py` |
+| Go2 PPO 训练参数 | `configs/task/go2-walk-flat/rslrl.ppo.yaml`、`configs/algo_base/rslrl.ppo.yaml` |
+| 训练入口和 RSL-RL provider | `scripts/train.py`、`motrix_rl_rslrl/src/motrix_rl_rslrl/torch/train/ppo.py` |
+| 固定速度直行评估 | `scripts/play_walk.py`、`configs/play_walk.yaml` |
+| Go2 部署 profile | `motrix_envs/src/motrix_envs/deploy/go2_walk.py` |
+
+```bash
+python scripts/train.py task=go2-walk-flat/rslrl.ppo
+python scripts/play_walk.py env=go2-walk-flat policy=<checkpoint>
+```
+
+评估结果保存在运行目录的 `walk_analysis/velocity_metrics.json`。
+
+## Go2 平地直行修改版
+
+修改版通过 `quadruped/go2_walk.py` 注册为当前 `go2-walk-flat` 配置，并保留 49 维 Actor、52 维 Critic 和 12 维关节动作接口，便于继续使用原有 PPO 训练和部署链路。
+
+相对第一版的主要变化：
+
+- 命令采样增加单轴命令和边界命令覆盖：默认 `single_axis_probability=0.45`、`boundary_probability=0.15`，提高纯前进、纯侧向和极限速度在训练中的出现频率。
+- 运动时关闭 `similar_to_default` 惩罚，避免默认姿态约束抑制摆腿。
+- 增加平衡姿态、站立保持、支撑足滑移、关节加速度和动作二阶平滑奖励。
+- 调整速度跟踪与稳定性奖励权重：线速度跟踪为 `2.0`，角速度跟踪为 `0.75`，并加强姿态、高度、动作和足端约束。
+- 固定直行评估的 `for_play()` 配置为 `[vx, vy, yaw]=[0.5, 0, 0]`，关闭播放噪声和命令重采样。
+- `play_walk.py` 每个控制步重新写入固定命令，并输出平均速度、稳态误差、RMSE、P95、正交漂移、跌倒率、姿态 RMS、高度波动和分项奖励。
+
+修改版新增或扩展的代码位置：
+
+| 修改内容 | 文件 |
+| --- | --- |
+| 当前 Go2 改进配置、命令和奖励权重 | `motrix_envs/src/motrix_envs/locomotion/quadruped/go2_walk.py` |
+| 命令采样的单轴/边界覆盖 | `motrix_envs/src/motrix_envs/locomotion/quadruped/velocity_command.py` |
+| 新奖励项及动作/状态历史缓存 | `motrix_envs/src/motrix_envs/locomotion/quadruped/walk_np.py` |
+| 新配置字段 | `motrix_envs/src/motrix_envs/locomotion/quadruped/cfg.py` |
+| 固定命令评估和 JSON 指标 | `scripts/play_walk.py`、`configs/play_walk.yaml` |
+| 算法映射记录 | `docs/go2_rl_gym_ppo_mapping.md` |
+
+`play.py` 是通用回放入口，不会像 `play_walk.py` 一样在每个 step 强制写入直行命令。Go2 平地直行的速度指标应使用 `play_walk.py`，结果默认写入 `walk_analysis/velocity_metrics.json`。
 
 ## 🤖 内置机器人模型
 

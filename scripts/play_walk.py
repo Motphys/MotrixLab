@@ -39,6 +39,7 @@ class WalkPlayConfig(PlayConfig):
 
     duration_seconds: float = 100.0
     warmup_seconds: float = 2.0
+    eval_steps: int | None = None
     forward_velocity: float = 0.5
     lateral_velocity: float = 0.0
     yaw_velocity: float = 0.0
@@ -290,7 +291,10 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
     if cfg.analysis_env_index < 0:
         raise ValueError(f"analysis_env_index must be non-negative, got {cfg.analysis_env_index}")
     if cfg.warmup_seconds < 0.0 or cfg.warmup_seconds >= cfg.duration_seconds:
-        raise ValueError("warmup_seconds must be non-negative and shorter than duration_seconds")
+        if cfg.eval_steps is None:
+            raise ValueError("warmup_seconds must be non-negative and shorter than duration_seconds")
+    if cfg.eval_steps is not None and cfg.eval_steps <= 0:
+        raise ValueError("eval_steps must be positive when provided")
 
     target = _resolve_play_target(cfg)
     render_cfg = replace(cfg, record_seconds=cfg.duration_seconds)
@@ -350,6 +354,9 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
     orientation_samples: list[float] = []
     height_samples: list[float] = []
     reward_term_samples: dict[str, list[float]] = {}
+    swing_abs_y_samples = {"RL": [], "RR": []}
+    swing_lateral_speed_samples = {"RL": [], "RR": []}
+    previous_eval_feet_pos = np.asarray(env.feet_pos[cfg.analysis_env_index], dtype=np.float32).copy()
     fall_count = 0
 
     logger.info(
@@ -358,14 +365,20 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
         *command,
     )
     try:
-        while time.monotonic() - started < cfg.duration_seconds:
+        while (
+            step_index < cfg.eval_steps
+            if cfg.eval_steps is not None
+            else time.monotonic() - started < cfg.duration_seconds
+        ):
             frame_started = time.monotonic()
+            previous_step_feet_pos = previous_eval_feet_pos.copy()
             with torch.no_grad():
                 actions = policy(obs)
             obs, _, dones, _ = vec_env.step(actions)
             current_contact = np.asarray(env.feet_contact[cfg.analysis_env_index], dtype=bool).copy()
             done_array = torch.as_tensor(dones).detach().cpu().numpy().reshape(-1)
             done = bool(done_array[cfg.analysis_env_index])
+            current_step_feet_pos = np.asarray(env.feet_pos[cfg.analysis_env_index], dtype=np.float32).copy()
             elapsed = step_index * ctrl_dt
             if elapsed >= cfg.warmup_seconds and not done:
                 velocity_samples.append(np.asarray(env.get_local_linvel()[cfg.analysis_env_index], dtype=np.float32).copy())
@@ -375,6 +388,17 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
                 height_samples.append(float(env.sim_data["base_pos"][cfg.analysis_env_index, 2]))
                 for name, values in getattr(env._state, "reward_terms", {}).items():
                     reward_term_samples.setdefault(name, []).append(float(values[cfg.analysis_env_index]))
+                current_feet_pos = current_step_feet_pos
+                swing_mask = np.asarray(env._feet_phase[cfg.analysis_env_index, 2:4] >= 0.6, dtype=bool)
+                swing_abs_y = np.abs(current_feet_pos[2:4, 1])
+                swing_speed_y = np.abs((current_feet_pos[2:4, 1] - previous_step_feet_pos[2:4, 1]) / ctrl_dt)
+                for foot_index, foot in enumerate(("RL", "RR")):
+                    if swing_mask[foot_index]:
+                        swing_abs_y_samples[foot].append(float(swing_abs_y[foot_index]))
+                        swing_lateral_speed_samples[foot].append(float(swing_speed_y[foot_index]))
+                previous_eval_feet_pos = current_feet_pos.copy()
+            elif done:
+                previous_eval_feet_pos = current_step_feet_pos
             fall_count += int(done)
             if not done and contact_initialized:
                 landed = current_contact & ~previous_contact
@@ -421,6 +445,16 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
                 "orientation_rms": float(np.sqrt(np.mean(np.square(orientation_samples)))) if orientation_samples else 0.0,
                 "base_height_std": float(np.std(height_samples)) if height_samples else 0.0,
                 "reward_terms": {name: float(np.mean(values)) for name, values in reward_term_samples.items()},
+                "rear_swing_max_abs_y": {
+                    foot: float(max(values)) if values else 0.0 for foot, values in swing_abs_y_samples.items()
+                },
+                "rear_swing_p95_abs_y": {
+                    foot: float(np.percentile(values, 95)) if values else 0.0 for foot, values in swing_abs_y_samples.items()
+                },
+                "rear_swing_peak_lateral_speed": {
+                    foot: float(max(values)) if values else 0.0
+                    for foot, values in swing_lateral_speed_samples.items()
+                },
                 "samples": int(len(velocities)),
             }
         else:

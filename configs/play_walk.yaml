@@ -10,6 +10,7 @@ sim: null
 # Fixed-command validation settings.
 duration_seconds: 100.0
 warmup_seconds: 2.0
+eval_steps: null
 forward_velocity: 0.5
 lateral_velocity: 0.0
 yaw_velocity: 0.0

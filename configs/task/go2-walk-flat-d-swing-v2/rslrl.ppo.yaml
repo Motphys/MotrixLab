@@ -1,0 +1,30 @@
+# @package _global_
+# D-swing-v2: normalized rear-leg swing lateral regularization.
+defaults:
+  - /algo_base@algo: rslrl.ppo
+  - _self_
+task:
+  env: go2-walk-flat-d-swing-v2
+  rllib: rslrl
+  algo: ppo
+  train_backend: null
+num_envs: 1024
+play_num_envs: 16
+seed: 1
+checkpoint:
+  interval: 100
+algo:
+  max_iterations: 1000
+  obs_groups:
+    actor:
+      - policy
+    critic:
+      - value
+  actor:
+    hidden_dims: [512, 256, 128]
+    init_noise_std: 0.5
+  critic:
+    hidden_dims: [512, 256, 128]
+  algorithm:
+    desired_kl: 0.01
+    entropy_coef: 0.001

@@ -25,6 +25,8 @@ _Microduck locomotion policies trained with MotrixLab, rendered in MotrixRender 
 - [Key Features](#key-features)
 - [Quick Start](#-quick-start)
 - [Task Environments](#-task-environments)
+- [Go2 Flat-Walk Baseline](#go2-flat-walk-baseline)
+- [Go2 Flat-Walk Updated Version](#go2-flat-walk-updated-version)
 - [Built-in Robot Models](#-built-in-robot-models)
 - [What's Inside](#-whats-inside)
 - [Contributing](#-contributing)
@@ -142,6 +144,57 @@ python scripts/view.py env=go2-walk-rough
 ```
 
 See the [full environment gallery](https://motrixlab.readthedocs.io/en/latest/user_guide/envs/index.html) for all registered environments and their supported training algorithms.
+
+## Go2 Flat-Walk Baseline
+
+The first `go2-walk-flat` implementation uses MotrixSim, `QuadrupedWalkTask`, and RSL-RL PPO. The policy outputs 12 joint-position residuals with `action_scale=0.25`. The actor receives a 49-D observation; the critic receives the actor observation plus 3-D local body velocity (52-D value observation).
+
+The observation contains gyro (3), projected gravity (3), joint-position error (12), joint velocity (12), previous action (12), velocity command (3), and four trot phase values (4). Commands are `[vx, vy, yaw]` with ranges `[-1, 1]`, `[-0.5, 0.5]`, and `[-0.5, 0.5]`; 10% are standing commands and commands are resampled every 5–10 seconds.
+
+The reward combines linear/angular velocity tracking, vertical velocity, angular velocity, base height, action-rate, default-pose, swing-foot height, contact-phase, and swing-contact terms. Training randomizes joint/state noise, friction, mass, center of mass, PD gains, and 0–1 control-step action delay.
+
+| Component | File |
+| --- | --- |
+| Go2 task configuration and registration | `motrix_envs/src/motrix_envs/locomotion/quadruped/go2.py` |
+| Environment loop, observations, actions, phase, and rewards | `motrix_envs/src/motrix_envs/locomotion/quadruped/walk_np.py` |
+| Command, randomization, and reward schemas | `motrix_envs/src/motrix_envs/locomotion/quadruped/cfg.py` |
+| Velocity command sampling | `motrix_envs/src/motrix_envs/locomotion/quadruped/velocity_command.py` |
+| Go2 model, joint order, and default pose | `motrix_robots/src/motrix_robots/unitree.py` |
+| Go2 PPO recipe | `configs/task/go2-walk-flat/rslrl.ppo.yaml`, `configs/algo_base/rslrl.ppo.yaml` |
+| Training entry point and RSL-RL provider | `scripts/train.py`, `motrix_rl_rslrl/src/motrix_rl_rslrl/torch/train/ppo.py` |
+| Fixed-velocity evaluation | `scripts/play_walk.py`, `configs/play_walk.yaml` |
+| Go2 deployment profile | `motrix_envs/src/motrix_envs/deploy/go2_walk.py` |
+
+```bash
+python scripts/train.py task=go2-walk-flat/rslrl.ppo
+python scripts/play_walk.py env=go2-walk-flat policy=<checkpoint>
+```
+
+Evaluation metrics are written to `walk_analysis/velocity_metrics.json` under the run directory.
+
+## Go2 Flat-Walk Updated Version
+
+The updated `go2-walk-flat` configuration is registered from `quadruped/go2_walk.py`. It keeps the 49-D actor observation, 52-D critic observation, and 12-D joint action interfaces so existing PPO and deployment paths remain usable.
+
+Changes from the first version:
+
+- Adds single-axis and boundary command coverage with `single_axis_probability=0.45` and `boundary_probability=0.15`.
+- Disables the motion-time `similar_to_default` penalty so it does not suppress leg swing.
+- Adds flat-orientation, stand-still, support-foot sliding, joint-acceleration, and second-order action-smoothness terms.
+- Reweights tracking and stability terms, including linear-velocity tracking `2.0` and angular-velocity tracking `0.75`.
+- Uses a deterministic play configuration with command `[0.5, 0, 0]`, disabled observation noise, and no command resampling.
+- Extends `play_walk.py` to repin the command every control step and write mean velocity, steady-state error, RMSE, P95 error, orthogonal drift, fall rate, orientation RMS, height variation, and reward-term metrics.
+
+| Updated component | File |
+| --- | --- |
+| Current Go2 configuration and reward weights | `motrix_envs/src/motrix_envs/locomotion/quadruped/go2_walk.py` |
+| Single-axis and boundary command sampling | `motrix_envs/src/motrix_envs/locomotion/quadruped/velocity_command.py` |
+| New reward terms and action/state history buffers | `motrix_envs/src/motrix_envs/locomotion/quadruped/walk_np.py` |
+| New configuration fields | `motrix_envs/src/motrix_envs/locomotion/quadruped/cfg.py` |
+| Fixed-command evaluation and JSON metrics | `scripts/play_walk.py`, `configs/play_walk.yaml` |
+| Algorithm mapping record | `docs/go2_rl_gym_ppo_mapping.md` |
+
+`play.py` is the generic replay entry point and does not repin a straight-line command every step. Use `play_walk.py` for Go2 flat-walk velocity evaluation; metrics are written to `walk_analysis/velocity_metrics.json`.
 
 ## 🤖 Built-in Robot Models
 
