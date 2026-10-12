@@ -4,14 +4,14 @@ build-backend = "uv_build"
 
 [project]
 name = "motrix-env-motrixsim"
-version = "0.4.0b0"
+version = "0.4.0b1"
 description = "MotrixSim simulation backend for the motrix-env-core environment framework."
 authors = [{ name = "Motphys", email = "developers@motphys.com" }]
 requires-python = "==3.10.*"
 readme = "README.md"
 license = "Apache-2.0"
 dependencies = [
-    "motrix-env-core==0.4.0b0",
+    "motrix-env-core==0.4.0b1",
     "motrixsim==0.10.1",
     "numpy>=1.26",
 ]

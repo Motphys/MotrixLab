@@ -969,7 +969,7 @@ wheels = [
 
 [[package]]
 name = "motrix-deploy"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_deploy" }
 dependencies = [
     { name = "hydra-core" },
@@ -990,7 +990,7 @@ requires-dist = [
 
 [[package]]
 name = "motrix-deploy-motrixsim"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_deploy_motrixsim" }
 dependencies = [
     { name = "motrix-deploy" },
@@ -1007,7 +1007,7 @@ requires-dist = [
 
 [[package]]
 name = "motrix-deploy-mujoco"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_deploy_mujoco" }
 dependencies = [
     { name = "hydra-core" },
@@ -1026,7 +1026,7 @@ requires-dist = [
 
 [[package]]
 name = "motrix-deploy-tasks"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_deploy_tasks" }
 dependencies = [
     { name = "hydra-core" },
@@ -1047,7 +1047,7 @@ requires-dist = [
 
 [[package]]
 name = "motrix-deploy-unitree"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_deploy_unitree" }
 dependencies = [
     { name = "hydra-core" },
@@ -1068,7 +1068,7 @@ requires-dist = [
 
 [[package]]
 name = "motrix-env-core"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_env_core" }
 dependencies = [
     { name = "array-api-compat" },
@@ -1115,7 +1115,7 @@ provides-extras = ["numba", "video", "all", "tbb"]
 
 [[package]]
 name = "motrix-env-motrixsim"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_env_motrixsim" }
 dependencies = [
     { name = "motrix-env-core" },
@@ -1132,7 +1132,7 @@ requires-dist = [
 
 [[package]]
 name = "motrix-env-mujoco"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_env_mujoco" }
 dependencies = [
     { name = "motrix-env-core" },
@@ -1149,7 +1149,7 @@ requires-dist = [
 
 [[package]]
 name = "motrix-envs"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_envs" }
 dependencies = [
     { name = "gymnasium" },
@@ -1181,7 +1181,7 @@ provides-extras = ["deploy"]
 
 [[package]]
 name = "motrix-lab"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { virtual = "." }
 dependencies = [
     { name = "motrix-deploy" },
@@ -1307,7 +1307,7 @@ test = [
 
 [[package]]
 name = "motrix-rl"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_rl" }
 dependencies = [
     { name = "gymnasium" },
@@ -1340,7 +1340,7 @@ requires-dist = [
 
 [[package]]
 name = "motrix-rl-builtin"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_rl_builtin" }
 dependencies = [
     { name = "gymnasium" },
@@ -1361,7 +1361,7 @@ requires-dist = [
 
 [[package]]
 name = "motrix-rl-rslrl"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_rl_rslrl" }
 dependencies = [
     { name = "motrix-rl" },
@@ -1380,7 +1380,7 @@ requires-dist = [
 
 [[package]]
 name = "motrix-rl-skrl"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_rl_skrl" }
 dependencies = [
     { name = "motrix-rl" },
@@ -1410,7 +1410,7 @@ provides-extras = ["jax"]
 
 [[package]]
 name = "motrix-robots"
-version = "0.4.0b0"
+version = "0.4.0b1"
 source = { editable = "motrix_robots" }
 dependencies = [
     { name = "motrix-env-core" },
