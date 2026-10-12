@@ -11,6 +11,7 @@ from motrix_deploy.errors import ValidationError
 from motrix_deploy.runtime.control import ControlSession
 from motrix_deploy.runtime.result import RolloutResult, SimulationRolloutResult
 from motrix_deploy.runtime.scheduler import LoopScheduler
+from motrix_env_core.input import GamePadDevice, KeyboardDevice
 
 if TYPE_CHECKING:
     from motrix_deploy.robot.interface import RobotInterface
@@ -34,6 +35,16 @@ class DeploymentRuntime(ABC):
     @property
     @abstractmethod
     def robot(self) -> "RobotInterface": ...
+
+    @property
+    def keyboard(self) -> KeyboardDevice | None:
+        """Viewer keyboard input, or None when this runtime has no viewer."""
+        return None
+
+    @property
+    def gamepad(self) -> GamePadDevice | None:
+        """Operator gamepad input, or None when this runtime provides none."""
+        return None
 
     @property
     def opened(self) -> bool:

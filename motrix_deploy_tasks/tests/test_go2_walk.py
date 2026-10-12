@@ -15,8 +15,49 @@ from motrix_deploy.errors import ControlFailure, ValidationError
 from motrix_deploy.policy import NoOpPolicy
 from motrix_deploy.runtime import ControlContext
 from motrix_deploy.runtime.control import PolicyController
-from motrix_deploy_tasks.tasks.go2_walk import Go2WalkDeployTask, Go2WalkPolicyProcessor, Go2WalkTaskSpec
-from motrix_env_core.input import PlanarVelocityCommand
+from motrix_deploy_tasks.tasks.go2_walk import (
+    Go2WalkDeployTask,
+    Go2WalkPolicyProcessor,
+    Go2WalkPreparationSettings,
+    Go2WalkTaskSpec,
+)
+from motrix_env_core.input import (
+    BoundedGamePadPlanarVelocityBinding,
+    ConstantPlanarVelocityBinding,
+    GamePadDevice,
+    KeyboardDevice,
+    KeyboardPlanarVelocityBinding,
+    PlanarVelocityCommand,
+)
+
+
+class FakeKeyboardDevice(KeyboardDevice):
+    def poll(self) -> None: ...
+
+    def is_key_down(self, key: str) -> bool:
+        return False
+
+    def is_key_up(self, key: str) -> bool:
+        return False
+
+    def is_pressing(self, key: str) -> bool:
+        return False
+
+
+class FakeGamePadDevice(GamePadDevice):
+    def poll(self) -> None: ...
+
+    def axis_value(self, axis: str) -> float:
+        return 0.0
+
+    def is_button_down(self, button: str) -> bool:
+        return False
+
+    def is_button_up(self, button: str) -> bool:
+        return False
+
+    def is_button_pressing(self, button: str) -> bool:
+        return False
 
 
 def _replace_spec(spec: Go2WalkTaskSpec, **overrides: object) -> Go2WalkTaskSpec:
@@ -70,6 +111,158 @@ def _task_spec() -> Go2WalkTaskSpec:
         action_lower=[-1.0] * 12,
         action_upper=[1.0] * 12,
     )
+
+
+def test_go2_preparation_is_derived_from_simulation_spawn_pose() -> None:
+    robot = _robot()
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), steps=1)
+
+    task.prepare(simulation=True)
+    task.reset(_state(robot))
+    assert task.phase == "policy"
+
+    task.prepare(simulation=False, spawn_pose="lie_down")
+    assert task.phase == "policy"
+
+    task.prepare(simulation=True, spawn_pose="default")
+    assert task.phase == "policy"
+
+    task.prepare(simulation=True, spawn_pose="lie_down")
+    task.reset(_state(robot))
+    assert task.phase == "wait_stand"
+
+
+def test_simulated_standing_preparation_gates_policy_and_damps_after_budget() -> None:
+    robot = _robot()
+    state = _state(robot)
+    state.joint_position[:] = -0.5
+    state.joint_velocity[:] = 0.0
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), steps=1)
+    settings = Go2WalkPreparationSettings(
+        ramp_duration_s=0.04, settle_duration_s=0.02, timeout_s=0.2, damping_duration_s=0.04
+    )
+    task.enable_simulation_preparation(settings)
+    task.reset(state)
+    assert task.phase == "wait_stand"
+    first = task.step(state, _context(0, 0.0, [0.0, 0.0, 0.0]))
+    assert task.phase == "prepare"
+    np.testing.assert_allclose(first.command.joint_position, -0.25)
+    assert task.policy_controller.completed_steps == 0
+    task.step(state, _context(1, 0.02, [0.0, 0.0, 0.0]))
+    state.joint_position[:] = 0.0
+    ready = task.step(state, _context(2, 0.04, [0.0, 0.0, 0.0]))
+    assert not ready.policy_tick and task.phase == "prepare"
+    standing = task.step(state, _context(3, 0.06, [0.0, 0.0, 0.0]))
+    assert not standing.policy_tick and task.phase == "wait_policy"
+    takeover = task.step(state, _context(4, 0.08, [0.0, 0.0, 0.0]))
+    assert takeover.policy_tick and task.phase == "policy"
+    assert task.policy_controller.completed_steps == 1
+    stop = task.step(state, _context(5, 0.10, [0.0, 0.0, 0.0]))
+    np.testing.assert_array_equal(stop.command.kp, 0.0)
+    np.testing.assert_array_equal(stop.command.kd, settings.damping_kd)
+    assert not stop.policy_tick and task.phase == "damping"
+    task.step(state, _context(6, 0.12, [0.0, 0.0, 0.0]))
+    assert task.step(state, _context(7, 0.14, [0.0, 0.0, 0.0])).complete
+    assert task.phase == "complete"
+
+
+def test_simulated_preparation_rejects_tilt_and_timeout() -> None:
+    robot = _robot()
+    state = _state(robot)
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), steps=1)
+    task.enable_simulation_preparation(
+        Go2WalkPreparationSettings(ramp_duration_s=0.02, settle_duration_s=0.02, timeout_s=0.04)
+    )
+    task.reset(state)
+    state.base_orientation_xyzw[:] = [1.0, 0.0, 0.0, 0.0]
+    assert "tilt" in task.step(state, _context(0, 0.0, [0.0, 0.0, 0.0])).error
+    state.base_orientation_xyzw[:] = [0.0, 0.0, 0.0, 1.0]
+    state.joint_position[:] = 0.5
+    assert "timed out" in task.step(state, _context(2, 0.04, [0.0, 0.0, 0.0])).error
+    assert task.policy_controller.completed_steps == 0
+
+
+class _FakeKeyboard:
+    def __init__(self) -> None:
+        self.down: set[str] = set()
+        self.poll_count = 0
+
+    def poll(self) -> None:
+        self.poll_count += 1
+
+    def is_key_down(self, key: str) -> bool:
+        return key in self.down
+
+
+def test_viewer_requires_separate_stand_and_policy_button_edges() -> None:
+    robot = _robot()
+    state = _state(robot)
+    state.joint_velocity[:] = 0.0
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), steps=1)
+    task.enable_simulation_preparation(
+        Go2WalkPreparationSettings(ramp_duration_s=0.02, settle_duration_s=0.02, timeout_s=0.1)
+    )
+    keyboard = _FakeKeyboard()
+    task.attach_keyboard(keyboard)
+    task.reset(state)
+
+    first = task.step(state, _context(0, 0.0, [0.0, 0.0, 0.0]))
+    assert task.phase == "wait_stand" and not first.policy_tick
+    np.testing.assert_array_equal(first.command.kp, 0.0)
+    keyboard.down = {"p"}
+    task.step(state, _context(0, 0.0, [0.0, 0.0, 0.0]))
+    keyboard.down = {"r"}
+    task.step(state, _context(1, 0.02, [0.0, 0.0, 0.0]))
+    assert task.phase == "prepare"
+    keyboard.down.clear()
+    task.step(state, _context(2, 0.04, [0.0, 0.0, 0.0]))
+    task.step(state, _context(3, 0.06, [0.0, 0.0, 0.0]))
+    hold = task.step(state, _context(4, 0.08, [0.0, 0.0, 0.0]))
+    assert task.phase == "wait_policy" and not hold.policy_tick
+    assert task.policy_controller.completed_steps == 0
+    keyboard.down.clear()
+    task.step(state, _context(5, 0.10, [0.0, 0.0, 0.0]))
+    assert task.phase == "wait_policy"
+    keyboard.down = {"p"}
+    takeover = task.step(state, _context(6, 0.12, [0.0, 0.0, 0.0]))
+    assert takeover.policy_tick and task.phase == "policy"
+    assert task.policy_controller.completed_steps == 1
+
+
+def test_o_keeps_damping_for_ten_seconds_before_closing() -> None:
+    robot = _robot()
+    state = _state(robot)
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), steps=1)
+    task.enable_simulation_preparation()
+    keyboard = _FakeKeyboard()
+    task.attach_keyboard(keyboard)
+    task.reset(state)
+    keyboard.down = {"o"}
+    start = task.step(state, _context(0, 0.0, [0.0, 0.0, 0.0]))
+    assert task.phase == "damping" and not start.complete
+    np.testing.assert_array_equal(start.command.kp, 0.0)
+    np.testing.assert_array_equal(start.command.kd, 8.0)
+    keyboard.down.clear()
+    before = task.step(state, _context(499, 9.98, [0.0, 0.0, 0.0]))
+    assert task.phase == "damping" and not before.complete
+    assert not before.policy_tick
+    finished = task.step(state, _context(500, 10.0, [0.0, 0.0, 0.0]))
+    assert finished.complete and not finished.success
+    assert task.phase == "complete"
+
+
+def test_shared_keyboard_velocity_binding_does_not_consume_operator_key_edges() -> None:
+    robot = _robot()
+    state = _state(robot)
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), steps=1)
+    task.enable_simulation_preparation()
+    keyboard = _FakeKeyboard()
+    task.attach_keyboard(keyboard, poll=False)
+    task.reset(state)
+    keyboard.down = {"r"}
+    task.step(state, _context(0, 0.0, [0.0, 0.0, 0.0]))
+    assert task.phase == "prepare"
+    assert keyboard.poll_count == 0
 
 
 def test_go2_missing_command_is_rejected_before_policy_and_action(monkeypatch):
@@ -338,6 +531,28 @@ def test_previous_action_and_trot_phase_advance_after_first_tick() -> None:
     np.testing.assert_allclose(observation[45:49], [0.04, 0.54, 0.54, 0.04])
 
 
+def test_gait_phase_restarts_after_standing_and_reset() -> None:
+    robot = _robot()
+    state = _state(robot)
+    task = Go2WalkPolicyProcessor(_task_spec(), robot)
+    moving = [0.5, 0.0, 0.0]
+    standing = [0.0, 0.0, 0.0]
+    task.reset(state, _context(0, 0.0, moving))
+
+    phases = [
+        task.build_observation(state, _context(step, step * 0.02, command))[45:49]
+        for step, command in enumerate((moving, moving, standing, standing, moving, moving))
+    ]
+    np.testing.assert_allclose(phases[0], 0.0)
+    np.testing.assert_allclose(phases[1], [0.04, 0.54, 0.54, 0.04])
+    np.testing.assert_allclose(phases[2:4], 0.0)
+    np.testing.assert_allclose(phases[4], phases[1])
+    np.testing.assert_allclose(phases[5], [0.08, 0.58, 0.58, 0.08])
+
+    task.reset(state, _context(0, 0.0, moving))
+    np.testing.assert_allclose(task.build_observation(state, _context(1, 0.02, moving))[45:49], phases[1])
+
+
 def test_standing_command_freezes_deployment_gait_phase() -> None:
     robot = _robot()
     task = Go2WalkPolicyProcessor(_task_spec(), robot)
@@ -394,6 +609,32 @@ def test_go2_task_scales_command_range_for_deployment_input_mapping() -> None:
     np.testing.assert_array_equal(task.command_lower, [-0.5, -0.5, -0.5])
     np.testing.assert_array_equal(task.command_upper, [0.5, 0.5, 0.5])
     task.validate_command(PlanarVelocityCommand(np.array([[0.75, 0.0, 0.0]], dtype=np.float32)))
+
+
+def test_go2_prepare_builds_binding_for_each_device_kind() -> None:
+    robot = _robot()
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), steps=1)
+
+    keyboard_binding = task.prepare(simulation=True, device=FakeKeyboardDevice())
+    assert isinstance(keyboard_binding, KeyboardPlanarVelocityBinding)
+
+    gamepad_binding = task.prepare(simulation=True, device=FakeGamePadDevice())
+    assert isinstance(gamepad_binding, BoundedGamePadPlanarVelocityBinding)
+
+    constant_binding = task.prepare(simulation=True)
+    assert isinstance(constant_binding, ConstantPlanarVelocityBinding)
+
+
+def test_go2_prepare_attaches_shared_keyboard_and_exposes_operator_hint() -> None:
+    robot = _robot()
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), steps=1)
+
+    assert task.operator_hint is None
+    keyboard = FakeKeyboardDevice()
+    task.prepare(simulation=True, device=keyboard, spawn_pose="lie_down")
+    assert task.operator_hint is not None
+    task.reset(_state(robot))
+    assert task.phase == "wait_stand"
 
 
 def test_go2_root_task_executes_policy_budget_and_normal_stop():

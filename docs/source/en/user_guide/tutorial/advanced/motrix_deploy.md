@@ -43,11 +43,12 @@ go2-walk-flat.deploy/
 
 Deployment also needs the installed `motrix_deploy_tasks` plugin, which supplies the walking implementation, deployment
 scenes, and Hydra recipes, plus the runtime plugin for the target. The recipes work outside the repository without a
-workspace config path. Task defaults select the Hydra runtime group (`sim` or `hardware`); you do not need a separate
-runtime override. Common top-level settings are `artifact`, `duration_s`, and `command`. All target-specific settings
-live directly under `runtime`. `runtime.kind` selects the simulation or hardware path; `runtime.backend` selects the
-plugin (`mujoco` or `motrixsim` for simulation, or `unitree_go2` for hardware). `runtime.backend` is a scalar string
-selector, not a nested configuration mapping or Hydra group.
+workspace config path. Task defaults compose the typed runtime configuration; you do not need a separate runtime
+override. Common top-level settings are `artifact` and `duration_s`. Runtime settings live under `runtime`;
+Unitree robot-specific options live under `runtime.robot`, while transport settings such as `runtime.network_interface`
+remain directly under `runtime`. The configuration type distinguishes simulation from hardware. `runtime.backend`
+selects the plugin (`mujoco` or `motrixsim` for simulation, or `unitree` for hardware). `runtime.backend` is a scalar
+string selector, not a nested configuration mapping or Hydra group.
 
 ## 3. Check in MuJoCo
 
@@ -58,8 +59,7 @@ motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
 ```
 
 Hold `W/S` to move forward/backward, `A/D` sideways, and `Q/E` to turn. Close the window, press Esc, or press Ctrl-C to stop.
-The recipe selects the flat scene and the `go2` robot. Headless mode uses constant zero velocity; for a moving check, add
-`'command.velocity=[0.5,0.0,0.0]'`. Set `duration_s` for a bounded run: it allows
+The recipe selects the flat scene and the `go2` robot. Headless mode uses constant zero velocity. Set `duration_s` for a bounded run: it allows
 `ceil(duration_s / control_period_s)` control ticks, using the artifact's control period, not a wall-clock timeout.
 Startup and shutdown may take additional wall time.
 
@@ -112,8 +112,18 @@ Press Start, wait for the default-pose transition, then
 press A. Hold L1 and move the sticks to command motion. B requests lie-down; Select triggers emergency stop. Stop paths
 send damping commands before closing DDS. Software tests do not replace a suspended real-robot check.
 
-The installed hardware recipe sets `runtime.kp=50` and `runtime.kd=1`. Set both to `null` to retain artifact gains, or
-supply non-negative scalars or per-joint values in canonical joint order.
+The installed hardware recipe composes these Hydra defaults:
+
+```yaml
+defaults:
+  - /runtime@runtime: _unitree_schema
+  - /unitree_robot@runtime.robot: go2
+  - _self_
+```
+
+It selects `runtime.backend=unitree` and sets `runtime.robot.kp=50` and `runtime.robot.kd=1`.
+Set both gains to `null` to retain artifact gains, or supply non-negative scalars or per-joint values in canonical joint
+order. Go2 transition, damping, remote-button, and motor settings also live under `runtime.robot`.
 
 For read-only diagnostics without a command publisher:
 
@@ -158,8 +168,9 @@ motrix-deploy inspect artifact=artifacts/g1-wbt-dance.deploy
 The default duration comes from the embedded motion clip; shorter runs use `duration_s`, longer durations are rejected
 before opening the backend instead of looping or holding. No velocity command is needed: the motion is artifact-owned.
 The same artifact runs on MuJoCo and MotrixSim (`runtime.backend=motrixsim`, with
-`runtime.physics.solver_iterations=3` matching the training budget). It is not a hardware deployment recipe: the current
-Unitree transport is Go2-specific, and sim2sim success is not evidence of hardware safety.
+`runtime.physics.solver_iterations=3` matching the training budget). It is not a hardware deployment recipe: the
+Unitree hardware backend currently implements only Go2; G1 hardware is not implemented, and sim2sim success is not
+evidence of hardware safety.
 
 The task mirrors real deployment practice with four phases: `prepare` (ramp measured joints to the default standing
 pose, gated on continuously measured readiness), `policy_hold`, `playback`, and `damping`. Takeover after readiness is
@@ -214,7 +225,6 @@ The installed flat recipe selects the world and robot by ID:
 
 ```yaml
 runtime:
-  kind: simulation
   backend: mujoco
   deploy_env_id: flat
   robot_id: go2

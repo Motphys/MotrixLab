@@ -66,7 +66,6 @@ def build_g1_wbt_profile(env_name: str) -> DeploymentProfile:
     )
     motion_payload_path = "payloads/motion.npz"
     task = G1WbtTaskSpec(
-        period_s=cfg.ctrl_dt,
         action_scale=scale.tolist(),
         kp=kp.tolist(),
         kd=kd.tolist(),

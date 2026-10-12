@@ -8,10 +8,12 @@ __version__ = "0.3.0"
 from motrix_deploy_unitree.config import (
     GO2_JOINT_NAME_TO_MOTOR_INDEX,
     GO2_MOTOR_COUNT,
-    UnitreeGo2BackendConfig,
+    UnitreeBackendConfig,
+    UnitreeGo2RobotCfg,
+    UnitreeRobotCfg,
 )
 from motrix_deploy_unitree.direct import UnitreeGo2DirectInterface
-from motrix_deploy_unitree.interface import UnitreeGo2RobotInterface, UnitreeSdkBindings
+from motrix_deploy_unitree.interface import UnitreeGo2Robot, UnitreeSdkBindings
 from motrix_deploy_unitree.remote import (
     BUTTON_NAMES,
     UnitreeRemoteGamePadDevice,
@@ -23,9 +25,11 @@ __all__ = [
     "BUTTON_NAMES",
     "GO2_JOINT_NAME_TO_MOTOR_INDEX",
     "GO2_MOTOR_COUNT",
-    "UnitreeGo2BackendConfig",
+    "UnitreeBackendConfig",
+    "UnitreeGo2RobotCfg",
+    "UnitreeRobotCfg",
     "UnitreeGo2DirectInterface",
-    "UnitreeGo2RobotInterface",
+    "UnitreeGo2Robot",
     "UnitreeSdkBindings",
     "UnitreeRemoteGamePadDevice",
     "UnitreeRemoteState",

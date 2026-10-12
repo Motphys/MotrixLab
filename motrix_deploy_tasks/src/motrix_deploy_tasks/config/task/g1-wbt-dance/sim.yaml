@@ -22,5 +22,3 @@ runtime:
     dt: 0.002
     # Use runtime.physics.solver_iterations=3 to match MotrixSim training.
     solver_iterations: 100
-
-command: null

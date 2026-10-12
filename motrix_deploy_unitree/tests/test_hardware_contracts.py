@@ -220,7 +220,7 @@ def test_hardware_configuration_imports_without_models_assets_or_sdk(module: str
 
         sys.meta_path.insert(0, BlockHardwareRuntimeDependencies())
         importlib.import_module('motrix_deploy_unitree.{module}')
-        from motrix_deploy_unitree.config import UnitreeGo2BackendConfig
+        from motrix_deploy_unitree.config import UnitreeBackendConfig, UnitreeGo2RobotCfg
         from motrix_deploy_unitree.hardware import UnitreeGo2HardwareCfg
         from motrix_deploy_unitree.interface import _load_sdk_bindings
 
@@ -230,9 +230,19 @@ def test_hardware_configuration_imports_without_models_assets_or_sdk(module: str
         Path.exists = forbidden_exists
         hardware = UnitreeGo2HardwareCfg()
         hardware.validate()
-        config = UnitreeGo2BackendConfig(network_interface='eth0', robot=hardware)
-        assert config.robot is hardware
-        assert config.lie_down_position().shape == (12,)
+        config = UnitreeBackendConfig(
+            network_interface='eth0',
+            robot=UnitreeGo2RobotCfg(
+                key_pose=hardware.key_pose,
+                sensors=hardware.sensors,
+                actuation=hardware.actuation,
+            ),
+        )
+        assert isinstance(config.robot, UnitreeGo2RobotCfg)
+        assert config.robot.key_pose is hardware.key_pose
+        assert config.robot.sensors is hardware.sensors
+        assert config.robot.actuation is hardware.actuation
+        assert config.robot.lie_down_position().shape == (12,)
         assert not any(name == root or name.startswith(root + '.')
                        for name in sys.modules for root in blocked)
         # The SDK is requested only by the explicit transport loader, not imports/configuration.

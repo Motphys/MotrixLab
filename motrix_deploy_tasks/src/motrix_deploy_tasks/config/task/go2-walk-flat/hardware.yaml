@@ -1,12 +1,13 @@
 # @package _global_
 defaults:
-  - /runtime: hardware
+  - /runtime@runtime: _unitree_schema
+  - /unitree_robot@runtime.robot: go2
   - _self_
 
+artifact: artifacts/go2-walk-flat.deploy
+
 runtime:
-  backend: unitree_go2
-  kp: 50
-  kd: 1
+  backend: unitree
   network_interface: enp5s0
   domain_id: 0
   lowcmd_topic: rt/lowcmd
@@ -14,27 +15,17 @@ runtime:
   connect_timeout_s: 5.0
   subscriber_queue_depth: 10
   validate_crc: true
-  default_transition_duration_s: 2.0
-  damping_duration_s: 1.0
-  damping_kd: 8.0
-  wait_for_remote_buttons: true
-  start_button: start
-  enable_button: A
-  emergency_stop_button: select
-  lie_down_button: B
-  lie_down_duration_s: 2.0
-  motor_mode: 10
-
-command:
-  source: gamepad
-  gamepad:
-    linear_x_axis: ly
-    linear_y_axis: lx
-    yaw_axis: rx
-    deadzone: 0.12
-    range_scale: [1.0, 1.0, 1.0]
-    invert_linear_x: false
-    invert_linear_y: true
-    invert_yaw: true
-    deadman_button: L1
+  robot:
+    kp: 50
+    kd: 1
+    default_transition_duration_s: 2.0
+    damping_duration_s: 1.0
+    damping_kd: 8.0
+    wait_for_remote_buttons: true
+    start_button: start
+    enable_button: A
+    emergency_stop_button: select
+    lie_down_button: B
+    lie_down_duration_s: 2.0
+    motor_mode: 10
 duration_s: 300.0

@@ -8,6 +8,7 @@ from motrix_deploy.robot.interface import RobotInterface
 from motrix_deploy.runtime.base import DeploymentRuntime
 from motrix_deploy.runtime.result import RolloutResult
 from motrix_deploy.runtime.scheduler import FixedStepScheduler, LoopScheduler, RealtimeScheduler
+from motrix_env_core.input import GamePadDevice
 
 
 class HardwareRuntime(DeploymentRuntime):
@@ -19,15 +20,22 @@ class HardwareRuntime(DeploymentRuntime):
         *,
         scheduler: LoopScheduler | None = None,
         realtime: bool = True,
+        gamepad: GamePadDevice | None = None,
     ) -> None:
         super().__init__()
         self._robot = robot
         self.scheduler = scheduler
         self.realtime = realtime
+        self._gamepad = gamepad if gamepad is not None else robot.get_gamepad_device()
 
     @property
     def robot(self) -> RobotInterface:
         return self._robot
+
+    @property
+    def gamepad(self) -> GamePadDevice | None:
+        """Operator gamepad supplied by the robot's remote channel, if any."""
+        return self._gamepad
 
     def run(self) -> RolloutResult:
         if self.session is None:

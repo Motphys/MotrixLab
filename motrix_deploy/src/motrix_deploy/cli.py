@@ -16,10 +16,8 @@ from omegaconf.errors import OmegaConfBaseException
 
 from motrix_deploy import __version__
 from motrix_deploy.artifact.io import inspect_artifact, read_artifact
-from motrix_deploy.config import DeployRunConfig
+from motrix_deploy.config import DeployRunConfig, SimRuntimeCfg
 from motrix_deploy.errors import ArtifactError, ValidationError
-from motrix_deploy.robot.interface import GamePadDeviceProvider, KeyboardDeviceProvider
-from motrix_deploy.runtime.config import SimulationRuntimeConfig
 from motrix_deploy.runtime.control import ControlSession
 from motrix_deploy.runtime.factory import RuntimeCreateContext, create_hardware_runtime, create_simulation_runtime
 from motrix_deploy.task import create_task, load_task_type
@@ -28,113 +26,48 @@ from motrix_deploy.task import create_task, load_task_type
 def run(cfg: DeployRunConfig) -> int:
     """Run one deployment rollout from typed application configuration."""
     from motrix_deploy.policy import OnnxPolicy
-    from motrix_env_core.input import (
-        BoundedGamePadPlanarVelocityBinding,
-        ConstantPlanarVelocityBinding,
-        KeyboardPlanarVelocityBinding,
-    )
 
     artifact = read_artifact(Path(cfg.artifact))
     manifest = artifact.manifest
     task_type = load_task_type(manifest.task.name)
-    default_duration_s = task_type.default_duration_s(manifest.task)
+    default_duration_s = task_type.default_duration_s(manifest.task, manifest.control.period_s)
     duration_s = cfg.duration_s if cfg.duration_s is not None else default_duration_s
     steps = _duration_steps(duration_s, manifest.control.period_s)
     if default_duration_s is not None and duration_s > default_duration_s + 1e-9:
         raise ValueError("duration_s exceeds the task's finite playback budget")
-    task_period = getattr(manifest.task, "period_s", manifest.control.period_s)
-    if not math.isclose(task_period, manifest.control.period_s, rel_tol=0, abs_tol=1e-9):
-        raise ValueError("task period_s must equal control.period_s")
     policy = OnnxPolicy(artifact.policy_path, manifest.policy.input, manifest.policy.output)
     task = create_task(manifest.task, manifest.robot, policy, steps=steps, artifact=artifact)
-    simulation = cfg.runtime["kind"] == "simulation"
-    viewer = cfg.runtime["viewer"] if simulation else False
-    realtime = cfg.runtime["realtime"] if simulation else True
-    if realtime is None:
-        realtime = viewer
-    runtime_options = cfg.runtime_options
+    simulation = isinstance(cfg.runtime, SimRuntimeCfg)
+    spawn_pose = cfg.runtime.robot_init_key_pose if simulation else None
     if simulation:
-        from motrix_deploy.env import assemble_deploy_scene
-
-        for field in ("deploy_env_id", "robot_id"):
-            if not isinstance(runtime_options.get(field), str) or not runtime_options[field]:
-                raise ValidationError(f"runtime.{field}", "a non-empty registered ID", runtime_options.get(field))
-        deploy_env_id = runtime_options.pop("deploy_env_id")
-        robot_id = runtime_options.pop("robot_id")
-        scene = assemble_deploy_scene(deploy_env_id, robot_id)
-        for field in ("translation", "rotation"):
-            option = f"robot_{field}"
-            if option in runtime_options:
-                value = runtime_options.pop(option)
-                setattr(scene.objs.robot, field, None if value is None else tuple(value))
-        runtime_options["scene"] = scene
-        runtime_config = SimulationRuntimeConfig.from_mapping(runtime_options, render=viewer, realtime=realtime)
-        runtime = create_simulation_runtime(cfg.backend_name, runtime_config)
+        runtime = create_simulation_runtime(cfg.runtime.backend, cfg.runtime.build_runtime_config())
     else:
         runtime = create_hardware_runtime(
-            cfg.backend_name,
-            runtime_options,
+            cfg.runtime.backend,
+            cfg.runtime,
             RuntimeCreateContext(
                 robot=manifest.robot,
                 control=manifest.control,
             ),
         )
-    backend = runtime.robot
+    robot = runtime.robot
+    device = runtime.keyboard or runtime.gamepad
     try:
-        manifest.robot.validate_compatible(backend.spec)
-    except ValidationError:
+        manifest.robot.validate_compatible(robot.spec)
+        command_binding = task.prepare(simulation=simulation, device=device, spawn_pose=spawn_pose)
+        session = ControlSession(
+            controller=task,
+            robot=robot,
+            command_binding=command_binding,
+            period_s=manifest.control.period_s,
+            state_timeout_s=manifest.control.state_timeout_s,
+        )
+        runtime.bind_session(session)
+    except (ValidationError, ValueError):
         runtime.close()
         raise
-    command_binding = None
-    command_lower = getattr(task, "command_lower", None)
-    command_upper = getattr(task, "command_upper", None)
-    command_config = cfg.command or {}
-    command_source = command_config.get("source", "constant")
-    if command_lower is None and command_upper is None:
-        if command_config:
-            raise ValueError("Autonomous task playback does not accept planar velocity commands")
-        task.validate_command(None)
-    elif command_lower is None or command_upper is None:
-        raise ValueError(f"Task {manifest.task.name!r} must provide both velocity bounds")
-    elif viewer and isinstance(runtime, KeyboardDeviceProvider):
-        command_binding = KeyboardPlanarVelocityBinding(
-            runtime.get_keyboard_device(),
-            command_lower=command_lower,
-            command_upper=command_upper,
-        )
-    elif command_source == "gamepad":
-        if not isinstance(backend, GamePadDeviceProvider):
-            raise ValueError(f"Backend {cfg.backend_name!r} does not provide gamepad input")
-        gamepad = command_config.get("gamepad", {})
-        if not isinstance(gamepad, dict):
-            raise ValueError("command.gamepad must be a mapping")
-        command_binding = BoundedGamePadPlanarVelocityBinding(
-            backend.get_gamepad_device(),
-            linear_x_axis=gamepad.get("linear_x_axis", "ly"),
-            linear_y_axis=gamepad.get("linear_y_axis", "lx"),
-            yaw_axis=gamepad.get("yaw_axis", "rx"),
-            command_lower=command_lower,
-            command_upper=command_upper,
-            deadzone=gamepad.get("deadzone", 0.1),
-            range_scale=gamepad.get("range_scale", [1.0, 1.0, 1.0]),
-            invert_linear_x=gamepad.get("invert_linear_x", False),
-            invert_linear_y=gamepad.get("invert_linear_y", False),
-            invert_yaw=gamepad.get("invert_yaw", False),
-            deadman_button=gamepad.get("deadman_button", "L1"),
-        )
-    elif command_source == "constant" and "velocity" in command_config:
-        command_binding = ConstantPlanarVelocityBinding(command_config["velocity"])
-        task.validate_command(command_binding.read_command())
-    else:
-        raise ValueError(f"Unsupported command source {command_source!r}; use gamepad or configure command.velocity")
-    session = ControlSession(
-        controller=task,
-        robot=backend,
-        command_binding=command_binding,
-        period_s=manifest.control.period_s,
-        state_timeout_s=manifest.control.state_timeout_s,
-    )
-    runtime.bind_session(session)
+    if task.operator_hint:
+        print(task.operator_hint)
     with runtime:
         result = runtime.run()
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))

@@ -294,7 +294,6 @@
         16.77832794189453
       ],
       "motion_frames": 999,
-      "period_s": 0.02,
       "preparation_joint_position": null,
       "preparation_kd": [
         5.0,

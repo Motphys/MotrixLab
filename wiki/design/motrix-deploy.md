@@ -925,7 +925,6 @@ task compiler 应把 run-varying 参数写入 artifact，并通过数值一致�
 
 ```yaml
 runtime:
-  kind: simulation
   backend: mujoco
   deploy_env_id: flat
   robot_id: go2

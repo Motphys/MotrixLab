@@ -41,7 +41,6 @@ class G1WbtTaskSpec(TaskSpec):
     """One motion clip in canonical robot order, inline or as an artifact NPZ payload."""
 
     task_name: ClassVar[str] = "g1_wbt/v1"
-    period_s: Annotated[FiniteFloat, Field(gt=0)] = 0.02
     action_scale: GainVector
     kp: GainVector
     kd: GainVector
@@ -495,8 +494,8 @@ class G1WbtDeployTask(DeployTask[None]):
         return self._playback_steps
 
     @classmethod
-    def default_duration_s(cls, spec: G1WbtTaskSpec) -> float:
-        return spec.motion_frames * spec.period_s
+    def default_duration_s(cls, spec: G1WbtTaskSpec, control_period_s: float) -> float:
+        return spec.motion_frames * control_period_s
 
     def validate_command(self, command: None) -> None:
         self.policy_io.validate_command(command)
@@ -547,8 +546,10 @@ class G1WbtDeployTask(DeployTask[None]):
         self._automatic_hold_ticks = hold_ticks
 
     @property
-    def operator_hint(self) -> str:
+    def operator_hint(self) -> str | None:
         """One-line key reference printed by the CLI when keyboard input is attached."""
+        if self._keyboard is None:
+            return None
         return "p start policy  m start motion  o stop"
 
     def _process_operator_inputs(self) -> None:

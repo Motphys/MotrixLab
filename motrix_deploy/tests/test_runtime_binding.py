@@ -103,7 +103,7 @@ def test_factory_produces_host_for_explicit_session_binding(monkeypatch, manifes
 
     def factory(config, context):
         calls.append((config, context))
-        return HardwareRuntime(robot, realtime=False)
+        return HardwareRuntime(robot)
 
     entry = SimpleNamespace(name="fake", value="fake:factory", load=lambda: factory)
     monkeypatch.setattr(runtime_factory, "_runtime_entry_points", lambda: (entry,))

@@ -16,4 +16,3 @@ hydra:
 artifact: ???
 runtime: ???
 duration_s: null
-command: null

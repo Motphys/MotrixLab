@@ -3,7 +3,7 @@
 
 """Public simulation runtime configuration and plugin selection contracts."""
 
-from dataclasses import FrozenInstanceError, asdict
+from dataclasses import asdict
 from types import SimpleNamespace
 
 import numpy as np
@@ -103,8 +103,6 @@ def test_simulation_config_uses_independent_typed_sensor_defaults():
         "base_linear_acceleration": None,
         "base_linear_velocity": None,
     }
-    with pytest.raises(FrozenInstanceError):
-        first.sensor_bindings.base_angular_velocity = "gyro"
 
 
 @pytest.mark.parametrize(

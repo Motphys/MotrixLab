@@ -7,21 +7,13 @@ import pytest
 from omegaconf import OmegaConf
 from omegaconf.errors import OmegaConfBaseException
 
-from motrix_deploy.config import DeployRunConfig
+from motrix_deploy.config import DeployRunConfig, HardwareRuntimeCfg, SimRuntimeCfg
 
 
-def _run_mapping() -> dict[str, object]:
-    return {
-        "artifact": "artifact.deploy",
-        "runtime": {
-            "kind": "simulation",
-            "backend": "test",
-            "option": 1,
-            "viewer": False,
-            "realtime": None,
-        },
-        "duration_s": 0.1,
-    }
+def _sim_runtime(overrides: dict[str, object] | None = None) -> object:
+    values = {"backend": "test", "deploy_env_id": "flat", "robot_id": "go2"}
+    values.update(overrides or {})
+    return OmegaConf.merge(OmegaConf.structured(SimRuntimeCfg), values)
 
 
 def _typed_config(values: dict[str, object]) -> DeployRunConfig:
@@ -30,41 +22,61 @@ def _typed_config(values: dict[str, object]) -> DeployRunConfig:
     return config
 
 
-def test_deploy_run_config_parses_resolved_application_tree() -> None:
-    config = _typed_config(_run_mapping())
+def test_deploy_run_config_decodes_typed_simulation_runtime() -> None:
+    config = _typed_config(
+        {
+            "artifact": "artifact.deploy",
+            "runtime": _sim_runtime({"robot_init_key_pose": "lie_down", "viewer": False}),
+            "duration_s": 0.1,
+        }
+    )
 
-    assert config.artifact == "artifact.deploy"
-    assert config.runtime == _run_mapping()["runtime"]
-    assert config.backend_name == "test"
-    assert config.runtime_options == {"option": 1}
+    assert isinstance(config.runtime, SimRuntimeCfg)
+    assert config.runtime.backend == "test"
+    assert config.runtime.viewer is False
+    assert config.runtime.realtime is None
+    assert config.runtime.robot_init_key_pose == "lie_down"
+    assert config.runtime.physics.dt == pytest.approx(0.002)
+    assert config.runtime.physics.solver_iterations == 100
+    assert config.runtime.backend == "test"
     assert config.duration_s == pytest.approx(0.1)
-    assert config.command is None
 
 
 def test_deploy_run_config_defaults_to_unbounded_duration() -> None:
-    values = _run_mapping()
-    values.pop("duration_s")
-
-    config = _typed_config(values)
+    config = _typed_config({"artifact": "artifact.deploy", "runtime": _sim_runtime()})
 
     assert config.duration_s is None
+
+
+def test_sim_schema_rejects_unknown_runtime_fields() -> None:
+    with pytest.raises(OmegaConfBaseException, match="robot_init_key_posee"):
+        _sim_runtime({"robot_init_key_posee": "lie_down"})
+
+
+def test_deploy_run_config_rejects_untyped_simulation_mapping() -> None:
+    runtime = {"kind": "simulation", "backend": "test", "deploy_env_id": "flat", "robot_id": "go2"}
+
+    with pytest.raises(ValueError, match="SimRuntimeCfg"):
+        _typed_config({"artifact": "artifact.deploy", "runtime": runtime})
 
 
 def test_deploy_run_config_parses_hardware_runtime() -> None:
+    hardware = OmegaConf.merge(OmegaConf.structured(HardwareRuntimeCfg), {"backend": "test"})
+
+    config = _typed_config({"artifact": "artifact.deploy", "runtime": hardware})
+
+    assert isinstance(config.runtime, HardwareRuntimeCfg)
+    assert config.runtime.backend == "test"
+    assert config.duration_s is None
+
+
+def test_deploy_run_config_rejects_untyped_hardware_mapping() -> None:
     runtime = {"kind": "hardware", "backend": "test", "network_interface": "enp3s0"}
 
-    config = _typed_config({"artifact": "artifact.deploy", "runtime": runtime})
-
-    assert config.runtime == runtime
-    assert config.backend_name == "test"
-    assert config.runtime_options == {"network_interface": "enp3s0"}
-    assert config.duration_s is None
-    assert config.command is None
+    with pytest.raises(ValueError, match="HardwareRuntimeCfg"):
+        _typed_config({"artifact": "artifact.deploy", "runtime": runtime})
 
 
 def test_deploy_run_config_rejects_unknown_top_level_fields() -> None:
-    values = _run_mapping()
-    values["unknown"] = True
-
     with pytest.raises(OmegaConfBaseException, match="unknown"):
-        _typed_config(values)
+        _typed_config({"artifact": "artifact.deploy", "runtime": _sim_runtime(), "unknown": True})

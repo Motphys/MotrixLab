@@ -46,6 +46,19 @@ def config(**kwargs):
     )
 
 
+def test_native_scene_init_pose_preserves_artifact_default_and_clips_servo_limits():
+    cfg = config()
+    cfg.scene.objs.robot.init_key_pose = "lie_down"
+    runtime = MotrixSimRuntime(cfg)
+    with runtime:
+        spec = runtime.robot.spec
+        pose = runtime.scene.objs.robot.key_pose.poses["lie_down"]
+        expected = np.clip(pose, spec.position_lower, spec.position_upper)
+        np.testing.assert_allclose(runtime.robot.read_state(0.1).joint_position, expected, atol=1e-6)
+        np.testing.assert_allclose(spec.default_joint_position, runtime.scene.objs.robot.key_pose.poses["default"])
+        assert runtime.scene.objs.robot.init_key_pose == "lie_down"
+
+
 class HoldPolicyProcessor(PolicyProcessor):
     def __init__(self, spec):
         self.spec = spec
@@ -440,19 +453,19 @@ def test_sdk_viewer_lifecycle_and_keyboard(monkeypatch):
     monkeypatch.setattr("motrix_deploy_motrixsim.viewer.RenderApp", Render)
     runtime = MotrixSimRuntime(config(render=True), viewer_factory=MotrixSimViewer)
     # CLI and application assembly obtain input before the world/viewer opens.
-    device = runtime.get_keyboard_device()
-    assert device is runtime.get_keyboard_device()
+    device = runtime.keyboard
+    assert device is runtime.keyboard
     assert calls == [] and not runtime.viewer.is_running()
     with pytest.raises(RuntimeError, match="Open the MotrixSim viewer"):
         device.poll()
     bind_session(runtime, steps=5)
     with runtime:
         assert runtime.viewer.is_running()
-        assert device is runtime.get_keyboard_device()
+        assert device is runtime.keyboard
         device.poll()
         assert not device.is_pressing("w")
     assert calls == ["launch", "camera", "sync", "close"]
-    assert device is runtime.get_keyboard_device()
+    assert device is runtime.keyboard
     assert not runtime.viewer.is_running()
     with pytest.raises(RuntimeError, match="Open the MotrixSim viewer"):
         device.is_pressing("w")

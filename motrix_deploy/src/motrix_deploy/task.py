@@ -8,10 +8,11 @@ from importlib import metadata
 from typing import Any, ClassVar, Generic, TypeVar
 
 from motrix_deploy.artifact.schema import TaskSpec
-from motrix_deploy.contracts import RobotSpec, RobotState
+from motrix_deploy.contracts import FloatArray, RobotSpec, RobotState
 from motrix_deploy.policy import Policy
 from motrix_deploy.runtime.context import ControlContext
 from motrix_deploy.runtime.lifecycle import ControllerStep
+from motrix_env_core.input import CommandBinding, InputDevice
 
 CommandT = TypeVar("CommandT")
 
@@ -22,7 +23,7 @@ class DeployTask(ABC, Generic[CommandT]):
     spec_type: ClassVar[type[TaskSpec]]
 
     @classmethod
-    def default_duration_s(cls, spec: TaskSpec) -> float | None:
+    def default_duration_s(cls, spec: TaskSpec, control_period_s: float) -> float | None:
         """Artifact-owned playback budget, if no CLI duration is supplied."""
         return None
 
@@ -38,6 +39,33 @@ class DeployTask(ABC, Generic[CommandT]):
     @abstractmethod
     def validate_command(self, command: CommandT | None) -> None:
         """Validate external input at the application assembly boundary."""
+
+    @property
+    def command_bounds(self) -> tuple[FloatArray, FloatArray] | None:
+        """Planar velocity command bounds, or None for autonomous tasks."""
+        return None
+
+    def prepare(
+        self,
+        *,
+        simulation: bool,
+        device: InputDevice | None = None,
+        spawn_pose: str | None = None,
+    ) -> CommandBinding[CommandT] | None:
+        """Assemble this task's command source from the available input.
+
+        One assembly hook at the application boundary: tasks own how their
+        command type is produced from the single operator input device, if
+        any, and the simulation's spawn pose name. Autonomous tasks need no
+        command binding.
+        """
+        self.validate_command(None)
+        return None
+
+    @property
+    def operator_hint(self) -> str | None:
+        """One-line operator key reference, or None when no operator input is attached."""
+        return None
 
 
 TASK_ENTRY_POINT_GROUP = "motrix_deploy.tasks"

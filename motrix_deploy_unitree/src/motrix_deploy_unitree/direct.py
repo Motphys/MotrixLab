@@ -4,11 +4,11 @@
 """Direct state and command API backed by the production Unitree deploy adapter."""
 
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 
@@ -16,8 +16,8 @@ from motrix_deploy.artifact import read_artifact
 from motrix_deploy.contracts import HealthStatus, JointServoCommand, RobotCommand, RobotSpec, RobotState
 from motrix_deploy.errors import ValidationError
 from motrix_deploy.profile import DeploymentProfile
-from motrix_deploy_unitree.config import UnitreeGo2BackendConfig
-from motrix_deploy_unitree.interface import UnitreeGo2RobotInterface, UnitreeSdkBindings
+from motrix_deploy_unitree.config import UnitreeBackendConfig
+from motrix_deploy_unitree.interface import UnitreeGo2Robot, UnitreeSdkBindings
 
 
 @runtime_checkable
@@ -43,7 +43,7 @@ class UnitreeGo2DirectInterface:
     Construction uses either an immutable deployment artifact or an explicit
     deployment profile. DDS, CRC, joint mapping, remote enable, emergency stop,
     validation, damping, and cleanup all delegate to the production
-    UnitreeGo2RobotInterface used by policy deployment.
+    UnitreeGo2Robot used by policy deployment.
     """
 
     def __init__(
@@ -53,7 +53,7 @@ class UnitreeGo2DirectInterface:
         kd: list[float],
         control_period_s: float,
         state_timeout_s: float,
-        backend: UnitreeGo2RobotInterface,
+        backend: UnitreeGo2Robot,
     ) -> None:
         for path, value in (
             ("control.period_s", control_period_s),
@@ -73,8 +73,11 @@ class UnitreeGo2DirectInterface:
         # startup fallback without changing policy runtime gain requirements.
         backend.config = replace(
             backend.config,
-            kp=self._kp.copy() if backend.config.kp is None else backend.config.kp,
-            kd=self._kd.copy() if backend.config.kd is None else backend.config.kd,
+            robot=replace(
+                backend.config.robot,
+                kp=self._kp.copy() if backend.config.robot.kp is None else backend.config.robot.kp,
+                kd=self._kd.copy() if backend.config.robot.kd is None else backend.config.robot.kd,
+            ),
         )
 
     @classmethod
@@ -82,9 +85,7 @@ class UnitreeGo2DirectInterface:
         cls,
         profile: DeploymentProfile,
         *,
-        network_interface: str,
-        joint_name_to_motor_index: Mapping[str, int] | None = None,
-        backend_options: Mapping[str, Any] | None = None,
+        config: UnitreeBackendConfig,
         sdk: UnitreeSdkBindings | None = None,
         clock_ns: Callable[[], int] = time.monotonic_ns,
         sleep: Callable[[float], None] = time.sleep,
@@ -97,9 +98,7 @@ class UnitreeGo2DirectInterface:
             kd=gains.kd,
             control_period_s=profile.control.period_s,
             state_timeout_s=profile.control.state_timeout_s,
-            network_interface=network_interface,
-            joint_name_to_motor_index=joint_name_to_motor_index,
-            backend_options=backend_options,
+            config=config,
             sdk=sdk,
             clock_ns=clock_ns,
             sleep=sleep,
@@ -110,9 +109,7 @@ class UnitreeGo2DirectInterface:
         cls,
         artifact_path: str | Path,
         *,
-        network_interface: str,
-        joint_name_to_motor_index: Mapping[str, int] | None = None,
-        backend_options: Mapping[str, Any] | None = None,
+        config: UnitreeBackendConfig,
         sdk: UnitreeSdkBindings | None = None,
         clock_ns: Callable[[], int] = time.monotonic_ns,
         sleep: Callable[[float], None] = time.sleep,
@@ -127,9 +124,7 @@ class UnitreeGo2DirectInterface:
             kd=gains.kd,
             control_period_s=manifest.control.period_s,
             state_timeout_s=manifest.control.state_timeout_s,
-            network_interface=network_interface,
-            joint_name_to_motor_index=joint_name_to_motor_index,
-            backend_options=backend_options,
+            config=config,
             sdk=sdk,
             clock_ns=clock_ns,
             sleep=sleep,
@@ -144,20 +139,13 @@ class UnitreeGo2DirectInterface:
         kd: list[float],
         control_period_s: float,
         state_timeout_s: float,
-        network_interface: str,
-        joint_name_to_motor_index: Mapping[str, int] | None,
-        backend_options: Mapping[str, Any] | None,
+        config: UnitreeBackendConfig,
         sdk: UnitreeSdkBindings | None,
         clock_ns: Callable[[], int],
         sleep: Callable[[float], None],
     ) -> "UnitreeGo2DirectInterface":
         """Construct the production backend from validated control contracts."""
-        options = dict(backend_options or {})
-        options["network_interface"] = network_interface
-        if joint_name_to_motor_index is not None:
-            options["joint_name_to_motor_index"] = dict(joint_name_to_motor_index)
-        config = UnitreeGo2BackendConfig.from_mapping(options)
-        backend = UnitreeGo2RobotInterface(
+        backend = UnitreeGo2Robot(
             config,
             control_period_s=control_period_s,
             state_timeout_s=state_timeout_s,

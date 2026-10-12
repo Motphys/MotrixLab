@@ -1,8 +1,11 @@
 # Motrix Deploy Unitree
 
-`motrix-deploy-unitree` provides the `unitree_go2` SDK2 DDS hardware backend for `motrix-deploy`,
+`motrix-deploy-unitree` provides the `unitree` SDK2 DDS hardware backend for `motrix-deploy`,
 asset-independent hardware sensor/motor configuration, and direct read/write and diagnostic tools.
-The Unitree SDK is imported only when a hardware connection is opened.
+The entry-point `create_runtime(config, context)` accepts a `UnitreeBackendConfig` with a nested
+`UnitreeGo2RobotCfg` in `config.robot`, and returns a `HardwareRuntime`. Robot configurations inherit
+`HardwareRobotCfg` through `UnitreeRobotCfg`, exposing `key_pose`, `sensors`, and `actuation` directly
+alongside robot-specific control settings. G1 hardware I/O is not implemented. The Unitree SDK is imported only when a hardware connection is opened.
 
 ## Safety
 

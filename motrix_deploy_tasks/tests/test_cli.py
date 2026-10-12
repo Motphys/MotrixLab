@@ -16,6 +16,7 @@ from hydra import compose, initialize_config_dir, initialize_config_module
 from hydra.core.global_hydra import GlobalHydra
 from hydra.core.object_type import ObjectType
 from motrix_robots.unitree import UnitreeGo2Robot
+from omegaconf import OmegaConf
 from onnx import TensorProto, helper, numpy_helper
 
 from motrix_deploy.artifact import (
@@ -27,9 +28,12 @@ from motrix_deploy.artifact import (
     write_artifact,
 )
 from motrix_deploy.artifact.schema import PayloadSpec
+from motrix_deploy.config import SimRuntimeCfg
 from motrix_deploy.contracts import RobotSpec, TensorSpec
 from motrix_deploy.env import assemble_deploy_scene, create_deploy_env
 from motrix_deploy_tasks.tasks.go2_walk import Go2WalkTaskSpec
+from motrix_deploy_unitree.config import UnitreeBackendConfig, UnitreeGo2RobotCfg
+from motrix_deploy_unitree.hardware import HardwareRobotCfg
 from motrix_env_core.config.scene import FlatTerrainCfg, HFieldTerrainCfg, SceneCfg
 
 
@@ -86,8 +90,7 @@ def test_hardware_cli_help_selects_hardware_recipe() -> None:
     )
 
     assert result.returncode == 0
-    assert "backend: unitree_go2" in result.stdout
-    assert "kind: hardware" in result.stdout
+    assert "backend: unitree" in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -95,7 +98,7 @@ def test_hardware_cli_help_selects_hardware_recipe() -> None:
     [
         ("go2-walk-flat/sim", "simulation", "mujoco"),
         ("go2-walk-rough/sim", "simulation", "mujoco"),
-        ("go2-walk-flat/hardware", "hardware", "unitree_go2"),
+        ("go2-walk-flat/hardware", "hardware", "unitree"),
     ],
 )
 def test_installed_recipes_compose_outside_workspace(tmp_path, task, runtime_kind, backend) -> None:
@@ -108,12 +111,30 @@ def test_installed_recipes_compose_outside_workspace(tmp_path, task, runtime_kin
     )
     assert result.returncode == 0, result.stderr
     assert f"backend: {backend}" in result.stdout
-    assert "artifact: ???" in result.stdout
-    assert f"kind: {runtime_kind}" in result.stdout
+    expected_artifact = "artifact: artifacts/go2-walk-flat.deploy" if task != "go2-walk-rough/sim" else "artifact: ???"
+    assert expected_artifact in result.stdout
     if runtime_kind == "simulation":
         assert "sensor_bindings:" in result.stdout
         assert "viewer: true" in result.stdout
         assert "realtime: null" in result.stdout
+
+
+def test_go2_sim_recipe_uses_clipped_crouch_without_changing_policy_default() -> None:
+    with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
+        cfg = compose(config_name="deploy", overrides=["task=go2-walk-flat/sim"])
+    OmegaConf.resolve(cfg)
+
+    assert "task" not in cfg
+    assert cfg.runtime.robot_init_key_pose == "lie_down"
+    assert cfg.artifact == "artifacts/go2-walk-flat.deploy"
+    runtime_config = OmegaConf.to_object(
+        OmegaConf.merge(OmegaConf.structured(SimRuntimeCfg), cfg.runtime)
+    ).build_runtime_config()
+    robot = runtime_config.scene.objs.robot
+    assert robot.init_key_pose == "lie_down"
+    assert robot.key_pose.poses["default"] != robot.key_pose.poses["lie_down"]
+    assert runtime_config.render is True
+    assert runtime_config.realtime is True
 
 
 def test_deployment_plugin_preserves_other_app_task_discovery(tmp_path: Path) -> None:
@@ -153,7 +174,7 @@ def test_mujoco_hydra_recipes_assemble_robot_and_selected_world(
     with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
         cfg = compose(config_name="deploy", overrides=[f"task={task}", "artifact=artifact.deploy"])
 
-    assert cfg.runtime.kind == "simulation"
+    assert isinstance(OmegaConf.to_container(cfg.runtime), dict)  # schema-typed node
 
     scene = assemble_deploy_scene(cfg.runtime.deploy_env_id, cfg.runtime.robot_id)
     assert isinstance(scene, SceneCfg)
@@ -222,7 +243,7 @@ def test_installed_go2_task_can_be_created_without_preimport(tmp_path: Path) -> 
     assert result.returncode == 0, result.stderr
 
 
-def test_hardware_hydra_config_selects_runtime_and_command_defaults() -> None:
+def test_hardware_hydra_config_selects_runtime_defaults() -> None:
     with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
         cfg = compose(
             config_name="deploy",
@@ -233,15 +254,15 @@ def test_hardware_hydra_config_selects_runtime_and_command_defaults() -> None:
             ],
         )
 
-    assert cfg.runtime.kind == "hardware"
-    assert cfg.runtime.backend == "unitree_go2"
+    assert cfg.runtime.backend == "unitree"
+    runtime = OmegaConf.to_object(cfg.runtime)
+    assert isinstance(runtime, UnitreeBackendConfig)
+    assert isinstance(runtime.robot, UnitreeGo2RobotCfg)
+    assert isinstance(runtime.robot, HardwareRobotCfg)
+    assert runtime.network_interface == "enp3s0"
     assert cfg.duration_s is not None and cfg.duration_s > 0
-    assert cfg.command.source == "gamepad"
-    assert cfg.runtime.lie_down_button == "B"
-    assert cfg.command.gamepad.deadman_button == "L1"
-    assert cfg.command.gamepad.invert_linear_x is False
-    assert cfg.command.gamepad.invert_linear_y is True
-    assert cfg.command.gamepad.invert_yaw is True
+    assert "command" not in cfg
+    assert cfg.runtime.robot.lie_down_button == "B"
 
 
 def test_hardware_hydra_config_accepts_explicit_gain_overrides() -> None:
@@ -251,13 +272,13 @@ def test_hardware_hydra_config_accepts_explicit_gain_overrides() -> None:
             overrides=[
                 "task=go2-walk-flat/hardware",
                 "artifact=artifact.deploy",
-                "runtime.kp=25.0",
-                "runtime.kd=[0.4,0.4,0.4,0.5,0.5,0.5,0.6,0.6,0.6,0.7,0.7,0.7]",
+                "runtime.robot.kp=25.0",
+                "runtime.robot.kd=[0.4,0.4,0.4,0.5,0.5,0.5,0.6,0.6,0.6,0.7,0.7,0.7]",
             ],
         )
 
-    assert cfg.runtime.kp == pytest.approx(25.0)
-    assert list(cfg.runtime.kd) == pytest.approx([0.4, 0.4, 0.4, 0.5, 0.5, 0.5, 0.6, 0.6, 0.6, 0.7, 0.7, 0.7])
+    assert cfg.runtime.robot.kp == pytest.approx(25.0)
+    assert list(cfg.runtime.robot.kd) == pytest.approx([0.4, 0.4, 0.4, 0.5, 0.5, 0.5, 0.6, 0.6, 0.6, 0.7, 0.7, 0.7])
 
 
 @pytest.mark.parametrize("backend", ["mujoco", "motrixsim"])
@@ -299,7 +320,6 @@ def test_headless_simulation_cli_runs_deterministic_onnx_fixture(tmp_path: Path,
         f"task={task}/sim",
         f"runtime.backend={backend}",
         f"artifact={artifact_path}",
-        "command.velocity=[0.5,0.0,0.0]",
         "duration_s=0.1",
         "runtime.viewer=false",
     ]
@@ -309,6 +329,9 @@ def test_headless_simulation_cli_runs_deterministic_onnx_fixture(tmp_path: Path,
     first_result = _rollout_result(first.stdout)
     assert first_result["success"] is True
     assert first_result["completed_steps"] == 5
+
+    if task == "go2-walk-flat":
+        assert first_result["policy_simulation_time_s"] == pytest.approx(0.1)
 
     # Both worlds smoke-test each backend; repeat only one world per backend.
     if task == "go2-walk-flat":
@@ -419,8 +442,8 @@ def _robot_spec() -> RobotSpec:
 def _task_spec() -> Go2WalkTaskSpec:
     return Go2WalkTaskSpec(
         action_scale=[0.25] * 12,
-        command_lower=[0.5, 0.0, 0.0],
-        command_upper=[0.5, 0.0, 0.0],
+        command_lower=[-0.5, -0.5, -0.5],
+        command_upper=[0.5, 0.5, 0.5],
         command_scale=[1.0, 1.0, 1.0],
         feet_phase_offsets=[0.0, 0.5, 0.5, 0.0],
         gait_frequency_hz=2.0,

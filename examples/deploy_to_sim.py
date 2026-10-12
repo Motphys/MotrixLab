@@ -11,7 +11,6 @@ from motrix_robots.unitree import UnitreeGo2Robot
 
 from motrix_deploy.contracts import TensorSpec
 from motrix_deploy.policy import OnnxPolicy
-from motrix_deploy.robot.interface import KeyboardDeviceProvider
 from motrix_deploy.runtime.config import SensorBindings, SimulationRuntimeConfig
 from motrix_deploy.runtime.control import ControlSession
 from motrix_deploy.runtime.factory import create_simulation_runtime
@@ -20,7 +19,6 @@ from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import FlatTerrainCfg, SceneCfg, SceneObjsCfg, SceneVisualCfg, SystemCameraCfg
 from motrix_env_core.config.scene.light import LightCfg
 from motrix_env_core.config.sim import SimCfg
-from motrix_env_core.input import ConstantPlanarVelocityBinding, KeyboardPlanarVelocityBinding
 
 POLICY_PATH = Path(__file__).resolve().parent / "assets/go2-walk-flat.onnx"
 
@@ -104,15 +102,8 @@ def main() -> int:
         model,
         steps=args.steps,
     )
-    if not args.headless and isinstance(runtime, KeyboardDeviceProvider):
-        command_binding = KeyboardPlanarVelocityBinding(
-            runtime.get_keyboard_device(),
-            command_lower=task.command_lower,
-            command_upper=task.command_upper,
-        )
-    else:
-        command_binding = ConstantPlanarVelocityBinding((0.0, 0.0, 0.0))
-        task.validate_command(command_binding.read_command())
+    device = runtime.keyboard
+    command_binding = task.prepare(simulation=True, device=device)
     period_s = 0.02
     session = ControlSession(
         controller=task, robot=robot, command_binding=command_binding, period_s=period_s, state_timeout_s=0.1

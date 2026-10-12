@@ -20,7 +20,6 @@ from scene_helpers import AdapterSceneObjsCfg, build_scene
 
 from motrix_deploy.contracts import JointServoCommand, RobotSpec
 from motrix_deploy.errors import ValidationError
-from motrix_deploy.robot.interface import KeyboardDeviceProvider
 from motrix_deploy.runtime.config import SensorBindings, SimulationRuntimeConfig
 from motrix_deploy_mujoco import (
     MujocoRuntime,
@@ -52,13 +51,17 @@ CONTROL_PERIOD_S = 0.02
 
 
 def _mapping(config_path: Path = CONFIG_PATH) -> dict[str, Any]:
-    values = OmegaConf.to_container(OmegaConf.load(config_path).runtime)
+    # Resolve interpolations against the whole recipe before extracting the runtime subtree.
+    recipe = OmegaConf.load(config_path)
+    OmegaConf.resolve(recipe)
+    values = OmegaConf.to_container(recipe.runtime)
     values.pop("backend")
     values.pop("deploy_env_id")
     values.pop("robot_id")
     values["scene"] = build_scene()
     values["scene"].objs.robot.translation = tuple(values.pop("robot_translation"))
     values["scene"].objs.robot.rotation = tuple(values.pop("robot_rotation"))
+    values["scene"].objs.robot.init_key_pose = values.pop("robot_init_key_pose", "default")
     return values
 
 
@@ -280,7 +283,7 @@ def test_glfw_viewer_syncs_without_owning_simulation_step() -> None:
     backend = _backend(render=True, viewer_factory=viewer_factory)
     spec = _spec()
 
-    assert backend.get_keyboard_device() is viewer.keyboard_device
+    assert backend.keyboard is viewer.keyboard_device
     assert camera_configs == [backend.scene.system_camera]
     backend.open()
     initial = backend.robot.read_state(timeout_s=0.1)
@@ -301,7 +304,7 @@ def test_glfw_viewer_syncs_without_owning_simulation_step() -> None:
     assert viewer.close_count == 1
 
     backend.open()
-    assert backend.get_keyboard_device() is viewer.keyboard_device
+    assert backend.keyboard is viewer.keyboard_device
     assert viewer.open_count == 2
     backend.close()
     assert viewer.close_count == 2
@@ -310,9 +313,7 @@ def test_glfw_viewer_syncs_without_owning_simulation_step() -> None:
 def test_headless_backend_does_not_provide_keyboard_input() -> None:
     backend = _backend(render=False)
 
-    assert isinstance(backend, KeyboardDeviceProvider)
-    with pytest.raises(RuntimeError, match="viewer=true"):
-        backend.get_keyboard_device()
+    assert backend.keyboard is None
 
 
 def test_swapped_artifact_joint_contract_fails_compatibility_comparison() -> None:
@@ -546,13 +547,16 @@ def test_direct_scene_recipe_runs_with_training_imports_blocked() -> None:
         class FlatWorldObjsCfg(SceneObjsCfg):
             floor: FlatTerrainCfg = FlatTerrainCfg()
         from motrix_robots.unitree import UnitreeGo2Robot
-        values = OmegaConf.to_container(OmegaConf.load(sys.argv[1]).runtime)
+        recipe = OmegaConf.load(sys.argv[1])
+        OmegaConf.resolve(recipe)
+        values = OmegaConf.to_container(recipe.runtime)
         values.pop('backend')
         values.pop('deploy_env_id')
         values.pop('robot_id')
         robot = UnitreeGo2Robot(
             translation=tuple(values.pop('robot_translation')),
             rotation=tuple(values.pop('robot_rotation')),
+            init_key_pose=values.pop('robot_init_key_pose', 'default'),
         )
         values['scene'] = SceneCfg(objs=FlatWorldObjsCfg(robot=robot, floor=FlatTerrainCfg()))
         config = SimulationRuntimeConfig.from_mapping(values)

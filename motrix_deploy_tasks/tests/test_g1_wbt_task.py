@@ -90,7 +90,7 @@ def test_standard_task_raw_history_servo_limits_frame_and_reset():
     assert task.check_termination(state) is None
     task.reset(state, context)
     np.testing.assert_array_equal(task.build_observation(state, context)[125:], 0)
-    assert G1WbtDeployTask.default_duration_s(task.spec) == 2 * task.spec.period_s
+    assert G1WbtDeployTask.default_duration_s(task.spec, 0.02) == 2 * 0.02
     with pytest.raises(ValidationError, match="context.step"):
         task.build_observation(state, ControlContext(2, 0.04, None, dt_s=0.02))
 

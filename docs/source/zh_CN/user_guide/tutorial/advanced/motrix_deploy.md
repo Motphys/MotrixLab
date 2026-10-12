@@ -41,9 +41,10 @@ go2-walk-flat.deploy/
 
 部署还需要安装 `motrix_deploy_tasks` 插件，提供行走任务实现、
 部署场景和 Hydra 配方，以及目标对应的运行时插件。配方安装在插件中，在仓库外运行也不需要 workspace 配置路径。
-任务 defaults 选择 Hydra 运行时组（`sim` 或 `hardware`），无需另行覆盖运行时组。
-顶层公共设置为 `artifact`、`duration_s` 和 `command`。所有目标专用设置直接位于 `runtime` 下；
-`runtime.kind` 选择仿真或硬件执行路径；`runtime.backend` 选择插件（仿真为 `mujoco` 或 `motrixsim`，硬件为 `unitree_go2`）。
+任务 defaults 组合类型化运行时配置，无需另行覆盖运行时组。
+顶层公共设置为 `artifact` 和 `duration_s`。运行时设置位于 `runtime` 下；Unitree 机器人专用选项
+位于 `runtime.robot` 下，而 `runtime.network_interface` 等传输设置仍直接位于 `runtime` 下。
+配置类型区分仿真与硬件执行路径；`runtime.backend` 选择插件（仿真为 `mujoco` 或 `motrixsim`，硬件为 `unitree`）。
 `runtime.backend` 是标量字符串选择器，不是嵌套配置映射或 Hydra 配置组。
 
 ## 3. 在 MuJoCo 中检查
@@ -55,7 +56,7 @@ motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
 ```
 
 按住 `W/S` 前后移动，`A/D` 横移，`Q/E` 转向。关闭窗口、按 Esc 或 Ctrl-C 退出。
-配方选择平地场景和 `go2` 机器人。无窗口模式使用固定零速度；添加 `'command.velocity=[0.5,0.0,0.0]'` 可检查移动。
+配方选择平地场景和 `go2` 机器人。无窗口模式使用固定零速度。
 通过 `duration_s` 限制运行长度：按 artifact 的控制周期换算为
 `ceil(duration_s / control_period_s)` 个控制 tick，而不是墙钟超时计时器。
 启动和关闭可能额外消耗墙钟时间。
@@ -106,8 +107,18 @@ motrix-deploy task=go2-walk-flat/hardware \
 按 Start，等待默认姿态过渡完成后按 A；按住 L1 并移动摇杆发送运动指令。
 B 请求趴下，Select 触发急停。停止时先发送阻尼指令，再关闭 DDS。软件测试不能替代悬空真机检查。
 
-安装的真机配方设置 `runtime.kp=50`、`runtime.kd=1`。把二者设为 `null` 可保留 artifact 增益，也可传入非负标量
-或按规范关节顺序排列的逐关节值。
+安装的真机配方组合以下 Hydra defaults：
+
+```yaml
+defaults:
+  - /runtime@runtime: _unitree_schema
+  - /unitree_robot@runtime.robot: go2
+  - _self_
+```
+
+配方选择 `runtime.backend=unitree`，并设置 `runtime.robot.kp=50`、`runtime.robot.kd=1`。
+把两个增益设为 `null` 可保留 artifact 增益，也可传入非负标量或按规范关节顺序排列的逐关节值。
+Go2 的姿态过渡、阻尼、遥控器按钮和电机设置也位于 `runtime.robot` 下。
 
 只读诊断不创建指令 publisher：
 
@@ -151,7 +162,7 @@ motrix-deploy inspect artifact=artifacts/g1-wbt-dance.deploy
 默认时长来自内嵌的 motion 片段；更短的运行用 `duration_s` 缩短，超长时长会在打开 backend 前被拒绝，
 不会循环或保持。无需速度指令：motion 由 artifact 持有。同一 artifact 可运行在 MuJoCo 与 MotrixSim
 （`runtime.backend=motrixsim`，配合训练预算使用 `runtime.physics.solver_iterations=3`）。
-它不是真机部署 recipe：当前 Unitree 传输仅支持 Go2，且 sim2sim 成功不代表真机安全。
+它不是真机部署 recipe：当前 Unitree 硬件 backend 仅实现 Go2，尚未实现 G1 真机支持，且 sim2sim 成功不代表真机安全。
 
 任务按真实部署实践编排四个阶段：`prepare`（实测关节 ramp 到默认站立位，就绪门连续满足）、`policy_hold`、
 `playback` 与 `damping`。默认就绪后自动接管；程序化应用可用 `automatic_start=False`、请求方法或附加键盘
@@ -203,7 +214,6 @@ Go2 固有 base 高度为 0.445 m，identity rotation 下，平地 recipe 的 -0
 
 ```yaml
 runtime:
-  kind: simulation
   backend: mujoco
   deploy_env_id: flat
   robot_id: go2

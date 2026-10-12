@@ -3,7 +3,7 @@
 
 """Discover deployment runtimes through installed plugins."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import metadata
 from typing import Any
@@ -48,10 +48,10 @@ def create_simulation_runtime(
 
 def create_hardware_runtime(
     name: str,
-    config: Mapping[str, Any],
+    config: Any,
     context: RuntimeCreateContext,
 ) -> HardwareRuntime:
-    """Create a hardware host, preserving plugin operator safety checks."""
+    """Create a hardware host from a typed recipe or plugin-decoded mapping."""
     runtime = _validate_runtime(name, _load_factory(name)(config, context))
     if not isinstance(runtime, HardwareRuntime):
         runtime.close()
