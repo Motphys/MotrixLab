@@ -104,6 +104,16 @@ def test_go2_swing_ablation_keeps_spaces_and_exposes_swing_terms():
     assert "rear_swing_lateral_speed" in state.reward_terms
 
 
+def test_go2_swing_v3_is_separate_and_uses_front_over_limit_terms():
+    v2_cfg = registry.make_env_config("go2-walk-flat-d-swing-v2")
+    v3_cfg = registry.make_env_config("go2-walk-flat-d-swing-v3")
+
+    assert not hasattr(v2_cfg, "front_swing_width_limit")
+    assert v3_cfg.front_swing_width_limit == pytest.approx(0.16)
+    assert v3_cfg.front_swing_width_scale < 0.0
+    assert v3_cfg.front_swing_lateral_speed_scale < 0.0
+
+
 def test_go2_velocity_commands_remain_constant_before_resampling_interval():
     np.random.seed(7)
     env = registry.make("go2-walk-flat", num_envs=64, mode="train")

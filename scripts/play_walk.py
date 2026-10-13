@@ -72,6 +72,79 @@ _FOOT_NAMES = ("FL", "FR", "RL", "RR")
 _FOOT_COLORS = {"FL": "#d62728", "FR": "#1f77b4", "RL": "#ff7f0e", "RR": "#2ca02c"}
 
 
+def _compute_motion_metrics(
+    velocities: np.ndarray,
+    gyros: np.ndarray,
+    command: np.ndarray,
+    *,
+    yaw_rate_deltas: np.ndarray,
+    orientation_samples: list[float],
+    height_samples: list[float],
+    termination_count: int,
+    total_steps: int,
+    ctrl_dt: float,
+) -> dict[str, object]:
+    """Compute fixed-command motion metrics with explicit linear/angular axes."""
+
+    command64 = np.asarray(command, dtype=np.float64)
+    linear_command = np.array([command64[0], command64[1], 0.0], dtype=np.float64)
+    angular_command = np.array([0.0, 0.0, command64[2]], dtype=np.float64)
+    linear_error = velocities - linear_command
+    angular_error = gyros - angular_command
+
+    # Preserve the original compact fields, but make their axes match the
+    # external command contract: [vx, vy, yaw_rate]. Version 1 accidentally
+    # used [vx, vy, vz] while subtracting a yaw command from vz.
+    command_velocity = np.column_stack((velocities[:, 0], velocities[:, 1], gyros[:, 2]))
+    command_error = command_velocity - command64
+
+    command_xy = command64[:2]
+    command_xy_norm = float(np.linalg.norm(command_xy))
+    if command_xy_norm > 1e-8:
+        perpendicular = np.array([-command_xy[1], command_xy[0]], dtype=np.float64) / command_xy_norm
+        orthogonal_drift = float(np.mean(np.abs(velocities[:, :2] @ perpendicular)))
+    else:
+        orthogonal_drift = float(np.mean(np.linalg.norm(velocities[:, :2], axis=1)))
+
+    evaluated_seconds = total_steps * ctrl_dt
+    return {
+        "metrics_schema_version": 2,
+        "command": command64.tolist(),
+        "command_axes": ["vx", "vy", "yaw_rate"],
+        "mean_velocity": np.mean(command_velocity, axis=0).tolist(),
+        "steady_state_error": np.mean(command_error, axis=0).tolist(),
+        "rmse": np.sqrt(np.mean(np.square(command_error), axis=0)).tolist(),
+        "p95_error": np.percentile(np.abs(command_error), 95, axis=0).tolist(),
+        "mean_linear_velocity": np.mean(velocities, axis=0).tolist(),
+        "linear_velocity_rmse": np.sqrt(np.mean(np.square(linear_error), axis=0)).tolist(),
+        "linear_velocity_p95_error": np.percentile(np.abs(linear_error), 95, axis=0).tolist(),
+        "mean_angular_velocity": np.mean(gyros, axis=0).tolist(),
+        "angular_velocity_rmse": np.sqrt(np.mean(np.square(angular_error), axis=0)).tolist(),
+        "angular_velocity_p95_error": np.percentile(np.abs(angular_error), 95, axis=0).tolist(),
+        "yaw_rate_error_mean": float(np.mean(angular_error[:, 2])),
+        "yaw_rate_rmse": float(np.sqrt(np.mean(np.square(angular_error[:, 2])))),
+        "yaw_rate_p95_error": float(np.percentile(np.abs(angular_error[:, 2]), 95)),
+        "yaw_rate_delta_rms": (
+            float(np.sqrt(np.mean(np.square(yaw_rate_deltas)))) if yaw_rate_deltas.size else 0.0
+        ),
+        "yaw_rate_delta_samples": int(yaw_rate_deltas.size),
+        "roll_pitch_rate_rms": float(np.sqrt(np.mean(np.sum(np.square(gyros[:, :2]), axis=1)))),
+        "orthogonal_drift": orthogonal_drift,
+        # Kept as a compatibility alias. This is a termination-event rate per
+        # control step, not an episode-level probability.
+        "fall_rate": float(termination_count / max(total_steps, 1)),
+        "termination_count": int(termination_count),
+        "termination_events_per_minute": (
+            float(termination_count * 60.0 / evaluated_seconds) if evaluated_seconds > 0.0 else 0.0
+        ),
+        "orientation_rms": (
+            float(np.sqrt(np.mean(np.square(orientation_samples)))) if orientation_samples else 0.0
+        ),
+        "base_height_std": float(np.std(height_samples)) if height_samples else 0.0,
+        "samples": int(len(velocities)),
+    }
+
+
 def _write_foot_landings_csv(path: Path, landings: dict[str, list[tuple[int, float, float, float]]]) -> None:
     lines = ["step,time_s,foot,x,y"]
     for foot in _FOOT_NAMES:
@@ -351,11 +424,15 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
     ctrl_dt = float(getattr(env.cfg, "ctrl_dt", 0.02))
     velocity_samples: list[np.ndarray] = []
     gyro_samples: list[np.ndarray] = []
+    yaw_rate_delta_samples: list[float] = []
+    previous_eval_gyro: np.ndarray | None = None
     orientation_samples: list[float] = []
     height_samples: list[float] = []
     reward_term_samples: dict[str, list[float]] = {}
-    swing_abs_y_samples = {"RL": [], "RR": []}
-    swing_lateral_speed_samples = {"RL": [], "RR": []}
+    # Keep rear-compatible fields while also exposing all four feet so a
+    # rear-leg regularizer cannot hide a compensating front-leg excursion.
+    swing_abs_y_samples = {foot: [] for foot in _FOOT_NAMES}
+    swing_lateral_speed_samples = {foot: [] for foot in _FOOT_NAMES}
     previous_eval_feet_pos = np.asarray(env.feet_pos[cfg.analysis_env_index], dtype=np.float32).copy()
     fall_count = 0
 
@@ -381,24 +458,34 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
             current_step_feet_pos = np.asarray(env.feet_pos[cfg.analysis_env_index], dtype=np.float32).copy()
             elapsed = step_index * ctrl_dt
             if elapsed >= cfg.warmup_seconds and not done:
-                velocity_samples.append(np.asarray(env.get_local_linvel()[cfg.analysis_env_index], dtype=np.float32).copy())
-                gyro_samples.append(np.asarray(env.get_gyro()[cfg.analysis_env_index], dtype=np.float32).copy())
+                current_gyro = np.asarray(env.get_gyro()[cfg.analysis_env_index], dtype=np.float32).copy()
+                velocity_samples.append(
+                    np.asarray(env.get_local_linvel()[cfg.analysis_env_index], dtype=np.float32).copy()
+                )
+                gyro_samples.append(current_gyro)
+                if previous_eval_gyro is not None:
+                    yaw_rate_delta_samples.append(float((current_gyro[2] - previous_eval_gyro[2]) / ctrl_dt))
+                previous_eval_gyro = current_gyro
                 gravity = np.asarray(env.get_gravity()[cfg.analysis_env_index], dtype=np.float32)
                 orientation_samples.append(float(np.linalg.norm(gravity[:2])))
                 height_samples.append(float(env.sim_data["base_pos"][cfg.analysis_env_index, 2]))
                 for name, values in getattr(env._state, "reward_terms", {}).items():
                     reward_term_samples.setdefault(name, []).append(float(values[cfg.analysis_env_index]))
                 current_feet_pos = current_step_feet_pos
-                swing_mask = np.asarray(env._feet_phase[cfg.analysis_env_index, 2:4] >= 0.6, dtype=bool)
-                swing_abs_y = np.abs(current_feet_pos[2:4, 1])
-                swing_speed_y = np.abs((current_feet_pos[2:4, 1] - previous_step_feet_pos[2:4, 1]) / ctrl_dt)
-                for foot_index, foot in enumerate(("RL", "RR")):
+                swing_mask = np.asarray(env._feet_phase[cfg.analysis_env_index] >= 0.6, dtype=bool)
+                swing_abs_y = np.abs(current_feet_pos[:, 1])
+                swing_speed_y = np.abs((current_feet_pos[:, 1] - previous_step_feet_pos[:, 1]) / ctrl_dt)
+                for foot_index, foot in enumerate(_FOOT_NAMES):
                     if swing_mask[foot_index]:
                         swing_abs_y_samples[foot].append(float(swing_abs_y[foot_index]))
                         swing_lateral_speed_samples[foot].append(float(swing_speed_y[foot_index]))
-                previous_eval_feet_pos = current_feet_pos.copy()
-            elif done:
-                previous_eval_feet_pos = current_step_feet_pos
+            else:
+                # Do not measure an angular-rate jump across warmup, skipped
+                # samples, or an auto-reset boundary.
+                previous_eval_gyro = None
+            # Advance every control step, including warmup and reset steps, so
+            # the first measured lateral speed is a true one-step difference.
+            previous_eval_feet_pos = current_step_feet_pos
             fall_count += int(done)
             if not done and contact_initialized:
                 landed = current_contact & ~previous_contact
@@ -430,35 +517,65 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
         velocities = np.asarray(velocity_samples, dtype=np.float64).reshape(-1, 3)
         gyros = np.asarray(gyro_samples, dtype=np.float64).reshape(-1, 3)
         if velocities.size:
-            command64 = command.astype(np.float64)
-            velocity_error = velocities - command64
-            mean_velocity = velocities.mean(axis=0)
-            abs_error = np.abs(velocity_error)
-            metrics = {
-                "command": command.tolist(),
-                "mean_velocity": mean_velocity.tolist(),
-                "steady_state_error": (mean_velocity - command64).tolist(),
-                "rmse": np.sqrt(np.mean(np.square(velocity_error), axis=0)).tolist(),
-                "p95_error": np.percentile(abs_error, 95, axis=0).tolist(),
-                "orthogonal_drift": float(np.mean(abs_error[:, 1:3])) if np.allclose(command64[1:], 0.0) else float(np.mean(abs_error[:, :2])),
-                "fall_rate": float(fall_count / max(step_index, 1)),
-                "orientation_rms": float(np.sqrt(np.mean(np.square(orientation_samples)))) if orientation_samples else 0.0,
-                "base_height_std": float(np.std(height_samples)) if height_samples else 0.0,
-                "reward_terms": {name: float(np.mean(values)) for name, values in reward_term_samples.items()},
-                "rear_swing_max_abs_y": {
-                    foot: float(max(values)) if values else 0.0 for foot, values in swing_abs_y_samples.items()
-                },
-                "rear_swing_p95_abs_y": {
-                    foot: float(np.percentile(values, 95)) if values else 0.0 for foot, values in swing_abs_y_samples.items()
-                },
-                "rear_swing_peak_lateral_speed": {
-                    foot: float(max(values)) if values else 0.0
-                    for foot, values in swing_lateral_speed_samples.items()
-                },
-                "samples": int(len(velocities)),
-            }
+            metrics = _compute_motion_metrics(
+                velocities,
+                gyros,
+                command,
+                yaw_rate_deltas=np.asarray(yaw_rate_delta_samples, dtype=np.float64),
+                orientation_samples=orientation_samples,
+                height_samples=height_samples,
+                termination_count=fall_count,
+                total_steps=step_index,
+                ctrl_dt=ctrl_dt,
+            )
+            metrics.update(
+                {
+                    "reward_terms": {
+                        name: float(np.mean(values)) for name, values in reward_term_samples.items()
+                    },
+                    "rear_swing_max_abs_y": {
+                        foot: float(max(swing_abs_y_samples[foot])) if swing_abs_y_samples[foot] else 0.0
+                        for foot in ("RL", "RR")
+                    },
+                    "rear_swing_p95_abs_y": {
+                        foot: float(np.percentile(swing_abs_y_samples[foot], 95))
+                        if swing_abs_y_samples[foot]
+                        else 0.0
+                        for foot in ("RL", "RR")
+                    },
+                    "rear_swing_peak_lateral_speed": {
+                        foot: float(max(swing_lateral_speed_samples[foot]))
+                        if swing_lateral_speed_samples[foot]
+                        else 0.0
+                        for foot in ("RL", "RR")
+                    },
+                    "front_swing_max_abs_y": {
+                        foot: float(max(swing_abs_y_samples[foot])) if swing_abs_y_samples[foot] else 0.0
+                        for foot in ("FL", "FR")
+                    },
+                    "front_swing_p95_abs_y": {
+                        foot: float(np.percentile(swing_abs_y_samples[foot], 95))
+                        if swing_abs_y_samples[foot]
+                        else 0.0
+                        for foot in ("FL", "FR")
+                    },
+                    "front_swing_peak_lateral_speed": {
+                        foot: float(max(swing_lateral_speed_samples[foot]))
+                        if swing_lateral_speed_samples[foot]
+                        else 0.0
+                        for foot in ("FL", "FR")
+                    },
+                }
+            )
         else:
-            metrics = {"command": command.tolist(), "samples": 0, "fall_rate": float(fall_count / max(step_index, 1))}
+            metrics = {
+                "metrics_schema_version": 2,
+                "command": command.tolist(),
+                "command_axes": ["vx", "vy", "yaw_rate"],
+                "samples": 0,
+                "fall_rate": float(fall_count / max(step_index, 1)),
+                "termination_count": int(fall_count),
+            }
         metrics_path = Path(cfg.metrics_path) if cfg.metrics_path else analysis_dir / "velocity_metrics.json"
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
         metrics_path.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")

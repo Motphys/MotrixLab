@@ -27,6 +27,7 @@ _使用 MotrixLab 训练的 microduck 行走策略，由 MotrixRender 实时渲�
 - [任务环境](#-任务环境)
 - [Go2 平地直行第一版算法](#go2-平地直行第一版算法)
 - [Go2 平地直行修改版](#go2-平地直行修改版)
+- [Go2 平地步态消融与摆动约束](#go2-平地步态消融与摆动约束)
 - [内置机器人模型](#-内置机器人模型)
 - [项目组成](#-项目组成)
 - [参与贡献](#-参与贡献)
@@ -185,7 +186,7 @@ python scripts/play_walk.py env=go2-walk-flat policy=<checkpoint>
 - 增加平衡姿态、站立保持、支撑足滑移、关节加速度和动作二阶平滑奖励。
 - 调整速度跟踪与稳定性奖励权重：线速度跟踪为 `2.0`，角速度跟踪为 `0.75`，并加强姿态、高度、动作和足端约束。
 - 固定直行评估的 `for_play()` 配置为 `[vx, vy, yaw]=[0.5, 0, 0]`，关闭播放噪声和命令重采样。
-- `play_walk.py` 每个控制步重新写入固定命令，并输出平均速度、稳态误差、RMSE、P95、正交漂移、跌倒率、姿态 RMS、高度波动和分项奖励。
+- `play_walk.py` 每个控制步重新写入固定命令；schema v2 的紧凑跟踪字段明确使用 `[vx, vy, yaw_rate]`，并额外输出线速度/角速度、yaw rate 变化 RMS、平面正交漂移、终止次数、姿态 RMS、高度波动和分项奖励。
 
 修改版新增或扩展的代码位置：
 
@@ -199,6 +200,45 @@ python scripts/play_walk.py env=go2-walk-flat policy=<checkpoint>
 | 算法映射记录 | `docs/go2_rl_gym_ppo_mapping.md` |
 
 `play.py` 是通用回放入口，不会像 `play_walk.py` 一样在每个 step 强制写入直行命令。Go2 平地直行的速度指标应使用 `play_walk.py`，结果默认写入 `walk_analysis/velocity_metrics.json`。
+
+### Go2 平地步态消融与摆动约束
+
+平地步态迁移中的每组实验都使用独立环境名。旧 checkpoint 仍按原环境解释，需要回退时直接选择上一版本环境，无需覆盖代码或模型：
+
+| 环境 | 相对上一组实验的变化 |
+| --- | --- |
+| `go2-walk-flat-d-legacy-pose` | 使用 legacy RL Gym 的 Go2 默认髋关节角：左侧 `+0.1`、右侧 `-0.1`。 |
+| `go2-walk-flat-d-swing` | 增加后足摆动横向距离和横向速度约束。 |
+| `go2-walk-flat-d-swing-v2` | 使用明确的距离与速度容差，对后足摆动惩罚进行归一化。 |
+| `go2-walk-flat-d-swing-v3` | 保留 v2，并增加较弱的前足单边越界约束；正常范围内的前足摆动不受惩罚。 |
+
+v3 的前足横向边界初始设为 `0.16 m`。只有摆动前足超过该边界时，才对横向距离和横向速度施加惩罚，避免把前足强行拉向固定目标。实现位于 `quadruped/go2_swing_ablation.py`，各版本 PPO 配置位于 `configs/task/go2-walk-flat-d-swing*/rslrl.ppo.yaml`。
+
+固定命令评估现已同时输出前足和后足摆动的最大横向距离、P95 横向距离和峰值横向速度。比较不同 checkpoint 时，应保持命令、随机种子、预热时长和 `eval_steps` 完全一致：
+
+```bash
+python scripts/play_walk.py \
+  env=go2-walk-flat-d-swing-v3 \
+  policy=<checkpoint> \
+  forward_velocity=0.5 lateral_velocity=0 yaw_velocity=0 \
+  warmup_seconds=2 eval_steps=5760 \
+  analysis_dir=runs/eval/go2_d_swing_v3
+```
+
+随机命令评估入口 `eval_walk_random.py` 按可配置的均匀分布采样 `[vx, vy, yaw]`，并使用独立的 `command_seed` 和固定命令切换间隔，便于复现实验：
+
+```bash
+python scripts/eval_walk_random.py \
+  env=go2-walk-flat-d-swing-v3 \
+  policy=<checkpoint> \
+  num_envs=16 seed=1 rand_seed=false command_seed=1 \
+  duration_seconds=120 warmup_seconds=2 command_interval_seconds=2 \
+  analysis_dir=runs/eval/go2_d_swing_v3_random
+```
+
+baseline、v1、v2 和 v3 均可使用该随机评估入口，但 `env` 必须与 checkpoint 的训练环境对应。随机评估输出聚合后的速度跟踪和稳定性指标；四足摆动外翻仍应使用固定命令评估逐足分析。
+
+当前仿真结果表明，v3 相比 v2 降低了前足横向摆动距离和峰值横向速度，并基本保留了后足改善；随机命令下的总体 `vx`、`vy` 跟踪优于 baseline，但 yaw 跟踪、姿态 RMS 和机身高度波动仍存在取舍。纯前进命令下允许出现小幅周期性 `vy` 和 yaw，但长时间均值应接近零。以上均为仿真结论，不能视为真实机器人已经可用；实机验证仍是后续独立阶段。
 
 ## 🤖 内置机器人模型
 
