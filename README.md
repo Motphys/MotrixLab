@@ -196,44 +196,33 @@ Changes from the first version:
 
 `play.py` is the generic replay entry point and does not repin a straight-line command every step. Use `play_walk.py` for Go2 flat-walk velocity evaluation; metrics are written to `walk_analysis/velocity_metrics.json`.
 
-### Go2 flat-walk ablations and swing regularization
+### Go2 F2-P1b flat walk
 
-The flat-walk migration keeps each gait experiment under a separate environment name, so older checkpoints retain their original interpretation and every change can be rolled back by selecting the previous environment:
+`go2-walk-flat-f2-p1b` is the retained Go2 flat-walk task. It uses the selected legacy hip pose, normalized rear-foot swing-width and lateral-speed regularization, a bilateral front-foot swing-width band, and front-foot stance-width regularization. Its full task definition is self-contained in `quadruped/go2_swing_ablation.py`; train it with `configs/task/go2-walk-flat-f2-p1b/rslrl.ppo.yaml`.
 
-| Environment | Change relative to the preceding experiment |
-| --- | --- |
-| `go2-walk-flat-d-legacy-pose` | Uses the legacy RL Gym Go2 default hip angles: left hips `+0.1`, right hips `-0.1`. |
-| `go2-walk-flat-d-swing` | Adds rear-foot swing-width and lateral-speed regularization. |
-| `go2-walk-flat-d-swing-v2` | Normalizes the rear swing penalties by explicit width and speed tolerances. |
-| `go2-walk-flat-d-swing-v3` | Keeps v2 and adds a weak, one-sided front-foot over-extension penalty; normal front swing remains unconstrained. |
-
-The v3 front-foot regularizer starts at a `0.16 m` lateral limit. It penalizes width and lateral speed only when a swinging front foot exceeds that envelope. The implementation and versioned PPO recipes are in `quadruped/go2_swing_ablation.py` and `configs/task/go2-walk-flat-d-swing*/rslrl.ppo.yaml`.
-
-Fixed-command evaluation now reports max, P95, and peak lateral speed for both front and rear swing feet. Use identical command, seed, warmup, and `eval_steps` values when comparing checkpoints:
+Fixed-command evaluation reports max, P95, and peak lateral speed for both front and rear swing feet:
 
 ```bash
 python scripts/play_walk.py \
-  env=go2-walk-flat-d-swing-v3 \
+  env=go2-walk-flat-f2-p1b \
   policy=<checkpoint> \
   forward_velocity=0.5 lateral_velocity=0 yaw_velocity=0 \
   warmup_seconds=2 eval_steps=5760 \
-  analysis_dir=runs/eval/go2_d_swing_v3
+  analysis_dir=runs/eval/go2_f2_p1b
 ```
 
 For reproducible random-command evaluation, `eval_walk_random.py` samples `[vx, vy, yaw]` from configurable uniform ranges with a separate `command_seed` and fixed resampling interval:
 
 ```bash
 python scripts/eval_walk_random.py \
-  env=go2-walk-flat-d-swing-v3 \
+  env=go2-walk-flat-f2-p1b \
   policy=<checkpoint> \
   num_envs=16 seed=1 rand_seed=false command_seed=1 \
   duration_seconds=120 warmup_seconds=2 command_interval_seconds=2 \
-  analysis_dir=runs/eval/go2_d_swing_v3_random
+  analysis_dir=runs/eval/go2_f2_p1b_random
 ```
 
-Keep the environment matching the checkpoint when applying the same evaluator to the baseline or v1/v2 experiments. The random evaluator reports aggregate tracking and stability metrics; use fixed-command evaluation for per-foot swing analysis.
-
-Current simulation results show that v3 reduces front-foot lateral excursion and peak lateral speed relative to v2 while preserving the rear-foot improvement. It improves aggregate random `vx`/`vy` tracking relative to the baseline, but yaw tracking, orientation RMS, and base-height variation remain trade-offs. Nonzero `vy` and yaw under a pure forward command are acceptable only as small periodic errors whose long-horizon means remain near zero. These simulation results are not evidence of real-robot readiness; real-hardware validation remains a separate gated stage.
+The random evaluator reports aggregate tracking and stability metrics; use fixed-command evaluation for per-foot swing analysis. Simulation results are not evidence of real-robot readiness; real-hardware validation remains a separate gated stage.
 
 ## 🤖 Built-in Robot Models
 

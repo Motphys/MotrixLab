@@ -81,37 +81,22 @@ def test_quadruped_reward_scales_are_structured_and_not_shared():
     assert go1 is not go2
 
 
-def test_go2_legacy_pose_ablation_only_changes_default_hip_angles():
-    current = registry.make("go2-walk-flat", num_envs=1, mode="play")
-    legacy = registry.make("go2-walk-flat-d-legacy-pose", num_envs=1, mode="play")
-
-    np.testing.assert_allclose(current.default_angles[[0, 3, 6, 9]], [0.0, 0.0, 0.0, 0.0])
-    np.testing.assert_allclose(legacy.default_angles[[0, 3, 6, 9]], [0.1, -0.1, 0.1, -0.1])
-    other = [1, 2, 4, 5, 7, 8, 10, 11]
-    np.testing.assert_allclose(current.default_angles[other], legacy.default_angles[other])
-    assert current.policy_observation_space.shape == legacy.policy_observation_space.shape
-    assert current.action_space.shape == legacy.action_space.shape
-
-
-def test_go2_swing_ablation_keeps_spaces_and_exposes_swing_terms():
-    env = registry.make("go2-walk-flat-d-swing", num_envs=2, mode="train")
+def test_go2_f2_p1b_keeps_spaces_and_exposes_gait_terms():
+    env = registry.make("go2-walk-flat-f2-p1b", num_envs=2, mode="train")
     state = env.init_state()
     assert env.policy_observation_space.shape == (49,)
     assert env.action_space.shape == (12,)
-    env._feet_phase[:, 2:4] = 0.75
+    env._feet_phase[:] = 0.75
+    env.feet_contact[:, :2] = True
     state = env.step(np.zeros((2, 12), dtype=np.float32))
-    assert "rear_swing_width" in state.reward_terms
-    assert "rear_swing_lateral_speed" in state.reward_terms
-
-
-def test_go2_swing_v3_is_separate_and_uses_front_over_limit_terms():
-    v2_cfg = registry.make_env_config("go2-walk-flat-d-swing-v2")
-    v3_cfg = registry.make_env_config("go2-walk-flat-d-swing-v3")
-
-    assert not hasattr(v2_cfg, "front_swing_width_limit")
-    assert v3_cfg.front_swing_width_limit == pytest.approx(0.16)
-    assert v3_cfg.front_swing_width_scale < 0.0
-    assert v3_cfg.front_swing_lateral_speed_scale < 0.0
+    assert {
+        "rear_swing_width",
+        "rear_swing_lateral_speed",
+        "front_swing_width",
+        "front_swing_lateral_speed",
+        "front_swing_inner_width",
+        "front_stance_width",
+    } <= state.reward_terms.keys()
 
 
 def test_go2_velocity_commands_remain_constant_before_resampling_interval():

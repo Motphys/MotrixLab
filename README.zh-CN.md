@@ -201,44 +201,33 @@ python scripts/play_walk.py env=go2-walk-flat policy=<checkpoint>
 
 `play.py` 是通用回放入口，不会像 `play_walk.py` 一样在每个 step 强制写入直行命令。Go2 平地直行的速度指标应使用 `play_walk.py`，结果默认写入 `walk_analysis/velocity_metrics.json`。
 
-### Go2 平地步态消融与摆动约束
+### Go2 F2-P1b 平地步态
 
-平地步态迁移中的每组实验都使用独立环境名。旧 checkpoint 仍按原环境解释，需要回退时直接选择上一版本环境，无需覆盖代码或模型：
+`go2-walk-flat-f2-p1b` 是保留的 Go2 平地步态任务。它包含选定的 legacy 髋关节初始姿态、归一化的后足摆动宽度/横向速度约束、前足双边摆动宽度约束和前足支撑期宽度约束。任务实现已收敛到 `quadruped/go2_swing_ablation.py`，训练配置为 `configs/task/go2-walk-flat-f2-p1b/rslrl.ppo.yaml`。
 
-| 环境 | 相对上一组实验的变化 |
-| --- | --- |
-| `go2-walk-flat-d-legacy-pose` | 使用 legacy RL Gym 的 Go2 默认髋关节角：左侧 `+0.1`、右侧 `-0.1`。 |
-| `go2-walk-flat-d-swing` | 增加后足摆动横向距离和横向速度约束。 |
-| `go2-walk-flat-d-swing-v2` | 使用明确的距离与速度容差，对后足摆动惩罚进行归一化。 |
-| `go2-walk-flat-d-swing-v3` | 保留 v2，并增加较弱的前足单边越界约束；正常范围内的前足摆动不受惩罚。 |
-
-v3 的前足横向边界初始设为 `0.16 m`。只有摆动前足超过该边界时，才对横向距离和横向速度施加惩罚，避免把前足强行拉向固定目标。实现位于 `quadruped/go2_swing_ablation.py`，各版本 PPO 配置位于 `configs/task/go2-walk-flat-d-swing*/rslrl.ppo.yaml`。
-
-固定命令评估现已同时输出前足和后足摆动的最大横向距离、P95 横向距离和峰值横向速度。比较不同 checkpoint 时，应保持命令、随机种子、预热时长和 `eval_steps` 完全一致：
+固定命令评估会输出前足和后足摆动的最大横向距离、P95 横向距离和峰值横向速度：
 
 ```bash
 python scripts/play_walk.py \
-  env=go2-walk-flat-d-swing-v3 \
+  env=go2-walk-flat-f2-p1b \
   policy=<checkpoint> \
   forward_velocity=0.5 lateral_velocity=0 yaw_velocity=0 \
   warmup_seconds=2 eval_steps=5760 \
-  analysis_dir=runs/eval/go2_d_swing_v3
+  analysis_dir=runs/eval/go2_f2_p1b
 ```
 
 随机命令评估入口 `eval_walk_random.py` 按可配置的均匀分布采样 `[vx, vy, yaw]`，并使用独立的 `command_seed` 和固定命令切换间隔，便于复现实验：
 
 ```bash
 python scripts/eval_walk_random.py \
-  env=go2-walk-flat-d-swing-v3 \
+  env=go2-walk-flat-f2-p1b \
   policy=<checkpoint> \
   num_envs=16 seed=1 rand_seed=false command_seed=1 \
   duration_seconds=120 warmup_seconds=2 command_interval_seconds=2 \
-  analysis_dir=runs/eval/go2_d_swing_v3_random
+  analysis_dir=runs/eval/go2_f2_p1b_random
 ```
 
-baseline、v1、v2 和 v3 均可使用该随机评估入口，但 `env` 必须与 checkpoint 的训练环境对应。随机评估输出聚合后的速度跟踪和稳定性指标；四足摆动外翻仍应使用固定命令评估逐足分析。
-
-当前仿真结果表明，v3 相比 v2 降低了前足横向摆动距离和峰值横向速度，并基本保留了后足改善；随机命令下的总体 `vx`、`vy` 跟踪优于 baseline，但 yaw 跟踪、姿态 RMS 和机身高度波动仍存在取舍。纯前进命令下允许出现小幅周期性 `vy` 和 yaw，但长时间均值应接近零。以上均为仿真结论，不能视为真实机器人已经可用；实机验证仍是后续独立阶段。
+随机评估输出聚合后的速度跟踪和稳定性指标；四足摆动分析仍应使用固定命令评估逐足检查。以上均为仿真结论，不能视为真实机器人已经可用；实机验证仍是后续独立阶段。
 
 ## 🤖 内置机器人模型
 
