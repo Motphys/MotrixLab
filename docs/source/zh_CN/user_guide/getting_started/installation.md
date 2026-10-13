@@ -50,7 +50,7 @@ sh install.sh
 ```
 
 该命令会自动探测 GPU 厂商（NVIDIA → CUDA，AMD → ROCm），安装运行环境所需的 workspace package、对应的
-PyTorch wheel、必需的 SKRL Torch provider 以及内置的 FastSAC 算法。运行环境采用选择性安装：开发工具、文档工具、RSL-RL、SKRL JAX 和其他可选 extra 不会自动安装。
+PyTorch wheel、必需的 SKRL Torch provider 以及内置的 FastSAC 算法。Linux 上，`install.sh` 默认还会为 Numba 并行 kernel 安装 Intel TBB，`--all` 和两种 GPU 配置均包含 TBB；其他平台的默认运行环境安装不会启用 TBB。开发工具、文档工具、RSL-RL、SKRL JAX 和其他可选 extra 不会自动安装。
 
 :::{dropdown} 配置国内镜像源（可选）
 :animate: fade-in
@@ -116,7 +116,7 @@ workspace plugin；`--all` 才会安装全部 workspace package 与支持的开�
 | `--skrl-torch` | — | 兼容性参数；SKRL Torch 已由根项目作为必需依赖提供 |
 | `--skrl-jax` | — | 添加 SKRL（JAX）训练后端，仅 Linux |
 | `--rslrl` | — | 添加 RSL-RL（PyTorch）训练后端，同时保留必需的 SKRL |
-| `--tbb` | — | 为 numba 并行 kernel 安装 Intel TBB 线程层；多核服务器（64 核以上）训练推荐启用，安装后自动生效 |
+| `--tbb` | — | 显式为 Numba 并行 kernel 安装 Intel TBB 线程层；Linux 上的 `install.sh` 已默认启用，安装后自动生效 |
 | `--docs` | — | 追加本地构建文档所需的工具链（Sphinx） |
 | `-h`、`--help` | — | 显示帮助 |
 
