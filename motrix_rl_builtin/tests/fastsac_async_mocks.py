@@ -23,7 +23,7 @@ def make_mock_learner(rings: list, extends: list | None) -> Learner:
     learner = Learner.__new__(Learner)
     learner.agent = SimpleNamespace(
         device=torch.device("cpu"),
-        rb=SimpleNamespace(extend_batch=lambda *c: extends.append([x.clone() for x in c])),
+        rb=SimpleNamespace(ptr=0, extend_batch=lambda *c: extends.append([x.clone() for x in c])),
         cfg=SimpleNamespace(learning_starts=0),
     )
     learner.async_options = SimpleNamespace(max_ingest_per_iter=8)

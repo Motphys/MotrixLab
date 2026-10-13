@@ -15,7 +15,7 @@ import torch.multiprocessing as mp
 from motrix_rl_builtin.fastsac.async_impl.transport import Control, SharedTransitionRing, StartupHandshake
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import HostWeightSender, WeightChannelShared
 from motrix_rl_builtin.fastsac.async_impl.worker import actor_param_numel, run_collector_process
-from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap
+from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap, FastSacStepResult
 
 from motrix_env_core.array.env import ArrayEnvState, NpObs
 from motrix_env_core.base import EnvCfg
@@ -95,7 +95,11 @@ def test_rl_trainer_supports_sim_backend(monkeypatch, sim_backend: str) -> None:
     assert isinstance(wrapped, FastSacEnvWrap)
     initial = wrapped.reset()
     result = wrapped.step(torch.zeros((_NUM_ENVS, _ACT_DIM)))
-    assert all(tensor.device.type == "cpu" for tensor in (*initial, *result))
+    assert isinstance(result, FastSacStepResult)
+    tensors = (*initial, result.obs, result.critic_obs, result.reward, result.terminated, result.truncated)
+    assert all(tensor.device.type == "cpu" for tensor in tensors)
+    assert result.final_obs is None
+    assert isinstance(result.info, dict)
 
     actions = env.step.call_args.args[0]
     assert isinstance(actions, np.ndarray if sim_backend == "np" else torch.Tensor)

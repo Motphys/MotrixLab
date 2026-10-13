@@ -255,7 +255,9 @@ class Trainer(TrainerBase):
                 else:
                     actions = agent.act(obs, deterministic=False)
 
-                next_obs, next_critic_obs, rewards, terminated, truncated = env.step(actions)
+                result = env.step(actions)
+                next_obs, next_critic_obs = result.obs, result.critic_obs
+                rewards, terminated, truncated = result.reward, result.terminated, result.truncated
 
                 agent.rb.extend(obs, critic_obs, actions, rewards, terminated.long(), truncated.long())
 
@@ -279,7 +281,7 @@ class Trainer(TrainerBase):
                 # accumulate per-term reward means over the logging window.
                 # info["Reward"] holds each term's per-env contribution as a (N,)
                 # array (shared convention across backends); mean over envs here.
-                reward_terms = env.last_info.get("Reward")
+                reward_terms = result.info.get("Reward")
                 if reward_terms:
                     for k, v in reward_terms.items():
                         term_accum[k] = term_accum.get(k, 0.0) + float(v.mean())
@@ -287,18 +289,18 @@ class Trainer(TrainerBase):
                 t_collect += time.perf_counter() - t0
 
                 # ---------------- learner phase: num_updates gradient steps on a sampled batch
-                metrics = None
                 if not warming:
                     t1 = time.perf_counter()
-                    metrics = agent.update(cfg.num_updates)
+                    agent.update(cfg.num_updates)
                     t_learn += time.perf_counter() - t1
 
                 if agent.global_step % logging_interval == 0:
                     now = time.time()
                     sps = (agent.global_step - last_log_step) * agent.num_envs / max(now - last_log_time, 1e-6)
-                    # Materialize metrics to floats here (and only here). update()
-                    # returns raw tensors to avoid per-iter cudaStreamSynchronize.
-                    metrics_log = {k: float(v) for k, v in metrics.items()} if metrics is not None else None
+                    # Window-aggregated diagnostics (means + extremes since the
+                    # last log window), shared semantics with the async
+                    # trainer's payload.
+                    metrics_log = agent.window_metrics.stats_and_reset() if not warming else None
                     mean_ret = sum(recent_returns) / len(recent_returns) if recent_returns else float("nan")
                     mean_len = sum(recent_lengths) / len(recent_lengths) if recent_lengths else float("nan")
                     term_means = {k: v / max(term_count, 1) for k, v in term_accum.items()}
@@ -308,7 +310,7 @@ class Trainer(TrainerBase):
                     learn_ms = t_learn * 1000.0 / n_iter_win
                     phase_total = t_collect + t_learn
                     learn_pct = 100.0 * t_learn / max(phase_total, 1e-9)
-                    info = env.last_info
+                    info = result.info
                     # generic env metrics channel: the wrapper merges the state's
                     # metrics snapshot into infos["metrics"], so backends log them
                     # without hardcoding any metric name.
@@ -350,7 +352,7 @@ class Trainer(TrainerBase):
                             self._writer.add_scalar(f"metrics/{k}", v, agent.global_step)
                         for k, v in term_means.items():
                             self._writer.add_scalar(f"reward/{k}", v, agent.global_step)
-                        if metrics is not None:
+                        if metrics_log is not None:
                             for k, v in metrics_log.items():
                                 self._writer.add_scalar(f"train/{k}", v, agent.global_step)
                     last_log_time, last_log_step = now, agent.global_step
@@ -393,7 +395,7 @@ class Trainer(TrainerBase):
         try:
             while True:
                 actions = agent.act(obs, deterministic=True)
-                obs, _, _, _, _ = env.step(actions)
+                obs = env.step(actions).obs
                 if env.render() is False:
                     break
         finally:

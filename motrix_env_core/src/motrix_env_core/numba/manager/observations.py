@@ -30,7 +30,12 @@ class ObservationTermCfg(abc.ABC):
 
 @dataclass(frozen=True, slots=True, init=False)
 class ObsTerm(BaseTerm):
-    """Observation dispatch term with a fixed output width."""
+    """Pure observation dispatch with a fixed output width.
+
+    Read context and write only the supplied output, except observation noise
+    may consume ctx.rand. Do not advance history or commands: truncated steps
+    may observe again before reset, with the RNG restored after that snapshot.
+    """
 
     size: int
 

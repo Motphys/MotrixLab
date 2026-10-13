@@ -34,6 +34,18 @@ class NpObs:
 
 
 @dataclass
+class FinalObs:
+    """Owned pre-reset observations of the current transition's truncated rows.
+
+    Rows in ``obs`` align with ``env_ids``. Arrays remain valid across steps;
+    consumers must treat them as read-only. ``obs.value`` stays optional.
+    """
+
+    env_ids: np.ndarray
+    obs: NpObs
+
+
+@dataclass
 class ArrayEnvState:
     obs: NpObs
     reward: np.ndarray
@@ -50,6 +62,8 @@ class ArrayEnvState:
     # reflect the latest step: retain values across steps through
     # :meth:`process_metrics`, which returns a fresh dict of reduced scalars.
     metrics: dict[str, float | np.ndarray] = dataclasses.field(default_factory=dict)
+    # None when no row truncated or the implementation does not capture finals.
+    final_obs: FinalObs | None = None
 
     @property
     def done(self) -> np.ndarray:
@@ -234,6 +248,15 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         writes have completed.
         """
 
+    def _capture_final_obs(self, env_ids: np.ndarray) -> FinalObs | None:
+        """Capture truncated rows before reset; default implementation is unsupported.
+
+        Called after transition and truncation updates, before any reset write.
+        Implementations must leave normal observations and task state unchanged
+        and return owned row arrays, without advancing observation history.
+        """
+        return None
+
     def _max_episode_steps(self) -> int | None:
         return self._cfg.max_episode_steps
 
@@ -279,6 +302,8 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         """Advance the simulator by the configured substeps."""
 
     def _prev_physics_step(self):
+        if self._state.final_obs is not None:
+            self._state = self._state.replace(final_obs=None)
         state = self._state
         state.reward.fill(0.0)
         state.terminated.fill(False)
@@ -302,6 +327,7 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
 
         Timing: ``apply_action`` -> ``physics_step`` -> ``compute_transition``
         (the only full simulator-data refresh) -> episode bookkeeping ->
+        optional pre-reset ``final_obs`` capture for truncated rows ->
         ``reset(env_ids)`` for done rows (may refresh selected rows) ->
         ``compute_observation`` (whole batch, pure construction).
         """
@@ -319,6 +345,10 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
             self._state = self.compute_transition(self._state)
         self._state.episode_steps += 1
         self._update_truncate()
+        trunc_ids = np.flatnonzero(self._state.truncated)
+        if trunc_ids.size:
+            with self.perf.scope("final_obs"):
+                self._state = self._state.replace(final_obs=self._capture_final_obs(trunc_ids))
         with self.perf.scope("reset"):
             self._reset_done_envs()
         with self.perf.scope("observation"):
@@ -327,4 +357,4 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         return self._state
 
 
-__all__ = ["ArrayEnv", "ArrayEnvState", "EnvCfgType", "NpObs"]
+__all__ = ["ArrayEnv", "ArrayEnvState", "EnvCfgType", "FinalObs", "NpObs"]

@@ -229,7 +229,7 @@ def test_ring_read_span_fifo_and_no_wrap():
         if k:
             count, views = ring.read_span()
             assert count >= k
-            assert 1 <= count <= capacity - (ring.read_idx % capacity)  # no wrap
+            assert 1 <= count <= capacity - (ring.read_completed_count % capacity)  # no wrap
             for i in range(k):
                 assert torch.all(views[0][i] == next_expected + i)
                 assert torch.all(views[1][i] == next_expected + i)  # critic dim reuse ok
@@ -248,3 +248,49 @@ def test_ring_read_span_fifo_and_no_wrap():
         next_expected += count
     assert next_expected == capacity * 4
     assert ring.size() == 0
+
+
+def test_shared_ring_counts_are_cumulative_and_synchronous_across_wraps():
+    from motrix_rl_builtin.fastsac.async_impl.transport import SharedTransitionRing
+
+    capacity = 3
+    ring = SharedTransitionRing(capacity, 1, 1, 1, 1)
+    writes = reads = 0
+
+    def assert_counts():
+        assert ring.write_issued_count == ring.write_completed_count == writes
+        assert ring.read_issued_count == ring.read_completed_count == reads
+        assert ring.cursors.write_completed_count == writes
+        assert ring.cursors.read_completed_count == reads
+        assert ring.size() == writes - reads
+
+    def push(tag):
+        value = torch.tensor([[float(tag)]])
+        flags = torch.zeros(1, dtype=torch.long)
+        return ring.push(value, value, value, value[:, 0], flags, flags)
+
+    assert_counts()
+    for _ in range(4):
+        while not ring.is_full():
+            assert push(writes)
+            writes += 1
+            assert_counts()
+        assert not push(writes)
+        assert_counts()
+        # Partially acknowledge each run, including runs split at the wrap.
+        for _ in range(2):
+            count, views = ring.read_span()
+            assert count == min(writes - reads, capacity - reads % capacity)
+            assert float(views[0][0, 0, 0]) == reads
+            assert_counts()  # borrowing views does not issue an acknowledgement
+            ring.commit_reads(1)
+            reads += 1
+            assert_counts()
+
+    while ring.has_next():
+        count, views = ring.read_span()
+        torch.testing.assert_close(views[0][:, 0, 0], torch.arange(reads, reads + count, dtype=torch.float32))
+        ring.commit_reads(count)
+        reads += count
+        assert_counts()
+    assert reads == writes > 2 * capacity

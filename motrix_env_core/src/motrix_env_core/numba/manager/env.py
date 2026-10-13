@@ -13,7 +13,7 @@ from typing import Any, TypeVar
 import gymnasium as gym
 import numpy as np
 
-from motrix_env_core.array.env import ArrayEnv, ArrayEnvState, EnvCfgType, NpObs
+from motrix_env_core.array.env import ArrayEnv, ArrayEnvState, EnvCfgType, FinalObs, NpObs
 from motrix_env_core.base import EnvCfg, ObsSpace
 from motrix_env_core.config import configclass
 from motrix_env_core.config.sim_reset import ManagerResetCfg, ResetTermCfg
@@ -285,6 +285,21 @@ class _ObsBufferSlot:
     observation: NpObs
     kernel_outputs: NumbaKernelOutputs
 
+    @classmethod
+    def bind(cls, observation: NpObs, reward: np.ndarray, terminated: np.ndarray) -> _ObsBufferSlot:
+        value = observation.value
+        if value is None:
+            value = np.empty((observation.policy.shape[0], 0), dtype=observation.policy.dtype)
+        return cls(
+            observation=observation,
+            kernel_outputs=NumbaKernelOutputs(
+                policy_obs=observation.policy,
+                value_obs=value,
+                reward=reward,
+                terminated=terminated,
+            ),
+        )
+
 
 @dataclass
 class SwapObsBuffer:
@@ -311,21 +326,7 @@ class SwapObsBuffer:
         reward: np.ndarray,
         terminated: np.ndarray,
     ) -> SwapObsBuffer:
-        def make_slot(observation: NpObs) -> _ObsBufferSlot:
-            value = observation.value
-            if value is None:
-                value = np.empty((observation.policy.shape[0], 0), dtype=observation.policy.dtype)
-            return _ObsBufferSlot(
-                observation=observation,
-                kernel_outputs=NumbaKernelOutputs(
-                    policy_obs=observation.policy,
-                    value_obs=value,
-                    reward=reward,
-                    terminated=terminated,
-                ),
-            )
-
-        return cls((make_slot(first), make_slot(second)))
+        return cls((_ObsBufferSlot.bind(first, reward, terminated), _ObsBufferSlot.bind(second, reward, terminated)))
 
     @property
     def current(self) -> _ObsBufferSlot:
@@ -370,6 +371,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         self.metrics: dict[str, np.ndarray] = {}
         self._kernel_outputs: NumbaKernelOutputs | None = None
         self._observation_buffer: SwapObsBuffer | None = None
+        self._final_obs_slot: _ObsBufferSlot | None = None
         # Persistent kernel-bound sim-reset-request buffer
         # (``ctx.sim_reset_requested``), cleared before each physics step and
         # consumed by _reset_done_envs.
@@ -509,6 +511,8 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
             state.terminated,
         )
         self._kernel_outputs = self._observation_buffer.current.kernel_outputs
+        final_obs = self._zeros_obs(self.observation_space)
+        self._final_obs_slot = _ObsBufferSlot.bind(final_obs, state.reward, state.terminated)
         self._refresh_sim_reads()
         inputs = self._kernel_inputs
         self._validate_kernel_context(inputs)
@@ -547,6 +551,25 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         assert self._task_program is not None
         assert self._kernel_outputs is not None
         self._task_program.observe_kernel(inputs, self._kernel_outputs)
+
+    def _capture_final_obs(self, env_ids: np.ndarray) -> FinalObs:
+        """Observe pre-reset inputs after command on_transition.
+
+        The compiled observe pass is batch-wide. Dedicated outputs preserve the
+        normal swap buffer; advanced indexing creates owned compact snapshots.
+        """
+        assert self._task_program is not None
+        assert self._final_obs_slot is not None
+        slot = self._final_obs_slot
+        self._task_program.observe_kernel(self._kernel_inputs, slot.kernel_outputs)
+        obs = slot.observation
+        return FinalObs(
+            env_ids=env_ids,
+            obs=NpObs(
+                policy=obs.policy[env_ids],
+                value=None if obs.value is None else obs.value[env_ids],
+            ),
+        )
 
     def _execute_task_kernel(self, inputs: tuple[Any, ...]) -> None:
         """Evaluate and observe without advancing host-side commands."""

@@ -38,6 +38,7 @@ class SimpleReplayBuffer(nn.Module):
         n_steps: int = 1,
         gamma: float = 0.99,
         device=None,
+        final_obs_bootstrap: bool = False,
     ):
         super().__init__()
         self.n_env = n_env
@@ -65,6 +66,44 @@ class SimpleReplayBuffer(nn.Module):
         self.critic_observations = z(n_critic_obs)
         self.ptr = 0
 
+        # Final rows are allocated only for live truncated transitions. Capacity
+        # grows geometrically, bounded by the replay's transition capacity; no
+        # assumption about time between truncations is required. Allocation and
+        # ownership bookkeeping are eager ingest work, outside compiled updates.
+        self._final_obs_table = None
+        self._final_critic_table = None
+        self._final_slot = None
+        self._final_capacity = 0
+        self._final_free: list[int] = []
+        self._final_owners: list[dict[int, int]] = [{} for _ in range(cap)]
+        if final_obs_bootstrap:
+            self._enable_final_storage()
+
+    def _enable_final_storage(self) -> None:
+        self._final_slot = torch.full((self.n_env, self._cap), -1, device=self.device, dtype=torch.int32)
+        self._grow_final_storage(self.n_env)
+
+    def _grow_final_storage(self, needed: int) -> None:
+        old = self._final_capacity
+        capacity = min(self.n_env * self._cap, max(self.n_env, old * 2, old + needed))
+        # Tables may be referenced by work on the compute and ingest streams.
+        # Growth is rare and eager; finish those uses before replacing backing.
+        if self.observations.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+        policy = torch.empty((capacity, self.n_obs), device=self.device)
+        critic = torch.empty((capacity, self.n_critic_obs), device=self.device)
+        if old:
+            policy[:old].copy_(self._final_obs_table)
+            critic[:old].copy_(self._final_critic_table)
+        else:
+            # Samples without a final row still gather index zero before masking.
+            policy[0].zero_()
+            critic[0].zero_()
+        self._final_obs_table = policy
+        self._final_critic_table = critic
+        self._final_free.extend(range(capacity - 1, old - 1, -1))
+        self._final_capacity = capacity
+
     @property
     def num_stored(self) -> int:
         # A transition is only complete once the following step's observation
@@ -82,6 +121,7 @@ class SimpleReplayBuffer(nn.Module):
         invariant already relied upon by the async transition ring.
         """
         slot = self.ptr % self._cap
+        self._invalidate_final_slot(slot, 1)
         self.observations[:, slot] = obs
         self.critic_observations[:, slot] = critic_obs
         self.actions[:, slot] = actions
@@ -90,7 +130,7 @@ class SimpleReplayBuffer(nn.Module):
         self.truncations[:, slot] = truncations
         self.ptr += 1
 
-    def extend_batch(self, obs, critic_obs, actions, rewards, dones, truncations) -> None:
+    def extend_batch(self, obs, critic_obs, actions, rewards, dones, truncations, *, final_payloads=None) -> None:
         """Append ``k`` transitions per environment from slot-major tensors.
 
         Inputs are shaped ``(k, n_env, dim)`` for obs / critic_obs / actions
@@ -102,12 +142,70 @@ class SimpleReplayBuffer(nn.Module):
         a side stream.
         """
         k = obs.shape[0]
+        if k > self._cap:
+            # Preserve only the newest replay-capacity transitions, but keep
+            # absolute time progression identical to successive extends.
+            skip = k - self._cap
+            self.ptr += skip
+            self.extend_batch(
+                *(v[skip:] for v in (obs, critic_obs, actions, rewards, dones, truncations)),
+                final_payloads=None if final_payloads is None else final_payloads[skip:],
+            )
+            return
         start = self.ptr % self._cap
+        self._invalidate_final_slot(start, k)
         n = min(k, self._cap - start)
         self._write_span(start, (t[:n] for t in (obs, critic_obs, actions, rewards, dones, truncations)))
         if k > n:
             self._write_span(0, (t[n:] for t in (obs, critic_obs, actions, rewards, dones, truncations)))
         self.ptr += k
+        if final_payloads is not None:
+            for offset, payload in enumerate(final_payloads):
+                if payload is not None:
+                    self.write_final(payload.env_ids, self.ptr - k + offset, payload.obs, payload.critic_obs)
+
+    def _invalidate_final_slot(self, start: int, count: int) -> None:
+        """Clear the final-obs grid for slots about to be overwritten.
+
+        The transitions being written carry no terminal observation (yet — a
+        ``write_final`` for exactly these slots may follow the ingest); stale
+        pointers from a full ring cycle earlier must not survive."""
+        if self._final_slot is None:
+            return
+        for offset in range(count):
+            owners = self._final_owners[(start + offset) % self._cap]
+            self._final_free.extend(owners.values())
+            owners.clear()
+        n = min(count, self._cap - start)
+        self._final_slot[:, start : start + n] = -1
+        if count > n:
+            self._final_slot[:, : count - n] = -1
+
+    @torch.no_grad()
+    def write_final(self, env_ids: torch.Tensor, t_abs: int, obs_rows: torch.Tensor, critic_rows: torch.Tensor) -> None:
+        """Attach owned final rows to an already-ingested transition.
+
+        Host allocation tracks live references, not episode frequency. Device
+        tables are read by eager sampling, outside compiled gradient updates.
+        """
+        ids = torch.as_tensor(env_ids, dtype=torch.long).cpu().tolist()
+        if not ids:
+            return
+        slot = t_abs % self._cap
+        owners = self._final_owners[slot]
+        for env_id in ids:
+            previous = owners.pop(env_id, None)
+            if previous is not None:
+                self._final_free.append(previous)
+        if len(self._final_free) < len(ids):
+            self._grow_final_storage(len(ids) - len(self._final_free))
+        rows = [self._final_free.pop() for _ in ids]
+        owners.update(zip(ids, rows))
+        device_ids = torch.tensor(ids, device=self.device, dtype=torch.long)
+        row_ids = torch.tensor(rows, device=self.device, dtype=torch.long)
+        self._final_obs_table[row_ids] = obs_rows.to(self.device, torch.float)
+        self._final_critic_table[row_ids] = critic_rows.to(self.device, torch.float)
+        self._final_slot[device_ids, slot] = row_ids.to(torch.int32)
 
     def _write_span(self, slot: int, fields) -> None:
         obs, critic_obs, actions, rewards, dones, truncations = fields
@@ -150,6 +248,22 @@ class SimpleReplayBuffer(nn.Module):
                 "dones": torch.gather(self.dones, 1, ring).reshape(flat),
                 "truncations": torch.gather(self.truncations, 1, ring).reshape(flat),
             }
+            if self._final_slot is not None:
+                # Time-limit-truncated transitions bootstrap from the stored
+                # TERMINAL observation, not the successor slot's auto-reset
+                # observation: the reset state's value has nothing to do with
+                # the episode that just timed out.
+                k_idx = self._final_slot.gather(1, ring.long())
+                has_final = (k_idx >= 0) & (out["truncations"] > 0).view(n_env, batch_size)
+                k_safe = k_idx.clamp(min=0).long()
+                fin_obs = self._final_obs_table[k_safe]
+                fin_cobs = self._final_critic_table[k_safe]
+                out["next_obs"] = torch.where(
+                    has_final.unsqueeze(-1), fin_obs, out["next_obs"].view(n_env, batch_size, no)
+                ).reshape(flat, no)
+                out["next_critic_obs"] = torch.where(
+                    has_final.unsqueeze(-1), fin_cobs, out["next_critic_obs"].view(n_env, batch_size, nco)
+                ).reshape(flat, nco)
             out["effective_n_steps"] = torch.ones_like(out["dones"])
             return out
 
@@ -206,6 +320,21 @@ class SimpleReplayBuffer(nn.Module):
         )
         dones = self.dones.gather(1, final_ring).reshape(flat)
         truncations = self.truncations.gather(1, final_ring).reshape(flat)
+        if self._final_slot is not None:
+            # Same terminal-observation correction as the 1-step branch,
+            # applied at the window's final transition (the one that
+            # bootstraps when the window ends on a truncation).
+            k_idx = self._final_slot.gather(1, final_ring.long())
+            has_final = (k_idx >= 0) & (truncations > 0).view(n_env, batch_size)
+            k_safe = k_idx.clamp(min=0).long()
+            fin_obs = self._final_obs_table[k_safe]
+            fin_cobs = self._final_critic_table[k_safe]
+            next_obs = torch.where(has_final.unsqueeze(-1), fin_obs, next_obs.view(n_env, batch_size, no)).reshape(
+                flat, no
+            )
+            next_critic_obs = torch.where(
+                has_final.unsqueeze(-1), fin_cobs, next_critic_obs.view(n_env, batch_size, nco)
+            ).reshape(flat, nco)
 
         return {
             "obs": obs,

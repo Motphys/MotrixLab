@@ -44,8 +44,13 @@ from motrix_rl_builtin.fastsac.async_impl.numa import spawn_placement
 from motrix_rl_builtin.fastsac.async_impl.panels import BootPanel
 from motrix_rl_builtin.fastsac.async_impl.stats import aggregate_collector_stats, nest_timing_path, timing_mean
 from motrix_rl_builtin.fastsac.async_impl.topology import resolve_trainer_topology
-from motrix_rl_builtin.fastsac.async_impl.transport import Control, RingCursors, SharedTransitionRing
+from motrix_rl_builtin.fastsac.async_impl.transport import (
+    Control,
+    RingCursors,
+    SharedTransitionRing,
+)
 from motrix_rl_builtin.fastsac.async_impl.transport.handshake import StartupHandshake
+from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsStorage
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import WeightChannelShared
 from motrix_rl_builtin.fastsac.async_impl.worker import (
     actor_param_numel,
@@ -143,6 +148,7 @@ class Trainer(TrainerBase):
         # child rebuilds its own env because env objects are not picklable across spawn.
         probe = self._make_env(1, render=None, device=torch.device("cpu"))
         obs_dim, critic_obs_dim, act_dim, action_scale, action_bias = self._dims(probe)
+        max_episode_steps = probe.max_episode_steps
         probe.close()
         dims = (obs_dim, critic_obs_dim, act_dim)
 
@@ -205,11 +211,24 @@ class Trainer(TrainerBase):
         # actually uses (topology is the single source of truth), not the
         # host inventory.
         annotate_run(self._context.run_dir, system=capture_system_info(topology=topology))
+        final_obs_enabled = max_episode_steps is not None and num_collectors == 1
+        final_stores: list[FinalObsStorage] | None = (
+            [FinalObsStorage(async_options.ring_capacity, shard, obs_dim, critic_obs_dim) for shard in env_shards]
+            if final_obs_enabled
+            else None
+        )
         rings: list[SharedTransitionRing | RingCursors] = [
             RingCursors()
             if ipc
-            else SharedTransitionRing(async_options.ring_capacity, shard, obs_dim, critic_obs_dim, act_dim)
-            for ipc, shard in zip(ring_ipc, env_shards)
+            else SharedTransitionRing(
+                async_options.ring_capacity,
+                shard,
+                obs_dim,
+                critic_obs_dim,
+                act_dim,
+                final_obs_store=final_stores[i] if final_stores is not None else None,
+            )
+            for i, (ipc, shard) in enumerate(zip(ring_ipc, env_shards))
         ]
         weights = [WeightChannelShared(obs_dim=obs_dim) for _ in range(num_collectors)]
         control = Control(num_collectors)
@@ -326,6 +345,11 @@ class Trainer(TrainerBase):
                     ],
                     "learner_cpus": topology.learners[rank].cpus if learner_numa_nodes else None,
                     "learner_numa_node": learner_numa_nodes[rank] if learner_numa_nodes else None,
+                    "final_stores": (
+                        final_stores[rank * per_learner : (rank + 1) * per_learner]
+                        if final_stores is not None
+                        else None
+                    ),
                 },
                 name="fastsac-async-learner" if num_learners == 1 else f"fastsac-async-learner-{rank}",
             )
@@ -356,6 +380,7 @@ class Trainer(TrainerBase):
                     "collector_device": str(topology.collectors[i].device),
                     "run_dir": str(self._context.run_dir),
                     "handshake": handshake,
+                    "final_store": final_stores[i] if final_stores is not None else None,
                 },
                 name=f"fastsac-async-collector-{i}",
             )
@@ -824,7 +849,7 @@ class Trainer(TrainerBase):
         try:
             while True:
                 actions = agent.act(obs, deterministic=True)
-                obs, _, _, _, _ = env.step(actions)
+                obs = env.step(actions).obs
                 if env.render() is False:
                     break
         finally:

@@ -140,6 +140,17 @@ host 环下 learner 的 drain 承担全部搬运：ring→pinned 的 CPU memcpy 
 
 **语义一致性**：collector 只是把同步版 collect 相位原样搬到另一进程，transition 的构造代码相同——调用顺序、dtype（dones/truncations 用 long）、auto-reset 后的 next_obs 语义与同步版逐字节一致。这是「算法未变、只变执行拓扑」的基础。
 
+#### 终态观测 payload
+
+单 async collector 且 Env 声明 episode horizon 时，trainer 置 `final_obs_bootstrap=True`：据此创建稀疏行区、启用 ring payload，并让 replay 在构造时建立终态行表（bool 本身不参与容量推导）。Env 快照契约见 [ArrayEnv 终态观测](./array-env-final-observation.md)。普通 next observation 由 successor slot 推导，截断 transition 使用紧凑的 `FinalObsPayload(env_ids, obs, critic_obs)` 覆盖 bootstrap 观测。
+
+- `FinalObsStorage` 是整条 ring 共用的稀疏共享行区（2*num_envs 行），slot 记录起点、行数及绝对行尾。主字段与 payload 完整写入后一起发布，消费确认后一起回收；CUDA IPC 的确认由完成事件控制。容量只影响背压，不依赖截断间隔。
+- 主 ring 满时 collector 不推进 Env；完成 step 后若稀疏区满，保存一个 owned pending step，只重试发布。成功后才更新当前观测、进度和统计。
+- Learner 在释放 slot 前复制终态行，并通过 replay 的 `extend_batch(..., final_payloads=...)` 一起 ingest，warmup 和不训练的循环也执行。设备采样等待全部 ingest 写入。
+- Replay 以存活 transition 引用管理空闲行，覆盖 slot 时回收；行表按需几何增长，最多 n_env*(buffer_size+1) 行，不缩短 replay 窗口或覆盖有效引用。sample 在 compiled 网络更新之外执行；罕见 CUDA 表增长先同步 outstanding work。
+
+内存预算：终态观测额外 backing 为 live_rows*(obs_dim+critic_obs_dim)*4 bytes。连续每步截断会达到 dense 最坏规模；正常稀疏场景只分配所需行。同步及多 collector 的终态传输尚未接入。
+
 ### 4.2 WeightSnapshot — seqlock 双缓冲（learner → collector）
 
 collector 前向只需两样东西，打包成一个快照：**actor 权重**（展平成单个 float 向量）与 **obs_normalizer 统计量**（`_mean` / `_std` / `_var` / `count`）。不含 qnet、critic_obs_normalizer、optimizer，故体积小。

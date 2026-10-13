@@ -22,6 +22,7 @@ from motrix_rl_builtin.fastsac.async_impl.transport import (
     RingCursors,
     SharedTransitionRing,
 )
+from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsPayload, FinalObsStorage
 from motrix_rl_builtin.fastsac.buffer import SimpleReplayBuffer
 
 CAPACITY, N_ENV, OBS, CRI, ACT = 5, 3, 4, 6, 2
@@ -109,6 +110,69 @@ def test_ipc_ring_cursor_publishes_only_after_event():
 
 
 @cuda_only
+def test_ipc_ring_issued_counts_precede_event_proven_counts_across_wraps(monkeypatch):
+    """Control event visibility explicitly, never assume a copy is still in flight."""
+    event_type = torch.cuda.Event
+    events = []
+
+    class ControlledEvent:
+        def __init__(self):
+            self.event = event_type()
+            self.released = False
+            events.append(self)
+
+        def record(self, stream):
+            self.released = False
+            self.event.record(stream)
+
+        def query(self):
+            return self.released and self.event.query()
+
+        def synchronize(self):
+            self.event.synchronize()
+            self.released = True
+
+    # Real CUDA events still order H2D/D2D copies, but the ring cannot observe
+    # completion until the test releases them. No sleeps or race-prone queries.
+    monkeypatch.setattr(torch.cuda, "Event", ControlledEvent)
+    owner, receiver = _owner_receiver()
+    assert owner.write_issued_count == owner.write_completed_count == 0
+    assert receiver.read_issued_count == receiver.read_completed_count == 0
+
+    for t in range(CAPACITY * 2 + 1):
+        fields = _batch(t, seed=13)
+        assert owner.push(*fields)
+        assert owner.write_issued_count == t + 1
+        assert owner.write_completed_count == owner.cursors.write_completed_count == t
+        assert receiver.read_span() == (0, ())
+        assert not receiver.has_next()
+
+        for event in events:
+            event.synchronize()
+        assert owner.write_completed_count == t + 1
+        assert receiver.has_next()
+        count, views = receiver.read_span()
+        assert count == 1
+        assert receiver.read_issued_count == receiver.read_completed_count == t
+        copied = tuple(view.clone() for view in views)
+        receiver.commit_reads(count)
+        assert receiver.read_issued_count == t + 1
+        assert receiver.read_completed_count == receiver.cursors.read_completed_count == t
+        # The issued read position skips the consumed slot even while its
+        # acknowledgement is withheld and the producer still sees it occupied.
+        assert receiver.read_span() == (0, ())
+        assert not receiver.has_next()
+        assert owner.size() == 1
+
+        for event in events:
+            event.synchronize()
+        assert receiver.read_completed_count == t + 1
+        assert owner.size() == 0
+        for actual, expected in zip(copied, fields):
+            torch.testing.assert_close(actual[0].cpu().to(expected.dtype), expected)
+
+
+@cuda_only
 def test_ipc_ring_backpressure_bounds_in_flight():
     owner, receiver = _owner_receiver()
     for t in range(CAPACITY):
@@ -120,8 +184,70 @@ def test_ipc_ring_backpressure_bounds_in_flight():
         k, _ = receiver.read_span()
         receiver.commit_reads(k)
     torch.cuda.synchronize()
+    # The final commit's event may have completed only now; the shared read
+    # cursor advances lazily on the consumer's next flush, so poll once more
+    # before the producer's is_full() is meaningful.
+    receiver.has_next()
     assert not owner.is_full()
     assert owner.push(*_batch(CAPACITY, seed=3))
+
+
+@cuda_only
+def test_ipc_sparse_pre_step_gate_waits_for_completed_read_acknowledgement(monkeypatch):
+    event_type = torch.cuda.Event
+    events = []
+
+    class ControlledEvent:
+        def __init__(self):
+            self.event = event_type()
+            self.released = False
+            events.append(self)
+
+        def record(self, stream):
+            self.released = False
+            self.event.record(stream)
+
+        def query(self):
+            return self.released and self.event.query()
+
+        def synchronize(self):
+            self.event.synchronize()
+            self.released = True
+
+    monkeypatch.setattr(torch.cuda, "Event", ControlledEvent)
+    capacity = 16
+    cursors = RingCursors()
+    slots = torch.zeros(capacity, N_ENV, FEAT, device="cuda")
+    store = FinalObsStorage(capacity, N_ENV, OBS, CRI)
+    owner = IpcTransitionRing(cursors, slots, capacity, N_ENV, OBS, CRI, ACT, final_obs_store=store)
+    receiver = IpcTransitionRing(cursors, slots, capacity, N_ENV, OBS, CRI, ACT, final_obs_store=store)
+    # Leave some sparse room, but not enough for a worst-case full-env payload.
+    published = store.capacity - N_ENV + 1
+    for tag in range(published):
+        assert not owner.is_full()
+        payload = FinalObsPayload(torch.tensor([0]), torch.full((1, OBS), float(tag)), torch.zeros(1, CRI))
+        assert owner.push(*_batch(tag), final_obs=payload)
+    assert owner.size() < capacity
+    assert owner.is_full()
+    for event in events:
+        event.synchronize()
+    assert owner.write_completed_count == published
+    count, _ = receiver.read_span()
+    assert count == published
+    snapshots = receiver.read_final_span(count)
+    receiver.commit_reads(1)
+    assert receiver.read_issued_count == 1
+    assert receiver.read_completed_count == 0
+    assert owner.is_full()  # issued GPU ingestion is not a row-release proof
+    for event in events:
+        event.synchronize()
+    assert receiver.read_completed_count == 1
+    assert not owner.is_full()
+    payload = FinalObsPayload(torch.arange(N_ENV), torch.full((N_ENV, OBS), 99.0), torch.zeros(N_ENV, CRI))
+    assert owner.push(*_batch(published), final_obs=payload)
+    torch.testing.assert_close(snapshots[0].obs, torch.zeros(1, OBS))
+    # Do not release CUDA storage with the last H2D event still in flight.
+    torch.cuda.synchronize()
 
 
 @cuda_only

@@ -50,6 +50,7 @@ from motrix_rl_builtin.fastsac.async_impl.transport import (
     SharedTransitionRing,
 )
 from motrix_rl_builtin.fastsac.async_impl.transport.handshake import StartupHandshake
+from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsStorage
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import (
     GpuIpcWeightSender,
     HostWeightSender,
@@ -124,6 +125,7 @@ def build_agent(
     action_bias: torch.Tensor | None,
     writer: SummaryWriter | None = None,
     world_size: int = 1,
+    final_obs_bootstrap: bool = False,
 ) -> FastSacAgent:
     """Build the learner's ``FastSacAgent``.
 
@@ -131,6 +133,8 @@ def build_agent(
     ``action_bias`` map the tanh-squashed policy output to the env action
     range (``None`` = identity). ``writer`` is the parent-created
     TensorBoard writer; ``world_size`` is the DDP learner-rank count.
+    ``final_obs_bootstrap`` enables the replay buffer's terminal-observation
+    storage for time-limit-truncated bootstrapping.
     """
     obs_dim, critic_obs_dim, act_dim = dims
     return FastSacAgent(
@@ -144,6 +148,7 @@ def build_agent(
         action_bias=action_bias,
         writer=writer,
         world_size=world_size,
+        final_obs_bootstrap=final_obs_bootstrap,
     )
 
 
@@ -331,6 +336,7 @@ def run_collector_process(
     numa_node: int | None = None,
     cpus: list[int] | None = None,
     collector_device: str | None = None,
+    final_store: FinalObsStorage | None = None,
 ) -> None:
     role = f"collector[{collector_id}]"
     _install_graceful_sigint(control)
@@ -369,7 +375,16 @@ def run_collector_process(
         if isinstance(ring, RingCursors):
             if ring_slots is None:
                 raise RuntimeError("the learner shipped no transition-ring slots for the IPC ring handshake")
-            ring = IpcTransitionRing(ring, ring_slots, opts.ring_capacity, num_envs, obs_dim, critic_obs_dim, act_dim)
+            ring = IpcTransitionRing(
+                ring,
+                ring_slots,
+                opts.ring_capacity,
+                num_envs,
+                obs_dim,
+                critic_obs_dim,
+                act_dim,
+                final_obs_store=final_store,
+            )
         collector = Collector(
             env,
             cfg,
@@ -464,9 +479,13 @@ def run_learner_process(
     num_learners: int = 1,
     rendezvous_file: str | None = None,
     learner_device: str | None = None,
+    final_stores: list[FinalObsStorage] | None = None,
 ) -> None:
     """One learner process; ``rank 0`` additionally owns stats aggregation,
     logging and checkpointing.
+
+    ``final_stores`` is either absent for all owned collectors or contains one
+    store per owned ring; final-observation support is uniform across collectors.
 
     Multi-learner (DDP) specifics: ``rings`` is this rank's slice (the parent
     partitions by collector ownership) while ``all_rings`` is the full list
@@ -526,6 +545,7 @@ def run_learner_process(
             action_scale,
             action_bias,
             world_size=num_learners,
+            final_obs_bootstrap=final_stores is not None,
         )
         if resume_from:
             ckpt = torch.load(resume_from, map_location=device, weights_only=False)
@@ -586,6 +606,7 @@ def run_learner_process(
                     obs_dim,
                     critic_obs_dim,
                     act_dim,
+                    final_obs_store=final_stores[j] if final_stores is not None else None,
                 )
             handshake.ship_ring_slots(rank * per_learner + j, ring_slots)
 
@@ -610,7 +631,7 @@ def run_learner_process(
         start_anchored = False
         last_log_time = start_time
         last_log_step = resume_step
-        last_metrics = None
+        train_started = False
         # First payload goes out immediately (step 0) so the parent's panel
         # quiescence gate opens as soon as collectors take their first steps,
         # instead of after a silent full log window; resume keeps window
@@ -664,9 +685,9 @@ def run_learner_process(
             # One decision path for both topologies: updates are gated on the
             # global progress basis (identical on every DDP rank; the single
             # learner's own position when num_collectors == 1).
-            metrics = learner.maybe_train(step)
-            if metrics is not None:
-                last_metrics = metrics
+            trained = learner.maybe_train(step)
+            if trained:
+                train_started = True
                 elapsed_learn_s = time.perf_counter() - t_l
                 t_learn_win += elapsed_learn_s
                 learner_train_samples_ms.append(elapsed_learn_s * 1000.0)
@@ -693,7 +714,14 @@ def run_learner_process(
                 now = time.time()
                 sps = (step - last_log_step) * num_envs / max(now - last_log_time, 1e-6)
                 warming = step < agent.cfg.learning_starts
-                metrics_log = {k: float(v) for k, v in last_metrics.items()} if (last_metrics and not warming) else None
+                metrics_log = None
+                if train_started and not warming:
+                    # Window-aggregated diagnostics only (means + extremes
+                    # since the last log window): single-update events between
+                    # log points stay visible, mirroring holosoma's averaged
+                    # meter logging. train_started just gates "training
+                    # started".
+                    metrics_log = learner.agent.window_metrics.stats_and_reset()
                 learn_pct = 100.0 * t_learn_win / max(now - last_log_time, 1e-9)
                 learner_items: dict[str, Any] = {}
                 if learner_drain_samples_ms:

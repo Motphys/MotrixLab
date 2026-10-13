@@ -24,7 +24,11 @@ import torch
 import torch.distributed as dist
 
 from motrix_rl_builtin.fastsac.agent import FastSacAgent
-from motrix_rl_builtin.fastsac.async_impl.transport import Control, IpcTransitionRing, SharedTransitionRing
+from motrix_rl_builtin.fastsac.async_impl.transport import (
+    Control,
+    IpcTransitionRing,
+    SharedTransitionRing,
+)
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import WeightSender
 from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
 from motrix_rl_builtin.fastsac.config import FastSacCfg
@@ -124,13 +128,16 @@ class DrainStaging:
         """Join in-flight copies before the buffers get overwritten."""
         self.stream.synchronize()
 
-    def stage(self, views) -> None:
+    def stage(self, views, final_payloads=None) -> None:
         """Copy one host run into the pinned buffers and issue the H2D ingest."""
         k = views[0].shape[0]
         for stage, view in zip(self.buffers, views):
             stage[:k].copy_(view)  # ring -> pinned (plain CPU memcpy)
         with torch.cuda.stream(self.stream):
-            self.rb.extend_batch(*(stage[:k] for stage in self.buffers))
+            if final_payloads is None:
+                self.rb.extend_batch(*(stage[:k] for stage in self.buffers))
+            else:
+                self.rb.extend_batch(*(stage[:k] for stage in self.buffers), final_payloads=final_payloads)
         self.pending = True
 
     def mark_in_flight(self) -> None:
@@ -256,7 +263,7 @@ class Learner:
 
     def _drain_rings(self, budget: int) -> int:
         for ring_id, ring in enumerate(self.rings):
-            base = ring.read_idx
+            base = ring.read_issued_count
             avail = min(budget, ring.size())
             if avail <= 0:
                 continue
@@ -288,7 +295,7 @@ class Learner:
             oldest,
             newest,
             count,
-            [(r.read_idx, r.write_idx) for r in self.rings],
+            [(r.read_completed_count, r.write_completed_count) for r in self.rings],
         )
 
     def _flush_complete_generations(self) -> int:
@@ -308,14 +315,22 @@ class Learner:
         # runs arrive env-major per generation (n_env, dim); the buffer write
         # path is slot-major (k, n_env, dim), so stack generations first.
         stacked = tuple(torch.stack(column, dim=0) for column in zip(*runs))
-        ingested = self._ingest_runs((stacked,))
+        # Payload belongs to the same unread slots, not a separately stamped
+        # event stream. It is copied to owned rows before acknowledging slots.
+        final_payloads = None
+        if len(self.rings) == 1 and self.rings[0].final_obs_store is not None:
+            final_payloads = self.rings[0].read_final_span(len(generations))
+        ingested = self._ingest_runs((stacked,), final_payloads=final_payloads)
+        if final_payloads is not None:
+            events = sum(p.env_ids.numel() for p in final_payloads if p is not None)
+            self.agent.window_metrics.add("final_obs_events", torch.tensor(float(events), device=self.agent.device))
         for ring in self.rings:
             ring.commit_reads(ingested)
         if self._staging is not None:
             self._staging.mark_in_flight()
         return ingested
 
-    def _ingest_runs(self, runs) -> int:
+    def _ingest_runs(self, runs, final_payloads=None) -> int:
         """Ingest slot-major device runs ``(k, n_env, dim)``; caller commits reads.
 
         Every shard was lifted to the ingest device before assembly, so each
@@ -327,11 +342,14 @@ class Learner:
         """
         if self._staging is not None:
             # pure-host rank: host run -> pinned buffers -> async H2D extend
-            self._staging.stage(runs[0])
+            self._staging.stage(runs[0], final_payloads=final_payloads)
             return runs[0][0].shape[0]
         k = 0
         for views in runs:
-            self.agent.rb.extend_batch(*views)
+            if final_payloads is None:
+                self.agent.rb.extend_batch(*views)
+            else:
+                self.agent.rb.extend_batch(*views, final_payloads=final_payloads)
             k += views[0].shape[0]
         return k
 
@@ -341,7 +359,7 @@ class Learner:
         if self._staging is not None:
             self._staging.finish()
 
-    def maybe_train(self, gstep: int) -> dict | None:
+    def maybe_train(self, gstep: int) -> bool:
         """Run ratio-governed updates when the global progress basis advanced.
 
         ``gstep`` is the trainer's full-batch-equivalent progress
@@ -380,7 +398,7 @@ class Learner:
             # cumulative delta grows, so nothing is lost on the next call.
             n = 0
         if n <= 0:
-            return None
+            return False
         # Sampling reads replay-buffer slots the copy stream may still be
         # filling (staged async H2D ingest); make the compute stream wait for
         # the in-flight copies first, mirroring the pre-staging event wait.
@@ -391,17 +409,17 @@ class Learner:
         # ``num_updates``-sized updates (measured 15x more publishes than one
         # huge update call — collectors act on much fresher weights).
         base = self.agent.cfg.num_updates
-        metrics = None
+        trained = False
         remaining = n
         while remaining > 0 and not self.control.stop:
-            metrics = self.agent.update(min(base, remaining))
+            self.agent.update(min(base, remaining))
+            trained = True
             remaining -= base
             self._last_publish_ms = 0.0
-            if metrics is not None:
-                started = time.perf_counter()
-                self.publish_if_due()
-                self._last_publish_ms = (time.perf_counter() - started) * 1000.0
-        return metrics
+            started = time.perf_counter()
+            self.publish_if_due()
+            self._last_publish_ms = (time.perf_counter() - started) * 1000.0
+        return trained
 
     # ------------------------------------------------------------------ publish
     def _sync_normalizer_stats(self) -> None:
