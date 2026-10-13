@@ -20,6 +20,7 @@ yaw_velocity: 0.0
 analysis_dir: null
 analysis_env_index: 0
 metrics_path: null
+no_render: false
 
 hydra:
   output_subdir: null

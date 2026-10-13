@@ -186,7 +186,7 @@ python scripts/play_walk.py env=go2-walk-flat policy=<checkpoint>
 - 增加平衡姿态、站立保持、支撑足滑移、关节加速度和动作二阶平滑奖励。
 - 调整速度跟踪与稳定性奖励权重：线速度跟踪为 `2.0`，角速度跟踪为 `0.75`，并加强姿态、高度、动作和足端约束。
 - 固定直行评估的 `for_play()` 配置为 `[vx, vy, yaw]=[0.5, 0, 0]`，关闭播放噪声和命令重采样。
-- `play_walk.py` 每个控制步重新写入固定命令；schema v2 的紧凑跟踪字段明确使用 `[vx, vy, yaw_rate]`，并额外输出线速度/角速度、yaw rate 变化 RMS、平面正交漂移、终止次数、姿态 RMS、高度波动和分项奖励。
+- `play_walk.py` 每个控制步重新写入固定命令；schema v2 的紧凑跟踪字段明确使用 `[vx, vy, yaw_rate]`。垂向线速度 `vz` 不会被删除，保存在 `mean_linear_velocity[2]`、`linear_velocity_rmse[2]`，并提供 `vz_rms`、`vz_p95_abs`、`vz_std` 和 `vz_delta_rms`；yaw 则单独提供 `yaw_rate_rmse`、`yaw_rate_p95_error` 和 `yaw_rate_delta_rms`。
 
 修改版新增或扩展的代码位置：
 

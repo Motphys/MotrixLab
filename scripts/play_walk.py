@@ -46,6 +46,7 @@ class WalkPlayConfig(PlayConfig):
     analysis_dir: str | None = None
     analysis_env_index: int = 0
     metrics_path: str | None = None
+    no_render: bool = False
 
 
 ConfigStore.instance().store(name="play_walk_schema", node=WalkPlayConfig)
@@ -78,6 +79,7 @@ def _compute_motion_metrics(
     command: np.ndarray,
     *,
     yaw_rate_deltas: np.ndarray,
+    vz_deltas: np.ndarray,
     orientation_samples: list[float],
     height_samples: list[float],
     termination_count: int,
@@ -97,6 +99,12 @@ def _compute_motion_metrics(
     # used [vx, vy, vz] while subtracting a yaw command from vz.
     command_velocity = np.column_stack((velocities[:, 0], velocities[:, 1], gyros[:, 2]))
     command_error = command_velocity - command64
+
+    # ``vz`` is deliberately reported independently from yaw.  It is the
+    # vertical linear velocity (m/s), whose target is always zero for the
+    # flat-walk commands.  The delta metric is an optional high-frequency
+    # indicator (m/s^2) for up/down bouncing.
+    vz_error = linear_error[:, 2]
 
     command_xy = command64[:2]
     command_xy_norm = float(np.linalg.norm(command_xy))
@@ -118,6 +126,13 @@ def _compute_motion_metrics(
         "mean_linear_velocity": np.mean(velocities, axis=0).tolist(),
         "linear_velocity_rmse": np.sqrt(np.mean(np.square(linear_error), axis=0)).tolist(),
         "linear_velocity_p95_error": np.percentile(np.abs(linear_error), 95, axis=0).tolist(),
+        "vz_mean": float(np.mean(velocities[:, 2])),
+        "vz_error_mean": float(np.mean(vz_error)),
+        "vz_rms": float(np.sqrt(np.mean(np.square(vz_error)))),
+        "vz_p95_abs": float(np.percentile(np.abs(vz_error), 95)),
+        "vz_std": float(np.std(velocities[:, 2])),
+        "vz_delta_rms": float(np.sqrt(np.mean(np.square(vz_deltas)))) if vz_deltas.size else 0.0,
+        "vz_delta_samples": int(vz_deltas.size),
         "mean_angular_velocity": np.mean(gyros, axis=0).tolist(),
         "angular_velocity_rmse": np.sqrt(np.mean(np.square(angular_error), axis=0)).tolist(),
         "angular_velocity_p95_error": np.percentile(np.abs(angular_error), 95, axis=0).tolist(),
@@ -142,6 +157,88 @@ def _compute_motion_metrics(
         ),
         "base_height_std": float(np.std(height_samples)) if height_samples else 0.0,
         "samples": int(len(velocities)),
+    }
+
+
+def _compute_trajectory_metrics(
+    base_positions: np.ndarray,
+    yaw_samples: np.ndarray,
+    command: np.ndarray,
+    segment_ids: np.ndarray | None = None,
+) -> dict[str, float | int | str | None]:
+    """Compute reset-aware world-frame drift for a nominal straight command."""
+
+    if len(base_positions) < 2 or len(yaw_samples) < 2:
+        return {"trajectory_metrics_available": 0}
+    base_positions = np.asarray(base_positions, dtype=np.float64)
+    yaw_samples = np.asarray(yaw_samples, dtype=np.float64)
+    if segment_ids is None:
+        segment_ids = np.zeros(len(base_positions), dtype=np.int64)
+    else:
+        segment_ids = np.asarray(segment_ids, dtype=np.int64)
+    if len(segment_ids) != len(base_positions):
+        raise ValueError("segment_ids must match base_positions")
+
+    yaw_drift_parts: list[np.ndarray] = []
+    cross_track_parts: list[np.ndarray] = []
+    segment_final_yaw: list[float] = []
+    segment_final_cross_track: list[float] = []
+    segment_along_track: list[float] = []
+    initial_yaws: list[float] = []
+    for segment_id in np.unique(segment_ids):
+        selected = segment_ids == segment_id
+        if np.count_nonzero(selected) < 2:
+            continue
+        positions = base_positions[selected]
+        yaw = np.unwrap(yaw_samples[selected])
+        initial_yaw = float(yaw[0])
+        initial_yaws.append(initial_yaw)
+        yaw_drift = yaw - initial_yaw
+        displacement = positions[:, :2] - positions[0, :2]
+        forward = np.array([np.cos(initial_yaw), np.sin(initial_yaw)], dtype=np.float64)
+        lateral = np.array([-np.sin(initial_yaw), np.cos(initial_yaw)], dtype=np.float64)
+        cross_track = displacement @ lateral
+        along_track = displacement @ forward
+        yaw_drift_parts.append(yaw_drift)
+        cross_track_parts.append(cross_track)
+        segment_final_yaw.append(float(yaw_drift[-1]))
+        segment_final_cross_track.append(float(cross_track[-1]))
+        segment_along_track.append(float(along_track[-1]))
+
+    if not yaw_drift_parts:
+        return {"trajectory_metrics_available": 0}
+    yaw_drift = np.concatenate(yaw_drift_parts)
+    cross_track = np.concatenate(cross_track_parts)
+    # Reverse commands produce negative signed along-track displacement, but
+    # travelled distance must remain positive for drift-per-metre metrics.
+    total_along_track = float(np.sum(np.abs(segment_along_track)))
+    total_abs_final_cross_track = float(np.sum(np.abs(segment_final_cross_track)))
+    # These accumulated metrics are meaningful for straight commands only.
+    if abs(float(command[2])) > 1e-6:
+        mode = "nonzero_yaw_command"
+    else:
+        mode = "straight"
+    return {
+        "trajectory_metrics_available": 1,
+        "trajectory_command_mode": mode,
+        "initial_yaw_rad": initial_yaws[0],
+        "final_yaw_drift_rad": segment_final_yaw[-1],
+        "max_abs_yaw_drift_rad": float(np.max(np.abs(yaw_drift))),
+        "yaw_drift_rms_rad": float(np.sqrt(np.mean(np.square(yaw_drift)))),
+        "final_cross_track_error_m": segment_final_cross_track[-1],
+        "max_abs_cross_track_error_m": float(np.max(np.abs(cross_track))),
+        "cross_track_error_rms_m": float(np.sqrt(np.mean(np.square(cross_track)))),
+        "final_along_track_distance_m": segment_along_track[-1],
+        "trajectory_segment_count": int(len(segment_final_cross_track)),
+        "mean_abs_segment_final_yaw_drift_rad": float(np.mean(np.abs(segment_final_yaw))),
+        "mean_abs_segment_final_cross_track_error_m": float(
+            np.mean(np.abs(segment_final_cross_track))
+        ),
+        "total_segment_along_track_distance_m": total_along_track,
+        "cross_track_error_per_meter": (
+            total_abs_final_cross_track / total_along_track if total_along_track > 1e-8 else 0.0
+        ),
+        "trajectory_samples": int(len(base_positions)),
     }
 
 
@@ -371,7 +468,7 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
 
     target = _resolve_play_target(cfg)
     render_cfg = replace(cfg, record_seconds=cfg.duration_seconds)
-    render = _play_render_config(target, render_cfg)
+    render = None if cfg.no_render else _play_render_config(target, render_cfg)
     handle = runner.create_run_handle(
         target.run,
         cfg_override=cfg.rl,
@@ -425,9 +522,15 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
     velocity_samples: list[np.ndarray] = []
     gyro_samples: list[np.ndarray] = []
     yaw_rate_delta_samples: list[float] = []
+    vz_delta_samples: list[float] = []
     previous_eval_gyro: np.ndarray | None = None
+    previous_eval_vz: float | None = None
     orientation_samples: list[float] = []
     height_samples: list[float] = []
+    base_position_samples: list[np.ndarray] = []
+    yaw_samples: list[float] = []
+    trajectory_segment_ids: list[int] = []
+    trajectory_segment_id = 0
     reward_term_samples: dict[str, list[float]] = {}
     # Keep rear-compatible fields while also exposing all four feet so a
     # rear-leg regularizer cannot hide a compensating front-leg excursion.
@@ -459,16 +562,30 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
             elapsed = step_index * ctrl_dt
             if elapsed >= cfg.warmup_seconds and not done:
                 current_gyro = np.asarray(env.get_gyro()[cfg.analysis_env_index], dtype=np.float32).copy()
-                velocity_samples.append(
-                    np.asarray(env.get_local_linvel()[cfg.analysis_env_index], dtype=np.float32).copy()
-                )
+                current_velocity = np.asarray(
+                    env.get_local_linvel()[cfg.analysis_env_index], dtype=np.float32
+                ).copy()
+                velocity_samples.append(current_velocity)
                 gyro_samples.append(current_gyro)
                 if previous_eval_gyro is not None:
                     yaw_rate_delta_samples.append(float((current_gyro[2] - previous_eval_gyro[2]) / ctrl_dt))
                 previous_eval_gyro = current_gyro
+                current_vz = float(current_velocity[2])
+                if previous_eval_vz is not None:
+                    vz_delta_samples.append((current_vz - previous_eval_vz) / ctrl_dt)
+                previous_eval_vz = current_vz
                 gravity = np.asarray(env.get_gravity()[cfg.analysis_env_index], dtype=np.float32)
                 orientation_samples.append(float(np.linalg.norm(gravity[:2])))
                 height_samples.append(float(env.sim_data["base_pos"][cfg.analysis_env_index, 2]))
+                base_position_samples.append(
+                    np.asarray(env.sim_data["base_pos"][cfg.analysis_env_index, :3], dtype=np.float64).copy()
+                )
+                root_quat = np.asarray(env.sim_data["root_quat"][cfg.analysis_env_index], dtype=np.float64)
+                if root_quat.shape[-1] != 4:
+                    raise ValueError(f"Expected root_quat shape (..., 4), got {root_quat.shape}")
+                qx, qy, qz, qw = root_quat[:4]
+                yaw_samples.append(float(np.arctan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))))
+                trajectory_segment_ids.append(trajectory_segment_id)
                 for name, values in getattr(env._state, "reward_terms", {}).items():
                     reward_term_samples.setdefault(name, []).append(float(values[cfg.analysis_env_index]))
                 current_feet_pos = current_step_feet_pos
@@ -483,6 +600,9 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
                 # Do not measure an angular-rate jump across warmup, skipped
                 # samples, or an auto-reset boundary.
                 previous_eval_gyro = None
+                previous_eval_vz = None
+                if done:
+                    trajectory_segment_id += 1
             # Advance every control step, including warmup and reset steps, so
             # the first measured lateral speed is a true one-step difference.
             previous_eval_feet_pos = current_step_feet_pos
@@ -502,7 +622,7 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
             if vec_env.render() is False:
                 break
 
-            if not recording:
+            if not recording and not cfg.no_render:
                 elapsed = time.monotonic() - frame_started
                 if elapsed < 1.0 / fps:
                     time.sleep(1.0 / fps - elapsed)
@@ -522,6 +642,7 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
                 gyros,
                 command,
                 yaw_rate_deltas=np.asarray(yaw_rate_delta_samples, dtype=np.float64),
+                vz_deltas=np.asarray(vz_delta_samples, dtype=np.float64),
                 orientation_samples=orientation_samples,
                 height_samples=height_samples,
                 termination_count=fall_count,
@@ -530,6 +651,12 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
             )
             metrics.update(
                 {
+                    **_compute_trajectory_metrics(
+                        np.asarray(base_position_samples, dtype=np.float64),
+                        np.asarray(yaw_samples, dtype=np.float64),
+                        command,
+                        np.asarray(trajectory_segment_ids, dtype=np.int64),
+                    ),
                     "reward_terms": {
                         name: float(np.mean(values)) for name, values in reward_term_samples.items()
                     },

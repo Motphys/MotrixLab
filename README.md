@@ -183,7 +183,7 @@ Changes from the first version:
 - Adds flat-orientation, stand-still, support-foot sliding, joint-acceleration, and second-order action-smoothness terms.
 - Reweights tracking and stability terms, including linear-velocity tracking `2.0` and angular-velocity tracking `0.75`.
 - Uses a deterministic play configuration with command `[0.5, 0, 0]`, disabled observation noise, and no command resampling.
-- Extends `play_walk.py` to repin the command every control step and write schema-v2 command tracking on `[vx, vy, yaw_rate]`, explicit linear/angular velocity metrics, yaw-rate change RMS, planar orthogonal drift, termination counts, orientation RMS, height variation, and reward-term metrics.
+- Extends `play_walk.py` to repin the command every control step and write schema-v2 command tracking on `[vx, vy, yaw_rate]`. Vertical linear velocity `vz` remains available in the linear-velocity fields and has dedicated `vz_rms`, `vz_p95_abs`, `vz_std`, and `vz_delta_rms` metrics; yaw is reported separately through `yaw_rate_rmse`, `yaw_rate_p95_error`, and `yaw_rate_delta_rms`.
 
 | Updated component | File |
 | --- | --- |

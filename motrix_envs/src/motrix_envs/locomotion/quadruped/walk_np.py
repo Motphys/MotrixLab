@@ -26,6 +26,7 @@ from motrix_env_core.sim import (
     GeomFrictionQuery,
     LinkCenterOfMassQuery,
     LinkMassQuery,
+    LinkQuaternionQuery,
     LinkPositionQuery,
     SensorValuesQuery,
 )
@@ -60,6 +61,7 @@ def _sim_data_queries(cfg: QuadrupedWalkEnvCfg):
         "gyro": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.gyro),)),
         "upvector": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.upvector),)),
         "base_pos": LinkPositionQuery(link=base_link_name),
+        "root_quat": LinkQuaternionQuery(link=base_link_name),
         "front_left_contact": SensorValuesQuery(sensors=("front_left_contact",)),
         "front_right_contact": SensorValuesQuery(sensors=("front_right_contact",)),
         "rear_left_contact": SensorValuesQuery(sensors=("rear_left_contact",)),

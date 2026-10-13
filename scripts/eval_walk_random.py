@@ -101,7 +101,9 @@ def _run(cfg: RandomWalkEvalConfig) -> None:
     warmup_steps = round(cfg.warmup_seconds / ctrl_dt)
     velocities, gyros, commands, orientations, heights = [], [], [], [], []
     yaw_rate_deltas = []
+    vz_deltas = []
     previous_eval_gyro = None
+    previous_eval_vz = None
     fall_count = 0
     command_count = 1
     started = time.monotonic()
@@ -123,12 +125,17 @@ def _run(cfg: RandomWalkEvalConfig) -> None:
                 if previous_eval_gyro is not None:
                     yaw_rate_deltas.append(float((current_gyro[2] - previous_eval_gyro[2]) / ctrl_dt))
                 previous_eval_gyro = current_gyro
+                current_vz = float(velocities[-1][2])
+                if previous_eval_vz is not None:
+                    vz_deltas.append((current_vz - previous_eval_vz) / ctrl_dt)
+                previous_eval_vz = current_vz
                 commands.append(command.astype(np.float64).copy())
                 gravity = np.asarray(env.get_gravity()[0], dtype=np.float64)
                 orientations.append(float(np.linalg.norm(gravity[:2])))
                 heights.append(float(env.sim_data["base_pos"][0, 2]))
             else:
                 previous_eval_gyro = None
+                previous_eval_vz = None
             if vec_env.render() is False:
                 break
     finally:
@@ -147,6 +154,7 @@ def _run(cfg: RandomWalkEvalConfig) -> None:
         linear_error = vel - linear_target
         angular_error = gyro - angular_target
         yaw_rate_deltas_array = np.asarray(yaw_rate_deltas, dtype=np.float64)
+        vz_deltas_array = np.asarray(vz_deltas, dtype=np.float64)
         xy_norm = np.linalg.norm(cmd[:, :2], axis=1)
         moving = xy_norm > 1e-8
         orthogonal = np.linalg.norm(vel[:, :2], axis=1)
@@ -169,6 +177,17 @@ def _run(cfg: RandomWalkEvalConfig) -> None:
             "mean_linear_velocity": vel.mean(axis=0).tolist(),
             "linear_velocity_rmse": np.sqrt(np.mean(np.square(linear_error), axis=0)).tolist(),
             "linear_velocity_p95_error": np.percentile(np.abs(linear_error), 95, axis=0).tolist(),
+            "vz_mean": float(np.mean(vel[:, 2])),
+            "vz_error_mean": float(np.mean(linear_error[:, 2])),
+            "vz_rms": float(np.sqrt(np.mean(np.square(linear_error[:, 2])))),
+            "vz_p95_abs": float(np.percentile(np.abs(linear_error[:, 2]), 95)),
+            "vz_std": float(np.std(vel[:, 2])),
+            "vz_delta_rms": (
+                float(np.sqrt(np.mean(np.square(vz_deltas_array))))
+                if vz_deltas_array.size
+                else 0.0
+            ),
+            "vz_delta_samples": int(vz_deltas_array.size),
             "mean_angular_velocity": gyro.mean(axis=0).tolist(),
             "angular_velocity_rmse": np.sqrt(np.mean(np.square(angular_error), axis=0)).tolist(),
             "angular_velocity_p95_error": np.percentile(np.abs(angular_error), 95, axis=0).tolist(),
