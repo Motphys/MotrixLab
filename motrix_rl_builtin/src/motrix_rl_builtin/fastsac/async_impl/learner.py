@@ -29,6 +29,7 @@ from motrix_rl_builtin.fastsac.async_impl.transport import (
     IpcTransitionRing,
     SharedTransitionRing,
 )
+from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsPayload
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import WeightSender
 from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
 from motrix_rl_builtin.fastsac.config import FastSacCfg
@@ -320,6 +321,27 @@ class Learner:
         final_payloads = None
         if len(self.rings) == 1 and self.rings[0].final_obs_store is not None:
             final_payloads = self.rings[0].read_final_span(len(generations))
+        elif self.rings[0].final_obs_store is not None:
+            # Ring env ids are shard-local; replay ids are local to this rank,
+            # with the same collector-order blocks as the transition merge above.
+            shards = [ring.read_final_span(len(generations)) for ring in self.rings]
+            final_payloads = []
+            for generation in zip(*shards):
+                parts = []
+                env_offset = 0
+                for ring, payload in zip(self.rings, generation):
+                    if payload is not None:
+                        parts.append(FinalObsPayload(payload.env_ids + env_offset, payload.obs, payload.critic_obs))
+                    env_offset += ring.num_envs
+                final_payloads.append(
+                    FinalObsPayload(
+                        torch.cat([part.env_ids for part in parts]),
+                        torch.cat([part.obs for part in parts]),
+                        torch.cat([part.critic_obs for part in parts]),
+                    )
+                    if parts
+                    else None
+                )
         ingested = self._ingest_runs((stacked,), final_payloads=final_payloads)
         if final_payloads is not None:
             events = sum(p.env_ids.numel() for p in final_payloads if p is not None)

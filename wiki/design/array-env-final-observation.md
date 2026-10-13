@@ -22,7 +22,7 @@ Observation term 应仅读取上下文并写观测输出，不推进 command 或
 
 ## FastSAC 边界
 
-NumPy adapter 保存最近 state 的 final_obs 引用，reset 清空 adapter 引用；公开只读属性不清空底层 state。collector 将 FinalObs 转换为传输所需的 env_ids、policy 与 value_or_policy。异步传输、背压和 replay 存储的生命周期不属于本次 Env 结构整理，见 [FastSAC 异步训练器设计的终态观测 payload](./fastsac-async-heterogeneous-trainer.md#终态观测-payload)。
+FastSAC adapter 的 step 返回 `FastSacStepResult`，将本步 obs、critic_obs、reward、terminated、truncated、final_obs 与 info 放在同一个结果中；NumPy adapter 直接传递 state 的 final_obs 引用，不在 wrapper 上缓存旁路状态。reset 仍返回 obs/critic_obs 二元组。collector 将 FinalObs 转换为传输所需的 env_ids、policy 与 value_or_policy。异步传输、背压和 replay 存储的生命周期不属于本次 Env 结构整理，见 [FastSAC 异步训练器设计的终态观测 payload](./fastsac-async-heterogeneous-trainer.md#终态观测-payload)。
 
 ## 验收
 

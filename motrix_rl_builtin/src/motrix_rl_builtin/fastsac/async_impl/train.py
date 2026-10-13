@@ -211,7 +211,7 @@ class Trainer(TrainerBase):
         # actually uses (topology is the single source of truth), not the
         # host inventory.
         annotate_run(self._context.run_dir, system=capture_system_info(topology=topology))
-        final_obs_enabled = max_episode_steps is not None and num_collectors == 1
+        final_obs_enabled = max_episode_steps is not None
         final_stores: list[FinalObsStorage] | None = (
             [FinalObsStorage(async_options.ring_capacity, shard, obs_dim, critic_obs_dim) for shard in env_shards]
             if final_obs_enabled
