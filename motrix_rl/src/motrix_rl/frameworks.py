@@ -24,6 +24,7 @@ from motrix_rl.contracts import (
     TrainerContext,
     TrainerHandle,
 )
+from motrix_rl.metrics import MetricsLogger
 
 __all__ = [
     "AgentProvider",
@@ -156,6 +157,7 @@ def create_trainer(context: TrainerContext[Any]) -> TrainerHandle:
         run=context.run,
         trainer=provider.create_trainer(typed_context),
         result_factory=TrainResult,
+        metrics=typed_context.metrics,
     )
 
 
@@ -170,6 +172,7 @@ def create_trainer_context(
     checkpoint: CheckpointConfig,
     render: Any = None,
     resume_from: str | None = None,
+    metrics: MetricsLogger | None = None,
 ) -> TrainerContext[Any]:
     _validate_runtime_config(logging, checkpoint)
     metadata = run.metadata
@@ -188,6 +191,7 @@ def create_trainer_context(
         checkpoint=checkpoint,
         render=render,
         resume_from=resume_from,
+        metrics=metrics or MetricsLogger.disabled(),
     )
 
 

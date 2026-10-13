@@ -1,0 +1,44 @@
+{
+  "body": {
+    "records": [
+      {
+        "axes": {
+          "env_steps": 204800
+        },
+        "data": {
+          "reward/alive": 1.0,
+          "rollout/mean_ep_len": 12.5,
+          "rollout/mean_return": null,
+          "sys/cpu_percent": 37.5,
+          "train/policy_loss": 0.25
+        },
+        "kind": "scalars",
+        "run_id": "master__51f2b01__1712",
+        "seq": 1791798330000002,
+        "step": 100,
+        "t": 1791798331.0,
+        "v": 1,
+        "writer": "trainer-host:4242:trainer"
+      },
+      {
+        "data": {
+          "key": "rollout/mean_return",
+          "name": "nonfinite"
+        },
+        "kind": "event",
+        "run_id": "master__51f2b01__1712",
+        "seq": 1791798330000003,
+        "step": 100,
+        "t": 1791798332.0,
+        "v": 1,
+        "writer": "trainer-host:4242:trainer"
+      }
+    ],
+    "schema": "motrix.metrics/v1"
+  },
+  "headers": {
+    "Authorization": "Bearer fixture-token",
+    "Content-Encoding": "gzip",
+    "Content-Type": "application/json"
+  }
+}

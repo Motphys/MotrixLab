@@ -30,6 +30,9 @@ class FastSacProvider(AgentProvider[FastSacCfg]):
 
         return Trainer(context=context)
 
+    def total_env_steps(self, config: FastSacCfg, num_envs: int) -> int:
+        return config.trainer.num_learning_iterations * num_envs
+
     def create_policy_exporter(self) -> OnnxPolicyExporter:
         from motrix_rl_builtin.fastsac.export import FastSacOnnxExporter
 

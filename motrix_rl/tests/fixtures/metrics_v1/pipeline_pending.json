@@ -1,0 +1,33 @@
+{
+  "body": {
+    "records": [
+      {
+        "data": {
+          "group": "locomotion__1712",
+          "meta": {
+            "branch": "master",
+            "commit_sha": "51f2b010c0ffee",
+            "exp_name": "locomotion",
+            "flow": "MotrixLabFlow",
+            "flow_run_id": "1712",
+            "job_type": "train"
+          },
+          "project": "locomotion",
+          "state": "pending"
+        },
+        "kind": "run",
+        "run_id": "master__51f2b01__1712",
+        "seq": 1791798324428939,
+        "t": 1791798324.4289403,
+        "v": 1,
+        "writer": "orchestrator:4242:pipeline"
+      }
+    ],
+    "schema": "motrix.metrics/v1"
+  },
+  "headers": {
+    "Authorization": "Bearer fixture-token",
+    "Content-Encoding": "gzip",
+    "Content-Type": "application/json"
+  }
+}

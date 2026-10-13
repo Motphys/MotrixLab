@@ -1,0 +1,70 @@
+{
+  "body": {
+    "records": [
+      {
+        "data": {
+          "algo": "ppo",
+          "checkpoint_format": "pt",
+          "config": {
+            "algo": {
+              "trainer": {
+                "timesteps": 1000
+              }
+            },
+            "checkpoint": {
+              "interval": 500
+            },
+            "logging": {
+              "backend": "tensorboard",
+              "interval": 100
+            },
+            "num_envs": 2048,
+            "play_num_envs": 16,
+            "seed": 42,
+            "task": {
+              "algo": "ppo",
+              "env": "cartpole",
+              "rllib": "skrl",
+              "train_backend": "torch"
+            }
+          },
+          "env_name": "cartpole",
+          "family": "rl.onpolicy",
+          "group": "locomotion__1712",
+          "job_type": "train",
+          "meta": {
+            "branch": "master",
+            "commit_sha": "51f2b010c0ffee",
+            "exp_name": "locomotion",
+            "flow": "MotrixLabFlow",
+            "flow_run_id": "1712",
+            "job_type": "train"
+          },
+          "motrixlab_version": "0.4.0b1",
+          "num_envs": 2048,
+          "primary_axis": "env_steps",
+          "project": "locomotion",
+          "rllib": "skrl",
+          "run_dir": "runs/cartpole/skrl/torch/ppo/26-10-12_10-00-00-000000",
+          "seed": 42,
+          "sim": null,
+          "state": "running",
+          "total_steps": 2048000,
+          "train_backend": "torch"
+        },
+        "kind": "run",
+        "run_id": "master__51f2b01__1712",
+        "seq": 1791798330000001,
+        "t": 1791798331.0,
+        "v": 1,
+        "writer": "trainer-host:4242:trainer"
+      }
+    ],
+    "schema": "motrix.metrics/v1"
+  },
+  "headers": {
+    "Authorization": "Bearer fixture-token",
+    "Content-Encoding": "gzip",
+    "Content-Type": "application/json"
+  }
+}

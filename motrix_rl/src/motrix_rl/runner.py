@@ -1,18 +1,24 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+import importlib.metadata
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from motrix_env_core.renderer import RenderConfig
 from motrix_rl import backend_runtime, checkpoints, frameworks, runs, utils
 from motrix_rl.config import TaskConfig, TrainConfig
 from motrix_rl.method import RlMethod
+from motrix_rl.metrics import MetricsLogger
 from motrix_rl.result import TrainResult
 
 logger = logging.getLogger(__name__)
+
+# Learning-curve family the live dashboard picks its charts by, keyed by agent name.
+_METRICS_FAMILIES = {"fastsac": "rl.offpolicy", "ppo": "rl.onpolicy"}
 
 
 @dataclass(frozen=True)
@@ -79,13 +85,22 @@ def create_training_handle(request: TrainRequest) -> frameworks.TrainerHandle:
     resume_from = None
     if config.resume is not None:
         resume_from = str(checkpoints.resolve_resume_checkpoint_path(config.resume))
-    handle = _create_handle(
-        run,
-        provider,
-        config,
-        render=request.render,
-        resume_from=resume_from,
-    )
+    metrics = MetricsLogger.from_env(run.run_dir)
+    try:
+        handle = _create_handle(
+            run,
+            provider,
+            config,
+            render=request.render,
+            resume_from=resume_from,
+            metrics=metrics,
+        )
+        if metrics.enabled:
+            runs.annotate_run(run.run_dir, live={"run_id": metrics.run_id})
+            handle = replace(handle, run_info=_running_fields(run, provider, config))
+    except BaseException:
+        metrics.close()
+        raise
     logger.info(
         "Training startup: trainer handle ready in %.3fs",
         time.perf_counter() - startup_started,
@@ -138,6 +153,7 @@ def _create_handle(
     randomize_seed: bool = False,
     render: RenderConfig | None = None,
     resume_from: str | None = None,
+    metrics: MetricsLogger | None = None,
 ) -> frameworks.TrainerHandle:
     metadata = run.metadata
     if (
@@ -160,5 +176,32 @@ def _create_handle(
             checkpoint=task_cfg.checkpoint,
             render=render,
             resume_from=resume_from,
+            metrics=metrics,
         )
     )
+
+
+def _running_fields(run: runs.RunContext, provider: frameworks.AgentProvider, config: TrainConfig) -> dict[str, Any]:
+    """Fields of the live ``running`` record besides state, project, group and meta."""
+    metadata = run.metadata
+    try:
+        version = importlib.metadata.version("motrix-rl")
+    except importlib.metadata.PackageNotFoundError:
+        version = None
+    return {
+        "env_name": metadata.env_name,
+        "rllib": metadata.rllib,
+        "train_backend": metadata.train_backend,
+        "algo": metadata.algo,
+        "seed": metadata.seed,
+        "sim": metadata.sim,
+        "checkpoint_format": metadata.checkpoint_format,
+        "family": _METRICS_FAMILIES.get(metadata.algo),
+        "job_type": "train",
+        "primary_axis": "env_steps",
+        "total_steps": provider.total_env_steps(config.algo, config.num_envs),
+        "num_envs": config.num_envs,
+        "run_dir": str(run.run_dir),
+        "config": runs.task_config_snapshot(config),
+        "motrixlab_version": version,
+    }

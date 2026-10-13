@@ -481,6 +481,7 @@ def run_learner_process(
     rendezvous_file: str | None = None,
     learner_device: str | None = None,
     final_stores: list[FinalObsStorage] | None = None,
+    notify_checkpoints: bool = False,
 ) -> None:
     """One learner process; ``rank 0`` additionally owns stats aggregation,
     logging and checkpointing.
@@ -789,6 +790,15 @@ def run_learner_process(
                 )
                 last_checkpoint_path = str(path)
                 logger.info("saved checkpoint %s", path)
+                # A notice per save for live metrics, separate from the log-window
+                # payload: this step's payload already went out above, and a save
+                # after the last log window would otherwise never reach the parent.
+                # Never blocks the learner, like the log payloads.
+                if notify_checkpoints:
+                    try:
+                        panel_queue.put_nowait({"rank": rank, "checkpoint_saved": {"step": step, "path": str(path)}})
+                    except Full:
+                        logger.warning("panel queue full; checkpoint notice for %s dropped", path)
                 next_save += save_interval
 
         if num_learners > 1:

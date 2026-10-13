@@ -1,12 +1,22 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+import gzip
+import json
+import threading
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import pytest
 
 from motrix_env_core import registry as env_registry
 from motrix_rl import frameworks, runner, runs, utils
 from motrix_rl.config import CheckpointConfig, LoggingConfig, TaskMeta, TrainConfig
 from motrix_rl.frameworks import RlFramework
+from motrix_rl.metrics import JSONL_FILENAME
+
+RUNNING_FIXTURE = Path(__file__).parent / "fixtures" / "metrics_v1" / "motrixlab_running.json"
 
 
 @dataclass
@@ -14,29 +24,38 @@ class DemoCfg:
     value: int = 1
 
 
-def test_runner_train_creates_run_and_returns_result(monkeypatch, tmp_path):
+@pytest.fixture
+def demo_framework(monkeypatch):
     monkeypatch.setattr(frameworks, "_frameworks", {})
     monkeypatch.setattr("motrix_rl.plugins.load_plugins", lambda: None)
     monkeypatch.setattr(env_registry, "contains", lambda env_name: env_name == "demo-env")
     monkeypatch.setattr(utils, "get_device_supports", lambda: utils.DeviceSupports(torch=True))
-
+    monkeypatch.delenv("MOTRIX_METRICS_URL", raising=False)
+    monkeypatch.delenv("MOTRIX_METRICS_JSONL", raising=False)
+    monkeypatch.delenv("MOTRIX_METRICS_RUN_ID", raising=False)
     provider = _RunnerProvider()
     frameworks.register_framework(_RunnerFramework("external", (provider,)))
+    return provider
 
-    result = runner.train(
-        runner.TrainRequest(
-            config=TrainConfig(
-                task=TaskMeta(env="demo-env", rllib="external", algo="demo", train_backend="custom"),
-                num_envs=2,
-                play_num_envs=3,
-                seed=7,
-                algo=DemoCfg(),
-                logging=LoggingConfig(backend="tensorboard", interval=20),
-                checkpoint=CheckpointConfig(interval=50),
-            ),
-            runs_root=tmp_path,
-        )
+
+def _train_request(runs_root):
+    return runner.TrainRequest(
+        config=TrainConfig(
+            task=TaskMeta(env="demo-env", rllib="external", algo="demo", train_backend="custom"),
+            num_envs=2,
+            play_num_envs=3,
+            seed=7,
+            algo=DemoCfg(),
+            logging=LoggingConfig(backend="tensorboard", interval=20),
+            checkpoint=CheckpointConfig(interval=50),
+        ),
+        runs_root=runs_root,
     )
+
+
+def test_runner_train_creates_run_and_returns_result(demo_framework, tmp_path):
+    provider = demo_framework
+    result = runner.train(_train_request(tmp_path))
 
     assert provider.trainer is not None
     assert provider.trainer.train_called
@@ -65,6 +84,56 @@ def test_runner_train_creates_run_and_returns_result(monkeypatch, tmp_path):
     assert handle.trainer.context.rl_cfg == DemoCfg(value=2)
     assert handle.trainer.context.logging == LoggingConfig(backend="tensorboard", interval=20)
     assert handle.trainer.context.checkpoint == CheckpointConfig(interval=50)
+    assert not provider.trainer.context.metrics.enabled
+    assert not (result.run.run_dir / JSONL_FILENAME).exists()
+
+
+def test_training_reports_live_metrics_but_play_does_not(demo_framework, monkeypatch, tmp_path):
+    received = []
+
+    class Ingest(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = gzip.decompress(self.rfile.read(int(self.headers["Content-Length"])))
+            received.extend(json.loads(body)["records"])
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Ingest)
+    threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True).start()
+    monkeypatch.setenv("MOTRIX_METRICS_URL", f"http://127.0.0.1:{server.server_address[1]}")
+    monkeypatch.setenv("MOTRIX_METRICS_JSONL", "1")
+    monkeypatch.setenv("MOTRIX_METRICS_RUN_ID", "demo-run")
+    monkeypatch.setenv("MOTRIX_METRICS_PROJECT", "demo")
+    monkeypatch.setenv("MOTRIX_METRICS_GROUP", "demo__1")
+    monkeypatch.setenv("MOTRIX_METRICS_META", '{"flow_run_id": "1"}')
+    try:
+        result = runner.train(_train_request(tmp_path))
+        metadata = (result.run.run_dir / runs.METADATA_FILENAME).read_text()
+        train_metrics = demo_framework.trainer.context.metrics
+        train_metrics.join(5)  # training closed the logger without waiting for the sinks
+        play = runner.create_run_handle(result.run)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    records = [json.loads(line) for line in (result.run.run_dir / JSONL_FILENAME).read_text().splitlines()]
+    assert records == received
+    assert [record["data"]["state"] for record in records] == ["running", "finished"]
+    running = records[0]["data"]
+    expected = json.loads(RUNNING_FIXTURE.read_text())["body"]["records"][0]["data"]
+    assert set(running) == set(expected)
+    assert running["config"] == runs.task_config_snapshot(_train_request(tmp_path).config)
+    assert running["run_dir"] == str(result.run.run_dir)
+    assert train_metrics.run_id == "demo-run"
+    assert json.loads(metadata)["live"] == {"run_id": "demo-run"}
+
+    assert not play.metrics.enabled
+    assert not play.trainer.context.metrics.enabled
+    assert (result.run.run_dir / runs.METADATA_FILENAME).read_text() == metadata
 
 
 class _RunnerTrainer(frameworks.TrainerBase):

@@ -1,0 +1,24 @@
+{
+  "body": {
+    "records": [
+      {
+        "data": {
+          "reason": "VolcanoJob finished with phase: Failed",
+          "state": "failed"
+        },
+        "kind": "run",
+        "run_id": "master__51f2b01__1712",
+        "seq": 1791798324430449,
+        "t": 1791798324.4304497,
+        "v": 1,
+        "writer": "orchestrator:4242:pipeline"
+      }
+    ],
+    "schema": "motrix.metrics/v1"
+  },
+  "headers": {
+    "Authorization": "Bearer fixture-token",
+    "Content-Encoding": "gzip",
+    "Content-Type": "application/json"
+  }
+}

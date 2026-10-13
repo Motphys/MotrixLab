@@ -157,15 +157,19 @@ def task_config_path(run_dir: str | Path) -> Path:
     return Path(run_dir) / TASK_CONFIG_FILENAME
 
 
-def write_task_config(run_dir: str | Path, config: TaskConfig) -> Path:
-    """Persist the resolved task recipe used to create a training run."""
+def task_config_snapshot(config: TaskConfig) -> dict[str, Any]:
+    """Return the resolved task recipe exactly as ``write_task_config`` persists it."""
     if not isinstance(config, TaskConfig):
         raise TypeError(f"Expected TaskConfig, got {type(config).__name__}")
-    structured = OmegaConf.structured(config)
-    resolved = _resolved_mapping(structured)
-    snapshot = {
+    resolved = _resolved_mapping(OmegaConf.structured(config))
+    return {
         key: resolved[key] for key in ("task", "num_envs", "play_num_envs", "seed", "logging", "checkpoint", "algo")
     }
+
+
+def write_task_config(run_dir: str | Path, config: TaskConfig) -> Path:
+    """Persist the resolved task recipe used to create a training run."""
+    snapshot = task_config_snapshot(config)
     path = task_config_path(run_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(OmegaConf.create(snapshot), path)

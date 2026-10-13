@@ -6,12 +6,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
-from dataclasses import dataclass, is_dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field, is_dataclass
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
+from motrix_rl.metrics import MetricsLogger
+
 CfgT = TypeVar("CfgT")
+
+_FAILURE_REASON_LIMIT = 2048
 
 
 class TrainerBase(ABC):
@@ -44,6 +48,8 @@ class TrainerContext(Generic[CfgT]):
     checkpoint: Any
     render: Any = None
     resume_from: str | None = None
+    # Live metrics for this run; disabled unless the control plane enabled it for training.
+    metrics: MetricsLogger = field(default_factory=MetricsLogger.disabled)
 
 
 @dataclass(frozen=True)
@@ -53,10 +59,33 @@ class TrainerHandle:
     run: Any
     trainer: TrainerBase
     result_factory: Any = None
+    metrics: MetricsLogger = field(default_factory=MetricsLogger.disabled)
+    # Extra fields of the ``running`` record (see wiki/design/live-metrics.md).
+    run_info: Mapping[str, Any] = field(default_factory=dict)
 
     def train(self):
-        """Run training and return the control plane's result view."""
-        self.trainer.train()
+        """Run training and return the control plane's result view.
+
+        Reports ``running``, then ``finished``, ``killed`` (Ctrl+C) or ``failed``
+        to live metrics; exceptions propagate unchanged. Closing live metrics
+        does not wait: the sinks finish in the background.
+        """
+        self.metrics.run("running", **self.run_info)
+        try:
+            self.trainer.train()
+        except KeyboardInterrupt:
+            self.metrics.run("killed")
+            raise
+        except BaseException as exc:
+            if isinstance(exc, SystemExit) and exc.code in (None, 0):
+                self.metrics.run("finished")
+            elif self.metrics.enabled:
+                self.metrics.run("failed", reason=_failure_reason(exc, Path(self.run.run_dir)))
+            raise
+        else:
+            self.metrics.run("finished")
+        finally:
+            self.metrics.close()
         if self.result_factory is None:
             return self.run
         return self.result_factory(self.run)
@@ -64,6 +93,14 @@ class TrainerHandle:
     def play(self, policy: str) -> None:
         """Run policy playback through the wrapped trainer."""
         self.trainer.play(policy)
+
+
+def _failure_reason(exc: BaseException, run_dir: Path) -> str:
+    """``Type: message`` within 2 KB, pointing at any worker error logs the run left behind."""
+    logs = sorted(path.relative_to(run_dir).as_posix() for path in (run_dir / "async_errors").glob("*.log"))
+    suffix = f" (see {', '.join(logs)})" if logs else ""
+    head = f"{type(exc).__name__}: {exc}"[: max(0, _FAILURE_REASON_LIMIT - len(suffix))]
+    return (head + suffix)[:_FAILURE_REASON_LIMIT]
 
 
 class AgentProvider(Generic[CfgT], ABC):
@@ -100,6 +137,10 @@ class AgentProvider(Generic[CfgT], ABC):
 
     def create_policy_exporter(self) -> Any:
         """Create an optional policy exporter owned by the control plane."""
+        return None
+
+    def total_env_steps(self, config: CfgT, num_envs: int) -> int | None:
+        """Environment steps a training run with *config* covers, for progress reporting."""
         return None
 
 

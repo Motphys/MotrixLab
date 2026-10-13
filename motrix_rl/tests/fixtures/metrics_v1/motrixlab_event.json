@@ -1,0 +1,61 @@
+{
+  "body": {
+    "records": [
+      {
+        "data": {
+          "name": "run_started",
+          "workers": 3
+        },
+        "kind": "event",
+        "run_id": "master__51f2b01__1712",
+        "seq": 1791798330000004,
+        "step": 0,
+        "t": 1791798331.0,
+        "v": 1,
+        "writer": "trainer-host:4242:trainer"
+      },
+      {
+        "data": {
+          "name": "warmup_done"
+        },
+        "kind": "event",
+        "run_id": "master__51f2b01__1712",
+        "seq": 1791798330000005,
+        "step": 50,
+        "t": 1791798332.0,
+        "v": 1,
+        "writer": "trainer-host:4242:trainer"
+      },
+      {
+        "data": {
+          "name": "checkpoint_saved",
+          "path": "runs/cartpole/skrl/torch/ppo/26-10-12_10-00-00-000000/checkpoints/model_0000500.pt"
+        },
+        "kind": "event",
+        "run_id": "master__51f2b01__1712",
+        "seq": 1791798330000006,
+        "step": 500,
+        "t": 1791798333.0,
+        "v": 1,
+        "writer": "trainer-host:4242:trainer"
+      },
+      {
+        "data": {
+          "state": "finished"
+        },
+        "kind": "run",
+        "run_id": "master__51f2b01__1712",
+        "seq": 1791798330000007,
+        "t": 1791798334.0,
+        "v": 1,
+        "writer": "trainer-host:4242:trainer"
+      }
+    ],
+    "schema": "motrix.metrics/v1"
+  },
+  "headers": {
+    "Authorization": "Bearer fixture-token",
+    "Content-Encoding": "gzip",
+    "Content-Type": "application/json"
+  }
+}
