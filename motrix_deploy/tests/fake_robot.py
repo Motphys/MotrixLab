@@ -148,6 +148,5 @@ class FakeRobotInterface(RobotInterface):
             base_orientation_xyzw=np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
             base_angular_velocity=zeros,
             base_linear_acceleration=zeros,
-            base_position=np.array([0.0, 0.0, 0.3], dtype=np.float32),
             base_linear_velocity=zeros,
         )

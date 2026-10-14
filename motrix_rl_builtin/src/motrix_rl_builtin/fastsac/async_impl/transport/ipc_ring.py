@@ -47,7 +47,7 @@ from collections import deque, namedtuple
 
 import torch
 
-from motrix_rl_builtin.fastsac.async_impl.transport.ring import RingCursors
+from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsPayload, FinalObsStorage, RingCursors
 
 # A slot-boundary event and the cursor value it certifies once complete:
 # the write (or read) cursor value the entry advances the shared cursor to
@@ -75,6 +75,7 @@ class IpcTransitionRing:
         obs_dim: int,
         critic_obs_dim: int,
         act_dim: int,
+        final_obs_store: FinalObsStorage | None = None,
     ):
         if not slots.is_cuda:
             raise ValueError(f"IPC transition ring requires CUDA slots, got device {slots.device}")
@@ -88,6 +89,7 @@ class IpcTransitionRing:
         self.obs_dim = obs_dim
         self.critic_obs_dim = critic_obs_dim
         self.act_dim = act_dim
+        self.final_obs_store = final_obs_store
         # Field layout along the fused last dimension.
         self._o0 = 0
         self._o1 = obs_dim
@@ -99,8 +101,8 @@ class IpcTransitionRing:
         # event-proven (published) values, which LAG the issued counts while
         # copies are in flight — so slot indexing and publish targets must come
         # from the issued counts, never from the cursors.
-        self._issued_writes = self.cursors.write_idx
-        self._issued_reads = self.cursors.read_idx
+        self._write_issued_count = self.cursors.write_completed_count
+        self._read_issued_count = self.cursors.read_completed_count
         # Producer-side: events of pushed-but-not-yet-published slots, in
         # order. (published cursor value, event) — the write cursor value the
         # entry certifies once its event completes. Deques: flush pops from
@@ -121,25 +123,41 @@ class IpcTransitionRing:
             self.cursors._write[0] = events.popleft().cursor
 
     @property
-    def write_idx(self) -> int:
+    def write_completed_count(self) -> int:
+        """Cumulative slots whose writes completed and were published."""
         self._flush_writes()
-        return self.cursors.write_idx
+        return self.cursors.write_completed_count
 
     @property
-    def read_idx(self) -> int:
+    def read_completed_count(self) -> int:
+        """Cumulative slots whose reads completed and were released."""
         self._flush_reads()
-        return self.cursors.read_idx
+        return self.cursors.read_completed_count
+
+    @property
+    def write_issued_count(self) -> int:
+        """Cumulative slots submitted for writing, including copies in flight."""
+        return self._write_issued_count
+
+    @property
+    def read_issued_count(self) -> int:
+        """Cumulative slots consumed, including acknowledgements still in flight."""
+        return self._read_issued_count
 
     def size(self) -> int:
-        """Published (event-proven) unread count — the observable ring fill."""
-        return self.write_idx - self.read_idx
+        """Published but not yet released slot count, including reads in flight."""
+        return self.write_completed_count - self.read_completed_count
 
     def is_full(self) -> bool:
         # Backpressure must count the producer's issued (in-flight included)
         # writes, so a burst of pushes can never exceed capacity. The flush
         # publishes completed slots, mirroring the collector's every-step poll.
         self._flush_writes()
-        return self._issued_writes - self.read_idx >= self.capacity
+        completed_reads = self.read_completed_count
+        if self._write_issued_count - completed_reads >= self.capacity:
+            return True
+        store = self.final_obs_store
+        return store is not None and not store.can_write_rows(self.num_envs, completed_reads)
 
     def push(
         self,
@@ -149,6 +167,7 @@ class IpcTransitionRing:
         rewards: torch.Tensor,
         dones: torch.Tensor,
         truncations: torch.Tensor,
+        final_obs: FinalObsPayload | None = None,
     ) -> bool:
         """Publish one env-step batch into the next slot. Returns False if full.
 
@@ -157,6 +176,11 @@ class IpcTransitionRing:
         lands the whole slot; the cursor publishes lazily once it completes.
         """
         if self.is_full():
+            return False
+        store = self.final_obs_store
+        if final_obs is not None and store is None:
+            raise ValueError("final payload requires a slot final-observation store")
+        if store is not None and not store.can_write(final_obs, self.cursors.read_completed_count):
             return False
         if self._staging_used and not self._staging_event.query():
             # The previous H2D still reads the staging buffer; it completes in
@@ -169,14 +193,16 @@ class IpcTransitionRing:
         s[:, self._o3 : self._o4].copy_(rewards.reshape(-1, 1))
         s[:, self._o4 : self._o5].copy_(dones.reshape(-1, 1))
         s[:, self._o5 :].copy_(truncations.reshape(-1, 1))
-        issued = self._issued_writes
+        issued = self._write_issued_count
         slot = issued % self.capacity
+        if store is not None:
+            store.write(issued, final_obs)
         stream = torch.cuda.current_stream(self.slots.device)
         self.slots[slot].copy_(s, non_blocking=True)
         event = torch.cuda.Event()
         event.record(stream)
         self._write_events.append(_PendingEvent(issued + 1, event))
-        self._issued_writes = issued + 1
+        self._write_issued_count = issued + 1
         self._staging_event.record(stream)
         self._staging_used = True
         return True
@@ -192,7 +218,7 @@ class IpcTransitionRing:
         # Flush this endpoint's commit events so the producer's is_full sees
         # freed slots (the learner's every-loop poll).
         self._flush_reads()
-        return self.write_idx > self._issued_reads
+        return self.write_completed_count > self._read_issued_count
 
     def read_span(self) -> tuple[int, tuple[torch.Tensor, ...]]:
         """Longest contiguous unread run, as ``(count, field_views)``.
@@ -203,10 +229,10 @@ class IpcTransitionRing:
         slot after its H2D event completed. Returns ``(0, ())`` when empty.
         """
         self._flush_reads()
-        available = self.write_idx - self._issued_reads
+        available = self.write_completed_count - self._read_issued_count
         if available <= 0:
             return 0, ()
-        slot = self._issued_reads % self.capacity
+        slot = self._read_issued_count % self.capacity
         count = min(available, self.capacity - slot)
         run = self.slots[slot : slot + count]
         return count, (
@@ -218,6 +244,12 @@ class IpcTransitionRing:
             run[:, :, self._o5],
         )
 
+    def read_final_span(self, count: int) -> list[FinalObsPayload | None]:
+        """Copy host payloads belonging to the next issued read span."""
+        if self.final_obs_store is None:
+            return [None] * count
+        return self.final_obs_store.read(self._read_issued_count, count)
+
     def commit_reads(self, n: int) -> None:
         """Release ``n`` slots of a consumed run once their reads completed.
 
@@ -228,5 +260,5 @@ class IpcTransitionRing:
         """
         event = torch.cuda.Event()
         event.record(torch.cuda.current_stream(self.slots.device))
-        self._read_events.append(_PendingEvent(self._issued_reads + n, event))
-        self._issued_reads += n
+        self._read_events.append(_PendingEvent(self._read_issued_count + n, event))
+        self._read_issued_count += n

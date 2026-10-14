@@ -72,20 +72,25 @@ def write_artifact(
     parent = target.parent
     parent.mkdir(parents=True, exist_ok=True)
     expected_path = _safe_relative_path(manifest.policy.payload_path, field_path="policy.payload_path")
-    if set(payloads) != {str(expected_path)}:
-        raise ArtifactError(f"payload keys must be exactly [{str(expected_path)!r}], got {sorted(payloads)!r}")
-    payload = payloads[str(expected_path)]
-    if not isinstance(payload, bytes):
-        raise ArtifactError(f"payload {expected_path} must be bytes")
-    digest = sha256_bytes(payload)
-    if digest != manifest.policy.sha256:
-        raise ArtifactError(f"policy.sha256 mismatch while writing: expected {manifest.policy.sha256}, got {digest}")
+    expected_payloads = {str(expected_path): manifest.policy.sha256}
+    for payload in manifest.payloads:
+        relative = _safe_relative_path(payload.path, field_path="payloads.path")
+        expected_payloads[str(relative)] = payload.sha256
+    if set(payloads) != set(expected_payloads):
+        raise ArtifactError(f"payload keys must be exactly {sorted(expected_payloads)}, got {sorted(payloads)!r}")
+    for relative, expected_sha in expected_payloads.items():
+        if not isinstance(payloads[relative], bytes):
+            raise ArtifactError(f"payload {relative} must be bytes")
+        digest = sha256_bytes(payloads[relative])
+        if digest != expected_sha:
+            raise ArtifactError(f"sha256 mismatch for payload {relative}: expected {expected_sha}, got {digest}")
 
     staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.staging-", dir=parent))
     try:
-        payload_path = _payload_path(staging, expected_path)
-        payload_path.parent.mkdir(parents=True, exist_ok=True)
-        payload_path.write_bytes(payload)
+        for relative in sorted(expected_payloads):
+            payload_path = _payload_path(staging, PurePosixPath(relative))
+            payload_path.parent.mkdir(parents=True, exist_ok=True)
+            payload_path.write_bytes(payloads[relative])
         manifest_path = staging / MANIFEST_NAME
         manifest_path.write_text(
             json.dumps(manifest.to_dict(), indent=2, sort_keys=True, allow_nan=False) + "\n",
@@ -111,6 +116,14 @@ def read_artifact(root: str | Path) -> Artifact:
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ArtifactError(f"cannot parse artifact manifest {manifest_path}: {error}") from error
     manifest = DeploymentManifest.from_dict(raw_manifest)
+    for payload in manifest.payloads:
+        relative = _safe_relative_path(payload.path, field_path="payloads.path")
+        payload_file = _payload_path(artifact_root, relative)
+        if not payload_file.is_file():
+            raise ArtifactError(f"artifact payload is missing: {relative}")
+        digest = hashlib.sha256(payload_file.read_bytes()).hexdigest()
+        if digest != payload.sha256:
+            raise ArtifactError(f"payload sha256 mismatch for {relative}: expected {payload.sha256}, got {digest}")
     relative = _safe_relative_path(manifest.policy.payload_path, field_path="policy.payload_path")
     policy_path = _payload_path(artifact_root, relative)
     if not policy_path.is_file():

@@ -10,7 +10,8 @@ from pathlib import Path
 
 import numpy as np
 
-from motrix_deploy_unitree import UnitreeGo2DirectInterface
+from motrix_deploy_unitree.config import UnitreeBackendConfig, UnitreeGo2RobotCfg
+from motrix_deploy_unitree.direct import UnitreeGo2DirectInterface
 
 
 def _build_robot(
@@ -22,8 +23,7 @@ def _build_robot(
 ) -> UnitreeGo2DirectInterface:
     return UnitreeGo2DirectInterface.from_artifact(
         artifact,
-        network_interface=network_interface,
-        backend_options={"kp": kp, "kd": kd},
+        config=UnitreeBackendConfig(network_interface=network_interface, robot=UnitreeGo2RobotCfg(kp=kp, kd=kd)),
     )
 
 

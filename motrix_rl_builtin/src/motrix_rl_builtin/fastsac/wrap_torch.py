@@ -17,7 +17,7 @@ import torch
 from motrix_env_core.renderer import RenderConfig, create_renderer
 from motrix_env_motrixsim.torch_env import TorchEnv
 from motrix_rl.utils import env_infos
-from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap
+from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap, FastSacStepResult
 
 
 class FastSacTorchEnvWrap(FastSacEnvWrap):
@@ -35,18 +35,18 @@ class FastSacTorchEnvWrap(FastSacEnvWrap):
 
     def reset(self) -> tuple[torch.Tensor, torch.Tensor]:
         state = self._env.init_state()
-        self.last_info = env_infos(state)
         return self._to_torch(state.obs.policy), self._to_torch(state.obs.value_or_policy)
 
-    def step(self, actions: torch.Tensor):
+    def step(self, actions: torch.Tensor) -> FastSacStepResult:
         env_actions = actions.detach().to(device=self._env.device, dtype=torch.float32)
         env_actions = torch.clamp(env_actions, self._low, self._high)
         state = self._env.step(env_actions)
-        self.last_info = env_infos(state)
-        return (
-            self._to_torch(state.obs.policy),
-            self._to_torch(state.obs.value_or_policy),
-            self._to_torch(state.reward),
-            self._to_torch(state.terminated, dtype=torch.bool),
-            self._to_torch(state.truncated, dtype=torch.bool),
+        return FastSacStepResult(
+            obs=self._to_torch(state.obs.policy),
+            critic_obs=self._to_torch(state.obs.value_or_policy),
+            reward=self._to_torch(state.reward),
+            terminated=self._to_torch(state.terminated, dtype=torch.bool),
+            truncated=self._to_torch(state.truncated, dtype=torch.bool),
+            final_obs=None,
+            info=env_infos(state),
         )

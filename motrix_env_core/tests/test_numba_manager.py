@@ -3,7 +3,7 @@
 
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -799,6 +799,60 @@ def test_truncated_envs_reset_before_observation() -> None:
     np.testing.assert_array_equal(state.episode_steps, 0)
     np.testing.assert_array_equal(state.obs.policy[:, 0], 1.75)
     np.testing.assert_allclose(state.reward, 0.005)
+
+
+@pytest.mark.parametrize("with_value", [False, True])
+def test_final_observations_capture_command_before_reset_and_survive_steps(with_value: bool) -> None:
+    cfg = _ManagerEnvCfg(max_episode_seconds=0.03)
+    if with_value:
+        cfg.observations = {"policy": _ManagerPolicyObsCfg(), "value": _LanePolicyObsCfg()}
+    env = ManagerEnv(cfg, num_envs=3)
+    # No physics is needed: action/command terms encode observable state.
+    env.physics_step = lambda: None
+    initial = env.init_state()
+    assert initial.final_obs is None
+    initial.episode_steps[:] = [2, 0, 2]
+    env.command_terms["counter"].command[:] = 2.0
+    state = env.step(np.full((3, 1), 0.25, dtype=np.float32))
+    final = state.final_obs
+    assert final is not None
+    np.testing.assert_array_equal(final.env_ids, [0, 2])
+    np.testing.assert_allclose(final.obs.policy[:, 1], 2.0)
+    np.testing.assert_allclose(state.obs.policy[[0, 2], 1], -1.0)
+    np.testing.assert_allclose(state.obs.policy[1, 1], 2.0)
+    if with_value:
+        np.testing.assert_array_equal(final.obs.value[:, 0], [0, 2])
+    else:
+        assert final.obs.value is None
+        assert final.obs.value_or_policy is final.obs.policy
+    assert not np.shares_memory(final.obs.policy, state.obs.policy)
+    saved = final.obs.policy.copy()
+    next_state = env.step(np.full((3, 1), 0.25, dtype=np.float32))
+    assert next_state.final_obs is None
+    assert state.final_obs is final
+    env.step(np.full((3, 1), 0.25, dtype=np.float32))
+    np.testing.assert_array_equal(final.obs.policy, saved)
+
+
+def test_final_observation_noise_uses_shared_observation_rng() -> None:
+    env = _ManagerEnv()
+    env.init_state()
+    rng_before = env._rand.state.copy()
+    observe = env._task_program.observe_kernel
+
+    def noisy_observe(inputs, outputs):
+        observe(inputs, outputs)
+        env._rand.state[:] += np.uint64(1)
+        outputs.policy_obs[:, 0] = env._rand.state[:, 0].astype(np.float32)
+
+    env._task_program = replace(env._task_program, observe_kernel=noisy_observe)
+    final = env._capture_final_obs(np.array([0], dtype=np.int64))
+    np.testing.assert_array_equal(env._rand.state, rng_before + np.uint64(1))
+    saved_final = final.obs.policy.copy()
+    np.testing.assert_array_equal(final.obs.policy[:, 0], (rng_before[[0], 0] + np.uint64(1)).astype(np.float32))
+    env._execute_observe_kernel(env._kernel_inputs)
+    np.testing.assert_array_equal(env._rand.state, rng_before + np.uint64(2))
+    np.testing.assert_array_equal(final.obs.policy, saved_final)
 
 
 def test_post_reset_observation_does_not_run_command_evaluation() -> None:

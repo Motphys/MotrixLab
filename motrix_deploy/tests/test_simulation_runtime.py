@@ -3,7 +3,7 @@
 
 """Public simulation runtime configuration and plugin selection contracts."""
 
-from dataclasses import FrozenInstanceError, asdict
+from dataclasses import asdict
 from types import SimpleNamespace
 
 import numpy as np
@@ -30,7 +30,13 @@ def test_simulation_factory_uses_installed_plugin_and_public_config(monkeypatch,
         def robot(self):
             return self._robot
 
-        def run(self, control, *, steps=None):
+        def advance_control_period(self):
+            pass
+
+        def _physics_time_s(self):
+            return 0.0
+
+        def run(self):
             raise NotImplementedError
 
     calls = []
@@ -97,8 +103,6 @@ def test_simulation_config_uses_independent_typed_sensor_defaults():
         "base_linear_acceleration": None,
         "base_linear_velocity": None,
     }
-    with pytest.raises(FrozenInstanceError):
-        first.sensor_bindings.base_angular_velocity = "gyro"
 
 
 @pytest.mark.parametrize(

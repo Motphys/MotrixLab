@@ -6,6 +6,7 @@
 from typing import ClassVar
 
 from motrix_deploy.artifact.schema import TaskSpec
+from motrix_deploy.runtime.lifecycle import ControllerStep
 from motrix_deploy.task import DeployTask
 
 
@@ -16,18 +17,25 @@ class TestTaskSpec(TaskSpec):
 class TestDeployTask(DeployTask[object]):
     spec_type = TestTaskSpec
 
-    def __init__(self, spec, robot):
+    def __init__(self, spec, robot, policy, steps=None, artifact=None):
         self.spec = spec
         self.robot = robot
+        self.policy = policy
+        self.steps = steps
+        self.states = []
+        self.stop_requested = False
 
-    def reset(self, state, context):
-        pass
+    def reset(self, state):
+        self.states = [state]
+        self.stop_requested = False
 
-    def build_observation(self, state, context):
-        raise NotImplementedError
+    def step(self, state, context):
+        self.states.append(state)
+        return ControllerStep(complete=True)
 
-    def process_action(self, action):
-        raise NotImplementedError
+    def request_stop(self):
+        self.stop_requested = True
 
     def validate_command(self, command):
-        pass
+        if command is not None:
+            raise ValueError("fixture task accepts no external input")

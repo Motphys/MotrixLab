@@ -3,7 +3,7 @@
 - [ ] This is a normal PR from a fork targeting upstream `main`.
 - [ ] This is a `hotfix/*` PR from a fork targeting upstream `stable`.
 - [ ] This is a maintainer release PR from `main` to `stable`.
-- [ ] This is a maintainer post-hotfix back-merge from upstream `stable` to
+- [ ] This is a maintainer stable-patch back-merge from upstream `stable` to
       `main`.
 - [ ] I selected `Motphys/MotrixLab` as the base repository and the correct base
       branch in GitHub's compare-across-forks UI.

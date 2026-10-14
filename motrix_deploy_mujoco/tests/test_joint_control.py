@@ -87,6 +87,24 @@ def test_command_limits_are_validated_before_application(control_scene_config, k
         np.testing.assert_array_equal(runtime.data.ctrl, 0)
 
 
+@pytest.mark.parametrize("bound,direction", [("position_lower", -1.0), ("position_upper", 1.0)])
+def test_servo_accepts_float32_boundary_rounding_but_rejects_real_limit_violation(
+    control_scene_config, bound, direction
+):
+    # Task and backend limits may originate from independently rounded model imports.
+    with MujocoRuntime(control_scene_config, 0.02) as runtime:
+        spec = runtime.robot.spec
+        limit = getattr(spec, bound)
+        runtime.robot.write_command(_servo(spec, joint_position=limit.copy()))
+        np.testing.assert_array_equal(runtime.robot._command.joint_position, limit)
+        rounded_target = limit + np.float32(direction * 2e-7)
+        runtime.robot.write_command(_servo(spec, joint_position=rounded_target))
+        np.testing.assert_array_equal(runtime.robot._command.joint_position, limit)
+        np.testing.assert_array_equal(rounded_target, limit + np.float32(direction * 2e-7))
+        with pytest.raises(ValidationError, match="command.joint_position"):
+            runtime.robot.write_command(_servo(spec, joint_position=limit + np.float32(direction * 2e-5)))
+
+
 def test_servo_total_pd_torque_is_clipped_and_mode_can_change(control_scene_config):
     with MujocoRuntime(control_scene_config, 0.02) as runtime:
         spec = runtime.robot.spec

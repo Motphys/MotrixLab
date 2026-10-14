@@ -3,7 +3,7 @@
 
 """Numpy-backend env wrapper for FastSAC.
 
-Wraps a Motrix ``DirectEnv`` as the torch-tensor vectorized environment consumed
+Wraps a Motrix ``ArrayEnv`` as the torch-tensor vectorized environment consumed
 by FastSAC.
 
 The actor maps its tanh output to the action range declared by the environment;
@@ -15,18 +15,18 @@ the post-reset observation for those environments.
 import numpy as np
 import torch
 
-from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.array.env import ArrayEnv
 from motrix_env_core.renderer import RenderConfig, create_renderer
 from motrix_rl.utils import env_infos
-from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap
+from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap, FastSacStepResult
 
 
 class FastSacNpEnvWrap(FastSacEnvWrap):
-    """Wrap a Motrix ``DirectEnv`` as a torch-tensor vectorized env for FastSAC."""
+    """Wrap a Motrix ``ArrayEnv`` as a torch-tensor vectorized env for FastSAC."""
 
-    def __init__(self, env: DirectEnv, device: torch.device, render: RenderConfig | None = None):
+    def __init__(self, env: ArrayEnv, device: torch.device, render: RenderConfig | None = None):
         super().__init__(env, device)
-        self._env: DirectEnv = env
+        self._env: ArrayEnv = env
         self._renderer = create_renderer(env, render)
 
     def _to_torch(self, arr: np.ndarray, dtype=torch.float32) -> torch.Tensor:
@@ -34,18 +34,18 @@ class FastSacNpEnvWrap(FastSacEnvWrap):
 
     def reset(self) -> tuple[torch.Tensor, torch.Tensor]:
         state = self._env.init_state()
-        self.last_info = env_infos(state)
         return self._to_torch(state.obs.policy), self._to_torch(state.obs.value_or_policy)
 
-    def step(self, actions: torch.Tensor):
+    def step(self, actions: torch.Tensor) -> FastSacStepResult:
         np_actions = actions.detach().cpu().numpy().astype(np.float32)
         np_actions = np.clip(np_actions, self._low, self._high)
         state = self._env.step(np_actions)
-        self.last_info = env_infos(state)
-        return (
-            self._to_torch(state.obs.policy),
-            self._to_torch(state.obs.value_or_policy),
-            self._to_torch(state.reward),
-            self._to_torch(state.terminated, dtype=torch.bool),
-            self._to_torch(state.truncated, dtype=torch.bool),
+        return FastSacStepResult(
+            obs=self._to_torch(state.obs.policy),
+            critic_obs=self._to_torch(state.obs.value_or_policy),
+            reward=self._to_torch(state.reward),
+            terminated=self._to_torch(state.terminated, dtype=torch.bool),
+            truncated=self._to_torch(state.truncated, dtype=torch.bool),
+            final_obs=state.final_obs,
+            info=env_infos(state),
         )

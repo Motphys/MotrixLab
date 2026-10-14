@@ -1,7 +1,7 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Programmatically assemble a Go2 scene, walking task, ONNX policy and control session."""
+"""Programmatically assemble a Go2 scene, walking task, ONNX model and robot controller."""
 
 import argparse
 import json
@@ -10,17 +10,15 @@ from pathlib import Path
 from motrix_robots.unitree import UnitreeGo2Robot
 
 from motrix_deploy.contracts import TensorSpec
-from motrix_deploy.policy import OnnxPolicyRuntime
-from motrix_deploy.robot.interface import KeyboardDeviceProvider
+from motrix_deploy.policy import OnnxPolicy
 from motrix_deploy.runtime.config import SensorBindings, SimulationRuntimeConfig
 from motrix_deploy.runtime.control import ControlSession
 from motrix_deploy.runtime.factory import create_simulation_runtime
-from motrix_deploy_tasks.tasks.go2_walk import Go2WalkDeployTaskV1, Go2WalkTaskSpec
+from motrix_deploy_tasks.tasks.go2_walk import Go2WalkDeployTask, Go2WalkTaskSpec
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import FlatTerrainCfg, SceneCfg, SceneObjsCfg, SceneVisualCfg, SystemCameraCfg
 from motrix_env_core.config.scene.light import LightCfg
 from motrix_env_core.config.sim import SimCfg
-from motrix_env_core.input import ConstantPlanarVelocityBinding, KeyboardPlanarVelocityBinding
 
 POLICY_PATH = Path(__file__).resolve().parent / "assets/go2-walk-flat.onnx"
 
@@ -39,14 +37,14 @@ def main() -> int:
         "--backend", choices=("mujoco", "motrixsim"), default="mujoco", help="Simulation runtime plugin"
     )
     parser.add_argument("--headless", action="store_true", help="No window; run fixed-step without wall-clock pacing")
-    parser.add_argument("--steps", type=int, help="Headless control ticks; GUI mode runs until the window closes")
+    parser.add_argument("--steps", type=int, help="Headless session ticks; GUI mode runs until the window closes")
     args = parser.parse_args()
     if args.headless and (args.steps is None or args.steps <= 0):
         parser.error("--steps must be a positive integer in --headless mode")
     if not args.headless and args.steps is not None:
         parser.error("--steps is only valid in --headless mode; GUI mode runs until the window closes")
 
-    policy = OnnxPolicyRuntime(
+    model = OnnxPolicy(
         POLICY_PATH,
         input_spec=TensorSpec(name="obs", shape=(1, 49)),
         output_spec=TensorSpec(name="actions", shape=(1, 12)),
@@ -82,10 +80,10 @@ def main() -> int:
 
     runtime = create_simulation_runtime(args.backend, config)
     robot = runtime.robot
-    # Explicit preprocessing/action semantics for this walking policy. These must
+    # Explicit preprocessing/action semantics for this walking controller. These must
     # match its training configuration; a raw ONNX file does not describe them.
     action_scale = 0.25
-    task = Go2WalkDeployTaskV1(
+    task = Go2WalkDeployTask(
         Go2WalkTaskSpec(
             action_scale=[action_scale] * robot.spec.joint_count,
             kp=[35.0] * robot.spec.joint_count,
@@ -99,30 +97,20 @@ def main() -> int:
             gait_frequency_hz=2.0,
             standing_threshold=0.05,
             termination_min_up_z=0.5,
-            termination_min_base_height=None,
         ),
         robot.spec,
+        model,
+        steps=args.steps,
     )
-    if not args.headless and isinstance(runtime, KeyboardDeviceProvider):
-        command_binding = KeyboardPlanarVelocityBinding(
-            runtime.get_keyboard_device(),
-            command_lower=task.command_lower,
-            command_upper=task.command_upper,
-        )
-    else:
-        command_binding = ConstantPlanarVelocityBinding((0.0, 0.0, 0.0))
-        task.validate_command(command_binding.read_command())
-    control = ControlSession(
-        robot=robot,
-        task=task,
-        policy=policy,
-        command_binding=command_binding,
-        period_s=0.02,
-        state_timeout_s=0.1,
+    device = runtime.keyboard
+    command_binding = task.prepare(simulation=True, device=device)
+    period_s = 0.02
+    session = ControlSession(
+        controller=task, robot=robot, command_binding=command_binding, period_s=period_s, state_timeout_s=0.1
     )
-    runtime.bind_control_session(control)
+    runtime.bind_session(session)
     with runtime:
-        result = runtime.run(steps=args.steps)
+        result = runtime.run()
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     return 0 if result.success else 1
 

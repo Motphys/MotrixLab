@@ -1,4 +1,4 @@
-kind: simulation
-backend: ???
-viewer: true
-realtime: null
+# Load the structured SimRuntimeCfg schema registered by motrix_deploy;
+# recipes under this group only override schema values.
+defaults:
+  - _sim_schema

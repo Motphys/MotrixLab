@@ -6,12 +6,12 @@
 import numpy as np
 
 from motrix_deploy.contracts import FloatArray, JointServoCommand, RobotSpec, RobotState
-from motrix_deploy.runtime.context import PolicyContext
-from motrix_deploy.task import DeployTask
+from motrix_deploy.policy.processing import PolicyProcessor
+from motrix_deploy.runtime.context import ControlContext
 from motrix_env_core.input import PlanarVelocityCommand
 
 
-class DummyServoTask(DeployTask[PlanarVelocityCommand]):
+class DummyServoPolicyProcessor(PolicyProcessor[PlanarVelocityCommand]):
     """Keep generic driver tests independent of examples and trained artifacts."""
 
     def __init__(self, robot: RobotSpec, kp: FloatArray, kd: FloatArray) -> None:
@@ -20,10 +20,10 @@ class DummyServoTask(DeployTask[PlanarVelocityCommand]):
         self.kd = kd
         self._zeros = np.zeros(robot.joint_count, dtype=np.float32)
 
-    def reset(self, state: RobotState, context: PolicyContext[PlanarVelocityCommand]) -> None:
+    def reset(self, state: RobotState, context: ControlContext[PlanarVelocityCommand]) -> None:
         pass
 
-    def build_observation(self, state: RobotState, context: PolicyContext[PlanarVelocityCommand]) -> FloatArray:
+    def build_observation(self, state: RobotState, context: ControlContext[PlanarVelocityCommand]) -> FloatArray:
         return self._zeros.copy()
 
     def process_action(self, action: FloatArray) -> JointServoCommand:
@@ -35,6 +35,9 @@ class DummyServoTask(DeployTask[PlanarVelocityCommand]):
             kd=self.kd,
         )
 
+    def check_termination(self, state: RobotState) -> str | None:
+        return None
+
     def validate_command(self, command: PlanarVelocityCommand) -> None:
         if command.batch_size != 1 or np.any(command.values != 0.0):
-            raise ValueError("DummyServoTask accepts one zero velocity command")
+            raise ValueError("DummyServoPolicyProcessor accepts one zero velocity command")

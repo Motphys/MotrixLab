@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from motrix_deploy.runtime.scheduler import FixedStepScheduler
 from motrix_deploy_mujoco.viewer import MujocoGlfwViewer
 from motrix_env_core.config.scene import SystemCameraCfg
 from motrix_env_core.input import KeyboardPlanarVelocityBinding
@@ -298,10 +299,10 @@ def test_render_event_pump_interrupts_without_keyboard_binding(event) -> None:
 def test_gui_runtime_pumps_startup_camera_and_close_with_constant_input(
     control_scene_config, control_gains, monkeypatch
 ) -> None:
-    from control_helpers import DummyServoTask
+    from control_helpers import DummyServoPolicyProcessor
 
-    from motrix_deploy.policy import NoOpPolicyRuntime
-    from motrix_deploy.runtime.control import ControlSession
+    from motrix_deploy.policy import NoOpPolicy
+    from motrix_deploy.runtime.control import ControlSession, PolicyController
     from motrix_deploy_mujoco import runtime
     from motrix_env_core.input import ConstantPlanarVelocityBinding
 
@@ -312,20 +313,14 @@ def test_gui_runtime_pumps_startup_camera_and_close_with_constant_input(
 
     simulation = runtime.MujocoRuntime(replace(control_scene_config, render=True), viewer_factory=lambda *_: viewer)
     robot = simulation.robot
-    control = ControlSession(
-        robot=robot,
-        task=DummyServoTask(robot.spec, *control_gains),
-        policy=NoOpPolicyRuntime(robot.spec.joint_count),
-        command_binding=ConstantPlanarVelocityBinding((0.0, 0.0, 0.0)),
-        period_s=0.02,
-        state_timeout_s=0.1,
+    controller = PolicyController(
+        DummyServoPolicyProcessor(robot.spec, *control_gains), NoOpPolicy(robot.spec.joint_count), steps=10
     )
     waits = []
 
-    class Scheduler:
-        overrun_count = 0
-
+    class Scheduler(FixedStepScheduler):
         def __init__(self, period_s):
+            super().__init__(period_s)
             assert period_s == simulation.control_period_s
 
         def reset(self):
@@ -345,15 +340,21 @@ def test_gui_runtime_pumps_startup_camera_and_close_with_constant_input(
         poll()
 
     monkeypatch.setattr(glfw, "poll_events", deliver_events)
-    simulation.bind_control_session(control)
+    session = ControlSession(
+        controller=controller,
+        robot=robot,
+        command_binding=ConstantPlanarVelocityBinding((0.0, 0.0, 0.0)),
+        period_s=0.02,
+        state_timeout_s=0.1,
+    )
+    simulation.bind_session(session)
     with simulation:
         assert glfw.poll_count == 1 and glfw.swap_count == 1
-        result = simulation.run(steps=10)
+        result = simulation.run()
         assert result.exit_reason == "interrupted" and result.completed_steps == 3
-        assert result.simulation_time_s == pytest.approx(0.06)
+        assert result.policy_simulation_time_s == pytest.approx(0.06)
         assert waits == [1, 2]
         assert mujoco.camera_moves == [(mujoco.mjtMouse.mjMOUSE_ZOOM, 0.0, -0.1)]
-        assert not control.active
     assert glfw.destroy_count == 1 and glfw.terminate_count == 1
     assert mujoco.context.free_count == 1 and not viewer.is_running()
 

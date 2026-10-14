@@ -22,11 +22,11 @@ runtime，因此 batch 维度是 command contract 的一部分。
 
 | 契约 | 数据方向 | 语义 |
 | --- | --- | --- |
-| 高层 command | input mechanism → policy task | 策略要完成的目标，例如 `PlanarVelocityCommand` |
-| `RobotCommand` | policy task → robot backend | 关节位置、速度、力矩和 gains 等低层执行命令 |
+| 高层 command | input mechanism → task/controller | 策略要完成的目标，例如 `PlanarVelocityCommand` |
+| `RobotCommand` | controller → robot backend | 关节位置、速度、力矩和 gains 等低层执行命令 |
 
 本文只定义 input mechanism 到高层 command 的路径。observation 拼接、policy inference 和 action processing 仍由
-[Motrix Deploy 框架设计](./motrix-deploy.md) 中的 `DeployTask`、`PolicyRuntime` 和 `RobotInterface` 负责。
+[Motrix Deploy 框架设计](./motrix-deploy.md) 中的 task-owned `PolicyProcessor`、`PolicyController` 与 `Policy` 负责，机器人 I/O 属于 `ControlSession` 与 `RobotInterface`。
 
 ## 2. 最小概念模型
 
@@ -51,7 +51,7 @@ range + RNG     ──> RandomPlanarVelocityBinding   ──> PlanarVelocityComm
 1. `InputDevice` 不得 import 或构造 command。
 2. command dataclass 不得包含 key code、gamepad axis 或设备实现。
 3. device 与 command 的组合只出现在 concrete device-backed binding 中；binding 本身不要求 device。
-4. `ControlLoop` 只调用 `CommandBinding.read_command(batch_size=1)`，不包含设备或任务分支。
+4. runtime 只调用 `CommandBinding.read_command(batch_size=1)`，不包含设备或任务分支。
 5. Go2 使用的通用平面速度 command 与 device/constant bindings 放在 `motrix_env_core`；带训练采样策略的 binding
    放在 `motrix_envs` 对应任务模块。
 
@@ -146,7 +146,7 @@ command scale 属于 binding。第一版先定义 ABC；具体 provider 等实�
 
 ### 4.1 不定义公共 Command ABC
 
-command 是普通 immutable dataclass，不继承公共 base。`CommandT` 只用于 `CommandBinding`、`PolicyContext` 和
+command 是普通 immutable dataclass，不继承公共 base。`CommandT` 只用于 `CommandBinding`、`ControlContext` 和
 `DeployTask` 之间的静态类型关联。
 
 是否放入 core 由语义复用范围决定，而不是由运行时继承层次决定。当前设计只增加 Go2 所需的公共平面速度类型。
@@ -321,26 +321,43 @@ physics/control step 无条件重新采样。partial reset 时传入 `batch_size
 
 ## 6. Runtime 组合
 
-`PolicyContext` 只携带 control-loop metadata 与具体 command：
+执行层级为 Runtime → ControlSession → DeployTask → phase controllers。Policy（`Policy`）只表示 observation → action；DeployTask 是完整任务 Controller，将机器人状态与控制输入映射为 `RobotCommand`，并编排具体任务需要的 Prepare/Policy/Stop 阶段。`PolicyController` 通过 `PolicyProcessor` 适配模型，不反向引用完整 task。
+
+`ControlSession.period_s` 是唯一执行周期来源，Runtime 据此调度；`ControlContext.dt_s` 携带该周期，`elapsed_time_s` 携带连续执行时间。Controller 在阶段开始时记录时间原点以形成局部时钟，不另设执行周期。Task/artifact 的参考采样周期只定义参考数据语义，不承担调度。
+
+`ControlContext` 携带 control-loop metadata 与具体 command：
 
 ```python
 @dataclass(frozen=True)
-class PolicyContext(Generic[CommandT]):
+class ControlContext(Generic[CommandT]):
     step: int
     elapsed_time_s: float
-    command: CommandT
+    command: CommandT | None
+    dt_s: float
 ```
 
 每个 tick 的 command input 路径只有两步：
 
 ```text
-1. command = command_binding.read_command(batch_size=1)
-2. context = PolicyContext(step=step, elapsed_time_s=elapsed_time_s, command=command)
+1. command = command_binding.read_command(batch_size=1) if command_binding is not None else None
+2. context = ControlContext(step=step, elapsed_time_s=elapsed_time_s, dt_s=session.period_s, command=command)
 ```
 
-随后 `DeployTask.validate_command()` 和 `build_observation()` 消费同一个 command。binding/device 异常统一作为
-`input_error` 结束 rollout；`KeyboardInterrupt` 映射为 `interrupted`。更细的 timeout、disconnect、stale input
-错误等真实设备需要区分时再加入。
+ControlSession 的 `command_binding` 默认 `None`；有 binding 时读取指令，没有时直接将
+`ControlContext.command` 设为 `None`。G1 自主播放不创建占位 binding；Go2 仍需外部速度
+binding，并由 task 语义校验拒绝缺失指令，不回退到零速度。Task 不提供 binding factory。
+CLI 从 task 的速度范围组装输入；无速度输入的自主任务校验 `None` 并拒绝 command 配置，
+不引入额外 capability 或 registry。
+ControlSession 负责读取可选 binding、构造 context、backend open/enable、状态校验、命令写入、清理和统计。
+`DeployTask.step(state, context)` 消费实测状态和输入，返回 `ControllerStep`；
+其 `PolicyController` 通过 `PolicyProcessor` 调用 command 校验、observation 构造、模型推理与动作转换，
+不持有 backend handle。`G1WbtDeployTask` 自行管理 ready、policy 与 damping，不让 ControlSession 或 Runtime 解释阶段名；DeploymentRuntime 负责会话调度、异常处理、清理与宿主生命周期；物理周期配置、推进、时间测量、viewer 与仿真世界资源仅属于 SimulationRuntime。
+binding/device 异常统一作为 `input_error` 结束 rollout；`KeyboardInterrupt` 映射为 `interrupted`。
+更细的 timeout、disconnect、stale input 错误等真实设备需要区分时再加入。
+
+`ControllerStep.policy_tick` 只标记实际模型推理/actor 决策，不计 ready 或 damping 命令。根 `ControllerStep.error` 对应 `controller_error`；`policy_error` 只用于推理失败。Session 提供 `ControlContext.dt_s` 与 `elapsed_time_s`；Controller 不持有独立执行周期。
+
+`ControlSession.result()` 只返回通用 RolloutResult：success、exit reason、模型完成步数、wall time、overrun、trace、error 与 latency。硬件结果不携带仿真指标。SimulationRuntime 返回 SimulationRolloutResult，增加 policy_simulation_time_s（模型命令下实际推进的物理时间，含故障前部分推进，不含 ready/damping）及其与 wall time 的比值 real_time_factor。该指标不是整个世界时钟；通用循环只通过窄的内部宿主 interval hook 执行宿主工作，不识别 physics。
 
 仿真 realtime/fixed-step scheduler 由 `runtime.realtime` 选择，`null` 跟随 `runtime.viewer`；硬件内部始终实时调度，不从 device capabilities 推断。
 
@@ -349,8 +366,15 @@ class PolicyContext(Generic[CommandT]):
 `KeyboardDeviceProvider` 与 `GamePadDeviceProvider` 定义在 `motrix_deploy.robot.interface`，是可选输入设备
 capability protocol，不是 runtime 插件 factory；返回设备的生命周期由 provider 管理。
 deploy 应用在 runtime factory 返回 prepared host 后，从 runtime 的可选 `KeyboardDeviceProvider` 取得 GLFW keyboard device 并创建 binding，
-再显式构造 `ControlSession(robot=runtime.robot, ...)`，通过 `runtime.bind_control_session(control)` 绑定；
-`with runtime` 打开资源后调用 `runtime.run(steps=...)`。Runtime factory 不承担控制器构造。应用
+在外部加载 Policy，再以 `task = create_task(spec, runtime.robot.spec, policy, steps=50)` 注入任务。
+应用创建 `session = ControlSession(robot=runtime.robot, controller=task, command_binding=binding, period_s=0.02, state_timeout_s=0.1)`，
+Task 满足构造时必需的 Controller 契约；调用 `runtime.bind_session(session)`，
+通过 `runtime.session` 与 `session.controller` 访问会话及 task，在 `with runtime` 中执行 `runtime.run()`。
+Task 负责自己的阶段编排，通用 DeployTask 不强制阶段顺序；正常停止由 task 决定，故障立即走 backend fallback。
+现有 `motrix_deploy.tasks` entry points 直接提供 task class；`load_task_type` 选择 task 与 spec codec，
+`create_task(spec, robot, policy, steps=None)` 构造完整任务，`default_duration_s(spec)` 无需构造 task 即可读取预算。
+PolicyController 持有 `policy_io` 与 Policy，不持有完整 task，避免循环依赖。模型预算在 task 构造时传入，
+不传给 run。Runtime factory 不承担任务或控制器构造。应用
 不建立 input registry；headless CLI 使用 `command.velocity` 配置 constant command。Go2 task 从 artifact 读取
 `command_lower`、`command_upper` 和与 `[vx, vy, yaw_rate]` 对齐的三维 `command_scale`，向 factory 暴露逐元素
 `range * scale` 后的映射端点；scale 属于 artifact 的 task contract，不在 runtime recipe 重复配置。内置交互式
@@ -382,7 +406,7 @@ motrix_env_core/src/motrix_env_core/
     └── bindings.py             # CommandBinding、built-in bindings
 
 motrix_deploy/src/motrix_deploy/
-└── runtime/                    # PolicyContext；调用 CommandBinding.read_command()
+└── runtime/                    # ControlContext；调用 CommandBinding.read_command()
 
 motrix_deploy_tasks/src/motrix_deploy_tasks/
 └── tasks/
@@ -441,7 +465,7 @@ contract，并在四足训练模块中实现带训练分布语义的 random bind
 ### 9.5 Runtime integration
 
 - fake `CommandBinding` 可以驱动 control loop，不需要真实 device；
-- 替换 keyboard、gamepad 或 constant binding 不修改 `ControlLoop`、`DeployTask` 或 backend；
+- 替换 keyboard、gamepad 或 constant binding 不修改 `Controller`、`DeployTask` 或 backend；
 - training 使用 random binding 不依赖 `InputDevice` 或 deploy runtime；
 - Go2 task 直接消费公共 `PlanarVelocityCommand`；
 - binding 异常产生 `input_error`，用户中断产生 `interrupted`。

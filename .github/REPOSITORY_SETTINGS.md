@@ -52,8 +52,9 @@ single source of truth.
   branch protection rules. Protect both long-lived branches.
 - Require pull requests, at least one maintainer review, and dismissal of stale
   approvals.
-- Require the `Branch policy / validate`, `Tests / pytest`, `PR checks / prek`,
-  and `CodeQL / analyze` status checks.
+- Require the `Branch policy / validate`, `Tests / pytest (fast)`,
+  `Tests / pytest (numba)`, `PR checks / prek`, and `CodeQL / analyze` status
+  checks.
 - Require approval of all review conversations before merge.
 - Require linear history or squash merging; disable merge commits for ordinary
   contributor PRs.
@@ -63,22 +64,38 @@ single source of truth.
   `hotfix/*` PR; if a ruleset bypass is unavoidable, record the incident and
   immediately follow up with the required hotfix PR.
 
+## Temporary release branch rulesets
+
+- Add branch rulesets targeting `release/**` and `hotfix/*`.
+- Block force-pushes and deletion for both patterns.
+- Do not require pull requests on the temporary branches themselves. The release
+  App must push the validated patch bump to `hotfix/*`, and governance remains
+  at the `hotfix/* → stable` review; `release/**` is governed by its PR into
+  `main`.
+- Restrict direct writes where the ruleset supports actor conditions, but keep
+  the release App installation allowed for the automated patch bump.
+- Require generated `release/v* → main` version PRs to use squash or rebase so
+  the resulting `main` head remains the detectable `chore(release):` commit. If
+  that trigger is missed, maintainers can use the documented
+  `open_release_pr=true` manual fallback.
+
 ## Stable branch and releases
 
 - Configure normal pull requests from forks to target `main`.
 - Require a release pull request from `main` to `stable`.
-- Allow `hotfix/*` pull requests to target `stable` directly.
+- Allow `hotfix/*` stable patch pull requests to target `stable` directly.
 - Allow only the upstream maintainer back-merge `stable` → `main` after a
-  hotfix release; reject `stable` → `main` PRs from forks.
-- Require every hotfix to be merged back into `main` after release.
+  stable patch release; reject `stable` → `main` PRs from forks.
+- Require every stable patch release to be merged back into `main` after
+  release.
 - Restrict tag creation for `v*` to maintainers and create tags from `stable`.
-- Configure the Docker/package publishing workflow to run only for reviewed
-  tags on `stable`.
+- Keep PyPI publishing automated from reviewed `stable` release tags, but keep
+  Docker publishing as a manual dispatch from `stable`.
 - Restrict who can create, update, or delete `v*` tags.
-- Add a tag ruleset for `v*` that allows creation only by maintainers and
-  prevents deletion or updates.
-- Remember that Git tags do not record their source branch; the Docker
-  workflow's ancestry check is a second guard, while the tag ruleset and
+- Add a tag ruleset for `v*` that allows creation only by maintainers and the
+  release App, and prevents deletion or updates.
+- Remember that Git tags do not record their source branch; the PyPI and Docker
+  workflow ancestry checks are second guards, while the tag ruleset and
   maintainer permissions enforce the `stable`-only release process.
 
 ## Security and automation
@@ -104,6 +121,12 @@ single source of truth.
   third-party asset audit is complete.
 - Configure the package/container publishing secrets only in the main
   repository, never in forks.
+- Create a release GitHub App, install it only on this repository with Contents
+  read/write and Pull requests read/write, and store its client ID/private key as
+  `RELEASE_APP_CLIENT_ID` / `RELEASE_APP_PRIVATE_KEY`. The workflow exchanges
+  those credentials for short-lived installation tokens; generated PRs, tags,
+  and GitHub Releases therefore trigger the downstream workflows and required
+  checks normally.
 - Check Git LFS bandwidth/storage usage before publishing large releases.
 
 GitHub references: [about rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets),

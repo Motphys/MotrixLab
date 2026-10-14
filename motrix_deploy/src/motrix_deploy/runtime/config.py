@@ -12,9 +12,13 @@ from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.config.sim import SimCfg
 
 
-@dataclass(frozen=True)
+@dataclass
 class SensorBindings:
-    """Semantic robot state fields bound to exact model-local sensor names."""
+    """Semantic robot state fields bound to exact model-local sensor names.
+
+    Also serves as the structured Hydra schema inside ``SimRuntimeCfg``:
+    mutable so composed recipes can override sensor names.
+    """
 
     base_angular_velocity: str | None = None
     base_linear_acceleration: str | None = None

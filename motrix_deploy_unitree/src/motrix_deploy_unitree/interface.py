@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from operator import attrgetter
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -25,7 +26,7 @@ from motrix_deploy.contracts import (
 )
 from motrix_deploy.errors import EmergencyStopError, LieDownRequestedError, ValidationError
 from motrix_deploy.robot.interface import RobotInterface
-from motrix_deploy_unitree.config import GO2_MOTOR_COUNT, UnitreeGo2BackendConfig
+from motrix_deploy_unitree.config import GO2_MOTOR_COUNT, UnitreeBackendConfig, UnitreeGo2RobotCfg
 from motrix_deploy_unitree.remote import UnitreeRemoteGamePadDevice, UnitreeRemoteState, decode_wireless_remote
 from motrix_env_core.input import GamePadDevice
 
@@ -36,7 +37,7 @@ _VELOCITY_STOP = 16000.0
 def _sdk_field_reader(field: str) -> Callable[[Any], Any]:
     """Resolve public dotted SDK attributes, never expressions or indexing."""
     if any(not part.isidentifier() or part.startswith("_") for part in field.split(".")):
-        raise ValidationError("runtime.robot.sensors.hardware.field", "public dotted SDK attributes", field)
+        raise ValidationError("runtime.robot.sensors.field", "public dotted SDK attributes", field)
     return attrgetter(field)
 
 
@@ -85,12 +86,12 @@ def _load_sdk_bindings() -> UnitreeSdkBindings:
     )
 
 
-class UnitreeGo2RobotInterface(RobotInterface):
+class UnitreeGo2Robot(RobotInterface):
     """Map canonical Go2 state/commands to SDK2 LowState/LowCmd DDS messages."""
 
     def __init__(
         self,
-        config: UnitreeGo2BackendConfig,
+        config: UnitreeBackendConfig,
         control_period_s: float,
         state_timeout_s: float,
         *,
@@ -99,6 +100,8 @@ class UnitreeGo2RobotInterface(RobotInterface):
         clock_ns: Callable[[], int] = time.monotonic_ns,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        if not isinstance(config.robot, UnitreeGo2RobotCfg):
+            raise TypeError("UnitreeGo2Robot requires UnitreeGo2RobotCfg")
         self.config = config
         for path, value in (
             ("control.period_s", control_period_s),
@@ -201,11 +204,22 @@ class UnitreeGo2RobotInterface(RobotInterface):
         if self._opened and not self._closed:
             raise RuntimeError("Unitree backend is already open")
         self._resolve_hardware_bindings(self._spec)
-        self._kp_override = self.config.gain_override("kp", self._spec.joint_count)
-        self._kd_override = self.config.gain_override("kd", self._spec.joint_count)
+        self._kp_override = self.config.robot.gain_override("kp", self._spec.joint_count)
+        self._kd_override = self.config.robot.gain_override("kd", self._spec.joint_count)
         sdk = self._sdk or _load_sdk_bindings()
         self._sdk = sdk
-        sdk.channel_factory_initialize(self.config.domain_id, self.config.network_interface)
+        try:
+            sdk.channel_factory_initialize(self.config.domain_id, self.config.network_interface)
+        except Exception as error:
+            available_interfaces = sorted(path.name for path in Path("/sys/class/net").iterdir())
+            available = ", ".join(available_interfaces) or "none detected"
+            raise RuntimeError(
+                f"Failed to initialize Unitree DDS on network interface "
+                f"{self.config.network_interface!r} (domain_id={self.config.domain_id}). "
+                f"The interface is unavailable or not visible to CycloneDDS. "
+                f"Available interfaces: {available}. "
+                f"Set runtime.network_interface to the Ethernet interface connected to the robot."
+            ) from error
         self._disable_high_level_motion_services(sdk)
         self._command_crc = sdk.crc_type()
         self._state_crc = sdk.crc_type()
@@ -255,13 +269,12 @@ class UnitreeGo2RobotInterface(RobotInterface):
 
     def _resolve_hardware_bindings(self, spec: RobotSpec) -> None:
         robot = self.config.robot
-        assert robot is not None
-        self._motor_indices = self.config.motor_indices(spec.joint_names)
+        self._motor_indices = self.config.robot.motor_indices(spec.joint_names)
         bindings = robot.actuation.motors
         if set(bindings) != set(spec.joint_names):
             raise ValidationError("runtime.robot.actuation.motors", "exactly the canonical joints", set(bindings))
         self._motor_modes = tuple(
-            bindings[name].enabled_mode if self.config.motor_mode is None else self.config.motor_mode
+            bindings[name].enabled_mode if self.config.robot.motor_mode is None else self.config.robot.motor_mode
             for name in spec.joint_names
         )
         for role in ("base_orientation_xyzw", "base_angular_velocity", "base_linear_acceleration"):
@@ -274,8 +287,8 @@ class UnitreeGo2RobotInterface(RobotInterface):
             raise ValidationError("runtime.robot.sensors.base_orientation_xyzw", "a declared quaternion order", order)
         self._quaternion_indices = [1, 2, 3, 0] if order == "wxyz" else [0, 1, 2, 3]
         robot.key_pose.validate()
-        target = self.config.lie_down_position()
-        if self.config.lie_down_joint_position is None:
+        target = self.config.robot.lie_down_position()
+        if self.config.robot.lie_down_joint_position is None:
             pose_by_joint = dict(zip(robot.key_pose.joint_names, target))
             if set(pose_by_joint) != set(spec.joint_names):
                 raise ValidationError("runtime.robot.key_pose", "exactly the canonical joints", set(pose_by_joint))
@@ -304,10 +317,10 @@ class UnitreeGo2RobotInterface(RobotInterface):
         kp, kd = self._effective_gains(initial_command)
         self._last_position_kp = np.array(kp, dtype=np.float32, copy=True)
         self._last_position_kd = np.array(kd, dtype=np.float32, copy=True)
-        if self.config.wait_for_remote_buttons:
-            self._wait_for_button(self.config.start_button, self._publish_zero_torque)
+        if self.config.robot.wait_for_remote_buttons:
+            self._wait_for_button(self.config.robot.start_button, self._publish_zero_torque)
         start = self._latest_robot_state().joint_position
-        steps = max(1, math.ceil(self.config.default_transition_duration_s / self._control_period_s))
+        steps = max(1, math.ceil(self.config.robot.default_transition_duration_s / self._control_period_s))
         for step in range(1, steps + 1):
             self._raise_if_remote_stop_requested()
             alpha = np.float32(step / steps)
@@ -321,9 +334,9 @@ class UnitreeGo2RobotInterface(RobotInterface):
             )
             self._wait_control_period()
 
-        if self.config.wait_for_remote_buttons:
+        if self.config.robot.wait_for_remote_buttons:
             self._wait_for_button(
-                self.config.enable_button,
+                self.config.robot.enable_button,
                 lambda: self._publish_robot_command(initial_command),
             )
         self._raise_if_remote_stop_requested()
@@ -362,9 +375,9 @@ class UnitreeGo2RobotInterface(RobotInterface):
             lie_down = self._lie_down_requested
         reason = self._health_reason
         if emergency:
-            reason = f"remote {self.config.emergency_stop_button!r} emergency stop is active"
+            reason = f"remote {self.config.robot.emergency_stop_button!r} emergency stop is active"
         elif lie_down and not reason:
-            reason = f"remote {self.config.lie_down_button!r} lie-down shutdown is active"
+            reason = f"remote {self.config.robot.lie_down_button!r} lie-down shutdown is active"
         elif self._closed:
             reason = reason or "backend is closed"
         elif self._stopped:
@@ -389,7 +402,7 @@ class UnitreeGo2RobotInterface(RobotInterface):
             except Exception as error:
                 self._health_reason = f"failed to execute lie-down shutdown: {error}"
         if self._publisher is not None and self._low_cmd is not None and self._command_crc is not None:
-            steps = max(1, math.ceil(self.config.damping_duration_s / self._control_period_s))
+            steps = max(1, math.ceil(self.config.robot.damping_duration_s / self._control_period_s))
             for step in range(steps):
                 try:
                     self._publish_damping()
@@ -439,9 +452,9 @@ class UnitreeGo2RobotInterface(RobotInterface):
             self._latest_receive_time_ns = receive_time_ns
             self._state_sequence += 1
             self._remote = remote
-            if remote.pressed(self.config.emergency_stop_button):
+            if remote.pressed(self.config.robot.emergency_stop_button):
                 self._emergency_stop = True
-            if remote.pressed(self.config.lie_down_button):
+            if remote.pressed(self.config.robot.lie_down_button):
                 self._lie_down_requested = True
             self._condition.notify_all()
 
@@ -633,11 +646,13 @@ class UnitreeGo2RobotInterface(RobotInterface):
         start = self._latest_robot_state().joint_position
         target = self._lie_down_position
         zeros = np.zeros(GO2_MOTOR_COUNT, dtype=np.float32)
-        steps = max(1, math.ceil(self.config.lie_down_duration_s / self._control_period_s))
+        steps = max(1, math.ceil(self.config.robot.lie_down_duration_s / self._control_period_s))
         for step in range(1, steps + 1):
             with self._condition:
                 if self._emergency_stop:
-                    raise EmergencyStopError(f"remote {self.config.emergency_stop_button!r} requested damping stop")
+                    raise EmergencyStopError(
+                        f"remote {self.config.robot.emergency_stop_button!r} requested damping stop"
+                    )
             alpha = np.float32(step / steps)
             position = ((np.float32(1.0) - alpha) * start + alpha * target).astype(np.float32)
             self._publish_robot_command(
@@ -659,7 +674,7 @@ class UnitreeGo2RobotInterface(RobotInterface):
                 motor.q = 0.0
                 motor.qd = 0.0
                 motor.kp = 0.0
-                motor.kd = self.config.damping_kd
+                motor.kd = self.config.robot.damping_kd
                 motor.tau = 0.0
             self._write_low_cmd_locked()
 
@@ -674,13 +689,13 @@ class UnitreeGo2RobotInterface(RobotInterface):
 
     def _raise_if_remote_stop_requested_locked(self) -> None:
         if self._emergency_stop:
-            raise EmergencyStopError(f"remote {self.config.emergency_stop_button!r} requested damping stop")
+            raise EmergencyStopError(f"remote {self.config.robot.emergency_stop_button!r} requested damping stop")
         if self._lie_down_requested:
-            raise LieDownRequestedError(f"remote {self.config.lie_down_button!r} requested lie-down shutdown")
+            raise LieDownRequestedError(f"remote {self.config.robot.lie_down_button!r} requested lie-down shutdown")
 
     def _require_open(self) -> None:
         if not self._opened or self._closed:
             raise RuntimeError("Unitree backend is not open")
 
 
-__all__ = ["UnitreeGo2RobotInterface", "UnitreeSdkBindings"]
+__all__ = ["UnitreeGo2Robot", "UnitreeSdkBindings"]

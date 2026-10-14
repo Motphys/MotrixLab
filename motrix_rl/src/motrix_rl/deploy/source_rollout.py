@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from motrix_deploy.artifact import read_artifact
-from motrix_deploy.policy import OnnxPolicyRuntime
+from motrix_deploy.policy import OnnxPolicy
 from motrix_env_core import registry
 from motrix_rl.deploy.api import SourceRolloutResult
 
@@ -29,7 +29,7 @@ def validate_motrixsim_source_rollout(
     if command.shape != (3,) or not np.isfinite(command).all():
         raise ValueError(f"command must contain three finite values, got {command}")
     artifact = read_artifact(artifact_path)
-    policy = OnnxPolicyRuntime(artifact.policy_path, artifact.manifest.policy.input, artifact.manifest.policy.output)
+    policy = OnnxPolicy(artifact.policy_path, artifact.manifest.policy.input, artifact.manifest.policy.output)
     np.random.seed(seed)
     env = registry.make(env_name, num_envs=1)
     env.cfg.noise_config.level = 0.0

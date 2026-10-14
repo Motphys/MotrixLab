@@ -3,8 +3,7 @@
 
 """Framework-independent deployment data contracts."""
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import TypeAlias
 
@@ -130,9 +129,8 @@ class RobotState:
     base_orientation_xyzw: FloatArray
     base_angular_velocity: FloatArray
     base_linear_acceleration: FloatArray
-    base_position: FloatArray | None = None
+    # Optional world-frame sensor/estimator output; unavailable backends leave it unset.
     base_linear_velocity: FloatArray | None = None
-    extras: Mapping[str, FloatArray] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.sample_time_ns < 0:
@@ -166,8 +164,6 @@ class RobotState:
             path="state.base_linear_acceleration",
             shape=(3,),
         )
-        if self.base_position is not None:
-            _validate_float32_array(self.base_position, path="state.base_position", shape=(3,))
         if self.base_linear_velocity is not None:
             _validate_float32_array(
                 self.base_linear_velocity,
@@ -177,12 +173,6 @@ class RobotState:
         norm = np.linalg.norm(self.base_orientation_xyzw)
         if not np.isclose(norm, 1.0, atol=1e-4):
             raise ValidationError("state.base_orientation_xyzw", "unit quaternion", norm)
-        for name, value in self.extras.items():
-            if not isinstance(name, str) or not name:
-                raise ValidationError("state.extras", "non-empty string keys", name)
-            if not isinstance(value, np.ndarray):
-                raise ValidationError(f"state.extras.{name}", "a numpy array", type(value).__name__)
-            _validate_float32_array(value, path=f"state.extras.{name}", shape=value.shape)
 
 
 class JointControlMode(str, Enum):
@@ -256,8 +246,8 @@ class RobotCapabilities:
 
     Attributes:
         control_modes: Canonical joint command modes accepted by the backend.
-        state_fields: ``RobotState`` fields populated by every state sample.
-        extra_sensors: Additional entries available in ``RobotState.extras``, mapped to their fixed shapes.
+        state_fields: ``RobotState`` fields supported by the backend, independently of sensor bindings.
+            Optional fields can be ``None`` in samples when their sensor is not bound.
         supports_rendering: Whether the backend can present a live viewer.
         max_command_rate_hz: Highest command update rate accepted by the backend, or ``None`` when unconstrained.
         requires_enable: Whether ``RobotInterface.enable()`` must complete before policy commands are accepted.
@@ -266,7 +256,6 @@ class RobotCapabilities:
 
     control_modes: tuple[JointControlMode, ...]
     state_fields: frozenset[str]
-    extra_sensors: Mapping[str, tuple[int, ...]] = field(default_factory=dict)
     supports_rendering: bool = False
     max_command_rate_hz: float | None = None
     requires_enable: bool = False
@@ -289,11 +278,6 @@ class RobotCapabilities:
             raise ValidationError("capabilities.max_command_rate_hz", "a positive value", self.max_command_rate_hz)
         if not self.stop_semantics:
             raise ValidationError("capabilities.stop_semantics", "a non-empty string", self.stop_semantics)
-        for name, shape in self.extra_sensors.items():
-            if not isinstance(name, str) or not name:
-                raise ValidationError("capabilities.extra_sensors", "non-empty string keys", name)
-            if not isinstance(shape, tuple) or any(not isinstance(size, int) or size <= 0 for size in shape):
-                raise ValidationError(f"capabilities.extra_sensors.{name}", "a tuple of positive dimensions", shape)
 
 
 @dataclass(frozen=True)

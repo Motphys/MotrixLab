@@ -4,10 +4,9 @@
 """Public robot I/O and device capability contracts."""
 
 from abc import ABC, abstractmethod
-from typing import Protocol, runtime_checkable
 
 from motrix_deploy.contracts import HealthStatus, RobotCapabilities, RobotCommand, RobotSpec, RobotState
-from motrix_env_core.input import GamePadDevice, KeyboardDevice
+from motrix_env_core.input import GamePadDevice
 
 
 class RobotInterface(ABC):
@@ -22,6 +21,10 @@ class RobotInterface(ABC):
     @abstractmethod
     def capabilities(self) -> RobotCapabilities:
         """Return immutable capabilities used during startup negotiation."""
+
+    def get_gamepad_device(self) -> GamePadDevice | None:
+        """Return an optional operator device supplied by the robot transport."""
+        return None
 
     @abstractmethod
     def open(self) -> None:
@@ -53,20 +56,4 @@ class RobotInterface(ABC):
         """Release robot I/O resources; must be idempotent."""
 
 
-@runtime_checkable
-class KeyboardDeviceProvider(Protocol):
-    """Optional runtime capability supplying keyboard input."""
-
-    def get_keyboard_device(self) -> KeyboardDevice:
-        """Return a device whose lifecycle is owned by its provider."""
-
-
-@runtime_checkable
-class GamePadDeviceProvider(Protocol):
-    """Optional robot capability supplying gamepad input."""
-
-    def get_gamepad_device(self) -> GamePadDevice:
-        """Return a device whose lifecycle is owned by its provider."""
-
-
-__all__ = ["GamePadDeviceProvider", "KeyboardDeviceProvider", "RobotInterface"]
+__all__ = ["RobotInterface"]

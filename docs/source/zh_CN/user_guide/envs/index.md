@@ -58,7 +58,8 @@ python scripts/view.py env=<env-id>
 | <img src="../../_static/images/poster/g1-29dof-wbt-largebox.jpg" alt="g1-29dof-wbt-largebox" width="240"> | `g1-29dof-wbt-largebox` | 让 Unitree G1 跟踪搬运大箱子的参考动作。 | `motrix.fastsac` |
 | <img src="../../_static/images/poster/g1-walk-flat.jpg" alt="g1-walk-flat" width="240"> | `g1-walk-flat` | 控制 Unitree G1 在平地上跟踪行走指令。 | `motrix.fastsac` |
 | <img src="../../_static/images/poster/g1-walk-rough.jpg" alt="g1-walk-rough" width="240"> | `g1-walk-rough` | 控制 Unitree G1 在起伏地形上跟踪行走指令。 | `motrix.fastsac` |
-| <img src="../../_static/images/poster/g1-wbt-dance.jpg" alt="g1-wbt-dance" width="240"> | `g1-wbt-dance` | 让 Unitree G1 跟踪内置舞蹈参考动作。 | `motrix.fastsac` |
+| <img src="../../_static/images/poster/g1-wbt-backflip.jpg" alt="g1-wbt-backflip" width="240"> | `g1-wbt-backflip` | 让 Unitree G1 跟踪内置后空翻参考动作。 | `motrix.fastsac` |
+| <img src="../../_static/images/poster/g1-wbt-dance.jpg" alt="g1-wbt-dance" width="240"> | `g1-wbt-dance` | 让 Unitree G1 在 dance 语料目录上做全身跟踪；目录内一个 clip | `motrix.fastsac` |
 | <img src="../../_static/images/poster/go1-stairs-terrain-walk.jpg" alt="go1-stairs-terrain-walk" width="240"> | `go1-stairs-terrain-walk` | 控制 Unitree Go1 在台阶地形上行走。 | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/go1-walk-flat.jpg" alt="go1-walk-flat" width="240"> | `go1-walk-flat` | 控制 Unitree Go1 在平地上跟踪行走指令。 | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/go1-walk-rough.jpg" alt="go1-walk-rough" width="240"> | `go1-walk-rough` | 控制 Unitree Go1 在程序化粗糙高度场上跟踪行走指令。 | `rslrl.ppo`, `skrl.ppo` |

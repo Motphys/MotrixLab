@@ -105,7 +105,7 @@ def test_drain_merges_shard_generations_into_full_batches() -> None:
     assert merged_obs[0, :4].eq(1.0).all()
     assert merged_obs[0, 4:].eq(2.0).all()
     # both read cursors advanced past the consumed generation
-    assert all(ring.read_idx == 1 for ring in rings)
+    assert all(ring.read_completed_count == 1 for ring in rings)
 
 
 def test_drain_holds_generation_until_all_rings_deliver() -> None:
@@ -121,7 +121,7 @@ def test_drain_holds_generation_until_all_rings_deliver() -> None:
     assert learner._pending.next_gen == 1
     _push_batch(rings[1], 2.5)
     assert learner.drain() == 1
-    assert all(ring.read_idx == 2 for ring in rings)
+    assert all(ring.read_completed_count == 2 for ring in rings)
 
 
 def test_single_ring_drain_batches_multiple_slots() -> None:
@@ -137,7 +137,7 @@ def test_single_ring_drain_batches_multiple_slots() -> None:
     assert extends[0][0].shape == (3, 4, 3)
     assert extends[0][0][0].eq(1.0).all()
     assert extends[0][0][2].eq(3.0).all()
-    assert ring.read_idx == 3
+    assert ring.read_completed_count == 3
 
 
 def _snapshot(collector_id: int, ret: float, episodes: int, lag: int, collect_ms: float) -> dict:
@@ -412,11 +412,11 @@ def test_lockstep_strict_due_scales_with_global_step_delta(monkeypatch) -> None:
     monkeypatch.setattr(dist, "broadcast", lambda tensor, src=0: tensor)
     learner, calls = _lockstep_learner(num_updates=4, utd_mode="strict")
 
-    assert learner.maybe_train(8) is not None  # delta 3
+    assert learner.maybe_train(8)  # delta 3
     assert sum(calls) == 12 and all(c == 4 for c in calls)
-    assert learner.maybe_train(8) is None  # no new global batches -> no update
+    assert not learner.maybe_train(8)  # no new global batches -> no update
     assert sum(calls) == 12
-    assert learner.maybe_train(9) is not None
+    assert learner.maybe_train(9)
     assert sum(calls) == 16
 
 
@@ -426,9 +426,9 @@ def test_lockstep_learner_bound_runs_base_on_any_progress(monkeypatch) -> None:
     monkeypatch.setattr(dist, "broadcast", lambda tensor, src=0: tensor)
     learner, calls = _lockstep_learner(num_updates=4, utd_mode="learner_bound")
 
-    assert learner.maybe_train(6) is not None
+    assert learner.maybe_train(6)
     assert sum(calls) == 4
-    assert learner.maybe_train(6) is None
+    assert not learner.maybe_train(6)
     assert sum(calls) == 4
 
 
@@ -439,7 +439,7 @@ def test_lockstep_gated_before_learning_starts(monkeypatch) -> None:
     learner, calls = _lockstep_learner(num_updates=4, utd_mode="strict")
     learner.control.collector_steps = 19  # < learning_starts(10) * num_collectors(2)
 
-    assert learner.maybe_train(8) is None
+    assert not learner.maybe_train(8)
     assert calls == []
 
 
@@ -493,6 +493,27 @@ def test_resolve_collector_inference_devices_colocates_with_owner(monkeypatch) -
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
     with pytest.raises(RuntimeError, match="only 1 device"):
         resolve_collector_inference_devices("cuda:1", [], 1, 1, cuda(0))
+
+
+def test_generic_cuda_falls_back_when_cuda_unavailable(monkeypatch) -> None:
+    """Generic "cuda" degrades to the default device on a CUDA-less host.
+
+    Only when NO explicit learner layout exists — with explicit learner
+    devices the resolution stays pure device arithmetic (worker-side
+    validation owns availability), so co-location proceeds unchanged.
+    """
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    cpu = torch.device("cpu")
+
+    # no learner layout: generic "cuda" follows the default device
+    devices = resolve_collector_inference_devices("cuda", [], 2, 1, cpu)
+    assert devices == [cpu, cpu]
+
+    # explicit learner layout: pure arithmetic, co-location proceeds
+    # even though CUDA is unavailable on this host
+    cuda = lambda n: torch.device("cuda", n)  # noqa: E731
+    devices = resolve_collector_inference_devices("cuda", [cuda(0), cuda(1)], 4, 2, cpu)
+    assert devices == [cuda(0), cuda(0), cuda(1), cuda(1)]
 
 
 def test_ring_transport_ipc_colocated_collectors() -> None:

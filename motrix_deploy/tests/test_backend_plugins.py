@@ -48,7 +48,7 @@ def test_runtime_plugin_is_discovered_and_constructed(monkeypatch: pytest.Monkey
     def factory(config, context):
         calls.append((config, context))
         robot = FakeRobotInterface(context.robot, response=config["response"])
-        return HardwareRuntime(robot=robot, realtime=True)
+        return HardwareRuntime(robot)
 
     entry_point = _EntryPoint("fake", "test:factory", factory)
     monkeypatch.setattr(runtime_factory, "_runtime_entry_points", lambda: (entry_point,))
@@ -61,6 +61,8 @@ def test_runtime_plugin_is_discovered_and_constructed(monkeypatch: pytest.Monkey
 
     assert isinstance(runtime, HardwareRuntime)
     assert isinstance(runtime.robot, FakeRobotInterface)
+    assert runtime.realtime is True
+    assert not runtime.opened
     assert runtime.robot.spec is context.robot
     assert registered_runtimes() == ("fake",)
     assert calls == [({"name": "fake", "response": 0.5}, context)]

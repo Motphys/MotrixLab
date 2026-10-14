@@ -74,8 +74,8 @@ def test_generation_merge_matches_single_ring_byte_for_byte() -> None:
     # read cursors must advance by exactly the number of drained slots — a
     # desync here stalls the generation merge permanently (the learner waits
     # for a generation whose slots it already consumed)
-    assert single.rings[0].read_idx == batches
-    assert all(r.read_idx == batches for r in rings)
+    assert single.rings[0].read_completed_count == batches
+    assert all(r.read_completed_count == batches for r in rings)
 
 
 def test_generation_merge_preserves_n_step_adjacency() -> None:

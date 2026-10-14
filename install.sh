@@ -11,8 +11,9 @@
 #
 # Built-in FastSAC and SKRL on Torch are always installed. --skrl-jax adds
 # the JAX runtime, and --rslrl adds the RSLRL plugin; multiple flags combine.
-# --tbb installs Intel TBB so numba parallel kernels use its threading layer
-# (avoids the OpenMP per-region thread-wakeup storm on many-core hosts).
+# Linux installs Intel TBB by default so numba parallel kernels use its threading
+# layer (avoids the OpenMP per-region thread-wakeup storm on many-core hosts).
+# --tbb remains available to explicitly request TBB on other platforms.
 
 set -e
 
@@ -27,7 +28,7 @@ usage() {
     echo "  --skrl-torch           Training backend: SKRL on PyTorch (default)"
     echo "  --skrl-jax             Training backend: SKRL on JAX (Linux only)"
     echo "  --rslrl                Training backend: RSL-RL on PyTorch"
-    echo "  --tbb                  Install Intel TBB for numba parallel kernels (recommended on many-core hosts)"
+    echo "  --tbb                  Install Intel TBB for numba parallel kernels (default on Linux)"
     echo "  -h, --help             Show this help"
 }
 
@@ -142,6 +143,7 @@ if [ -z "$GPU" ]; then
 fi
 
 case "$(uname -s 2>/dev/null)" in
+    Linux) IS_WINDOWS=""; TBB=1 ;;
     MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
     *) IS_WINDOWS="" ;;
 esac
@@ -151,10 +153,13 @@ if [ "$GPU" = rocm ] && [ -n "$IS_WINDOWS" ]; then
     exit 1
 fi
 
+TBB_EXTRA=""
+[ -n "$TBB" ] && TBB_EXTRA=" --extra tbb"
+
 if [ -n "$ALL" ]; then
     if [ "$GPU" = rocm ]; then
         set -x
-        uv sync --all-packages --all-groups --extra rocm --extra rslrl --extra unitree --extra docs
+        uv sync --all-packages --all-groups --extra rocm --extra rslrl --extra unitree --extra docs$TBB_EXTRA
     else
         set -x
         uv sync --all-packages --all-groups --all-extras --no-extra rocm
@@ -164,7 +169,7 @@ else
     [ -n "$SKRL_JAX" ] && EXTRAS="$EXTRAS --extra skrl-jax"
     [ -n "$RSLRL" ] && EXTRAS="$EXTRAS --extra rslrl"
     [ -n "$DOCS" ] && EXTRAS="$EXTRAS --extra docs"
-    [ -n "$TBB" ] && EXTRAS="$EXTRAS --extra tbb"
+    EXTRAS="$EXTRAS$TBB_EXTRA"
     set -x
     uv sync --no-default-groups --extra "$GPU"$EXTRAS
 fi

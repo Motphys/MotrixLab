@@ -89,7 +89,7 @@ def test_file_scene_and_custom_objects_preserved_placement_has_no_double_transfo
     backend.open()
     try:
         state = backend.robot.read_state(0.1)
-        np.testing.assert_allclose(state.base_position, backend.model.qpos0[:3])
+        np.testing.assert_allclose(backend.data.xpos[backend.robot._base_body_id], backend.model.qpos0[:3])
         np.testing.assert_allclose(state.base_orientation_xyzw, robot.rotation, atol=1e-6)
         np.testing.assert_allclose(backend.model.geom("obstacle").pos, [5, 6, 7])
         assert backend.model.geom("platform").pos[2] == pytest.approx(0.2)
@@ -131,14 +131,30 @@ def test_robot_attach_transform_and_init_key_pose_are_reset_once(rotation) -> No
     with runtime:
         for _ in range(2):
             state = runtime.robot.read_state(0.1)
-            np.testing.assert_allclose(state.base_position, expected_position, atol=1e-6)
+            np.testing.assert_allclose(runtime.data.xpos[runtime.robot._base_body_id], expected_position, atol=1e-6)
             np.testing.assert_allclose(state.base_orientation_xyzw, expected_quat[[1, 2, 3, 0]], atol=1e-6)
             np.testing.assert_allclose(state.joint_position, robot.key_pose.poses["custom"], atol=1e-6)
             runtime.data.qpos[:] = 0.0
             runtime.data.qvel[:] = 1.0
-            runtime.reset(runtime.robot._joint_qpos_indices, runtime.robot.spec.default_joint_position)
+            runtime.reset(runtime.robot._joint_qpos_indices, runtime.initial_joint_position(runtime.robot.spec))
             np.testing.assert_array_equal(runtime.data.qvel, 0.0)
     assert scene.objs.robot.translation == translation and scene.objs.robot.rotation == rotation
+
+
+def test_scene_init_pose_preserves_artifact_default_and_clips_servo_limits() -> None:
+    from motrix_deploy.runtime.config import SimulationRuntimeConfig
+    from motrix_deploy.runtime.factory import create_simulation_runtime
+
+    scene = SceneCfg(objs=AdapterSceneObjsCfg(robot=UnitreeGo2Robot(init_key_pose="lie_down")))
+    runtime = create_simulation_runtime(
+        "mujoco", SimulationRuntimeConfig(scene=scene, sensor_bindings=_config().sensor_bindings)
+    )
+    with runtime:
+        spec = runtime.robot.spec
+        expected = np.clip(scene.objs.robot.key_pose.poses["lie_down"], spec.position_lower, spec.position_upper)
+        np.testing.assert_allclose(runtime.robot.read_state(0.1).joint_position, expected, atol=1e-6)
+        np.testing.assert_allclose(spec.default_joint_position, scene.objs.robot.key_pose.poses["default"])
+        assert scene.objs.robot.init_key_pose == "lie_down"
 
 
 def test_environment_scene_is_resolved_by_application_before_backend() -> None:
@@ -151,7 +167,7 @@ def test_environment_scene_is_resolved_by_application_before_backend() -> None:
     try:
         assert backend.model.njnt == 13
         assert backend.scene is not source
-        np.testing.assert_allclose(backend.robot.read_state(0.1).base_position, backend.model.qpos0[:3])
+        np.testing.assert_allclose(backend.data.xpos[backend.robot._base_body_id], backend.model.qpos0[:3])
     finally:
         backend.close()
 

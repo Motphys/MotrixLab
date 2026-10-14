@@ -11,6 +11,7 @@ from motrix_env_core.config.scene import (
     SceneAssetsCfg,
     SceneCfg,
     SceneObjsCfg,
+    SystemCameraCfg,
 )
 
 
@@ -32,4 +33,9 @@ class RoughWorldObjsCfg(SceneObjsCfg):
 
 def build_scene() -> SceneCfg:
     """Build fresh seeded rough ground with an empty robot slot."""
-    return SceneCfg(assets=RoughWorldAssetsCfg(), objs=RoughWorldObjsCfg())
+    # Front view matching the quadruped training scenes (e.g. quadruped/cfg.py).
+    return SceneCfg(
+        assets=RoughWorldAssetsCfg(),
+        objs=RoughWorldObjsCfg(),
+        system_camera=SystemCameraCfg(distance=10.0, elevation=-25.0, azimuth=90.0),
+    )

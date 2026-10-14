@@ -11,21 +11,21 @@ from typing import ClassVar
 
 import numpy as np
 import pytest
+from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
 from motrix_deploy.artifact import ControlSpec, TaskSpec
 from motrix_deploy.contracts import JointControlMode, JointServoCommand, JointTorqueCommand, RobotSpec
 from motrix_deploy.errors import EmergencyStopError, LieDownRequestedError, ValidationError
 from motrix_deploy.profile import DeploymentProfile
-from motrix_deploy.robot.interface import GamePadDeviceProvider
-from motrix_deploy.runtime.factory import RuntimeCreateContext
+from motrix_deploy.runtime.factory import RuntimeCreateContext, create_hardware_runtime
 from motrix_deploy.runtime.hardware import HardwareRuntime
 from motrix_deploy_unitree.actuation import Actuation, UnitreeMotorBinding
 from motrix_deploy_unitree.cli import _parser, main
-from motrix_deploy_unitree.config import UnitreeGo2BackendConfig
+from motrix_deploy_unitree.config import UnitreeBackendConfig, UnitreeGo2RobotCfg
 from motrix_deploy_unitree.direct import UnitreeGo2DirectInterface
 from motrix_deploy_unitree.hardware import UnitreeGo2HardwareCfg
-from motrix_deploy_unitree.interface import UnitreeGo2RobotInterface, UnitreeSdkBindings
+from motrix_deploy_unitree.interface import UnitreeGo2Robot, UnitreeSdkBindings
 from motrix_deploy_unitree.plugin import create_runtime
 from motrix_deploy_unitree.remote import UnitreeRemoteGamePadDevice, decode_wireless_remote
 from motrix_deploy_unitree.sensor import HardwareSensorBinding, HardwareSensorBindings
@@ -251,24 +251,40 @@ def _spec() -> RobotSpec:
     )
 
 
-def _config(**overrides) -> UnitreeGo2BackendConfig:
-    values = {
-        "network_interface": "enp3s0",
+def _config(**overrides) -> UnitreeBackendConfig:
+    transport_fields = {
+        "network_interface",
+        "domain_id",
+        "lowcmd_topic",
+        "lowstate_topic",
+        "connect_timeout_s",
+        "subscriber_queue_depth",
+        "validate_crc",
+    }
+    transport = {"network_interface": "enp3s0"}
+    robot_values = {
         "default_transition_duration_s": 0.02,
         "damping_duration_s": 0.04,
         "wait_for_remote_buttons": False,
         "kp": 35.0,
         "kd": 0.5,
     }
-    values.update(overrides)
-    return UnitreeGo2BackendConfig(**values)
+    for name, value in overrides.items():
+        if name in transport_fields:
+            transport[name] = value
+        else:
+            robot_values[name] = value
+    hardware = robot_values.pop("hardware", None)
+    if hardware is not None:
+        robot_values.update(key_pose=hardware.key_pose, sensors=hardware.sensors, actuation=hardware.actuation)
+    return UnitreeBackendConfig(**transport, robot=UnitreeGo2RobotCfg(**robot_values))
 
 
 def _backend(
-    config: UnitreeGo2BackendConfig,
+    config: UnitreeBackendConfig,
     bus: _Bus,
-) -> UnitreeGo2RobotInterface:
-    return UnitreeGo2RobotInterface(
+) -> UnitreeGo2Robot:
+    return UnitreeGo2Robot(
         config,
         spec=_spec(),
         control_period_s=0.02,
@@ -291,7 +307,6 @@ def _command(position: np.ndarray) -> JointServoCommand:
 
 def test_unitree_interface_provides_remote_gamepad_device() -> None:
     backend = _backend(_config(), _Bus())
-    assert isinstance(backend, GamePadDeviceProvider)
     assert backend.get_gamepad_device() is backend.get_gamepad_device()
 
 
@@ -452,7 +467,7 @@ def test_custom_robot_config_drives_sensor_wiring_motor_addresses_modes_and_shut
     bus.state.custom = SimpleNamespace(
         orientation=[0.0, 0.0, 2.0, 0.0], angular_velocity=[4.0, 5.0, 6.0], acceleration=[7.0, 8.0, 9.0]
     )
-    backend = _backend(_config(robot=robot, lie_down_duration_s=0.02, damping_duration_s=0.02), bus)
+    backend = _backend(_config(hardware=robot, lie_down_duration_s=0.02, damping_duration_s=0.02), bus)
     backend.open()
     # Bindings and pose are resolved at open, not re-read from mutable robot configs.
     robot.actuation = Actuation()
@@ -481,16 +496,11 @@ def test_direct_api_explicit_mapping_and_mode_overrides_remain_supported() -> No
     mapping = dict(zip(JOINT_NAMES, range(12)))
     direct = UnitreeGo2DirectInterface.from_profile(
         _profile(),
-        network_interface="enp3s0",
-        joint_name_to_motor_index=mapping,
-        backend_options={
-            "motor_mode": 42,
-            "wait_for_remote_buttons": False,
-            "kp": 35.0,
-            "kd": 0.5,
-            "default_transition_duration_s": 0.02,
-            "damping_duration_s": 0.0,
-        },
+        config=_config(
+            joint_name_to_motor_index=mapping,
+            motor_mode=42,
+            damping_duration_s=0.0,
+        ),
         sdk=bus.sdk(),
         sleep=lambda _: None,
     )
@@ -633,7 +643,7 @@ def test_b_button_lies_down_then_enters_damping() -> None:
 
     shutdown_commands = bus.commands[commands_before_stop:]
     assert len(shutdown_commands) == 3
-    target = config.lie_down_position()
+    target = config.robot.lie_down_position()
     for canonical_index, name in enumerate(JOINT_NAMES):
         motor_index = MOTOR_MAPPING[name]
         final_position = shutdown_commands[-2].motor_cmd[motor_index]
@@ -668,17 +678,14 @@ def test_select_has_priority_over_simultaneous_lie_down_request() -> None:
 
 
 def test_trusted_recipe_instantiates_robot_config() -> None:
-    backend = create_runtime(
-        {
-            "name": "unitree_go2",
-            "network_interface": "enp3s0",
-            "robot": {"_target_": "motrix_deploy_unitree.hardware.UnitreeGo2HardwareCfg"},
-        },
-        _context(),
+    config = OmegaConf.to_object(
+        OmegaConf.structured(UnitreeBackendConfig(network_interface="enp3s0", robot=UnitreeGo2RobotCfg()))
     )
-    assert isinstance(backend, HardwareRuntime)
-    assert backend.realtime is True
-    assert isinstance(backend.robot.config.robot, UnitreeGo2HardwareCfg)
+    runtime = create_runtime(config, _context())
+    assert isinstance(runtime, HardwareRuntime)
+    assert isinstance(runtime.robot, UnitreeGo2Robot)
+    assert isinstance(runtime.robot.config.robot, UnitreeGo2RobotCfg)
+    assert isinstance(runtime.robot.config.robot, UnitreeGo2RobotCfg)
 
 
 @pytest.mark.parametrize("structured", [False, True])
@@ -703,15 +710,21 @@ def test_recipe_parser_preserves_typed_custom_sensor_bindings(structured: bool) 
         {
             "network_interface": "enp3s0",
             "robot": {
-                "_target_": "motrix_deploy_unitree.hardware.UnitreeGo2HardwareCfg",
+                "_target_": "motrix_deploy_unitree.config.UnitreeGo2RobotCfg",
                 "sensors": sensor_recipe,
             },
         }
     )
     if not structured:
         recipe = OmegaConf.to_container(recipe, resolve=True)
-    config = UnitreeGo2BackendConfig.from_mapping(recipe)
-    assert isinstance(config.robot, UnitreeGo2HardwareCfg)
+    robot = (
+        instantiate(recipe.robot, _convert_="object")
+        if structured
+        else instantiate(recipe["robot"], _convert_="object")
+    )
+    config = UnitreeBackendConfig(network_interface="enp3s0", robot=robot)
+    assert isinstance(config.robot, UnitreeGo2RobotCfg)
+    assert isinstance(config.robot, UnitreeGo2RobotCfg)
     assert isinstance(config.robot.sensors, HardwareSensorBindings)
     assert config.robot.sensors == sensors
     assert isinstance(config.robot.sensors.base_orientation_xyzw, HardwareSensorBinding)
@@ -733,7 +746,7 @@ def test_missing_sensor_binding_aborts_before_dds_or_command_output(role: str) -
     robot = UnitreeGo2HardwareCfg()
     robot.sensors = replace(robot.sensors, **{role: None})
     bus = _Bus()
-    backend = _backend(_config(robot=robot), bus)
+    backend = _backend(_config(hardware=robot), bus)
     with pytest.raises(ValidationError, match=f"runtime.robot.sensors.{role}"):
         backend.open()
     assert bus.factory_calls == []
@@ -750,7 +763,7 @@ def test_missing_quaternion_order_aborts_before_dds() -> None:
     )
     bus = _Bus()
     with pytest.raises(ValidationError, match="declared quaternion order"):
-        _backend(_config(robot=robot), bus).open()
+        _backend(_config(hardware=robot), bus).open()
     assert bus.factory_calls == []
     assert bus.commands == []
 
@@ -766,7 +779,7 @@ def test_sensor_sdk_field_rejects_indexing_private_attributes_and_expressions(fi
     robot.sensors = replace(robot.sensors, base_orientation_xyzw=HardwareSensorBinding(field, "wxyz"))
     bus = _Bus()
     with pytest.raises(ValidationError, match="public dotted SDK attributes"):
-        _backend(_config(robot=robot), bus).open()
+        _backend(_config(hardware=robot), bus).open()
     assert bus.factory_calls == []
 
 
@@ -799,21 +812,21 @@ def test_zero_quaternion_is_rejected_before_enable_output() -> None:
 
 def test_explicit_lie_down_override_remains_canonical_and_validated() -> None:
     pose = np.linspace(-0.2, 0.2, 12, dtype=np.float32)
-    np.testing.assert_array_equal(_config(lie_down_joint_position=pose).lie_down_position(), pose)
-    with pytest.raises(ValidationError, match="runtime.lie_down_joint_position"):
+    np.testing.assert_array_equal(_config(lie_down_joint_position=pose).robot.lie_down_position(), pose)
+    with pytest.raises(ValidationError, match="runtime.robot.lie_down_joint_position"):
         _config(lie_down_joint_position=[0.0] * 11)
 
 
 def test_go2_hardware_defaults_are_resolved_from_robot_config() -> None:
-    config = UnitreeGo2BackendConfig(network_interface="enp3s0")
+    config = UnitreeBackendConfig(network_interface="enp3s0", robot=UnitreeGo2RobotCfg())
     assert config.robot is not None
 
     np.testing.assert_array_equal(
-        config.motor_indices(JOINT_NAMES),
+        config.robot.motor_indices(JOINT_NAMES),
         [config.robot.actuation.motors[name].index for name in JOINT_NAMES],
     )
     np.testing.assert_array_equal(
-        config.lie_down_position(), np.asarray(config.robot.key_pose.poses["lie_down"], dtype=np.float32)
+        config.robot.lie_down_position(), np.asarray(config.robot.key_pose.poses["lie_down"], dtype=np.float32)
     )
 
 
@@ -823,26 +836,43 @@ def test_motor_mapping_must_exactly_cover_artifact_joint_names() -> None:
     config = _config(joint_name_to_motor_index=mapping)
 
     with pytest.raises(ValidationError, match="missing"):
-        config.motor_indices(JOINT_NAMES)
+        config.robot.motor_indices(JOINT_NAMES)
 
 
 def _context() -> RuntimeCreateContext:
     return RuntimeCreateContext(robot=_spec(), control=ControlSpec(period_s=0.02, state_timeout_s=0.1))
 
 
-def test_plugin_factory_creates_realtime_hardware_runtime_and_strict_config() -> None:
-    config = {
-        "name": "unitree_go2",
-        "network_interface": "enp3s0",
-    }
+def test_open_reports_available_interfaces_when_dds_interface_is_invalid() -> None:
+    bus = _Bus()
+    backend = _backend(_config(network_interface="missing0"), bus)
 
-    backend = create_runtime(config, _context())
-    assert isinstance(backend, HardwareRuntime)
-    assert backend.realtime is True
-    assert isinstance(backend.robot, UnitreeGo2RobotInterface)
+    def fail_factory(domain_id, network_interface):
+        raise RuntimeError(f"{network_interface}: does not match an available interface")
 
-    with pytest.raises(ValidationError, match="unknown"):
-        UnitreeGo2BackendConfig.from_mapping({**config, "unexpected": 1})
+    backend._sdk = replace(bus.sdk(), channel_factory_initialize=fail_factory)
+    with pytest.raises(RuntimeError, match="Available interfaces:.*runtime.network_interface"):
+        backend.open()
+
+
+def test_plugin_factory_creates_robot_for_shared_hardware_runtime() -> None:
+    config = UnitreeBackendConfig(network_interface="enp3s0", robot=UnitreeGo2RobotCfg())
+    context = _context()
+
+    runtime = create_runtime(config, context)
+    assert isinstance(runtime, HardwareRuntime)
+    robot = runtime.robot
+    assert isinstance(robot, UnitreeGo2Robot)
+    assert robot.config is config
+    assert isinstance(robot.config.robot, UnitreeGo2RobotCfg)
+    assert robot.spec is context.robot
+    assert runtime.robot is robot
+    assert runtime.realtime is True
+    assert runtime.gamepad is robot.get_gamepad_device()
+    assert not runtime.opened
+
+    with pytest.raises(TypeError):
+        create_runtime({"network_interface": "enp3s0"}, context)
 
 
 @pytest.mark.parametrize(
@@ -855,7 +885,7 @@ def test_plugin_factory_creates_realtime_hardware_runtime_and_strict_config() ->
     ],
 )
 def test_backend_config_rejects_invalid_gain_overrides(name: str, value: object) -> None:
-    with pytest.raises(ValidationError, match=f"runtime.{name}"):
+    with pytest.raises(ValidationError, match=f"runtime.robot.{name}"):
         _config(**{name: value})
 
 
@@ -883,14 +913,7 @@ def test_direct_interface_builds_from_profile_without_artifact() -> None:
     bus = _Bus()
     direct = UnitreeGo2DirectInterface.from_profile(
         _profile(),
-        network_interface="enp5s0",
-        backend_options={
-            "default_transition_duration_s": 0.02,
-            "damping_duration_s": 0.0,
-            "wait_for_remote_buttons": False,
-            "kp": 35.0,
-            "kd": 0.5,
-        },
+        config=_config(network_interface="enp5s0", damping_duration_s=0.0),
         sdk=bus.sdk(),
         sleep=lambda _: None,
     )
@@ -914,25 +937,20 @@ def test_direct_artifact_factory_reads_typed_joint_gains(monkeypatch: pytest.Mon
     monkeypatch.setattr("motrix_deploy_unitree.direct.read_artifact", lambda path: SimpleNamespace(manifest=profile))
     direct = UnitreeGo2DirectInterface.from_artifact(
         "example.deploy",
-        network_interface="enp5s0",
+        config=UnitreeBackendConfig(network_interface="enp5s0", robot=UnitreeGo2RobotCfg()),
         sdk=_Bus().sdk(),
     )
     np.testing.assert_array_equal(direct.default_pose_command().kp, profile.task.kp)
     np.testing.assert_array_equal(direct.default_pose_command().kd, profile.task.kd)
-    np.testing.assert_array_equal(direct.backend.config.kp, profile.task.kp)
-    np.testing.assert_array_equal(direct.backend.config.kd, profile.task.kd)
+    np.testing.assert_array_equal(direct.backend.config.robot.kp, profile.task.kp)
+    np.testing.assert_array_equal(direct.backend.config.robot.kd, profile.task.kd)
 
 
 def test_direct_api_supplied_gains_enable_without_backend_overrides() -> None:
     bus = _Bus()
     direct = UnitreeGo2DirectInterface.from_profile(
         _profile(),
-        network_interface="enp5s0",
-        backend_options={
-            "wait_for_remote_buttons": False,
-            "default_transition_duration_s": 0.02,
-            "damping_duration_s": 0.0,
-        },
+        config=_config(network_interface="enp5s0", kp=None, kd=None, damping_duration_s=0.0),
         sdk=bus.sdk(),
         sleep=lambda _: None,
     )
@@ -948,7 +966,7 @@ def test_direct_profile_rejects_task_without_typed_joint_gains_before_dds() -> N
     with pytest.raises(ValidationError, match="typed task spec with kp and kd"):
         UnitreeGo2DirectInterface.from_profile(
             profile,
-            network_interface="enp5s0",
+            config=UnitreeBackendConfig(network_interface="enp5s0", robot=UnitreeGo2RobotCfg()),
             sdk=bus.sdk(),
         )
     assert bus.factory_calls == []
@@ -1011,7 +1029,11 @@ def test_joint_control_builds_backend_with_explicit_safety_gains(monkeypatch) ->
         UnitreeGo2DirectInterface, "from_artifact", lambda *args, **kwargs: calls.append((args, kwargs)) or robot
     )
     assert _build_robot("example.deploy", "enp5s0", kp=42.0, kd=0.8) is robot
-    assert calls[0][1]["backend_options"] == {"kp": 42.0, "kd": 0.8}
+    config = calls[0][1]["config"]
+    assert isinstance(config, UnitreeBackendConfig)
+    assert config.network_interface == "enp5s0"
+    assert isinstance(config.robot, UnitreeGo2RobotCfg)
+    assert config.robot.kp == 42.0 and config.robot.kd == 0.8
 
 
 def test_read_lowstate_uses_unified_cli_defaults() -> None:
@@ -1058,18 +1080,13 @@ def test_joint_control_cli_dispatches_artifact_and_motion_defaults(monkeypatch) 
 def test_plugin_runtime_uses_production_interface_with_injected_sdk(monkeypatch) -> None:
     bus = _Bus()
     monkeypatch.setattr("motrix_deploy_unitree.interface._load_sdk_bindings", bus.sdk)
-    runtime = create_runtime(
-        {
-            "network_interface": "enp3s0",
-            "kp": 35.0,
-            "kd": 0.5,
-            "default_transition_duration_s": 0.02,
-            "damping_duration_s": 0.0,
-            "wait_for_remote_buttons": False,
-        },
+    runtime = create_hardware_runtime(
+        "unitree",
+        _config(damping_duration_s=0.0),
         _context(),
     )
     robot = runtime.robot
+    assert runtime.gamepad is robot.get_gamepad_device()
     try:
         robot.open()
         robot.read_state(0.1)

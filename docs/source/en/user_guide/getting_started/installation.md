@@ -49,7 +49,7 @@ Install the runtime environment from the repository root (on Windows, run `insta
 sh install.sh
 ```
 
-This auto-detects your GPU vendor (NVIDIA → CUDA, AMD → ROCm) and installs the runtime workspace packages, the matching PyTorch wheels, the required SKRL Torch provider, and the built-in FastSAC algorithm. Runtime installation is selective: development tools, docs, RSL-RL, SKRL JAX, and other optional extras are not installed unless requested.
+This auto-detects your GPU vendor (NVIDIA → CUDA, AMD → ROCm) and installs the runtime workspace packages, the matching PyTorch wheels, the required SKRL Torch provider, and the built-in FastSAC algorithm. On Linux, `install.sh` also installs Intel TBB by default for Numba parallel kernels, including with `--all` and either GPU profile. Other platforms do not enable TBB by default for runtime installation. Development tools, docs, RSL-RL, SKRL JAX, and other optional extras are not installed unless requested.
 
 ### Activate the Environment
 
@@ -96,7 +96,7 @@ workspace packages and supported development extras. Backend flags select or add
 | `--skrl-torch` | — | Compatibility flag; SKRL Torch is already required by the root package |
 | `--skrl-jax` | — | Add SKRL on JAX backend, Linux only |
 | `--rslrl` | — | Add RSL-RL on PyTorch backend while retaining required SKRL |
-| `--tbb` | — | Install Intel TBB for the numba parallel kernels; recommended for training on many-core servers (64+ cores), auto-activates once installed |
+| `--tbb` | — | Explicitly install Intel TBB for Numba parallel kernels; already enabled by default in `install.sh` on Linux, auto-activates once installed |
 | `--docs` | — | Add the toolchain (sphinx) needed to build the documentation locally |
 | `-h`, `--help` | — | Show the help message |
 

@@ -13,7 +13,7 @@ from motrix_deploy.contracts import FloatArray, TensorSpec, float32_array
 from motrix_deploy.errors import ValidationError
 
 
-class PolicyRuntime(ABC):
+class Policy(ABC):
     """Decision runtime for a task's vector observation/action interface.
 
     Implementations may use networks, planners, or fixed decisions. Tensor names
@@ -28,7 +28,7 @@ class PolicyRuntime(ABC):
         """Infer one unbatched action."""
 
 
-class NoOpPolicyRuntime(PolicyRuntime):
+class NoOpPolicy(Policy):
     """Ignore observations and return zero actions; the task defines their meaning.
 
     A zero action does not imply zero torque or skipping a command. For example,
@@ -36,8 +36,6 @@ class NoOpPolicyRuntime(PolicyRuntime):
     """
 
     def __init__(self, action_size: int) -> None:
-        if isinstance(action_size, bool) or not isinstance(action_size, int) or action_size < 0:
-            raise ValidationError("policy.noop.action_size", "a non-negative integer", action_size)
         self._action = np.zeros(action_size, dtype=np.float32)
 
     def infer(self, observation: FloatArray) -> FloatArray:
@@ -45,7 +43,7 @@ class NoOpPolicyRuntime(PolicyRuntime):
         return self._action.copy()
 
 
-class OnnxPolicyRuntime(PolicyRuntime):
+class OnnxPolicy(Policy):
     """Single-input, single-output ONNX Runtime policy."""
 
     def __init__(
@@ -111,4 +109,4 @@ class OnnxPolicyRuntime(PolicyRuntime):
         return float32_array(output[0], path="policy.output", shape=(self.output_spec.shape[1],))
 
 
-__all__ = ["NoOpPolicyRuntime", "OnnxPolicyRuntime", "PolicyRuntime"]
+__all__ = ["NoOpPolicy", "OnnxPolicy", "Policy"]

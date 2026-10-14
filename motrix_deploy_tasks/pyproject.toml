@@ -4,22 +4,23 @@ build-backend = "uv_build"
 
 [project]
 name = "motrix-deploy-tasks"
-version = "0.4.0b0"
+version = "0.4.0b1"
 description = "Concrete policy deployment tasks for MotrixLab."
 authors = [{ name = "Motphys", email = "developers@motphys.com" }]
 requires-python = "==3.10.*"
 readme = "README.md"
 license = "Apache-2.0"
 dependencies = [
-    "motrix-deploy",
-    "motrix-env-core",
-    "motrix-robots",
+    "motrix-deploy==0.4.0b1",
+    "motrix-env-core==0.4.0b1",
+    "motrix-robots==0.4.0b1",
     "hydra-core>=1.3,<1.4",
     "numpy>=1.26",
 ]
 
 [project.entry-points."motrix_deploy.tasks"]
-"go2_walk/v1" = "motrix_deploy_tasks.tasks.go2_walk:Go2WalkDeployTaskV1"
+"go2_walk/v1" = "motrix_deploy_tasks.tasks.go2_walk:Go2WalkDeployTask"
+"g1_wbt/v1" = "motrix_deploy_tasks.tasks.g1_wbt:G1WbtDeployTask"
 
 [project.entry-points."motrix_deploy.envs"]
 flat = "motrix_deploy_tasks.envs.flat:build_scene"

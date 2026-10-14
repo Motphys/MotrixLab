@@ -23,25 +23,7 @@ from torch import nn, optim
 from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization, SimpleReplayBuffer
 from motrix_rl_builtin.fastsac.config import FastSacAgentCfg
 from motrix_rl_builtin.fastsac.networks import Actor, Critic
-
-
-def _own(outputs: tuple) -> tuple:
-    """Copy compiled-region outputs out of the CUDA graph's memory pool.
-
-    With ``mode="reduce-overhead"`` the tensors a compiled function returns live
-    in the graph's pool, and the next ``cudagraph_mark_step_begin()`` invalidates
-    them -- reading one afterwards raises rather than returning stale data. These
-    outputs do outlive the call that made them: the metrics travel to the next log
-    record, and the actor pair is carried across policy-frequency gating. So they
-    are copied out here, while they are still valid.
-
-    Cloning a handful of 0-dim tensors costs nothing and does not synchronize;
-    what the caller must keep avoiding is ``.item()`` / ``float()``, which does.
-    See https://docs.pytorch.org/docs/2.7/torch.compiler_cudagraph_trees.html
-    -- "clone tensors of a prior iteration (outside of torch.compile) before you
-    begin the next run".
-    """
-    return tuple(t.clone() if torch.is_tensor(t) else t for t in outputs)
+from motrix_rl_builtin.fastsac.window_metrics import WindowMetrics
 
 
 class FastSacAgent:
@@ -57,6 +39,7 @@ class FastSacAgent:
         action_bias: torch.Tensor | None = None,
         writer=None,
         world_size: int = 1,
+        final_obs_bootstrap: bool = False,
     ):
         """Build the actor, twin distributional critics, optimizers and replay buffer.
 
@@ -70,6 +53,8 @@ class FastSacAgent:
         across ranks manually after each backward and splits ``batch_size``
         across ranks; the all-reduce stays in the eager orchestrator so the
         compiled halves remain CUDA-graph capturable (see _update_main).
+        ``final_obs_bootstrap`` enables the replay buffer's terminal-observation
+        storage for time-limit-truncated bootstrapping.
         """
         self.cfg = cfg
         self.device = device
@@ -86,6 +71,10 @@ class FastSacAgent:
         # publish-cadence bookkeeping.
         self.update_idx = 0
         self._last_update_timing_ms: dict[str, float] = {}
+        # Window-aggregated diagnostics (see window_metrics.py): means and
+        # per-key extremes accumulated across update() calls until the trainer
+        # drains them at a logging boundary.
+        self.window_metrics = WindowMetrics()
 
         self.actor = Actor(
             n_obs=obs_dim,
@@ -150,6 +139,7 @@ class FastSacAgent:
             n_steps=cfg.num_steps,
             gamma=cfg.gamma,
             device=device,
+            final_obs_bootstrap=final_obs_bootstrap,
         )
 
         # AMP / autocast setup: auto-disabled on CPU. dtype resolved from cfg.amp_dtype.
@@ -181,7 +171,16 @@ class FastSacAgent:
         # keeping the all-reduce outside the compiled region lets DDP ranks
         # (world_size > 1) use the same reduce-overhead graphs as the
         # single-learner path instead of falling back to eager.
-        if bool(cfg.compile) and device.type == "cuda":
+        if bool(cfg.compile) and device.type == "mps":
+            # MPS: inductor kernels measured ~2.6x SLOWER than eager
+            # MPSGraph on the g1-wbt-dance update (Mac Studio, torch 2.11),
+            # and MPS autocast bf16/fp16 gains nothing (~1%). aot_eager
+            # keeps the same MPSGraph kernels but removes the Python /
+            # dispatch overhead: measured 86ms vs 106ms per update(4),
+            # ~19% faster.
+            self._critic_backward_runtime = torch.compile(self._critic_backward, backend="aot_eager", dynamic=False)
+            self._actor_backward_runtime = torch.compile(self._actor_backward, backend="aot_eager", dynamic=False)
+        elif bool(cfg.compile) and device.type == "cuda":
             import torch._inductor.config as inductor_config
 
             inductor_config.compile_threads = 1
@@ -285,6 +284,9 @@ class FastSacAgent:
         self._allreduce_module_grads([self.qnet])
         if cfg.max_grad_norm > 0:
             torch.nn.utils.clip_grad_norm_(self.qnet.parameters(), cfg.max_grad_norm)
+        self.window_metrics.add("qf_loss", qf_loss)
+        self.window_metrics.add("qf_max", tv_max, track_range=True)
+        self.window_metrics.add("qf_min", tv_min, track_range=True)
         self.q_optimizer.step()
 
         # Target-network soft update. Ordering constraints: after the target
@@ -307,6 +309,9 @@ class FastSacAgent:
                 # gradient manually to keep every rank's temperature identical.
                 dist.all_reduce(self.log_alpha.grad, op=dist.ReduceOp.AVG)
             self.alpha_optimizer.step()
+        self.window_metrics.add("alpha_loss", alpha_loss)
+        self.window_metrics.add("alpha_loss_abs", alpha_loss.abs(), track_range=True)
+        self.window_metrics.add("alpha", self.log_alpha.exp())
 
         return (qf_loss, alpha_loss.detach().float(), tv_max, tv_min)
 
@@ -316,7 +321,13 @@ class FastSacAgent:
             actions, log_probs = self._actor_runtime.get_actions_and_log_probs(b["obs"])
             q_outputs = self._qnet_runtime(b["critic_obs"], actions)
             q_values = self._qnet_runtime.get_value(F.softmax(q_outputs, dim=-1))
-            qf_value = q_values.mean(dim=0)
+            # Use the minimum expected Q across critic heads rather than their
+            # mean: one overestimating head can lift the mean and encourage the
+            # actor to exploit that error. The minimum gives a conservative
+            # policy objective, at the cost of possible underestimation. The
+            # g1-wbt-dance Q-min + final-observation ablation was more stable
+            # than Q-mean + final-observation, without a hard actor-mean clamp.
+            qf_value = q_values.min(dim=0).values
             actor_loss = (self.log_alpha.exp().detach() * log_probs - qf_value).mean()
 
         self.actor_optimizer.zero_grad(set_to_none=True)
@@ -331,23 +342,19 @@ class FastSacAgent:
         self._allreduce_module_grads([self.actor, self.qnet])
         if self.cfg.max_grad_norm > 0:
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.cfg.max_grad_norm)
+        self.window_metrics.add("policy_entropy", neg_logp, track_range=True)
+        self.window_metrics.add("actor_loss", actor_loss)
         self.actor_optimizer.step()
         return actor_loss, neg_logp
 
-    def update(self, num_updates: int):
+    def update(self, num_updates: int) -> None:
         """Run ``num_updates`` gradient steps, each on a fresh batch.
 
         ``num_updates`` is required — callers pass either ``cfg.num_updates``
-        (sync) or a UTD-governed count (async). Returns a dict of **raw GPU
-        tensors** (no float conversion) for the last update, or ``None`` if
-        ``num_updates <= 0``. Converting to python floats would force a
-        cudaStreamSynchronize per call, draining the GPU pipeline and blocking
-        kernel submission for the next env step. The caller should ``.item()``
-        / ``float()`` only when actually emitting a log record.
-
-        Those tensors are safe to hold until then: under ``mode="reduce-overhead"``
-        they would otherwise live in the CUDA graph pool and be invalidated by the
-        next update, so :func:`_own` copies them out at the point they are made.
+        (sync) or a UTD-governed count (async); values ``<= 0`` return without
+        stepping. Per-step diagnostics are accumulated in
+        :attr:`window_metrics` (raw tensors, no host synchronization); the
+        trainers drain them at their logging boundary.
 
         Policy-frequency gating uses the persistent ``self.update_idx`` counter
         (not a per-call ``i``), so the actor/Q update ratio is exactly
@@ -356,13 +363,11 @@ class FastSacAgent:
         """
         cfg = self.cfg
         if num_updates <= 0:
-            return None
+            return
         # Global batch split across DDP ranks (== batch_size when world_size 1);
         # gradient averaging makes the update equivalent to the sync
         # trainer's single global-batch step.
         batch_per_env = max(cfg.batch_size // self.world_size // self.num_envs, 1)
-        last = (torch.zeros((), device=self.device),) * 5
-        actor_pair = (last[3], last[4])
         timing_s = {key: 0.0 for key in ("sample_normalize", "critic_alpha", "actor")}
         update_started = time.perf_counter()
         # Batched data preparation (Holosoma-style): sample once and normalize
@@ -391,44 +396,25 @@ class FastSacAgent:
 
         for i in range(num_updates):
             b = prepared[i]
+            self.window_metrics.add("batch_reward_max", b["rewards"].max(), track_range=True)
+            self.window_metrics.add("batch_reward_mean", b["rewards"].mean())
             # Required with reduce-overhead (CUDA graph trees): open a new graph
             # generation for this update. NOTE it does not preserve anything --
             # it *invalidates* the previous generation's outputs, which is why
-            # any output that outlives its own iteration goes through `_own`.
+            # no compiled output may be read after this loop iteration.
             torch.compiler.cudagraph_mark_step_begin()
             stage_started = time.perf_counter()
-            outputs = self._update_main(b)
+            self._update_main(b)
             timing_s["critic_alpha"] += time.perf_counter() - stage_started
 
             if (self.update_idx + i) % cfg.policy_frequency == 0:
                 stage_started = time.perf_counter()
-                pol_outputs = self._update_pol(b)
+                self._update_pol(b)
                 timing_s["actor"] += time.perf_counter() - stage_started
-                # Always own: the pair is carried across later generations
-                # within this call AND the returned metrics must stay readable
-                # after future update() calls replay the pol graph.
-                actor_pair = _own(pol_outputs)
-
-            # Only the final step's main outputs feed the returned metrics; own
-            # them so they survive future update() calls' replays. Earlier
-            # steps' outputs are never read — only replaced below.
-            # The critic tuple carries a fourth tv_min element the metrics
-            # dict does not expose, so compose the five-slot layout from the
-            # first three main outputs.
-            main_outputs = _own(outputs) if i == num_updates - 1 else outputs
-            last = (*main_outputs[:3], *actor_pair)
 
         self.update_idx += num_updates
         timing_s["total"] = time.perf_counter() - update_started
         self._last_update_timing_ms = {key: value * 1000.0 for key, value in timing_s.items()}
-        return {
-            "qf_loss": last[0],
-            "alpha_loss": last[1],
-            "qf_max": last[2],
-            "actor_loss": last[3],
-            "policy_entropy": last[4],
-            "alpha": self.log_alpha.exp(),
-        }
 
     # --------------------------------------------------------------- rollout
     @torch.no_grad()

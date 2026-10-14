@@ -5,10 +5,12 @@ import sys
 import time
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 from motrix_rl_builtin.fastsac.async_impl.collector import Collector, resolve_collector_inference_device
 from motrix_rl_builtin.fastsac.async_impl.transport import Control, SharedTransitionRing
+from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsStorage
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import (
     HostWeightReceiver,
     HostWeightSender,
@@ -16,7 +18,9 @@ from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import (
 )
 from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
 from motrix_rl_builtin.fastsac.networks import Actor
+from motrix_rl_builtin.fastsac.wrap import FastSacStepResult
 
+from motrix_env_core.array.env import FinalObs, NpObs
 from motrix_env_core.perf import Perf
 
 _NUM_ENVS = 8
@@ -30,7 +34,6 @@ class _CpuEnv:
 
     def __init__(self):
         self.num_envs = _NUM_ENVS
-        self.last_info = {}
         self.last_actions = None
 
     @property
@@ -43,12 +46,14 @@ class _CpuEnv:
     def step(self, actions):
         assert actions.device.type == "cpu"
         self.last_actions = actions.clone()
-        return (
-            torch.ones(_NUM_ENVS, _OBS_DIM),
-            torch.ones(_NUM_ENVS, _CRITIC_OBS_DIM),
-            torch.ones(_NUM_ENVS),
-            torch.zeros(_NUM_ENVS, dtype=torch.bool),
-            torch.zeros(_NUM_ENVS, dtype=torch.bool),
+        return FastSacStepResult(
+            obs=torch.ones(_NUM_ENVS, _OBS_DIM),
+            critic_obs=torch.ones(_NUM_ENVS, _CRITIC_OBS_DIM),
+            reward=torch.ones(_NUM_ENVS),
+            terminated=torch.zeros(_NUM_ENVS, dtype=torch.bool),
+            truncated=torch.zeros(_NUM_ENVS, dtype=torch.bool),
+            final_obs=None,
+            info={},
         )
 
 
@@ -262,8 +267,8 @@ def test_collector_cuda_request_fails_without_cuda(monkeypatch) -> None:
         resolve_collector_inference_device("cuda")
 
 
-def test_collector_rejects_non_cpu_cuda_device() -> None:
-    with pytest.raises(ValueError, match="must be cpu or cuda"):
+def test_collector_rejects_unsupported_device() -> None:
+    with pytest.raises(ValueError, match="must be cpu, cuda or mps"):
         resolve_collector_inference_device("meta")
 
 
@@ -356,3 +361,172 @@ def test_compiled_cuda_stochastic_actions_change_and_stay_in_bounds() -> None:
     assert torch.all(first <= high)
     assert torch.all(second >= low)
     assert torch.all(second <= high)
+
+
+class _BackpressureEnv:
+    num_envs = 2
+
+    def __init__(self):
+        self.steps = 0
+        self.outputs = None
+
+    @property
+    def env(self):
+        return self
+
+    def reset(self):
+        return torch.zeros(2, 3), torch.zeros(2, 3)
+
+    def step(self, actions):
+        self.steps += 1
+        self.outputs = FastSacStepResult(
+            obs=torch.full((2, 3), 2.0),
+            critic_obs=torch.full((2, 3), 3.0),
+            reward=torch.tensor([1.0, 2.0]),
+            terminated=torch.zeros(2, dtype=torch.bool),
+            truncated=torch.tensor([False, True]),
+            final_obs=FinalObs(np.array([1]), NpObs(policy=np.full((1, 3), 7.0, dtype=np.float32))),
+            info={"Reward": {"alive": np.ones(2)}, "metrics": {"error": np.ones(2)}},
+        )
+        return self.outputs
+
+
+def _backpressure_collector(*, capacity=16):
+    cfg = SimpleNamespace(
+        agent=SimpleNamespace(
+            actor_hidden_dim=16,
+            log_std_max=2.0,
+            log_std_min=-5.0,
+            use_tanh=True,
+            use_layer_norm=True,
+            obs_normalization=False,
+            learning_starts=0,
+        ),
+        trainer=SimpleNamespace(
+            async_options=SimpleNamespace(
+                collector_inference_device="cpu",
+                collector_compile=False,
+                collector_amp=False,
+                collector_amp_dtype="fp16",
+                weight_poll_interval=100,
+            )
+        ),
+    )
+    env, control = _BackpressureEnv(), Control()
+    store = FinalObsStorage(capacity, env.num_envs, 3, 3)
+    ring = SharedTransitionRing(capacity, env.num_envs, 3, 3, 1, final_obs_store=store)
+    collector = Collector(env, cfg, 3, 1, torch.ones(1), torch.zeros(1), ring, None, control)
+    collector.reset()
+    actions = torch.full((2, 1), 0.25)
+    calls = []
+    collector._sample_actions = lambda warming: calls.append(warming) or actions
+    return collector, env, ring, control, actions, calls
+
+
+def test_payload_backpressure_gates_before_actions_and_resumes_without_dropped_steps(monkeypatch):
+    collector, env, ring, control, _, calls = _backpressure_collector()
+    original_step = env.step
+
+    def tagged_step(actions):
+        result = original_step(actions)
+        result.obs.fill_(env.steps)
+        result.critic_obs.fill_(100 + env.steps)
+        result.final_obs.obs.policy.fill(1000 + env.steps)
+        return result
+
+    monkeypatch.setattr(env, "step", tagged_step)
+    pushes = []
+    original_push = ring.push
+
+    def push_once(*fields, **kwargs):
+        pushes.append(original_push(*fields, **kwargs))
+        return pushes[-1]
+
+    monkeypatch.setattr(ring, "push", push_once)
+    # Each result owns one terminal row. Leave fewer than num_envs rows free:
+    # even though this env would fit, the next step may truncate every env.
+    published = ring.final_obs_store.capacity - env.num_envs + 1
+    for _ in range(published):
+        assert collector.step_once()
+    assert ring.size() < ring.capacity
+    assert ring.is_full()
+    obs_before = collector.obs.clone()
+    for _ in range(3):
+        assert not collector.step_once()
+    assert env.steps == len(calls) == len(pushes) == published
+    assert all(pushes)
+    assert control.collector_steps == collector._collect_n == collector.n_episodes == published
+    torch.testing.assert_close(collector.obs, obs_before)
+
+    count, fields = ring.read_span()
+    payloads = ring.read_final_span(count)
+    assert count == published
+    torch.testing.assert_close(fields[0][:, 0, 0], torch.arange(published, dtype=torch.float32))
+    ring.commit_reads(1)
+    assert not ring.is_full()
+    assert collector.step_once()
+    assert env.steps == len(calls) == len(pushes) == published + 1
+    assert all(pushes)
+    assert control.collector_steps == collector._collect_n == collector.n_episodes == published + 1
+    count, fields = ring.read_span()
+    assert count == published
+    torch.testing.assert_close(fields[0][:, 0, 0], torch.arange(1, published + 1, dtype=torch.float32))
+    resumed_payloads = ring.read_final_span(count)
+    for offset, payload in enumerate(resumed_payloads, start=2):
+        torch.testing.assert_close(payload.obs, torch.full((1, 3), float(1000 + offset)))
+    # Previously read owned snapshots survive acknowledgement and publication.
+    torch.testing.assert_close(payloads[0].obs, torch.full((1, 3), 1001.0))
+
+
+def test_published_step_owns_transition_and_final_payload_buffers():
+    collector, env, ring, control, actions, calls = _backpressure_collector()
+    initial_obs, initial_critic = collector.obs, collector.critic_obs
+    assert collector.step_once()
+    torch.testing.assert_close(collector.obs, torch.full((2, 3), 2.0))
+    torch.testing.assert_close(collector.ep_return, torch.tensor([1.0, 0.0]))
+    assert collector.recent_returns == [2.0]
+    assert collector.recent_lengths == [1.0]
+    assert env.steps == len(calls) == 1
+    assert collector.n_episodes == collector.term_count == collector._collect_n == control.collector_steps == 1
+
+    # The environment, action staging, and previous observations may all be
+    # reused as soon as step_once returns: the published slot owns its data.
+    initial_obs.fill_(99)
+    initial_critic.fill_(99)
+    actions.fill_(99)
+    result = env.outputs
+    for tensor in (result.obs, result.critic_obs, result.reward, result.terminated, result.truncated):
+        tensor.fill_(True if tensor.dtype == torch.bool else 99)
+    result.final_obs.env_ids.fill(0)
+    result.final_obs.obs.policy.fill(99)
+    count, fields = ring.read_span()
+    assert count == 1
+    expected = (
+        torch.zeros(2, 3),
+        torch.zeros(2, 3),
+        torch.full((2, 1), 0.25),
+        torch.tensor([1.0, 2.0]),
+        torch.zeros(2, dtype=torch.long),
+        torch.tensor([0, 1]),
+    )
+    for actual, wanted in zip(fields, expected):
+        torch.testing.assert_close(actual[0], wanted)
+    payload = ring.read_final_span(count)[0]
+    assert payload.env_ids.tolist() == [1]
+    torch.testing.assert_close(payload.obs, torch.full((1, 3), 7.0))
+    torch.testing.assert_close(payload.critic_obs, torch.full((1, 3), 7.0))
+
+
+def test_transition_ring_full_gates_before_actions_and_resumes():
+    collector, env, ring, control, _, calls = _backpressure_collector(capacity=1)
+    assert collector.step_once()
+    assert ring.is_full()
+    for _ in range(3):
+        assert not collector.step_once()
+    assert env.steps == len(calls) == control.collector_steps == 1
+    assert ring.write_completed_count == 1
+    ring.commit_reads(1)
+    assert not ring.is_full()
+    assert collector.step_once()
+    assert env.steps == len(calls) == control.collector_steps == 2
+    assert ring.write_completed_count == 2

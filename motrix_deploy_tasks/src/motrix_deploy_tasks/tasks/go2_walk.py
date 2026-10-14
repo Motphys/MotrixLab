@@ -3,6 +3,7 @@
 
 """Typed artifact specification and runtime for ``go2_walk/v1``."""
 
+from dataclasses import dataclass
 from typing import Annotated, ClassVar
 
 import numpy as np
@@ -11,9 +12,22 @@ from pydantic import Field, model_validator
 from motrix_deploy.artifact.schema import TaskSpec
 from motrix_deploy.contracts import FloatArray, JointServoCommand, RobotSpec, RobotState, float32_array
 from motrix_deploy.errors import ValidationError
-from motrix_deploy.runtime import PolicyContext
+from motrix_deploy.policy import Policy
+from motrix_deploy.policy.processing import PolicyProcessor
+from motrix_deploy.runtime.context import ControlContext
+from motrix_deploy.runtime.control import PolicyController
+from motrix_deploy.runtime.lifecycle import ControllerStep
 from motrix_deploy.task import DeployTask
-from motrix_env_core.input import PlanarVelocityCommand
+from motrix_env_core.input import (
+    BoundedGamePadPlanarVelocityBinding,
+    CommandBinding,
+    ConstantPlanarVelocityBinding,
+    GamePadDevice,
+    InputDevice,
+    KeyboardDevice,
+    KeyboardPlanarVelocityBinding,
+    PlanarVelocityCommand,
+)
 
 FLOAT32_MAX = float(np.finfo(np.float32).max)
 FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
@@ -25,6 +39,19 @@ NonNegativeJointVector = Annotated[list[Annotated[Float32Float, Field(ge=0)]], F
 CommandVector = Annotated[list[Float32Float], Field(min_length=3, max_length=3)]
 CommandScale = Annotated[list[Annotated[Float32Float, Field(ge=0, le=1)]], Field(min_length=3, max_length=3)]
 FeetPhaseOffsets = Annotated[list[Float32Float], Field(min_length=4, max_length=4)]
+
+# Unitree remote wiring: the left stick drives planar motion, the right stick turns,
+# and L1 must be held (deadman) for stick input to reach the policy.
+_REMOTE_WIRING = {
+    "linear_x_axis": "ly",
+    "linear_y_axis": "lx",
+    "yaw_axis": "rx",
+    "deadzone": 0.12,
+    "invert_linear_x": False,
+    "invert_linear_y": True,
+    "invert_yaw": True,
+    "deadman_button": "L1",
+}
 
 
 class Go2WalkTaskSpec(TaskSpec):
@@ -45,7 +72,6 @@ class Go2WalkTaskSpec(TaskSpec):
     gait_frequency_hz: PositiveFloat
     standing_threshold: NonNegativeFloat
     termination_min_up_z: Annotated[FiniteFloat, Field(ge=-1, le=1)]
-    termination_min_base_height: FiniteFloat | None
 
     @model_validator(mode="after")
     def validate_joint_vectors_and_ranges(self) -> "Go2WalkTaskSpec":
@@ -60,15 +86,11 @@ class Go2WalkTaskSpec(TaskSpec):
         return self
 
 
-class Go2WalkDeployTaskV1(DeployTask[PlanarVelocityCommand]):
+class Go2WalkPolicyProcessor(PolicyProcessor[PlanarVelocityCommand]):
     """Go2 walking policy I/O and artifact-owned fall termination.
 
     Orientation termination is supported by both simulated and real IMU state.
-    Optional world-frame base-height termination requires base_position when
-    enabled; no height is invented when the backend cannot provide it.
     """
-
-    spec_type = Go2WalkTaskSpec
 
     def __init__(self, spec: Go2WalkTaskSpec, robot: RobotSpec) -> None:
         if len(spec.action_scale) != robot.joint_count:
@@ -89,8 +111,8 @@ class Go2WalkDeployTaskV1(DeployTask[PlanarVelocityCommand]):
         self._gait_frequency_hz = spec.gait_frequency_hz
         self._standing_threshold = spec.standing_threshold
         self._termination_min_up_z = spec.termination_min_up_z
-        self._termination_min_base_height = spec.termination_min_base_height
         self._previous_action: FloatArray = np.zeros(self.robot.joint_count, dtype=np.float32)
+        self._phase = np.float32(0.0)
 
     @property
     def command_lower(self) -> FloatArray:
@@ -105,26 +127,22 @@ class Go2WalkDeployTaskV1(DeployTask[PlanarVelocityCommand]):
         up_z = 1.0 - 2.0 * (x * x + y * y)
         if up_z <= self._termination_min_up_z:
             return "fall_orientation"
-        if self._termination_min_base_height is not None:
-            if state.base_position is None:
-                raise ValidationError("state.base_position", "available for enabled base-height termination", "missing")
-            if state.base_position[2] <= self._termination_min_base_height:
-                return "fall_height"
         return None
 
-    def reset(self, state: RobotState, context: PolicyContext[PlanarVelocityCommand]) -> None:
-        """Reset action history; callers provide validated state and command."""
+    def reset(self, state: RobotState, context: ControlContext[PlanarVelocityCommand]) -> None:
+        """Reset action and gait history; callers provide validated state and command."""
         self._previous_action.fill(0)
+        self._phase = np.float32(0.0)
 
-    def build_observation(self, state: RobotState, context: PolicyContext[PlanarVelocityCommand]) -> FloatArray:
-        """Consume state and command validated by ControlSession or the caller."""
+    def build_observation(self, state: RobotState, context: ControlContext[PlanarVelocityCommand]) -> FloatArray:
+        """Consume runtime-validated state and PolicyController-validated input commands."""
         velocity = context.command.values[0, :]
         phase = np.zeros(4, dtype=np.float32)
-        if context.step > 0 and np.linalg.norm(velocity) >= self._standing_threshold:
-            phase = np.mod(
-                context.elapsed_time_s * self._gait_frequency_hz + self._feet_phase_offsets,
-                1.0,
-            ).astype(np.float32)
+        if np.linalg.norm(velocity) < self._standing_threshold:
+            self._phase = np.float32(0.0)
+        elif context.step > 0:
+            self._phase = np.float32((self._phase + context.dt_s * self._gait_frequency_hz) % 1.0)
+            phase = np.mod(self._phase + self._feet_phase_offsets, 1.0).astype(np.float32)
         observation = np.concatenate(
             (
                 state.base_angular_velocity,
@@ -153,7 +171,7 @@ class Go2WalkDeployTaskV1(DeployTask[PlanarVelocityCommand]):
             kd=self._kd,
         )
 
-    def validate_command(self, command: PlanarVelocityCommand) -> None:
+    def validate_command(self, command: PlanarVelocityCommand | None) -> None:
         if not isinstance(command, PlanarVelocityCommand):
             raise ValidationError("command.type", "PlanarVelocityCommand", type(command).__name__)
         if command.batch_size != 1:
@@ -178,3 +196,237 @@ def _projected_gravity(orientation_xyzw: FloatArray) -> FloatArray:
         dtype=np.float32,
     )
     return rotation @ np.array([0.0, 0.0, -1.0], dtype=np.float32)
+
+
+@dataclass(frozen=True)
+class Go2WalkPreparationSettings:
+    """Simulation-only standing transition; keep it separate from policy gains."""
+
+    ramp_duration_s: float = 2.0
+    settle_duration_s: float = 0.5
+    timeout_s: float = 6.0
+    max_joint_error_rad: float = 0.2
+    max_joint_velocity_rad_s: float = 1.0
+    max_base_tilt_rad: float = 0.5
+    kp: float = 50.0
+    kd: float = 1.0
+    damping_duration_s: float = 1.0
+    stop_damping_duration_s: float = 10.0
+    damping_kd: float = 8.0
+
+
+class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
+    """Go2 walking task, optionally with a simulated measured-state preparation flow."""
+
+    spec_type = Go2WalkTaskSpec
+
+    def __init__(
+        self, spec: Go2WalkTaskSpec, robot: RobotSpec, policy: Policy, steps: int | None = None, artifact=None
+    ):
+        self.spec = spec
+        self.robot = robot
+        self.policy_io = Go2WalkPolicyProcessor(spec, robot)
+        self.policy_controller = PolicyController(self.policy_io, policy, steps=steps)
+        self._preparation: Go2WalkPreparationSettings | None = None
+        self._stage = "policy"
+        self._stage_start_s = 0.0
+        self._stop_requested = False
+        self._start_position: FloatArray | None = None
+        self._ready_since_s: float | None = None
+        self._policy_start_s = 0.0
+        self._keyboard = None
+        self._poll_keyboard = True
+        self._automatic_start = True
+        self._stand_requested = False
+        self._policy_start_requested = False
+        self._preparation_ready = False
+        self._zeros = np.zeros(robot.joint_count, dtype=np.float32)
+
+    def enable_simulation_preparation(self, settings: Go2WalkPreparationSettings | None = None) -> None:
+        """Use measured crouch-to-stand and damping stages in opt-in simulation."""
+        self._preparation = settings if settings is not None else Go2WalkPreparationSettings()
+
+    def prepare(
+        self,
+        *,
+        simulation: bool,
+        device: InputDevice | None = None,
+        spawn_pose: str | None = None,
+    ) -> CommandBinding[PlanarVelocityCommand]:
+        """Derive the crouch preparation from the simulation spawn pose and build the command source."""
+        if simulation and spawn_pose == "lie_down":
+            self.enable_simulation_preparation()
+        command_lower, command_upper = self.command_bounds
+        if isinstance(device, KeyboardDevice):
+            binding: CommandBinding[PlanarVelocityCommand] = KeyboardPlanarVelocityBinding(
+                device, command_lower=command_lower, command_upper=command_upper
+            )
+        elif isinstance(device, GamePadDevice):
+            binding = BoundedGamePadPlanarVelocityBinding(
+                device,
+                linear_x_axis=_REMOTE_WIRING["linear_x_axis"],
+                linear_y_axis=_REMOTE_WIRING["linear_y_axis"],
+                yaw_axis=_REMOTE_WIRING["yaw_axis"],
+                command_lower=command_lower,
+                command_upper=command_upper,
+                deadzone=_REMOTE_WIRING["deadzone"],
+                invert_linear_x=_REMOTE_WIRING["invert_linear_x"],
+                invert_linear_y=_REMOTE_WIRING["invert_linear_y"],
+                invert_yaw=_REMOTE_WIRING["invert_yaw"],
+                deadman_button=_REMOTE_WIRING["deadman_button"],
+            )
+        else:
+            # Headless playback holds still; the policy keeps standing commands in bounds.
+            binding = ConstantPlanarVelocityBinding((0.0, 0.0, 0.0))
+            self.validate_command(binding.read_command())
+        if self._preparation is not None and isinstance(device, KeyboardDevice):
+            # Share the device with the velocity binding; let it poll first when present.
+            self.attach_keyboard(device, poll=not isinstance(binding, KeyboardPlanarVelocityBinding))
+        return binding
+
+    def attach_keyboard(self, keyboard, *, poll: bool = True) -> None:
+        """Require Start and A analogues; a shared velocity binding polls the device first."""
+        if keyboard is None:
+            raise ValidationError("operator.keyboard", "a viewer keyboard device", None)
+        self._keyboard = keyboard
+        self._poll_keyboard = poll
+        self._automatic_start = False
+
+    def request_stand(self) -> None:
+        """Latch the first operator confirmation without commanding from an input thread."""
+        self._stand_requested = True
+
+    def request_policy_start(self) -> None:
+        """Latch takeover intent; policy still waits for measured standing readiness."""
+        self._policy_start_requested = True
+
+    @property
+    def operator_hint(self) -> str | None:
+        if self._keyboard is None:
+            return None
+        return "r stand up (Start)  p enable policy (A)  o damp for 10s then close"
+
+    def _process_operator_input(self) -> None:
+        if self._keyboard is not None:
+            if self._poll_keyboard:
+                self._keyboard.poll()
+            if self._keyboard.is_key_down("r"):
+                self.request_stand()
+            if self._stage == "wait_policy" and self._keyboard.is_key_down("p"):
+                self.request_policy_start()
+            if self._keyboard.is_key_down("o"):
+                self.request_stop()
+        elif self._automatic_start:
+            self.request_stand()
+            if self._preparation_ready:
+                self.request_policy_start()
+
+    @property
+    def phase(self) -> str:
+        return self._stage
+
+    @property
+    def command_bounds(self) -> tuple[FloatArray, FloatArray]:
+        return self.policy_io.command_lower, self.policy_io.command_upper
+
+    def validate_command(self, command: PlanarVelocityCommand | None) -> None:
+        self.policy_io.validate_command(command)
+
+    def reset(self, state: RobotState) -> None:
+        self._stage = "wait_stand" if self._preparation is not None else "policy"
+        self._stage_start_s = 0.0
+        self._stop_requested = False
+        self._start_position = state.joint_position.copy()
+        self._ready_since_s = None
+        self._policy_start_s = 0.0
+        self._stand_requested = False
+        self._policy_start_requested = False
+        self._preparation_ready = False
+        if self._preparation is None:
+            self.policy_controller.reset(state)
+
+    def _servo(self, position: FloatArray, kp: float, kd: float) -> JointServoCommand:
+        return JointServoCommand(
+            np.clip(position, self.robot.position_lower, self.robot.position_upper).astype(np.float32),
+            self._zeros,
+            self._zeros,
+            np.full(self.robot.joint_count, kp, dtype=np.float32),
+            np.full(self.robot.joint_count, kd, dtype=np.float32),
+        )
+
+    def step(self, state: RobotState, context: ControlContext[PlanarVelocityCommand]) -> ControllerStep:
+        settings = self._preparation
+        if settings is None:
+            return self.policy_controller.step(state, context)
+        self._process_operator_input()
+        if self._stop_requested and self._stage not in {"damping", "complete"}:
+            self._stage = "damping"
+            self._stage_start_s = context.elapsed_time_s
+        if self._stage == "wait_stand":
+            if not self._stand_requested:
+                return ControllerStep(command=self._servo(state.joint_position, 0.0, settings.damping_kd))
+            self._stage = "prepare"
+            self._stage_start_s = context.elapsed_time_s
+            self._start_position = state.joint_position.copy()
+        if self._stage == "prepare":
+            elapsed = context.elapsed_time_s - self._stage_start_s
+            x, y, _, _ = state.base_orientation_xyzw
+            tilt = float(np.arccos(np.clip(1 - 2 * (float(x) ** 2 + float(y) ** 2), -1, 1)))
+            if tilt > settings.max_base_tilt_rad:
+                return ControllerStep(error=f"unsafe base tilt during Go2 preparation: {tilt:.3f} rad")
+            ready = (
+                elapsed >= settings.ramp_duration_s
+                and np.max(np.abs(state.joint_position - self.robot.default_joint_position))
+                <= settings.max_joint_error_rad
+                and np.max(np.abs(state.joint_velocity)) <= settings.max_joint_velocity_rad_s
+            )
+            if not ready:
+                self._ready_since_s = None
+            elif self._ready_since_s is None:
+                self._ready_since_s = elapsed
+            if self._ready_since_s is not None and elapsed - self._ready_since_s + 1e-9 >= settings.settle_duration_s:
+                self._preparation_ready = True
+                self._stage = "wait_policy"
+            elif elapsed + 1e-9 >= settings.timeout_s:
+                return ControllerStep(error="Go2 standing preparation timed out")
+            else:
+                assert self._start_position is not None
+                fraction = np.float32(min((elapsed + context.dt_s) / settings.ramp_duration_s, 1.0))
+                target = self._start_position + fraction * (self.robot.default_joint_position - self._start_position)
+                return ControllerStep(command=self._servo(target, settings.kp, settings.kd))
+        if self._stage == "wait_policy":
+            if not self._policy_start_requested:
+                return ControllerStep(command=self._servo(self.robot.default_joint_position, settings.kp, settings.kd))
+            self.policy_controller.reset(state)
+            self._policy_start_s = context.elapsed_time_s
+            self._stage = "policy"
+        if self._stage == "policy":
+            local = ControlContext(
+                context.step,
+                context.elapsed_time_s - self._policy_start_s,
+                context.command,
+                context.dt_s,
+            )
+            decision = self.policy_controller.step(state, local)
+            if not decision.complete:
+                return decision
+            self._stage = "damping"
+            self._stage_start_s = context.elapsed_time_s
+        if self._stage == "damping":
+            damping_duration_s = (
+                settings.stop_damping_duration_s if self._stop_requested else settings.damping_duration_s
+            )
+            if context.elapsed_time_s - self._stage_start_s + 1e-9 >= damping_duration_s:
+                self._stage = "complete"
+                return ControllerStep(complete=True, success=not self._stop_requested)
+            return ControllerStep(
+                command=self._servo(state.joint_position, 0.0, settings.damping_kd),
+                success=not self._stop_requested,
+            )
+        return ControllerStep(complete=True, success=not self._stop_requested)
+
+    def request_stop(self) -> None:
+        if self._preparation is None:
+            self.policy_controller.request_stop()
+        else:
+            self._stop_requested = True

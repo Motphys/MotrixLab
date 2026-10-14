@@ -25,9 +25,7 @@ class RolloutResult:
     success: bool
     exit_reason: str
     completed_steps: int
-    simulation_time_s: float
     wall_time_s: float
-    real_time_factor: float
     overrun_count: int
     trace_sha256: str
     error: str | None = None
@@ -35,6 +33,14 @@ class RolloutResult:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SimulationRolloutResult(RolloutResult):
+    """Simulation outcome with model-only physical time, excluding readiness and damping."""
+
+    policy_simulation_time_s: float
+    real_time_factor: float
 
 
 class LatencyRecorder:

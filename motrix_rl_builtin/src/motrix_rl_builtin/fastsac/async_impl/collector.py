@@ -26,6 +26,7 @@ from motrix_rl_builtin.fastsac.async_impl.transport import (
     SharedTransitionRing,
     bind_flat_params,
 )
+from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsPayload
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import WeightReceiver
 from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
 from motrix_rl_builtin.fastsac.config import FastSacAgentCfg, FastSacCfg
@@ -38,8 +39,12 @@ def resolve_collector_inference_device(device_spec: str) -> torch.device:
     device = torch.device(device_spec)
     if device.type == "cpu":
         return device
+    if device.type == "mps":
+        if not torch.backends.mps.is_available():
+            raise RuntimeError(f"collector_inference_device='{device_spec}' requested MPS, but MPS is unavailable")
+        return device
     if device.type != "cuda":
-        raise ValueError(f"collector_inference_device must be cpu or cuda, got '{device_spec}'")
+        raise ValueError(f"collector_inference_device must be cpu, cuda or mps, got '{device_spec}'")
     if not torch.cuda.is_available():
         raise RuntimeError(f"collector_inference_device='{device_spec}' requested CUDA, but CUDA is unavailable")
     index = torch.cuda.current_device() if device.index is None else device.index
@@ -136,15 +141,19 @@ class Collector:
         except KeyError as exc:
             raise ValueError("collector_amp_dtype must be 'fp16' or 'bf16'") from exc
 
-        self._flat_params = bind_flat_params(self.actor) if self.device.type == "cuda" else None
+        # MPS has no pinned host memory, CUDA graphs or stream-ordered copies;
+        # it shares the staged-host path with plain CPU staging buffers.
+        self._is_cuda = self.device.type == "cuda"
+        self._flat_params = bind_flat_params(self.actor) if self._is_cuda else None
         self._obs_host = None
         self._obs_device = None
         self._actions_host = None
-        if self.device.type == "cuda":
-            self._obs_host = torch.empty((self.num_envs, obs_dim), dtype=torch.float32, pin_memory=True)
+        if self.device.type in ("cuda", "mps"):
+            pin = self._is_cuda
+            self._obs_host = torch.empty((self.num_envs, obs_dim), dtype=torch.float32, pin_memory=pin)
             self._obs_device = torch.empty_like(self._obs_host, device=self.device)
-            self._actions_host = torch.empty((self.num_envs, act_dim), dtype=torch.float32, pin_memory=True)
-            if bool(self.async_options.collector_compile):
+            self._actions_host = torch.empty((self.num_envs, act_dim), dtype=torch.float32, pin_memory=pin)
+            if self._is_cuda and bool(self.async_options.collector_compile):
                 import torch._inductor.config as inductor_config
 
                 inductor_config.compile_threads = 1
@@ -201,7 +210,8 @@ class Collector:
         self._actions_host.copy_(device_actions, non_blocking=True)
         # reduce-overhead may reuse CUDA Graph output storage. Complete D2H
         # before returning so the next replay cannot overwrite env actions.
-        torch.cuda.current_stream(self.device).synchronize()
+        if self._is_cuda:
+            torch.cuda.current_stream(self.device).synchronize()
         return self._actions_host
 
     def warmup_inference(self) -> None:
@@ -235,11 +245,10 @@ class Collector:
 
     # ------------------------------------------------------------------ step
     def step_once(self) -> bool:
-        """Run one env-step batch and push it to the ring.
+        """Publish one step after checking slot and worst-case final-row capacity.
 
-        Returns ``False`` if the ring was full (backpressure) — the caller should
-        let the learner drain and retry. The env is only stepped when there is
-        room, so no transition is ever dropped.
+        The SPSC producer is the only allocator and the consumer only frees
+        capacity, so the pre-step check guarantees this step can be published.
         """
         now = time.perf_counter()
         if self.ring.is_full():
@@ -251,30 +260,36 @@ class Collector:
             self._wait_t += now - self._wait_started
             self._wait_started = None
 
-        t0 = now
         steps = self.control.collector_steps_at(self.collector_id)
         warming = steps < self._learning_starts
-        t_sample_actions = time.perf_counter()
+        t_sample = time.perf_counter()
         actions = self._sample_actions(warming)
         t_env = time.perf_counter()
-        next_obs, next_critic_obs, rewards, terminated, truncated = self.env.step(actions)
+        result = self.env.step(actions)
+        t_payload = time.perf_counter()
+        final_payload = None
+        if self.ring.final_obs_store is not None:
+            final = result.final_obs
+            if final is not None:
+                final_payload = FinalObsPayload(
+                    torch.as_tensor(final.env_ids, dtype=torch.long),
+                    torch.as_tensor(final.obs.policy),
+                    torch.as_tensor(final.obs.value_or_policy),
+                )
+        rewards = result.reward.detach()
+        terminated = result.terminated.detach().long()
+        truncated = result.truncated.detach().long()
         t_push = time.perf_counter()
-
-        # The transition is (obs, action, reward, done) with obs being the
-        # pre-step observation; next_obs of step t is the stored obs of t+1.
-        # The learner derives next_obs from the successor slot, so the newest
-        # batch only becomes ingestible after the next push; the final batch
-        # pushed before training stops is intentionally dropped (one batch of
-        # num_envs transitions out of a full training run).
-        pushed = self.ring.push(
+        # Capacity was established before stepping; no other producer can use it.
+        self.ring.push(
             self.obs.detach(),
             self.critic_obs.detach(),
             actions.detach(),
-            rewards.detach(),
-            terminated.detach().long(),
-            truncated.detach().long(),
+            rewards,
+            terminated,
+            truncated,
+            final_obs=final_payload,
         )
-        assert pushed, "ring became full after is_full() check — single-producer invariant violated"
         t_bookkeep = time.perf_counter()
 
         # episode bookkeeping (mirrors sync agent.py collect phase)
@@ -293,7 +308,7 @@ class Collector:
         self.recent_returns = self.recent_returns[-100:]
         self.recent_lengths = self.recent_lengths[-100:]
 
-        info = self.env.last_info
+        info = result.info
         reward_terms = info.get("Reward")
         if reward_terms:
             for k, v in reward_terms.items():
@@ -301,8 +316,8 @@ class Collector:
             self.term_count += 1
         self.last_env_metrics = {k: float(np.mean(v)) for k, v in info.get("metrics", {}).items()}
 
-        self.obs = next_obs
-        self.critic_obs = next_critic_obs
+        self.obs = result.obs
+        self.critic_obs = result.critic_obs
         self.control.inc_collector_steps(self.collector_id)
         t_sync = time.perf_counter()
 
@@ -310,9 +325,9 @@ class Collector:
             self.sync_weights(record_timing=True)
         t_done = time.perf_counter()
 
-        self._collect_t += t_done - t0
-        self._sample_actions_t += t_env - t_sample_actions
-        self._env_step_t += t_push - t_env
+        self._collect_t += t_done - t_sample
+        self._sample_actions_t += t_env - t_sample
+        self._env_step_t += t_payload - t_env
         self._push_t += t_bookkeep - t_push
         self._bookkeep_t += t_sync - t_bookkeep
         self._sync_t += t_done - t_sync

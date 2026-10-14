@@ -4,16 +4,16 @@ build-backend = "uv_build"
 
 [project]
 name = "motrix-deploy-unitree"
-version = "0.4.0b0"
+version = "0.4.0b1"
 description = "Unitree SDK2 DDS hardware plugin for the Motrix deployment runtime."
 authors = [{ name = "Motphys", email = "developers@motphys.com" }]
 requires-python = "==3.10.*"
 readme = "README.md"
 license = "Apache-2.0"
 dependencies = [
+    "motrix-deploy==0.4.0b1",
+    "motrix-env-core==0.4.0b1",
     "hydra-core>=1.3,<1.4",
-    "motrix-deploy",
-    "motrix-env-core",
     "numpy>=1.26",
     "unitree-sdk2py",
 ]
@@ -22,7 +22,11 @@ dependencies = [
 motrix-deploy-unitree = "motrix_deploy_unitree.cli:main"
 
 [project.entry-points."motrix_deploy.backends"]
-unitree_go2 = "motrix_deploy_unitree.plugin:create_runtime"
+unitree = "motrix_deploy_unitree.plugin:create_runtime"
+
+[tool.uv.build-backend]
+module-name = ["motrix_deploy_unitree", "hydra_plugins"]
+namespace = true
 
 [tool.uv.sources]
 unitree-sdk2py = { git = "https://github.com/motphys-developers/unitree_sdk2_python", rev = "ff87e731174f7258e0d09980897c55116634939a" }
