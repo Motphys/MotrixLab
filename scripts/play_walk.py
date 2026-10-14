@@ -180,6 +180,36 @@ def _compute_motion_metrics(
     }
 
 
+def _compute_episode_metrics(
+    completed_episode_steps: list[int],
+    *,
+    successful_episode_count: int,
+    failed_episode_count: int,
+    unfinished_episode_steps: int,
+    ctrl_dt: float,
+) -> dict[str, object]:
+    """Summarize completed fixed-command episodes without counting a partial run as success."""
+
+    completed_episode_count = len(completed_episode_steps)
+    if completed_episode_count != successful_episode_count + failed_episode_count:
+        raise ValueError("completed episode outcomes must match completed episode count")
+    durations = np.asarray(completed_episode_steps, dtype=np.float64) * ctrl_dt
+    return {
+        "completed_episode_count": completed_episode_count,
+        "successful_episode_count": successful_episode_count,
+        "failed_episode_count": failed_episode_count,
+        "success_rate": (
+            float(successful_episode_count / completed_episode_count)
+            if completed_episode_count
+            else None
+        ),
+        "completed_episode_duration_mean_s": float(np.mean(durations)) if durations.size else 0.0,
+        "completed_episode_duration_min_s": float(np.min(durations)) if durations.size else 0.0,
+        "unfinished_episode_steps": unfinished_episode_steps,
+        "unfinished_episode_duration_s": unfinished_episode_steps * ctrl_dt,
+    }
+
+
 def _compute_trajectory_metrics(
     base_positions: np.ndarray,
     yaw_samples: np.ndarray,
@@ -581,7 +611,11 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
     swing_abs_y_samples = {foot: [] for foot in _FOOT_NAMES}
     swing_lateral_speed_samples = {foot: [] for foot in _FOOT_NAMES}
     previous_eval_feet_pos = np.asarray(env.feet_pos[cfg.analysis_env_index], dtype=np.float32).copy()
-    fall_count = 0
+    failure_count = 0
+    successful_episode_count = 0
+    failed_episode_count = 0
+    completed_episode_steps: list[int] = []
+    current_episode_steps = 0
 
     logger.info(
         "Running straight walk for %.2fs with command [%.3f, %.3f, %.3f]",
@@ -598,11 +632,14 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
             previous_step_feet_pos = previous_eval_feet_pos.copy()
             with torch.no_grad():
                 actions = policy(obs)
-            obs, _, dones, _ = vec_env.step(actions)
+            obs, _, dones, extras = vec_env.step(actions)
             current_contact = np.asarray(env.feet_contact[cfg.analysis_env_index], dtype=bool).copy()
             done_array = torch.as_tensor(dones).detach().cpu().numpy().reshape(-1)
             done = bool(done_array[cfg.analysis_env_index])
+            timeout_array = torch.as_tensor(extras["time_outs"]).detach().cpu().numpy().reshape(-1)
+            timed_out = bool(timeout_array[cfg.analysis_env_index])
             current_step_feet_pos = np.asarray(env.feet_pos[cfg.analysis_env_index], dtype=np.float32).copy()
+            current_episode_steps += 1
             elapsed = step_index * ctrl_dt
             if elapsed >= cfg.warmup_seconds and not done:
                 current_gyro = np.asarray(env.get_gyro()[cfg.analysis_env_index], dtype=np.float32).copy()
@@ -653,7 +690,18 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
             # Advance every control step, including warmup and reset steps, so
             # the first measured lateral speed is a true one-step difference.
             previous_eval_feet_pos = current_step_feet_pos
-            fall_count += int(done)
+            if done:
+                completed_episode_steps.append(current_episode_steps)
+                if timed_out:
+                    successful_episode_count += 1
+                else:
+                    failed_episode_count += 1
+                    failure_count += 1
+                current_episode_steps = 0
+            if np.any(done_array):
+                # Auto-reset resamples commands. Restore the requested command
+                # before the next policy step for every parallel environment.
+                _set_straight_command(env, command)
             if not done and contact_initialized:
                 landed = current_contact & ~previous_contact
                 foot_positions = np.asarray(env.feet_pos[cfg.analysis_env_index], dtype=np.float32)
@@ -692,7 +740,7 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
                 vz_deltas=np.asarray(vz_delta_samples, dtype=np.float64),
                 orientation_samples=orientation_samples,
                 height_samples=height_samples,
-                termination_count=fall_count,
+                termination_count=failure_count,
                 total_steps=step_index,
                 ctrl_dt=ctrl_dt,
             )
@@ -707,6 +755,13 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
                     "reward_terms": {
                         name: float(np.mean(values)) for name, values in reward_term_samples.items()
                     },
+                    **_compute_episode_metrics(
+                        completed_episode_steps,
+                        successful_episode_count=successful_episode_count,
+                        failed_episode_count=failed_episode_count,
+                        unfinished_episode_steps=current_episode_steps,
+                        ctrl_dt=ctrl_dt,
+                    ),
                     "rear_swing_max_abs_y": {
                         foot: float(max(swing_abs_y_samples[foot])) if swing_abs_y_samples[foot] else 0.0
                         for foot in ("RL", "RR")
@@ -747,8 +802,15 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
                 "command": command.tolist(),
                 "command_axes": ["vx", "vy", "yaw_rate"],
                 "samples": 0,
-                "fall_rate": float(fall_count / max(step_index, 1)),
-                "termination_count": int(fall_count),
+                "fall_rate": float(failure_count / max(step_index, 1)),
+                "termination_count": int(failure_count),
+                **_compute_episode_metrics(
+                    completed_episode_steps,
+                    successful_episode_count=successful_episode_count,
+                    failed_episode_count=failed_episode_count,
+                    unfinished_episode_steps=current_episode_steps,
+                    ctrl_dt=ctrl_dt,
+                ),
             }
         metrics_path = Path(cfg.metrics_path) if cfg.metrics_path else analysis_dir / "velocity_metrics.json"
         metrics_path.parent.mkdir(parents=True, exist_ok=True)

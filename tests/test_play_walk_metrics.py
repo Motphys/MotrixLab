@@ -90,3 +90,33 @@ def test_trajectory_metrics_use_positive_distance_for_reverse_motion():
     assert metrics["final_along_track_distance_m"] == -1.0
     assert metrics["total_segment_along_track_distance_m"] == 1.0
     np.testing.assert_allclose(metrics["cross_track_error_per_meter"], 0.1)
+
+
+def test_episode_metrics_exclude_an_unfinished_episode_from_success_rate():
+    metrics = play_walk._compute_episode_metrics(
+        [100, 40, 75],
+        successful_episode_count=2,
+        failed_episode_count=1,
+        unfinished_episode_steps=20,
+        ctrl_dt=0.02,
+    )
+
+    assert metrics["completed_episode_count"] == 3
+    assert metrics["successful_episode_count"] == 2
+    assert metrics["failed_episode_count"] == 1
+    np.testing.assert_allclose(metrics["success_rate"], 2 / 3)
+    np.testing.assert_allclose(metrics["completed_episode_duration_mean_s"], 43 / 30)
+    np.testing.assert_allclose(metrics["unfinished_episode_duration_s"], 0.4)
+
+
+def test_episode_metrics_report_no_rate_without_a_completed_episode():
+    metrics = play_walk._compute_episode_metrics(
+        [],
+        successful_episode_count=0,
+        failed_episode_count=0,
+        unfinished_episode_steps=25,
+        ctrl_dt=0.02,
+    )
+
+    assert metrics["success_rate"] is None
+    assert metrics["unfinished_episode_steps"] == 25

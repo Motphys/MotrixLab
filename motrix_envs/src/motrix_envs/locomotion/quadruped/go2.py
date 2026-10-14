@@ -78,8 +78,6 @@ class Go2WalkDirectEnvCfg(QuadrupedWalkEnvCfg):
             # dof_acc=-2.5e-7,
             # action_smoothness=-0.01,
             # contact=0.1,
-            # swing_feet_z=0.5,
-            # swing_contact=-0.5,
         ),
         tracking_ang_vel_sigma=0.05,
         target_foot_height=0.05,
@@ -93,24 +91,6 @@ class Go2WalkDirectEnvCfg(QuadrupedWalkEnvCfg):
                 width_tolerance=0.02,
                 width_scale=-0.05,
             ),
-            # FootLateralRewardCfg(
-            #     name="front_swing_width",
-            #     feet=("front_left", "front_right"),
-            #     phase="swing",
-            #     min_abs_y=0.13,
-            #     max_abs_y=0.16,
-            #     width_tolerance=0.02,
-            #     width_scale=-0.02,
-            # ),
-            # FootLateralRewardCfg(
-            #     name="front_stance_width",
-            #     feet=("front_left", "front_right"),
-            #     phase="stance",
-            #     min_abs_y=0.13,
-            #     max_abs_y=0.16,
-            #     width_tolerance=0.02,
-            #     width_scale=-0.01,
-            # ),
         ),
     )
 
