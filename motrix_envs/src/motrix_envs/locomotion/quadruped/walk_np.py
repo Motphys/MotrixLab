@@ -167,6 +167,22 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             "rear_right_contact",
         )
         self._feet_position_sensors = foot_position_sensors
+        foot_indices = {
+            "front_left": 0,
+            "front_right": 1,
+            "rear_left": 2,
+            "rear_right": 3,
+        }
+        try:
+            self._foot_lateral_terms = tuple(
+                (
+                    term,
+                    np.asarray([foot_indices[foot] for foot in term.feet], dtype=np.intp),
+                )
+                for term in cfg.reward_config.foot_lateral_terms
+            )
+        except KeyError as error:
+            raise ValueError(f"unknown foot lateral reward foot {error.args[0]!r}") from error
         velocity_cfg = cfg.commands.velocity
         root_seed = int(np.random.randint(0, np.iinfo(np.uint32).max, dtype=np.uint32))
         command_seed, randomization_seed = np.random.SeedSequence(root_seed).spawn(2)
@@ -392,8 +408,17 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._advance_phase()
         self._update_feet_buffers()
 
+        linvel = self.get_local_linvel()
+        gyro = self.get_gyro()
         terminated = self.get_gravity()[:, 2] <= self.cfg.termination_min_up_z
-        reward = self._compute_reward(state, self.get_local_linvel(), self.get_gyro(), self.get_dof_pos())
+        reward = self._compute_reward(state, linvel, gyro, self.get_dof_pos())
+        state.metrics.update(
+            {
+                "Tracking/vx_mae": np.abs(linvel[:, 0] - self._commands[:, 0]),
+                "Tracking/vy_mae": np.abs(linvel[:, 1] - self._commands[:, 1]),
+                "Tracking/yaw_rate_mae": np.abs(gyro[:, 2] - self._commands[:, 2]),
+            }
+        )
         return state.replace(reward=reward, terminated=terminated)
 
     def _compute_reward(
@@ -429,6 +454,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             reward_items[name] = weighted
 
         state.reward_terms = reward_items
+        reward += self._reward_foot_lateral_terms(reward_items)
         self._previous_dof_vel[:] = self.get_dof_vel()[:, -self._num_action :]
         self._previous_feet_pos[:] = self.feet_pos
         return reward * self.cfg.ctrl_dt
@@ -686,5 +712,37 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             np.square(self._current_actions - 2.0 * self._last_actions + self._last_last_actions), axis=1
         )
 
+    def _reward_foot_lateral_terms(self, reward_items: dict[str, np.ndarray]) -> np.ndarray:
+        reward = np.zeros((self._num_envs,), dtype=np.float32)
+        for term, foot_ids in self._foot_lateral_terms:
+            abs_y = np.abs(self.feet_pos[:, foot_ids, 1])
+            if term.phase == "swing":
+                active = self._feet_phase[:, foot_ids] >= 0.6
+            else:
+                active = self.feet_contact[:, foot_ids]
+
+            if term.target_abs_y is not None:
+                width_error = np.square((abs_y - term.target_abs_y) / term.width_tolerance)
+                outside_band = np.ones_like(active)
+            else:
+                outer = np.maximum(abs_y - term.max_abs_y, 0.0)
+                inner = np.maximum(term.min_abs_y - abs_y, 0.0)
+                width_error = np.square(outer / term.width_tolerance) + np.square(inner / term.width_tolerance)
+                outside_band = (outer > 0.0) | (inner > 0.0)
+
+            width = np.sum(width_error * active, axis=1) / len(foot_ids)
+            weighted_width = (width * term.width_scale).astype(np.float32, copy=False)
+            reward_items[term.name] = weighted_width
+            reward += weighted_width
+
+            if term.lateral_speed_scale == 0.0:
+                continue
+            lateral_speed = (self.feet_pos[:, foot_ids, 1] - self._previous_feet_pos[:, foot_ids, 1]) / self.cfg.ctrl_dt
+            speed_active = active & outside_band if term.speed_only_outside_band else active
+            speed = np.sum(np.square(lateral_speed / term.lateral_speed_tolerance) * speed_active, axis=1) / len(foot_ids)
+            weighted_speed = (speed * term.lateral_speed_scale).astype(np.float32, copy=False)
+            reward_items[f"{term.name}_lateral_speed"] = weighted_speed
+            reward += weighted_speed
+        return reward
 
 __all__ = ["QuadrupedWalkTask"]

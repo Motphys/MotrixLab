@@ -216,6 +216,57 @@ class RewardScales:
 
 
 @configclass
+class FootLateralRewardCfg:
+    """A body-frame lateral foot-placement reward for a named set of feet."""
+
+    name: str = ""
+    feet: tuple[str, ...] = ()
+    phase: str = "swing"
+    target_abs_y: float | None = None
+    min_abs_y: float | None = None
+    max_abs_y: float | None = None
+    width_tolerance: float = 0.02
+    width_scale: float = 0.0
+    lateral_speed_tolerance: float = 0.15
+    lateral_speed_scale: float = 0.0
+    speed_only_outside_band: bool = True
+
+    def validate(self) -> None:
+        if not self.name:
+            raise ValueError("foot lateral reward name must not be empty")
+        if not self.feet or len(set(self.feet)) != len(self.feet):
+            raise ValueError(f"foot lateral reward {self.name!r} must name unique feet")
+        if self.phase not in {"swing", "stance"}:
+            raise ValueError(f"foot lateral reward {self.name!r} phase must be 'swing' or 'stance'")
+        if not np.isfinite(self.width_tolerance) or self.width_tolerance <= 0.0:
+            raise ValueError(f"foot lateral reward {self.name!r} width_tolerance must be positive")
+        if not np.isfinite(self.lateral_speed_tolerance) or self.lateral_speed_tolerance <= 0.0:
+            raise ValueError(f"foot lateral reward {self.name!r} lateral_speed_tolerance must be positive")
+        if not np.isfinite(self.width_scale) or not np.isfinite(self.lateral_speed_scale):
+            raise ValueError(f"foot lateral reward {self.name!r} scales must be finite")
+
+        has_target = self.target_abs_y is not None
+        has_band = self.min_abs_y is not None or self.max_abs_y is not None
+        if has_target == has_band:
+            raise ValueError(
+                f"foot lateral reward {self.name!r} must define either target_abs_y or min_abs_y and max_abs_y"
+            )
+        if has_target:
+            if not np.isfinite(self.target_abs_y) or self.target_abs_y < 0.0:
+                raise ValueError(f"foot lateral reward {self.name!r} target_abs_y must be non-negative")
+            return
+        if self.min_abs_y is None or self.max_abs_y is None:
+            raise ValueError(f"foot lateral reward {self.name!r} band requires min_abs_y and max_abs_y")
+        if (
+            not np.isfinite(self.min_abs_y)
+            or not np.isfinite(self.max_abs_y)
+            or self.min_abs_y < 0.0
+            or self.min_abs_y > self.max_abs_y
+        ):
+            raise ValueError(f"foot lateral reward {self.name!r} must define a non-negative ordered band")
+
+
+@configclass
 class RewardConfig:
     scales: RewardScales = RewardScales()
     tracking_lin_vel_sigma: float = 0.25
@@ -224,6 +275,15 @@ class RewardConfig:
     swing_feet_height_sigma: float = 0.05
     base_height_target: float = 0.3
     stand_still_threshold: float = 0.05
+    foot_lateral_terms: tuple[FootLateralRewardCfg, ...] = ()
+
+    def validate(self) -> None:
+        names: set[str] = set()
+        for term in self.foot_lateral_terms:
+            term.validate()
+            if term.name in names:
+                raise ValueError(f"duplicate foot lateral reward name {term.name!r}")
+            names.add(term.name)
 
 
 @configclass
@@ -253,6 +313,7 @@ class QuadrupedWalkEnvCfg(DirectEnvCfg):
         super().validate()
         self.randomization.validate()
         self.commands.velocity.validate()
+        self.reward_config.validate()
         if not np.isfinite(self.termination_min_up_z) or not -1.0 <= self.termination_min_up_z <= 1.0:
             raise ValueError("termination_min_up_z must be finite and inside [-1, 1]")
         if (
@@ -278,6 +339,7 @@ class QuadrupedWalkEnvCfg(DirectEnvCfg):
 __all__ = [
     "Commands",
     "ControlConfig",
+    "FootLateralRewardCfg",
     "NoiseConfig",
     "QuadrupedWalkRandomizationCfg",
     "QuadrupedSceneCfg",

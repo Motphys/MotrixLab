@@ -81,8 +81,8 @@ def test_quadruped_reward_scales_are_structured_and_not_shared():
     assert go1 is not go2
 
 
-def test_go2_f2_p1b_keeps_spaces_and_exposes_gait_terms():
-    env = registry.make("go2-walk-flat-f2-p1b", num_envs=2, mode="train")
+def test_go2_flat_walk_keeps_spaces_and_exposes_gait_terms():
+    env = registry.make("go2-walk-flat", num_envs=2, mode="train")
     state = env.init_state()
     assert env.policy_observation_space.shape == (49,)
     assert env.action_space.shape == (12,)
@@ -91,10 +91,7 @@ def test_go2_f2_p1b_keeps_spaces_and_exposes_gait_terms():
     state = env.step(np.zeros((2, 12), dtype=np.float32))
     assert {
         "rear_swing_width",
-        "rear_swing_lateral_speed",
         "front_swing_width",
-        "front_swing_lateral_speed",
-        "front_swing_inner_width",
         "front_stance_width",
     } <= state.reward_terms.keys()
 

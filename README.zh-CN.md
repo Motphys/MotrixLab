@@ -173,11 +173,13 @@ python scripts/train.py task=go2-walk-flat/rslrl.ppo
 python scripts/play_walk.py env=go2-walk-flat policy=<checkpoint>
 ```
 
-评估结果保存在运行目录的 `walk_analysis/velocity_metrics.json`。
+评估结果保存在运行目录的 `walk_analysis/velocity_metrics.json`，并同时写出逐控制步的
+`walk_analysis/velocity_trace.csv`。JSON 包含 `actual_velocity`、`tracking_error`、
+`tracking_mae`、`actual_speed_xy_mean` 等汇总指标；CSV 可直接用于画出指令速度、实际速度和误差曲线。
 
 ## Go2 平地直行修改版
 
-修改版通过 `quadruped/go2_walk.py` 注册为当前 `go2-walk-flat` 配置，并保留 49 维 Actor、52 维 Critic 和 12 维关节动作接口，便于继续使用原有 PPO 训练和部署链路。
+修改版通过 `quadruped/go2.py` 注册为当前 `go2-walk-flat` 配置，并保留 49 维 Actor、52 维 Critic 和 12 维关节动作接口，便于继续使用原有 PPO 训练和部署链路。
 
 相对第一版的主要变化：
 
@@ -192,7 +194,7 @@ python scripts/play_walk.py env=go2-walk-flat policy=<checkpoint>
 
 | 修改内容 | 文件 |
 | --- | --- |
-| 当前 Go2 改进配置、命令和奖励权重 | `motrix_envs/src/motrix_envs/locomotion/quadruped/go2_walk.py` |
+| 当前 Go2 改进配置、命令和奖励权重 | `motrix_envs/src/motrix_envs/locomotion/quadruped/go2.py` |
 | 命令采样的单轴/边界覆盖 | `motrix_envs/src/motrix_envs/locomotion/quadruped/velocity_command.py` |
 | 新奖励项及动作/状态历史缓存 | `motrix_envs/src/motrix_envs/locomotion/quadruped/walk_np.py` |
 | 新配置字段 | `motrix_envs/src/motrix_envs/locomotion/quadruped/cfg.py` |
@@ -201,30 +203,30 @@ python scripts/play_walk.py env=go2-walk-flat policy=<checkpoint>
 
 `play.py` 是通用回放入口，不会像 `play_walk.py` 一样在每个 step 强制写入直行命令。Go2 平地直行的速度指标应使用 `play_walk.py`，结果默认写入 `walk_analysis/velocity_metrics.json`。
 
-### Go2 F2-P1b 平地步态
+### Go2 平地步态约束
 
-`go2-walk-flat-f2-p1b` 是保留的 Go2 平地步态任务。它包含选定的 legacy 髋关节初始姿态、归一化的后足摆动宽度/横向速度约束、前足双边摆动宽度约束和前足支撑期宽度约束。任务实现已收敛到 `quadruped/go2_swing_ablation.py`，训练配置为 `configs/task/go2-walk-flat-f2-p1b/rslrl.ppo.yaml`。
+`go2-walk-flat` 集成选定的 legacy 髋关节初始姿态，并启用通用的足端横向 reward term：后足摆动期目标宽度、前足摆动期宽度带和前足支撑期宽度带。通用计算在 `quadruped/walk_np.py`，Go2 的具体数值在 `quadruped/go2.py`。`go2-walk-rough` 显式不启用这些平地约束，以保留粗糙地形上的横向落脚自由度。
 
 固定命令评估会输出前足和后足摆动的最大横向距离、P95 横向距离和峰值横向速度：
 
 ```bash
 python scripts/play_walk.py \
-  env=go2-walk-flat-f2-p1b \
+  env=go2-walk-flat \
   policy=<checkpoint> \
   forward_velocity=0.5 lateral_velocity=0 yaw_velocity=0 \
   warmup_seconds=2 eval_steps=5760 \
-  analysis_dir=runs/eval/go2_f2_p1b
+  analysis_dir=runs/eval/go2_flat
 ```
 
 随机命令评估入口 `eval_walk_random.py` 按可配置的均匀分布采样 `[vx, vy, yaw]`，并使用独立的 `command_seed` 和固定命令切换间隔，便于复现实验：
 
 ```bash
 python scripts/eval_walk_random.py \
-  env=go2-walk-flat-f2-p1b \
+  env=go2-walk-flat \
   policy=<checkpoint> \
   num_envs=16 seed=1 rand_seed=false command_seed=1 \
   duration_seconds=120 warmup_seconds=2 command_interval_seconds=2 \
-  analysis_dir=runs/eval/go2_f2_p1b_random
+  analysis_dir=runs/eval/go2_flat_random
 ```
 
 随机评估输出聚合后的速度跟踪和稳定性指标；四足摆动分析仍应使用固定命令评估逐足检查。以上均为仿真结论，不能视为真实机器人已经可用；实机验证仍是后续独立阶段。

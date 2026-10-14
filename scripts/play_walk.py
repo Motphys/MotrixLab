@@ -43,6 +43,8 @@ class WalkPlayConfig(PlayConfig):
     forward_velocity: float = 0.5
     lateral_velocity: float = 0.0
     yaw_velocity: float = 0.0
+    eval_env: str | None = None
+    """Optional environment used for cross-environment policy evaluation."""
     analysis_dir: str | None = None
     analysis_env_index: int = 0
     metrics_path: str | None = None
@@ -115,12 +117,30 @@ def _compute_motion_metrics(
         orthogonal_drift = float(np.mean(np.linalg.norm(velocities[:, :2], axis=1)))
 
     evaluated_seconds = total_steps * ctrl_dt
+    actual_speed_xy = np.linalg.norm(velocities[:, :2], axis=1)
+    command_speed_xy = float(np.linalg.norm(command64[:2]))
     return {
         "metrics_schema_version": 2,
         "command": command64.tolist(),
         "command_axes": ["vx", "vy", "yaw_rate"],
         "mean_velocity": np.mean(command_velocity, axis=0).tolist(),
         "steady_state_error": np.mean(command_error, axis=0).tolist(),
+        # Named fields make the JSON self-describing for scripts and humans.
+        "actual_velocity": {
+            "vx": float(np.mean(velocities[:, 0])),
+            "vy": float(np.mean(velocities[:, 1])),
+            "vz": float(np.mean(velocities[:, 2])),
+            "yaw_rate": float(np.mean(gyros[:, 2])),
+        },
+        "tracking_error": {
+            "vx": float(np.mean(command_error[:, 0])),
+            "vy": float(np.mean(command_error[:, 1])),
+            "yaw_rate": float(np.mean(command_error[:, 2])),
+        },
+        "tracking_mae": np.mean(np.abs(command_error), axis=0).tolist(),
+        "actual_speed_xy_mean": float(np.mean(actual_speed_xy)),
+        "actual_speed_xy_rmse": float(np.sqrt(np.mean(np.square(actual_speed_xy)))),
+        "command_speed_xy": command_speed_xy,
         "rmse": np.sqrt(np.mean(np.square(command_error), axis=0)).tolist(),
         "p95_error": np.percentile(np.abs(command_error), 95, axis=0).tolist(),
         "mean_linear_velocity": np.mean(velocities, axis=0).tolist(),
@@ -248,6 +268,26 @@ def _write_foot_landings_csv(path: Path, landings: dict[str, list[tuple[int, flo
         for step, time_s, x, y in landings[foot]:
             lines.append(f"{step},{time_s:.6f},{foot},{x:.6f},{y:.6f}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_velocity_trace_csv(path: Path, samples: list[tuple[float, np.ndarray, np.ndarray, np.ndarray]]) -> None:
+    """Write one row per evaluated control step for plotting and diagnosis."""
+
+    header = (
+        "time_s,command_vx,command_vy,command_yaw_rate,"
+        "actual_vx,actual_vy,actual_vz,actual_yaw_rate,"
+        "error_vx,error_vy,error_yaw_rate,actual_speed_xy\n"
+    )
+    rows = [header]
+    for time_s, actual_linear, actual_gyro, command in samples:
+        error = np.array([actual_linear[0], actual_linear[1], actual_gyro[2]], dtype=np.float64) - command
+        rows.append(
+            f"{time_s:.6f},{command[0]:.8f},{command[1]:.8f},{command[2]:.8f},"
+            f"{actual_linear[0]:.8f},{actual_linear[1]:.8f},{actual_linear[2]:.8f},{actual_gyro[2]:.8f},"
+            f"{error[0]:.8f},{error[1]:.8f},{error[2]:.8f},"
+            f"{np.linalg.norm(actual_linear[:2]):.8f}\n"
+        )
+    path.write_text("".join(rows), encoding="utf-8")
 
 
 def _write_foot_landings_svg(path: Path, landings: dict[str, list[tuple[int, float, float, float]]]) -> None:
@@ -484,8 +524,11 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     trainer._set_seed(trainer._context.seed)
+    eval_env_name = cfg.eval_env or trainer._env_name
+    if cfg.eval_env is not None:
+        logger.info("Evaluating policy trained for %s on %s", trainer._env_name, eval_env_name)
     env = env_registry.make(
-        trainer._env_name,
+        eval_env_name,
         sim=trainer._sim,
         num_envs=trainer._context.play_num_envs,
         mode="play",
@@ -521,6 +564,7 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
     ctrl_dt = float(getattr(env.cfg, "ctrl_dt", 0.02))
     velocity_samples: list[np.ndarray] = []
     gyro_samples: list[np.ndarray] = []
+    velocity_trace_samples: list[tuple[float, np.ndarray, np.ndarray, np.ndarray]] = []
     yaw_rate_delta_samples: list[float] = []
     vz_delta_samples: list[float] = []
     previous_eval_gyro: np.ndarray | None = None
@@ -567,6 +611,9 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
                 ).copy()
                 velocity_samples.append(current_velocity)
                 gyro_samples.append(current_gyro)
+                velocity_trace_samples.append(
+                    (float((step_index + 1) * ctrl_dt), current_velocity.copy(), current_gyro.copy(), command.copy())
+                )
                 if previous_eval_gyro is not None:
                     yaw_rate_delta_samples.append(float((current_gyro[2] - previous_eval_gyro[2]) / ctrl_dt))
                 previous_eval_gyro = current_gyro
@@ -705,8 +752,20 @@ def _run_walk(cfg: WalkPlayConfig) -> None:
             }
         metrics_path = Path(cfg.metrics_path) if cfg.metrics_path else analysis_dir / "velocity_metrics.json"
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        trace_path = metrics_path.parent / "velocity_trace.csv"
+        _write_velocity_trace_csv(trace_path, velocity_trace_samples)
+        metrics["velocity_trace_csv"] = str(trace_path)
         metrics_path.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
         logger.info("Saved velocity metrics: %s", metrics_path)
+        logger.info(
+            "Velocity summary: target_xy=%.3f m/s, actual_xy=%.3f m/s, "
+            "vx_mae=%.3f, vy_mae=%.3f, yaw_mae=%.3f rad/s",
+            metrics.get("command_speed_xy", 0.0),
+            metrics.get("actual_speed_xy_mean", 0.0),
+            metrics.get("tracking_mae", [0.0, 0.0, 0.0])[0],
+            metrics.get("tracking_mae", [0.0, 0.0, 0.0])[1],
+            metrics.get("tracking_mae", [0.0, 0.0, 0.0])[2],
+        )
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="play_walk")

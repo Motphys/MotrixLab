@@ -170,11 +170,13 @@ python scripts/train.py task=go2-walk-flat/rslrl.ppo
 python scripts/play_walk.py env=go2-walk-flat policy=<checkpoint>
 ```
 
-Evaluation metrics are written to `walk_analysis/velocity_metrics.json` under the run directory.
+Evaluation metrics are written to `walk_analysis/velocity_metrics.json` under the run directory; a per-control-step
+`walk_analysis/velocity_trace.csv` is written alongside it. The JSON includes `actual_velocity`, `tracking_error`,
+`tracking_mae`, and `actual_speed_xy_mean`, while the CSV is suitable for plotting command, actual velocity, and error.
 
 ## Go2 Flat-Walk Updated Version
 
-The updated `go2-walk-flat` configuration is registered from `quadruped/go2_walk.py`. It keeps the 49-D actor observation, 52-D critic observation, and 12-D joint action interfaces so existing PPO and deployment paths remain usable.
+The updated `go2-walk-flat` configuration is registered from `quadruped/go2.py`. It keeps the 49-D actor observation, 52-D critic observation, and 12-D joint action interfaces so existing PPO and deployment paths remain usable.
 
 Changes from the first version:
 
@@ -187,7 +189,7 @@ Changes from the first version:
 
 | Updated component | File |
 | --- | --- |
-| Current Go2 configuration and reward weights | `motrix_envs/src/motrix_envs/locomotion/quadruped/go2_walk.py` |
+| Current Go2 configuration and reward weights | `motrix_envs/src/motrix_envs/locomotion/quadruped/go2.py` |
 | Single-axis and boundary command sampling | `motrix_envs/src/motrix_envs/locomotion/quadruped/velocity_command.py` |
 | New reward terms and action/state history buffers | `motrix_envs/src/motrix_envs/locomotion/quadruped/walk_np.py` |
 | New configuration fields | `motrix_envs/src/motrix_envs/locomotion/quadruped/cfg.py` |
@@ -196,30 +198,30 @@ Changes from the first version:
 
 `play.py` is the generic replay entry point and does not repin a straight-line command every step. Use `play_walk.py` for Go2 flat-walk velocity evaluation; metrics are written to `walk_analysis/velocity_metrics.json`.
 
-### Go2 F2-P1b flat walk
+### Go2 flat-walk gait regularization
 
-`go2-walk-flat-f2-p1b` is the retained Go2 flat-walk task. It uses the selected legacy hip pose, normalized rear-foot swing-width and lateral-speed regularization, a bilateral front-foot swing-width band, and front-foot stance-width regularization. Its full task definition is self-contained in `quadruped/go2_swing_ablation.py`; train it with `configs/task/go2-walk-flat-f2-p1b/rslrl.ppo.yaml`.
+`go2-walk-flat` uses the selected legacy hip pose plus generic foot-lateral reward terms: a rear-foot swing-width target, a front-foot swing-width band, and a front-foot stance-width band. The term implementation lives in `quadruped/walk_np.py`; Go2-specific values live in `quadruped/go2.py`. `go2-walk-rough` deliberately leaves these flat-ground terms disabled so it can choose lateral footholds on uneven terrain.
 
 Fixed-command evaluation reports max, P95, and peak lateral speed for both front and rear swing feet:
 
 ```bash
 python scripts/play_walk.py \
-  env=go2-walk-flat-f2-p1b \
+  env=go2-walk-flat \
   policy=<checkpoint> \
   forward_velocity=0.5 lateral_velocity=0 yaw_velocity=0 \
   warmup_seconds=2 eval_steps=5760 \
-  analysis_dir=runs/eval/go2_f2_p1b
+  analysis_dir=runs/eval/go2_flat
 ```
 
 For reproducible random-command evaluation, `eval_walk_random.py` samples `[vx, vy, yaw]` from configurable uniform ranges with a separate `command_seed` and fixed resampling interval:
 
 ```bash
 python scripts/eval_walk_random.py \
-  env=go2-walk-flat-f2-p1b \
+  env=go2-walk-flat \
   policy=<checkpoint> \
   num_envs=16 seed=1 rand_seed=false command_seed=1 \
   duration_seconds=120 warmup_seconds=2 command_interval_seconds=2 \
-  analysis_dir=runs/eval/go2_f2_p1b_random
+  analysis_dir=runs/eval/go2_flat_random
 ```
 
 The random evaluator reports aggregate tracking and stability metrics; use fixed-command evaluation for per-foot swing analysis. Simulation results are not evidence of real-robot readiness; real-hardware validation remains a separate gated stage.

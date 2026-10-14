@@ -14,6 +14,9 @@ eval_steps: null
 forward_velocity: 0.5
 lateral_velocity: 0.0
 yaw_velocity: 0.0
+# Set this to a registered environment name to test a policy outside its
+# metadata training environment, for example ``go2-walk-rough``.
+eval_env: null
 
 # Footfall analysis output. If null, save under the selected run's
 # ``walk_analysis`` directory.

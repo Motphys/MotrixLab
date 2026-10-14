@@ -95,3 +95,14 @@ def test_rl_trainer_supports_sim_backend(monkeypatch, sim_backend: str) -> None:
     wrapped.close()
     renderer.render.assert_called_once_with()
     renderer.close.assert_called_once_with()
+
+
+def test_np_wrapper_forwards_environment_metrics_to_rslrl_logs(monkeypatch) -> None:
+    env = _make_env("np")
+    env.state.metrics = {"Tracking/vx_mae": np.array([0.1, 0.3], dtype=np.float32)}
+    renderer = Mock()
+    wrapped = _wrap_env(monkeypatch, "np", env, renderer)
+
+    _, _, _, extras = wrapped.step(torch.zeros((_NUM_ENVS, _ACT_DIM)))
+
+    assert extras["log"]["Tracking/vx_mae"].item() == pytest.approx(0.2)

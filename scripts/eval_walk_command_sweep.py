@@ -165,7 +165,7 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", type=Path, required=True)
-    parser.add_argument("--env", default="go2-walk-flat-f2-p1b")
+    parser.add_argument("--env", default="go2-walk-flat")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--axes", nargs="+", choices=("vx", "vy", "yaw"), default=["vx", "vy", "yaw"])
     parser.add_argument("--vx-values", type=_parse_values, default=_parse_values(DEFAULT_VX))
