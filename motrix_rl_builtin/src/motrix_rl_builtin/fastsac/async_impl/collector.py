@@ -39,8 +39,12 @@ def resolve_collector_inference_device(device_spec: str) -> torch.device:
     device = torch.device(device_spec)
     if device.type == "cpu":
         return device
+    if device.type == "mps":
+        if not torch.backends.mps.is_available():
+            raise RuntimeError(f"collector_inference_device='{device_spec}' requested MPS, but MPS is unavailable")
+        return device
     if device.type != "cuda":
-        raise ValueError(f"collector_inference_device must be cpu or cuda, got '{device_spec}'")
+        raise ValueError(f"collector_inference_device must be cpu, cuda or mps, got '{device_spec}'")
     if not torch.cuda.is_available():
         raise RuntimeError(f"collector_inference_device='{device_spec}' requested CUDA, but CUDA is unavailable")
     index = torch.cuda.current_device() if device.index is None else device.index
@@ -137,15 +141,19 @@ class Collector:
         except KeyError as exc:
             raise ValueError("collector_amp_dtype must be 'fp16' or 'bf16'") from exc
 
-        self._flat_params = bind_flat_params(self.actor) if self.device.type == "cuda" else None
+        # MPS has no pinned host memory, CUDA graphs or stream-ordered copies;
+        # it shares the staged-host path with plain CPU staging buffers.
+        self._is_cuda = self.device.type == "cuda"
+        self._flat_params = bind_flat_params(self.actor) if self._is_cuda else None
         self._obs_host = None
         self._obs_device = None
         self._actions_host = None
-        if self.device.type == "cuda":
-            self._obs_host = torch.empty((self.num_envs, obs_dim), dtype=torch.float32, pin_memory=True)
+        if self.device.type in ("cuda", "mps"):
+            pin = self._is_cuda
+            self._obs_host = torch.empty((self.num_envs, obs_dim), dtype=torch.float32, pin_memory=pin)
             self._obs_device = torch.empty_like(self._obs_host, device=self.device)
-            self._actions_host = torch.empty((self.num_envs, act_dim), dtype=torch.float32, pin_memory=True)
-            if bool(self.async_options.collector_compile):
+            self._actions_host = torch.empty((self.num_envs, act_dim), dtype=torch.float32, pin_memory=pin)
+            if self._is_cuda and bool(self.async_options.collector_compile):
                 import torch._inductor.config as inductor_config
 
                 inductor_config.compile_threads = 1
@@ -202,7 +210,8 @@ class Collector:
         self._actions_host.copy_(device_actions, non_blocking=True)
         # reduce-overhead may reuse CUDA Graph output storage. Complete D2H
         # before returning so the next replay cannot overwrite env actions.
-        torch.cuda.current_stream(self.device).synchronize()
+        if self._is_cuda:
+            torch.cuda.current_stream(self.device).synchronize()
         return self._actions_host
 
     def warmup_inference(self) -> None:

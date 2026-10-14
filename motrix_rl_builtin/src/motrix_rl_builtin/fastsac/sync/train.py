@@ -15,6 +15,7 @@ from motrix_env_motrixsim.torch_env import TorchEnv
 from motrix_rl import checkpoints
 from motrix_rl.console import TrainingPanelStats, emit_training_panel, open_training_live
 from motrix_rl.contracts import TrainerBase, TrainerContext
+from motrix_rl.device import resolve_default_device
 from motrix_rl.system_metrics import (
     CpuLoadSampler,
     GpuMemoryUsageSampler,
@@ -53,7 +54,7 @@ class Trainer(TrainerBase):
     def _device(self) -> torch.device:
         if self._rlcfg.device:
             return torch.device(self._rlcfg.device)
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return resolve_default_device()
 
     def _make_env(
         self,

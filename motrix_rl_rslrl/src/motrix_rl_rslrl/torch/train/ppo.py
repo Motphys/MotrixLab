@@ -15,6 +15,7 @@ from motrix_env_core.renderer import RenderConfig
 from motrix_rl import checkpoints
 from motrix_rl.config import CheckpointConfig, LoggingConfig
 from motrix_rl.contracts import TrainerBase, TrainerContext
+from motrix_rl.device import resolve_default_device
 from motrix_rl_rslrl.cfg import RslrlCfg
 from motrix_rl_rslrl.torch import wrap_env
 
@@ -57,7 +58,7 @@ class Trainer(TrainerBase):
         Creates the environment, wraps it for RSLRL, and runs the training loop.
         """
         # Determine device for training
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        device = resolve_default_device()
 
         # Set random seed
         self._set_seed(self._context.seed)
@@ -125,7 +126,7 @@ class Trainer(TrainerBase):
         import time
 
         # Determine device for evaluation
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        device = resolve_default_device()
 
         # Set random seed
         self._set_seed(self._context.seed)

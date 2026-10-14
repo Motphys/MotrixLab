@@ -30,6 +30,7 @@ from motrix_env_core import registry as env_registry
 from motrix_env_core.renderer import RenderConfig
 from motrix_rl.console import TrainingPanelStats, emit_training_panel, open_training_live
 from motrix_rl.contracts import TrainerBase, TrainerContext
+from motrix_rl.device import resolve_default_device
 from motrix_rl.runs import annotate_run
 from motrix_rl.system_metrics import (
     CpuLoadSampler,
@@ -80,7 +81,7 @@ class Trainer(TrainerBase):
     def _device(self) -> torch.device:
         if self._rlcfg.device:
             return torch.device(self._rlcfg.device)
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return resolve_default_device()
 
     def _make_env(
         self,

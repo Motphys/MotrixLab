@@ -38,6 +38,7 @@ from motrix_env_core.registry import EnvBuildSpec
 from motrix_env_core.renderer import RenderConfig
 from motrix_env_motrixsim.torch_env import TorchEnv
 from motrix_rl import checkpoints
+from motrix_rl.device import resolve_default_device
 from motrix_rl_builtin.fastsac.agent import FastSacAgent
 from motrix_rl_builtin.fastsac.async_impl.collector import Collector
 from motrix_rl_builtin.fastsac.async_impl.learner import CollectorEndpoint, Learner
@@ -509,11 +510,12 @@ def run_learner_process(
         opts = cfg.trainer.async_options
         _pin_worker_cpus(_resolve_cpu_set(opts.learner_cpu_cores, "learner_cpu_cores"))
         num_collectors = len(all_rings)
-        device = (
-            torch.device(learner_device)
-            if learner_device is not None
-            else torch.device(cfg.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        )
+        if learner_device is not None:
+            device = torch.device(learner_device)
+        elif cfg.device:
+            device = torch.device(cfg.device)
+        else:
+            device = resolve_default_device()
         if num_learners > 1:
             if device.type != "cuda" or device.index is None:
                 raise ValueError(f"multi-learner requires explicit indexed CUDA learner devices, got {device}")

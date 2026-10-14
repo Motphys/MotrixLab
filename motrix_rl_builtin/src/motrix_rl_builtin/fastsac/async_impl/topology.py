@@ -39,6 +39,8 @@ import torch
 from motrix_rl_builtin.fastsac.async_impl import numa
 from motrix_rl_builtin.fastsac.config import FastSacAsyncOptionsCfg
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class LearnerInfo:
@@ -148,8 +150,20 @@ def resolve_collector_inference_devices(
     :func:`motrix_rl_builtin.fastsac.async_impl.collector.resolve_collector_inference_device`.
     """
     device = torch.device(collector_inference_device)
-    if device.type not in ("cpu", "cuda"):
-        raise ValueError(f"collector_inference_device must be cpu or cuda, got '{collector_inference_device}'")
+    if device.type not in ("cpu", "cuda", "mps"):
+        raise ValueError(f"collector_inference_device must be cpu, cuda or mps, got '{collector_inference_device}'")
+    if device.type == "mps" and not torch.backends.mps.is_available():
+        raise RuntimeError(
+            f"collector_inference_device='{collector_inference_device}' requested MPS, but MPS is unavailable"
+        )
+    if device.type == "cuda" and device.index is None and not torch.cuda.is_available() and not learner_devices:
+        # Generic "cuda" means "the trainer's accelerator": on a CUDA-less
+        # host it degrades to the default device (MPS on Apple Silicon, CPU
+        # elsewhere), mirroring the learner's device resolution. With an
+        # explicit learner layout this stays pure device arithmetic
+        # (availability validation is worker-side), so co-location proceeds.
+        logger.warning("collector_inference_device='cuda' but CUDA is unavailable; using %s", default_device)
+        return [default_device] * num_collectors
     if (
         device.type == "cuda"
         and device.index is not None
@@ -305,6 +319,9 @@ def resolve_trainer_topology(
     # best-effort contract.
     def _base_cpus(node: int | None) -> list[int]:
         if node is None:
+            # macOS has no sched_getaffinity; degrade to no binding like worker.py
+            if not hasattr(os, "sched_getaffinity"):
+                return []
             return sorted(os.sched_getaffinity(0))
         try:
             return numa.numa_node_cpus(node)

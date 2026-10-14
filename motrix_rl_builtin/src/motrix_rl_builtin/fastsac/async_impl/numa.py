@@ -103,6 +103,9 @@ def select_collector_cpus(
 
 def apply_cpu_affinity(cpus: list[int], role: str) -> None:
     """Pin the current process to ``cpus``, intersected with allowed CPUs."""
+    if not hasattr(os, "sched_getaffinity"):
+        logger.warning("%s: CPU affinity is unsupported on this platform; skipping pinning to %s", role, sorted(cpus))
+        return
     allowed = os.sched_getaffinity(0)
     selected = sorted(set(cpus) & allowed)
     if not selected:

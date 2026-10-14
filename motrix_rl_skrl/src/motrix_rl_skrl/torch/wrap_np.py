@@ -10,6 +10,7 @@ from skrl.envs.wrappers.torch import Wrapper as SkrlWrapper
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.renderer import RenderConfig, VideoRecorder, create_renderer
 from motrix_env_core.sim.backend import SimRenderer
+from motrix_rl.device import resolve_default_device
 from motrix_rl.utils import env_infos
 
 
@@ -23,6 +24,13 @@ class SkrlNpWrapper(SkrlWrapper):
 
     def __init__(self, env: DirectEnv, render: RenderConfig | None = None):
         super().__init__(env)
+        # skrl's fallback for device-less envs is cuda-else-cpu; resolve with
+        # the shared cuda -> mps -> cpu policy so Apple Silicon trains on MPS.
+        # CUDA is normalized to an explicit index: skrl realizes tensors on
+        # cuda:<current>, and torch.device("cuda") != torch.device("cuda:0").
+        if not hasattr(env, "device"):
+            device = resolve_default_device()
+            self._device = torch.device("cuda", torch.cuda.current_device()) if device.type == "cuda" else device
         self._renderer = create_renderer(env, render)
 
     def reset(self) -> tuple[torch.Tensor, Any]:

@@ -171,7 +171,16 @@ class FastSacAgent:
         # keeping the all-reduce outside the compiled region lets DDP ranks
         # (world_size > 1) use the same reduce-overhead graphs as the
         # single-learner path instead of falling back to eager.
-        if bool(cfg.compile) and device.type == "cuda":
+        if bool(cfg.compile) and device.type == "mps":
+            # MPS: inductor kernels measured ~2.6x SLOWER than eager
+            # MPSGraph on the g1-wbt-dance update (Mac Studio, torch 2.11),
+            # and MPS autocast bf16/fp16 gains nothing (~1%). aot_eager
+            # keeps the same MPSGraph kernels but removes the Python /
+            # dispatch overhead: measured 86ms vs 106ms per update(4),
+            # ~19% faster.
+            self._critic_backward_runtime = torch.compile(self._critic_backward, backend="aot_eager", dynamic=False)
+            self._actor_backward_runtime = torch.compile(self._actor_backward, backend="aot_eager", dynamic=False)
+        elif bool(cfg.compile) and device.type == "cuda":
             import torch._inductor.config as inductor_config
 
             inductor_config.compile_threads = 1

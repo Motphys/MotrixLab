@@ -368,8 +368,11 @@ class EmpiricalNormalization(nn.Module):
         self.eps = eps
         self.until = until
         self.local_enabled = False
-        self._local_mean = torch.zeros(shape, dtype=torch.float64, device=device)
-        self._local_var = torch.ones(shape, dtype=torch.float64, device=device)
+        # MPS has no float64; the local accumulators exist only for the
+        # multi-learner merge (a CUDA-only path), so keep them on the CPU.
+        acc_device = device if torch.device(device).type != "mps" else torch.device("cpu")
+        self._local_mean = torch.zeros(shape, dtype=torch.float64, device=acc_device)
+        self._local_var = torch.ones(shape, dtype=torch.float64, device=acc_device)
         self._local_count = 0
         self.register_buffer("_mean", torch.zeros(shape).unsqueeze(0).to(device))
         self.register_buffer("_var", torch.ones(shape).unsqueeze(0).to(device))

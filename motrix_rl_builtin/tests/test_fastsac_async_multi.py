@@ -495,6 +495,27 @@ def test_resolve_collector_inference_devices_colocates_with_owner(monkeypatch) -
         resolve_collector_inference_devices("cuda:1", [], 1, 1, cuda(0))
 
 
+def test_generic_cuda_falls_back_when_cuda_unavailable(monkeypatch) -> None:
+    """Generic "cuda" degrades to the default device on a CUDA-less host.
+
+    Only when NO explicit learner layout exists — with explicit learner
+    devices the resolution stays pure device arithmetic (worker-side
+    validation owns availability), so co-location proceeds unchanged.
+    """
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    cpu = torch.device("cpu")
+
+    # no learner layout: generic "cuda" follows the default device
+    devices = resolve_collector_inference_devices("cuda", [], 2, 1, cpu)
+    assert devices == [cpu, cpu]
+
+    # explicit learner layout: pure arithmetic, co-location proceeds
+    # even though CUDA is unavailable on this host
+    cuda = lambda n: torch.device("cuda", n)  # noqa: E731
+    devices = resolve_collector_inference_devices("cuda", [cuda(0), cuda(1)], 4, 2, cpu)
+    assert devices == [cuda(0), cuda(0), cuda(1), cuda(1)]
+
+
 def test_ring_transport_ipc_colocated_collectors() -> None:
     """Collectors co-located with their owning learner's GPU get IPC rings per rank."""
     cuda = lambda n: torch.device("cuda", n)  # noqa: E731

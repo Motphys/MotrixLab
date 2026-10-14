@@ -1,6 +1,7 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 import time
 from contextlib import nullcontext
 from pathlib import Path
@@ -11,6 +12,8 @@ from motrix_rl import checkpoints
 from motrix_rl.config import CheckpointConfig, LoggingConfig
 from motrix_rl.contracts import TrainerBase, TrainerContext
 from motrix_rl_skrl.config import SkrlCfg
+
+logger = logging.getLogger(__name__)
 
 
 class SkrlEnvProtocol(Protocol):
@@ -76,6 +79,17 @@ def add_runtime_config(
     else:
         cfg.pop("rewards_shaper_scale", None)
         cfg["rewards_shaper"] = None
+
+    if getattr(env.device, "type", "") == "mps":
+        # skrl's RunningStandardScaler keeps float64 running-stat buffers, and
+        # MPS does not support float64; disable the preprocessors on MPS (the
+        # agent falls back to identity preprocessing) rather than crash.
+        logger.warning(
+            "MPS backend: skrl RunningStandardScaler is unavailable (float64 "
+            "buffers unsupported on MPS); running without observation/state "
+            "running normalization"
+        )
+        scaler_cls = None  # type: ignore[assignment]
 
     cfg["observation_preprocessor"] = scaler_cls
     cfg["observation_preprocessor_kwargs"] = {

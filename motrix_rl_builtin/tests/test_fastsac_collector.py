@@ -267,8 +267,8 @@ def test_collector_cuda_request_fails_without_cuda(monkeypatch) -> None:
         resolve_collector_inference_device("cuda")
 
 
-def test_collector_rejects_non_cpu_cuda_device() -> None:
-    with pytest.raises(ValueError, match="must be cpu or cuda"):
+def test_collector_rejects_unsupported_device() -> None:
+    with pytest.raises(ValueError, match="must be cpu, cuda or mps"):
         resolve_collector_inference_device("meta")
 
 
