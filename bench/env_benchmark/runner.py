@@ -111,7 +111,7 @@ def run_steps(
 def split_num_envs(total: int, nodes: list[NodePlacement]) -> list[int]:
     """Split a total batch as evenly as possible, preserving the total."""
     if not nodes or total < len(nodes):
-        raise ValueError(f"Total num_envs={total} must be at least {len(nodes)} usable NUMA nodes")
+        raise ValueError(f"Total num_envs={total} must be at least the number of usable NUMA nodes ({len(nodes)})")
     quotient, remainder = divmod(total, len(nodes))
     return [quotient + (index < remainder) for index in range(len(nodes))]
 
