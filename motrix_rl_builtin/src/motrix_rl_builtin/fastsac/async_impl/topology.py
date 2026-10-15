@@ -36,6 +36,7 @@ from dataclasses import dataclass
 
 import torch
 
+from motrix_rl import numa as system_numa
 from motrix_rl_builtin.fastsac.async_impl import numa
 from motrix_rl_builtin.fastsac.config import FastSacAsyncOptionsCfg
 
@@ -309,7 +310,7 @@ def resolve_trainer_topology(
     )
 
     env_shards = split_num_envs(num_envs, num_collectors)
-    multi_node = len(numa.available_numa_nodes()) >= 2
+    multi_node = len(system_numa.available_numa_nodes()) >= 2
     per_learner = num_collectors // num_learners
 
     # Per-worker CPU bindings, decided here so workers only apply them. Base
@@ -324,7 +325,7 @@ def resolve_trainer_topology(
                 return []
             return sorted(os.sched_getaffinity(0))
         try:
-            return numa.numa_node_cpus(node)
+            return system_numa.numa_node_cpus(node)
         except ValueError:
             return []
 

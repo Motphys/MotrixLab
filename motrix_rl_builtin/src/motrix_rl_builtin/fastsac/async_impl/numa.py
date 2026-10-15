@@ -12,7 +12,7 @@ on their owning learner's node); this module applies the decided placement
 worker process:
 
 * CPU affinity via ``os.sched_setaffinity`` (portable stdlib);
-* memory policy via libnuma's ``set_membind`` (the same call ``numactl`` uses),
+* memory policy via libnuma's checked ``set_mempolicy`` (the same call ``numactl`` uses),
   loaded with :mod:`ctypes` — future allocations of the calling process come
   from the bound node.
 
@@ -21,13 +21,12 @@ the binding logs a warning and continues with OS default placement, so single
 NUMA machines and containers keep working unchanged.
 
 Binding must happen at process start, before the env and any staging buffer is
-allocated — ``set_membind`` only affects future allocations.
+allocated — memory binding only affects future allocations.
 """
 
 from __future__ import annotations
 
 import contextlib
-import ctypes
 import functools
 import logging
 import os
@@ -36,40 +35,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-_NODE_SYSFS = Path("/sys/devices/system/node")
+from motrix_rl import numa as system_numa
 
 logger = logging.getLogger(__name__)
-
-_RANGE_RE = re.compile(r"^(\d+)-(\d+)$")
-
-
-def parse_cpulist(text: str) -> list[int]:
-    """Parse a sysfs ``cpulist`` (e.g. ``"0-3,8,10-11"``) into CPU ids."""
-    cpus: list[int] = []
-    for part in text.strip().split(","):
-        if not part:
-            continue
-        match = _RANGE_RE.match(part)
-        if match:
-            cpus.extend(range(int(match.group(1)), int(match.group(2)) + 1))
-        else:
-            cpus.append(int(part))
-    return cpus
-
-
-def available_numa_nodes() -> list[int]:
-    """NUMA node ids visible in sysfs; empty when the host is not NUMA-aware."""
-    if not _NODE_SYSFS.is_dir():
-        return []
-    return sorted(int(p.name.removeprefix("node")) for p in _NODE_SYSFS.iterdir() if p.name.startswith("node"))
-
-
-def numa_node_cpus(node: int) -> list[int]:
-    """CPU ids of a NUMA node; raises ``ValueError`` for unknown nodes."""
-    cpulist = _NODE_SYSFS / f"node{node}" / "cpulist"
-    if not cpulist.is_file():
-        raise ValueError(f"NUMA node {node} does not exist ({cpulist} missing)")
-    return parse_cpulist(cpulist.read_text())
 
 
 def select_collector_cpus(
@@ -101,64 +69,6 @@ def select_collector_cpus(
     return base[start:end]
 
 
-def apply_cpu_affinity(cpus: list[int], role: str) -> None:
-    """Pin the current process to ``cpus``, intersected with allowed CPUs."""
-    if not hasattr(os, "sched_getaffinity"):
-        logger.warning("%s: CPU affinity is unsupported on this platform; skipping pinning to %s", role, sorted(cpus))
-        return
-    allowed = os.sched_getaffinity(0)
-    selected = sorted(set(cpus) & allowed)
-    if not selected:
-        raise ValueError(
-            f"{role}: none of the requested CPUs {sorted(cpus)} are allowed (process affinity is {sorted(allowed)})"
-        )
-    os.sched_setaffinity(0, selected)
-    if set(cpus) - allowed:
-        logger.warning("%s: dropped non-allowed CPUs %s from binding", role, sorted(set(cpus) - allowed))
-
-
-def _load_libnuma():
-    try:
-        return ctypes.CDLL("libnuma.so.1", use_errno=True)
-    except OSError:
-        return None
-
-
-def _membind(libnuma, bitmask_ptr, role: str, what: str, node: int | None = None) -> bool:
-    if libnuma.numa_set_membind(ctypes.c_void_p(bitmask_ptr)) != 0:
-        logger.warning("%s: numa_set_membind(%s) failed; %s not bound", role, node, what)
-        return False
-    return True
-
-
-def _node_bitmask(node: int):
-    libnuma = _load_libnuma()
-    if libnuma is None:
-        return None, None
-    libnuma.numa_allocate_nodemask.restype = ctypes.c_void_p
-    mask = libnuma.numa_allocate_nodemask()
-    if not mask:
-        return None, None
-    libnuma.numa_bitmask_setbit(ctypes.c_void_p(mask), ctypes.c_uint(node))
-    return libnuma, mask
-
-
-def _free_bitmask(libnuma, mask) -> None:
-    libnuma.numa_bitmask_free(ctypes.c_void_p(mask))
-
-
-def apply_memory_policy(node: int, role: str) -> None:
-    """Bind future allocations of this process to ``node`` (libnuma ``numa_set_membind``)."""
-    libnuma, mask = _node_bitmask(node)
-    if libnuma is None:
-        logger.warning("%s: libnuma unavailable; memory policy left to the OS (node %d not bound)", role, node)
-        return
-    try:
-        _membind(libnuma, mask, role, "memory policy", node)
-    finally:
-        _free_bitmask(libnuma, mask)
-
-
 @contextlib.contextmanager
 def spawn_placement(node: int | None, role: str):
     """Place a spawn-started child on ``node`` by pre-placing its parent.
@@ -177,27 +87,29 @@ def spawn_placement(node: int | None, role: str):
         yield
         return
     saved_affinity = os.sched_getaffinity(0)
+    saved_policy = None
+    memory_changed = False
     try:
-        cpus = sorted(set(numa_node_cpus(node)) & saved_affinity)
-        if cpus:
-            os.sched_setaffinity(0, cpus)
-        libnuma, mask = _node_bitmask(node)
-        if libnuma is not None and mask:
-            try:
-                _membind(libnuma, mask, role, "spawn placement", node)
-            finally:
-                _free_bitmask(libnuma, mask)
+        cpus = sorted(set(system_numa.numa_node_cpus(node)) & saved_affinity)
+        if not cpus:
+            raise ValueError(f"{role}: no allowed CPUs on NUMA node {node}")
+        system_numa.apply_cpu_affinity(cpus, role)
+        try:
+            saved_policy = system_numa.get_memory_policy()
+        except (OSError, AttributeError) as error:
+            logger.warning("%s: cannot snapshot memory policy; retaining inherited policy: %s", role, error)
+        if saved_policy is not None:
+            memory_changed = system_numa.apply_memory_policy(node, role)
         yield
     finally:
-        os.sched_setaffinity(0, saved_affinity)
-        libnuma = _load_libnuma()
-        if libnuma is not None:
-            # restore the default "any node" policy for the parent
-            try:
-                all_nodes = ctypes.c_void_p.in_dll(libnuma, "numa_all_nodes_ptr")
-                libnuma.numa_set_membind(all_nodes)
-            except (ValueError, OSError, AttributeError):
-                pass
+        try:
+            os.sched_setaffinity(0, saved_affinity)
+        finally:
+            if memory_changed:
+                try:
+                    system_numa.set_memory_policy(saved_policy)
+                except (OSError, AttributeError) as error:
+                    logger.warning("%s: restoring inherited memory policy failed: %s", role, error)
 
 
 def apply_binding(role: str, node: int | None, cpus: list[int]) -> None:
@@ -208,9 +120,9 @@ def apply_binding(role: str, node: int | None, cpus: list[int]) -> None:
     CPUs and no node this is a no-op.
     """
     if cpus:
-        apply_cpu_affinity(cpus, role)
+        system_numa.apply_cpu_affinity(cpus, role)
     if node is not None:
-        apply_memory_policy(node, role)
+        system_numa.apply_memory_policy(node, role)
 
 
 _nvml_state: tuple[Any, list[Any]] | tuple[()] | None = None  # None: untried; (): unavailable
@@ -285,7 +197,7 @@ def _gpu_cpu_affinities() -> dict[int, frozenset[int]]:
         for cell in cells[1:]:
             if not re.fullmatch(r"[0-9]+(?:-[0-9]+)?(?:,[0-9]+(?:-[0-9]+)?)+|[0-9]+-[0-9]+", cell):
                 continue
-            cpus = parse_cpulist(cell)
+            cpus = system_numa.parse_cpulist(cell)
             if len(cpus) > 1:
                 affinities[index] = frozenset(cpus)
                 break
@@ -298,9 +210,9 @@ def _gpu_node_from_topology(device_index: int) -> int | None:
     if not affinity:
         return None
     best_node, best_overlap = None, 0
-    for node in available_numa_nodes():
+    for node in system_numa.available_numa_nodes():
         try:
-            overlap = len(set(numa_node_cpus(node)) & affinity)
+            overlap = len(set(system_numa.numa_node_cpus(node)) & affinity)
         except ValueError:
             continue
         if overlap > best_overlap:

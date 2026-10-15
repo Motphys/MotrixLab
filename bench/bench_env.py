@@ -12,54 +12,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import time
-from collections.abc import Callable
-from dataclasses import dataclass
+import math
+from typing import TYPE_CHECKING
 
-os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
-os.environ.setdefault("GOMP_SPINCOUNT", "0")
+if __package__:
+    from .env_benchmark import runner
+    from .report import render_table
+else:
+    from env_benchmark import runner
+    from report import render_table
 
-import numpy as np
-from report import render_table
-
-import motrix_envs  # noqa: F401  registers built-in environments
-from motrix_env_core import registry
-from motrix_env_core.perf import Perf, PerfNode
-
-
-@dataclass(frozen=True, slots=True)
-class _ProfileResult:
-    elapsed_seconds: float
-    root: PerfNode
-
-
-def _profile_calls(
-    perf: Perf,
-    function: Callable[[], object],
-    count: int,
-    root_name: str,
-) -> _ProfileResult:
-    was_enabled = perf.enabled
-    perf.reset()
-    if not was_enabled:
-        perf.enable()
-
-    started = time.perf_counter()
-    try:
-        for _ in range(count):
-            function()
-    finally:
-        elapsed_seconds = time.perf_counter() - started
-        if not was_enabled:
-            perf.disable()
-
-    roots = {root.name: root for root in perf.snapshot()}
-    try:
-        root = roots[root_name]
-    except KeyError as error:
-        raise RuntimeError(f"Perf did not record expected root scope {root_name!r}.") from error
-    return _ProfileResult(elapsed_seconds=elapsed_seconds, root=root)
+if TYPE_CHECKING:
+    from motrix_env_core.perf import PerfNode
 
 
 def _print_perf_tree(root: PerfNode) -> None:
@@ -77,95 +41,6 @@ def _print_perf_tree(root: PerfNode) -> None:
             print_node(child, depth + 1)
 
     print_node(root, 0)
-
-
-def _make_env(name: str, args: argparse.Namespace, num_envs: int):
-    kwargs = {
-        "mode": args.mode,
-        "num_envs": num_envs,
-    }
-    if args.sim_backend is not None:
-        kwargs["sim_backend"] = args.sim_backend
-    return registry.make(name, **kwargs)
-
-
-def _action_spec(env) -> tuple[tuple[int, ...], np.dtype, np.ndarray, np.ndarray]:
-    space = env.action_space
-    return space.shape, space.dtype, np.asarray(space.low), np.asarray(space.high)
-
-
-def _make_actions(env, *, seed: int, zero_actions: bool) -> np.ndarray:
-    space = env.action_space
-    shape = (env.num_envs, *space.shape)
-    if zero_actions:
-        return np.zeros(shape, dtype=space.dtype)
-
-    low = np.where(np.isfinite(space.low), space.low, -1.0)
-    high = np.where(np.isfinite(space.high), space.high, 1.0)
-    return np.random.default_rng(seed).uniform(low, high, size=shape).astype(space.dtype)
-
-
-def _measure_env(
-    name: str,
-    args: argparse.Namespace,
-    num_envs: int,
-    actions: np.ndarray | None,
-    expected_action_spec: tuple[tuple[int, ...], np.dtype, np.ndarray, np.ndarray] | None,
-) -> tuple[
-    dict[str, object],
-    np.ndarray,
-    tuple[tuple[int, ...], np.dtype, np.ndarray, np.ndarray],
-    _ProfileResult | None,
-]:
-    env = _make_env(name, args, num_envs)
-    action_spec = _action_spec(env)
-    if expected_action_spec is not None:
-        expected_shape, expected_dtype, expected_low, expected_high = expected_action_spec
-        shape, dtype, low, high = action_spec
-        if shape != expected_shape or dtype != expected_dtype:
-            raise ValueError(
-                f"Cannot compare {name!r}: action space {(shape, dtype)} does not match "
-                f"the reference {(expected_shape, expected_dtype)}."
-            )
-        if not np.array_equal(low, expected_low) or not np.array_equal(high, expected_high):
-            raise ValueError(f"Cannot compare {name!r}: action bounds do not match the reference environment.")
-    if actions is None:
-        actions = _make_actions(env, seed=args.seed, zero_actions=args.zero_actions)
-
-    for _ in range(args.warmup):
-        env.step(actions)
-
-    samples_ns = np.empty((args.steps,), dtype=np.int64)
-    started_wall = time.perf_counter()
-    started_cpu = time.process_time()
-    for index in range(args.steps):
-        started_ns = time.perf_counter_ns()
-        env.step(actions)
-        samples_ns[index] = time.perf_counter_ns() - started_ns
-    elapsed_wall = time.perf_counter() - started_wall
-    elapsed_cpu = time.process_time() - started_cpu
-
-    percentiles_ns = np.percentile(samples_ns, (10, 50, 90))
-    median_seconds = float(percentiles_ns[1] / 1e9)
-    result: dict[str, object] = {
-        "env": name,
-        "mode": args.mode,
-        "num_envs": num_envs,
-        "steps": args.steps,
-        "warmup": args.warmup,
-        "random_actions": not args.zero_actions,
-        "p10_ms": float(percentiles_ns[0] / 1e6),
-        "median_ms": float(percentiles_ns[1] / 1e6),
-        "p90_ms": float(percentiles_ns[2] / 1e6),
-        "env_steps_per_s": float(num_envs / median_seconds),
-        "cpu_util_percent": float(elapsed_cpu / elapsed_wall * 100.0),
-    }
-
-    profile = None
-    if args.breakdown:
-        profile = _profile_calls(env.perf, lambda: env.step(actions), args.steps, "step")
-
-    return result, actions, action_spec, profile
 
 
 _RESULT_HEADERS = [
@@ -199,8 +74,15 @@ def main() -> None:
     parser.add_argument("--env", default="cartpole", help="Reference registered environment name.")
     parser.add_argument("--compare-env", help="Optional registered environment to compare with --env.")
     parser.add_argument("--mode", default="train", help="Environment mode (train/play).")
-    parser.add_argument("--num-envs", type=int, nargs="+", default=[2048], help="Batch sizes to benchmark.")
-    parser.add_argument("--steps", type=int, default=1000, help="Timed env.step() calls per measurement.")
+    parser.add_argument(
+        "--num-envs", type=int, nargs="+", default=[2048], help="Total environment batch sizes to benchmark."
+    )
+    measurement = parser.add_mutually_exclusive_group()
+    measurement.add_argument("--steps", type=int, help="Timed calls; selects legacy single-process mode.")
+    measurement.add_argument("--duration", type=float, help="Positive finite measurement seconds (default: 10).")
+    parser.add_argument(
+        "--numa", choices=("single", "shard"), help="Placement (default: shard for duration, single for steps)."
+    )
     parser.add_argument("--warmup", type=int, default=10, help="Untimed env.step() calls per measurement.")
     parser.add_argument("--seed", type=int, default=20260808)
     parser.add_argument(
@@ -212,35 +94,76 @@ def main() -> None:
     parser.add_argument("--breakdown", action="store_true", help="Print the environment Perf scope tree.")
     parser.add_argument("--json", action="store_true", help="Print one JSON object per result.")
     args = parser.parse_args()
-    if args.steps < 1 or args.warmup < 0:
+    if args.steps is None and args.duration is None:
+        args.duration = 10.0
+    if args.numa is None:
+        args.numa = "shard" if args.duration is not None else "single"
+    if args.duration is not None and (not math.isfinite(args.duration) or args.duration <= 0):
+        parser.error("--duration must be positive and finite")
+    if args.numa == "shard" and args.duration is None:
+        parser.error("--numa shard requires --duration")
+    if args.duration is not None and args.breakdown:
+        parser.error("--breakdown cannot be used with --duration")
+    if (args.steps is not None and args.steps < 1) or args.warmup < 0:
         parser.error("--steps must be positive and --warmup must not be negative")
     if any(num_envs < 1 for num_envs in args.num_envs):
         parser.error("--num-envs values must be positive")
     if args.json and args.breakdown:
         parser.error("--json and --breakdown cannot be used together")
 
-    rows: list[list[str]] = []
-    perf_sections: list[tuple[str, int, _ProfileResult]] = []
-    for num_envs in args.num_envs:
-        reference, actions, action_spec, reference_profile = _measure_env(
-            args.env,
-            args,
-            num_envs,
-            None,
-            None,
-        )
-        results = [reference]
-        profiles = [(args.env, reference_profile)]
-        if args.compare_env is not None:
-            compared, _, _, compared_profile = _measure_env(
-                args.compare_env,
-                args,
-                num_envs,
-                actions,
-                action_spec,
+    if args.duration is not None:
+        duration_rows = []
+        for num_envs in args.num_envs:
+            results = runner.run_duration(args, num_envs)
+            reference_rate = float(results[0]["env_steps_per_s"])
+            for index, result in enumerate(results):
+                rate = float(result["env_steps_per_s"])
+                speedup = None if index == 0 or reference_rate == 0 else rate / reference_rate
+                if speedup is not None:
+                    result["speedup_vs_reference"] = speedup
+                if args.json:
+                    print(json.dumps(result, sort_keys=True))
+                else:
+                    duration_rows.append(
+                        [
+                            str(result["env"]),
+                            str(num_envs),
+                            str(result["worker_count"]),
+                            f"{args.duration:g}",
+                            str(result["completed_env_steps"]),
+                            f"{rate:,.0f}",
+                            "—" if speedup is None else f"{speedup:.2f}x",
+                        ]
+                    )
+                    for worker in result["workers"]:
+                        print(
+                            f"{result['env']} worker {worker['worker_index']}: "
+                            f"batch={worker['num_envs']} calls={worker['completed_calls']} "
+                            f"start_offset_ns={worker['actual_start_offset_ns']} "
+                            f"placement={json.dumps(worker['placement'], sort_keys=True)}"
+                        )
+        if not args.json:
+            print(
+                render_table(
+                    [
+                        "environment",
+                        "total num_envs",
+                        "workers",
+                        "seconds",
+                        "completed env steps",
+                        "env steps/s",
+                        "speedup",
+                    ],
+                    duration_rows,
+                )
             )
-            results.append(compared)
-            profiles.append((args.compare_env, compared_profile))
+        return
+
+    rows: list[list[str]] = []
+    perf_sections: list[tuple[str, int, runner.ProfileResult]] = []
+    for num_envs in args.num_envs:
+        results, profiles = runner.run_steps(args, num_envs)
+        reference = results[0]
 
         reference_median = float(reference["median_ms"])
         for index, result in enumerate(results):
