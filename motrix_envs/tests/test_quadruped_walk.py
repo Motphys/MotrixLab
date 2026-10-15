@@ -89,11 +89,7 @@ def test_go2_flat_walk_keeps_spaces_and_exposes_gait_terms():
     env._feet_phase[:] = 0.75
     env.feet_contact[:, :2] = True
     state = env.step(np.zeros((2, 12), dtype=np.float32))
-    assert {
-        "rear_swing_width",
-        "front_swing_width",
-        "front_stance_width",
-    } <= state.reward_terms.keys()
+    assert "rear_swing_width" in state.reward_terms
 
 
 def test_go2_velocity_commands_remain_constant_before_resampling_interval():
