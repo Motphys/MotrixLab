@@ -92,25 +92,6 @@ def test_go2_flat_walk_keeps_spaces_and_exposes_gait_terms():
     assert "rear_swing_width" in state.reward_terms
 
 
-def test_feet_slide_uses_world_displacement_not_body_relative_displacement():
-    env = registry.make("go2-walk-flat", num_envs=1, mode="train")
-    env.init_state()
-    env.feet_contact[:] = True
-
-    # The body advances while a support foot stays fixed in the world.  Its
-    # body-relative coordinate changes, but this is not foot sliding.
-    env._previous_feet_pos[:] = 0.0
-    env.feet_pos[:] = np.array([-0.1, 0.0, 0.0], dtype=np.float32)
-    env._previous_feet_world_pos[:] = 0.0
-    env._feet_world_pos[:] = 0.0
-    np.testing.assert_allclose(env._reward_feet_slide(None, None, None), 0.0)
-
-    # A fixed body with a moving contact foot is a real slide and must be
-    # visible to the penalty.
-    env._feet_world_pos[:, :, 0] = env.cfg.ctrl_dt
-    np.testing.assert_allclose(env._reward_feet_slide(None, None, None), 1.0)
-
-
 def test_go2_velocity_commands_remain_constant_before_resampling_interval():
     np.random.seed(7)
     env = registry.make("go2-walk-flat", num_envs=64, mode="train")
@@ -552,7 +533,7 @@ def test_swing_height_reward_prefers_target_height(quadruped_env):
     assert np.all(off_target_reward > 0.0)
 
 
-def test_swing_contact_penalty_detects_dragging_feet(quadruped_env):
+def test_contact_penalties_distinguish_swing_contacts_from_world_slide(quadruped_env):
     feet_phase = np.full((1, quadruped_env._num_feet), 0.75, dtype=np.float32)
     no_contacts = np.zeros((1, quadruped_env._num_feet), dtype=bool)
     all_contacts = np.ones((1, quadruped_env._num_feet), dtype=bool)
@@ -565,6 +546,16 @@ def test_swing_contact_penalty_detects_dragging_feet(quadruped_env):
 
     np.testing.assert_array_equal(no_drag, np.zeros((1,), dtype=np.float32))
     np.testing.assert_array_equal(all_drag, np.ones((1,), dtype=np.float32))
+
+    quadruped_env._previous_feet_pos[:] = 0.0
+    quadruped_env.feet_pos[:] = np.array([-0.1, 0.0, 0.0], dtype=np.float32)
+    quadruped_env._previous_feet_world_pos[:] = 0.0
+    quadruped_env._feet_world_pos[:] = 0.0
+    np.testing.assert_allclose(quadruped_env._reward_feet_slide(None, None, None), 0.0)
+
+    # A moving contact foot must still produce a slide penalty.
+    quadruped_env._feet_world_pos[:, :, 0] = quadruped_env.cfg.ctrl_dt
+    np.testing.assert_allclose(quadruped_env._reward_feet_slide(None, None, None), 1.0)
 
 
 @pytest.mark.parametrize("robot_name", ["go1", "go2", "anymalc"])
