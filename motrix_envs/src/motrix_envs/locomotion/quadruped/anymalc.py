@@ -95,6 +95,10 @@ class AnymalCWalkSceneCfg(QuadrupedSceneCfg):
             front_right_contact=base.front_right_contact,
             rear_left_contact=base.rear_left_contact,
             rear_right_contact=base.rear_right_contact,
+            front_left_world_pos=base.front_left_world_pos,
+            front_right_world_pos=base.front_right_world_pos,
+            rear_left_world_pos=base.rear_left_world_pos,
+            rear_right_world_pos=base.rear_right_world_pos,
         )
 
 

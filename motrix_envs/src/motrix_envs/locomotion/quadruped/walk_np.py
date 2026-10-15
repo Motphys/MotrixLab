@@ -26,7 +26,6 @@ from motrix_env_core.sim import (
     GeomFrictionQuery,
     LinkCenterOfMassQuery,
     LinkMassQuery,
-    LinkQuaternionQuery,
     LinkPositionQuery,
     SensorValuesQuery,
 )
@@ -61,7 +60,6 @@ def _sim_data_queries(cfg: QuadrupedWalkEnvCfg):
         "gyro": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.gyro),)),
         "upvector": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.upvector),)),
         "base_pos": LinkPositionQuery(link=base_link_name),
-        "root_quat": LinkQuaternionQuery(link=base_link_name),
         "front_left_contact": SensorValuesQuery(sensors=("front_left_contact",)),
         "front_right_contact": SensorValuesQuery(sensors=("front_right_contact",)),
         "rear_left_contact": SensorValuesQuery(sensors=("rear_left_contact",)),
@@ -70,6 +68,10 @@ def _sim_data_queries(cfg: QuadrupedWalkEnvCfg):
         "FR_pos": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.foot_positions[1]),)),
         "RL_pos": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.foot_positions[2]),)),
         "RR_pos": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.foot_positions[3]),)),
+        "front_left_world_pos": SensorValuesQuery(sensors=("front_left_world_pos",)),
+        "front_right_world_pos": SensorValuesQuery(sensors=("front_right_world_pos",)),
+        "rear_left_world_pos": SensorValuesQuery(sensors=("rear_left_world_pos",)),
+        "rear_right_world_pos": SensorValuesQuery(sensors=("rear_right_world_pos",)),
     }
 
 
@@ -167,6 +169,12 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             "rear_right_contact",
         )
         self._feet_position_sensors = foot_position_sensors
+        self._feet_world_position_sensors = (
+            "front_left_world_pos",
+            "front_right_world_pos",
+            "rear_left_world_pos",
+            "rear_right_world_pos",
+        )
         foot_indices = {
             "front_left": 0,
             "front_right": 1,
@@ -246,6 +254,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
 
         self.feet_contact = np.zeros((num_envs, self._num_feet), dtype=bool)
         self.feet_pos = np.zeros((num_envs, self._num_feet, 3), dtype=np.float32)
+        self._feet_world_pos = np.zeros((num_envs, self._num_feet, 3), dtype=np.float32)
 
         # Episode-scoped task state: full-batch buffers, reset writes the done
         # rows in place.
@@ -258,6 +267,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._last_last_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
         self._previous_dof_vel = np.zeros((num_envs, self._num_action), dtype=np.float32)
         self._previous_feet_pos = np.zeros((num_envs, self._num_feet, 3), dtype=np.float32)
+        self._previous_feet_world_pos = np.zeros((num_envs, self._num_feet, 3), dtype=np.float32)
         self._action_delay_steps = np.zeros(num_envs, dtype=np.int32)
 
     # ---- obs/action space plumbing ----------------------------------------
@@ -332,6 +342,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self.feet_contact[rows, :] = contacts[rows, :]
         for i, name in enumerate(self._feet_position_sensors):
             self.feet_pos[rows, i, :] = self.sim_data[name][rows]
+        for i, name in enumerate(self._feet_world_position_sensors):
+            self._feet_world_pos[rows, i, :] = self.sim_data[name][rows]
 
     def _advance_phase(self):
         commands = self._commands
@@ -457,6 +469,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         reward += self._reward_foot_lateral_terms(reward_items)
         self._previous_dof_vel[:] = self.get_dof_vel()[:, -self._num_action :]
         self._previous_feet_pos[:] = self.feet_pos
+        self._previous_feet_world_pos[:] = self._feet_world_pos
         return reward * self.cfg.ctrl_dt
 
     def reset(self, env_ids: np.ndarray) -> None:
@@ -499,6 +512,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._last_last_actions[env_ids] = 0.0
         self._previous_dof_vel[env_ids] = 0.0
         self._previous_feet_pos[env_ids] = self.feet_pos[env_ids]
+        self._previous_feet_world_pos[env_ids] = self._feet_world_pos[env_ids]
 
     def resample_commands(self, num_envs: int) -> np.ndarray:
         return self._velocity_command_binding.read_command(batch_size=num_envs).values.copy()
@@ -697,7 +711,12 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
     def _reward_feet_slide(self, linvel, gyro, dof_pos) -> np.ndarray:
         del linvel, gyro, dof_pos
         support = self.feet_contact
-        speed = np.linalg.norm((self.feet_pos - self._previous_feet_pos) / self.cfg.ctrl_dt, axis=2)
+        # ``feet_pos`` is body-relative (the frame-position sensor uses the IMU
+        # as reference).  Sliding is a world/contact-frame quantity, so use the
+        # horizontal world displacement; otherwise normal forward motion makes
+        # a stationary support foot appear to move backwards.
+        world_delta = (self._feet_world_pos - self._previous_feet_world_pos) / self.cfg.ctrl_dt
+        speed = np.linalg.norm(world_delta[:, :, :2], axis=2)
         return np.sum(speed * support, axis=1) / self._num_feet
 
     def _reward_dof_acc(self, linvel, gyro, dof_pos) -> np.ndarray:

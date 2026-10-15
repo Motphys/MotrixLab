@@ -15,6 +15,9 @@ from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import (
     ContactSensorCfg,
     ContactSensorReduce,
+    FrameObjectKind,
+    FrameSensorCfg,
+    FrameSensorType,
     NoiseTerrainGeneratorCfg,
     ProceduralHFieldAssetCfg,
     SceneSensorsCfg,
@@ -37,6 +40,20 @@ class QuadrupedTaskSensorsCfg(SceneSensorsCfg):
     front_right_contact: ContactSensorCfg = MISSING
     rear_left_contact: ContactSensorCfg = MISSING
     rear_right_contact: ContactSensorCfg = MISSING
+    front_left_world_pos: FrameSensorCfg = MISSING
+    front_right_world_pos: FrameSensorCfg = MISSING
+    rear_left_world_pos: FrameSensorCfg = MISSING
+    rear_right_world_pos: FrameSensorCfg = MISSING
+
+
+def _world_position_sensor(geom_name: str | None) -> FrameSensorCfg:
+    if geom_name is None:
+        raise ValueError("Quadruped task requires a contact geom name for every leg")
+    return FrameSensorCfg(
+        object_type=FrameObjectKind.geom,
+        object_name=geom_name,
+        sensor_type=FrameSensorType.framepos,
+    )
 
 
 @configclass
@@ -55,6 +72,10 @@ class QuadrupedSceneCfg(StandardSceneCfg):
             front_right_contact=_contact_sensor(front_right),
             rear_left_contact=_contact_sensor(rear_left),
             rear_right_contact=_contact_sensor(rear_right),
+            front_left_world_pos=_world_position_sensor(front_left),
+            front_right_world_pos=_world_position_sensor(front_right),
+            rear_left_world_pos=_world_position_sensor(rear_left),
+            rear_right_world_pos=_world_position_sensor(rear_right),
         )
 
 
