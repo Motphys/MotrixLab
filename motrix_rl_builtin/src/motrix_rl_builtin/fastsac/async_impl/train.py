@@ -32,6 +32,7 @@ from motrix_rl import checkpoints
 from motrix_rl.console import TrainingPanelStats, emit_training_panel, open_training_live
 from motrix_rl.contracts import TrainerBase, TrainerContext
 from motrix_rl.device import resolve_default_device
+from motrix_rl.numa import spawn_placement
 from motrix_rl.runs import annotate_run
 from motrix_rl.system_metrics import (
     CpuLoadSampler,
@@ -43,7 +44,6 @@ from motrix_rl.system_metrics import (
 )
 from motrix_rl.training_logger import TrainingLogger
 from motrix_rl_builtin.fastsac.agent import FastSacAgent
-from motrix_rl_builtin.fastsac.async_impl.numa import spawn_placement
 from motrix_rl_builtin.fastsac.async_impl.panels import BootPanel
 from motrix_rl_builtin.fastsac.async_impl.stats import aggregate_collector_stats, nest_timing_path, timing_mean
 from motrix_rl_builtin.fastsac.async_impl.topology import resolve_trainer_topology

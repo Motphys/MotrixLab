@@ -68,6 +68,50 @@ def test_mutable_and_nested_defaults_are_isolated():
     assert first.tuple_value[1] is not second.tuple_value[1]
 
 
+def test_callable_dataclass_defaults_are_isolated():
+    @configclass
+    class CallableCfg:
+        values: list[int] = [1]
+
+        def __call__(self) -> int:
+            return sum(self.values)
+
+    template = CallableCfg()
+
+    @configclass
+    class BaseCfg:
+        callback: CallableCfg = template
+
+    @configclass
+    class ChildCfg(BaseCfg):
+        pass
+
+    first = ChildCfg()
+    second = ChildCfg()
+    first.callback.values.append(2)
+
+    assert first.callback() == 3
+    assert second.callback() == 1
+    assert template.values == [1]
+    assert first.callback is not second.callback
+    assert second.callback is not template
+
+
+def test_function_and_class_defaults_keep_identity():
+    def callback() -> int:
+        return 1
+
+    @configclass
+    class DemoCfg:
+        function: object = callback
+        config_type: type = NestedCfg
+
+    cfg = DemoCfg()
+
+    assert cfg.function is callback
+    assert cfg.config_type is NestedCfg
+
+
 def test_ndarray_defaults_are_isolated():
     @configclass
     class DemoCfg:

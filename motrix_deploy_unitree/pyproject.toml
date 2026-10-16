@@ -7,7 +7,9 @@ name = "motrix-deploy-unitree"
 version = "0.4.0b1"
 description = "Unitree SDK2 DDS hardware plugin for the Motrix deployment runtime."
 authors = [{ name = "Motphys", email = "developers@motphys.com" }]
-requires-python = "==3.10.*"
+# Permit Python 3.11 workspace resolution; the optional Unitree SDK/DDS runtime
+# remains unvalidated on Python 3.11.
+requires-python = ">=3.10,<3.12"
 readme = "README.md"
 license = "Apache-2.0"
 dependencies = [

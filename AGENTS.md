@@ -117,9 +117,11 @@ Python 方法，由 manager 运行时契约定义（`wiki/design/manager/runtime
 
 ## 开发环境
 
-项目使用 UV 管理依赖，Python 版本要求 3.10.\*。可用的依赖组与 extras 见 `pyproject.toml`。
+项目使用 UV 管理依赖，默认 Python 3.10；不含 Unitree 硬件部署插件的仿真与训练也支持 Python 3.11。
+Unitree 硬件部署插件与包含该插件的 `--all` 安装仍仅支持 Python 3.10；Unitree 机器人模型的仿真与训练不受此限制。
+可用的依赖组与 extras 见 `pyproject.toml`。
 
-完整开发环境（全部 package、依赖组与 extras；`--gpu rocm` 切换 AMD wheel）：
+完整开发环境（Python 3.10，全部 package、依赖组与 extras；`--gpu rocm` 切换 AMD wheel）：
 
 ```bash
 sh install.sh --all
@@ -129,6 +131,8 @@ sh install.sh --all
 
 ```bash
 sh install.sh
+# 不含 Unitree 硬件部署插件的 Python 3.11 运行环境：
+sh install.sh --python 3.11
 ```
 
 避免裸 `uv run` / `uv sync`：`cuda`/`rocm` extras 声明为互斥，裸命令会解析到默认 fork（PyPI torch）

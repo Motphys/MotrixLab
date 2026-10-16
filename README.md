@@ -5,7 +5,7 @@
 # MotrixLab
 
 [![GitHub License](https://img.shields.io/github/license/Motphys/MotrixLab)](LICENSE)
-![Python Version](https://img.shields.io/badge/python-3.10-blue)
+![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11-blue)
 [![Release](https://img.shields.io/github/v/release/Motphys/MotrixLab?include_prereleases)](https://github.com/Motphys/MotrixLab/releases)
 [![Docs](https://img.shields.io/badge/docs-readthedocs-blue)](https://motrixlab.readthedocs.io)
 
@@ -56,7 +56,7 @@ _Microduck locomotion policies trained with MotrixLab, rendered in MotrixRender 
 
 | Requirement | Notes |
 | --- | --- |
-| Python **3.10.x** | The workspace pins `==3.10.*` |
+| Python **3.10.x / 3.11.x** | Default: 3.10 |
 | [uv](https://docs.astral.sh/uv/) | Python project and dependency manager — [installation guide](https://docs.astral.sh/uv/getting-started/installation/) |
 | [Git LFS](https://git-lfs.com) | Robot meshes, motion data, and videos are tracked by LFS |
 | OS | Linux x86_64 or Windows x86_64; the JAX training backend is Linux-only |
@@ -72,11 +72,15 @@ git lfs pull
 
 ### 2. Install dependencies
 
-Linux:
+Linux (Python 3.10 by default):
 
 ```bash
 sh install.sh
+# Python 3.11 for simulation/training without the Unitree hardware plugin:
+sh install.sh --python 3.11
 ```
+
+Unitree hardware deployment and `--all` require Python 3.10; simulation/training with Unitree robot models can use Python 3.11.
 
 Windows (PowerShell):
 

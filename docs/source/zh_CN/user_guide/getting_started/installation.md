@@ -4,15 +4,18 @@
 
 ## 系统要求
 
--   **Python 版本**：{bdg-danger-line}`3.10.*`
+-   **Python 版本**：{bdg-danger-line}`3.10.* / 3.11.*`
 
-    本项目依赖特定 Python 版本，其他版本暂不受支持：
+    默认使用 Python 3.10。
 
     | Python 版本 | 支持状态 |
     | :---------: | :------: |
     |    ≤ 3.9    |    ❌    |
     |    3.10     |    ✅    |
-    |   ≥ 3.11    |    ❌    |
+    |    3.11     |    ✅    |
+    |   ≥ 3.12    |    ❌    |
+
+    Unitree 硬件部署与 `--all` 仅支持 Python 3.10；Unitree 机器人模型的仿真与训练可使用 Python 3.11。
 
 -   **包管理器**：{bdg-danger-line}`UV`
 
@@ -46,7 +49,9 @@ cd MotrixLab
 在仓库根目录执行以下命令安装运行环境（Windows 上请在 PowerShell 中执行 `install.ps1`；若执行策略受限，改用 `powershell -ExecutionPolicy Bypass -File install.ps1`）：
 
 ```bash
-sh install.sh
+sh install.sh  # 默认 Python 3.10
+# 不含 Unitree 硬件部署插件的 Python 3.11 运行环境：
+sh install.sh --python 3.11
 ```
 
 该命令会自动探测 GPU 厂商（NVIDIA → CUDA，AMD → ROCm），安装运行环境所需的 workspace package、对应的
@@ -99,7 +104,8 @@ source .venv/bin/activate
 sh install.sh --all
 ```
 
-`--all` 会把所有依赖一次性全部启用：开发工具链、测试依赖、全部训练后端
+`--all` 包含 Unitree 硬件部署插件，因此仅支持 Python 3.10，不能与 `--python 3.11` 组合。
+它会把所有依赖一次性全部启用：开发工具链、测试依赖、全部训练后端
 （SKRL Torch 为必需项；`--skrl-jax` 和 `--rslrl` 添加可选后端）与文档工具。在 ROCm 下，CUDA-only
 extra（例如 SKRL JAX）会被跳过。也可以按需选择额外依赖，例如 `sh install.sh --docs` 只添加文档工具链。
 
@@ -110,7 +116,8 @@ workspace plugin；`--all` 才会安装全部 workspace package 与支持的开�
 
 | 参数 | 可选值 | 说明 |
 | ---- | ------ | ---- |
-| `--all` | — | 完整开发环境：把下述所有依赖一次性全部启用（开发工具链、测试依赖、全部训练后端与文档工具） |
+| `--python` | `3.10`<br>`3.11` | 选择 Python 版本；默认 `3.10`，`3.11` 仅用于不含 Unitree 硬件部署插件的运行环境 |
+| `--all` | — | 完整开发环境，包含 Unitree，仅支持 Python 3.10（开发工具链、测试依赖、全部训练后端与文档工具） |
 | （无参数） | — | 运行环境；自动探测 GPU 厂商（NVIDIA → CUDA，AMD → ROCm，无法探测时回退 CUDA） |
 | `--gpu` | `cuda`<br>`rocm` | 指定 torch wheel 来源，覆盖自动探测 |
 | `--skrl-torch` | — | 兼容性参数；SKRL Torch 已由根项目作为必需依赖提供 |

@@ -23,7 +23,7 @@ non-NUMA kernels/containers and CPU learners — the OS default placement is
 already optimal there.
 
 The binding itself (affinity + libnuma memory policy, spawn-time
-pre-placement) lives in :mod:`motrix_rl_builtin.fastsac.async_impl.numa`, the ring
+pre-placement) lives in :mod:`motrix_rl.numa`, the ring
 runtime objects in :mod:`motrix_rl_builtin.fastsac.async_impl.transport`; this module
 only computes the decisions.
 """
@@ -123,7 +123,7 @@ def _learner_node(device: torch.device, multi_node: bool) -> int | None:
     if device.type != "cuda":
         return None
     index = device.index if device.index is not None else 0
-    return numa.gpu_numa_node(index)
+    return system_numa.gpu_numa_node(index, runtime="hip" if torch.version.hip else "cuda")
 
 
 def resolve_collector_inference_devices(

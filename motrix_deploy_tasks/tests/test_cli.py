@@ -32,8 +32,6 @@ from motrix_deploy.config import SimRuntimeCfg
 from motrix_deploy.contracts import RobotSpec, TensorSpec
 from motrix_deploy.env import assemble_deploy_scene, create_deploy_env
 from motrix_deploy_tasks.tasks.go2_walk import Go2WalkTaskSpec
-from motrix_deploy_unitree.config import UnitreeBackendConfig, UnitreeGo2RobotCfg
-from motrix_deploy_unitree.hardware import HardwareRobotCfg
 from motrix_env_core.config.scene import FlatTerrainCfg, HFieldTerrainCfg, SceneCfg
 
 
@@ -76,6 +74,7 @@ def test_cli_help() -> None:
 
 
 def test_hardware_cli_help_selects_hardware_recipe() -> None:
+    pytest.importorskip("motrix_deploy_unitree.config")
     result = subprocess.run(
         [
             sys.executable,
@@ -102,6 +101,8 @@ def test_hardware_cli_help_selects_hardware_recipe() -> None:
     ],
 )
 def test_installed_recipes_compose_outside_workspace(tmp_path, task, runtime_kind, backend) -> None:
+    if runtime_kind == "hardware":
+        pytest.importorskip("motrix_deploy_unitree.config")
     result = subprocess.run(
         [sys.executable, "-m", "motrix_deploy.cli", f"task={task}", "--cfg", "job"],
         cwd=tmp_path,
@@ -244,6 +245,8 @@ def test_installed_go2_task_can_be_created_without_preimport(tmp_path: Path) -> 
 
 
 def test_hardware_hydra_config_selects_runtime_defaults() -> None:
+    unitree_config = pytest.importorskip("motrix_deploy_unitree.config")
+    unitree_hardware = pytest.importorskip("motrix_deploy_unitree.hardware")
     with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
         cfg = compose(
             config_name="deploy",
@@ -256,9 +259,9 @@ def test_hardware_hydra_config_selects_runtime_defaults() -> None:
 
     assert cfg.runtime.backend == "unitree"
     runtime = OmegaConf.to_object(cfg.runtime)
-    assert isinstance(runtime, UnitreeBackendConfig)
-    assert isinstance(runtime.robot, UnitreeGo2RobotCfg)
-    assert isinstance(runtime.robot, HardwareRobotCfg)
+    assert isinstance(runtime, unitree_config.UnitreeBackendConfig)
+    assert isinstance(runtime.robot, unitree_config.UnitreeGo2RobotCfg)
+    assert isinstance(runtime.robot, unitree_hardware.HardwareRobotCfg)
     assert runtime.network_interface == "enp3s0"
     assert cfg.duration_s is not None and cfg.duration_s > 0
     assert "command" not in cfg
@@ -266,6 +269,7 @@ def test_hardware_hydra_config_selects_runtime_defaults() -> None:
 
 
 def test_hardware_hydra_config_accepts_explicit_gain_overrides() -> None:
+    pytest.importorskip("motrix_deploy_unitree.config")
     with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
         cfg = compose(
             config_name="deploy",

@@ -5,7 +5,7 @@
 # MotrixLab
 
 [![GitHub License](https://img.shields.io/github/license/Motphys/MotrixLab)](LICENSE)
-![Python Version](https://img.shields.io/badge/python-3.10-blue)
+![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11-blue)
 [![Release](https://img.shields.io/github/v/release/Motphys/MotrixLab?include_prereleases)](https://github.com/Motphys/MotrixLab/releases)
 [![Docs](https://img.shields.io/badge/docs-readthedocs-blue)](https://motrixlab.readthedocs.io)
 
@@ -56,7 +56,7 @@ _使用 MotrixLab 训练的 microduck 行走策略，由 MotrixRender 实时渲�
 
 | 要求 | 说明 |
 | --- | --- |
-| Python **3.10.x** | workspace 锁定 `==3.10.*` |
+| Python **3.10.x / 3.11.x** | 默认 3.10 |
 | [uv](https://docs.astral.sh/uv/) | Python 项目与依赖管理工具 — [安装指南](https://docs.astral.sh/uv/getting-started/installation/) |
 | [Git LFS](https://git-lfs.com) | 机器人网格、运动数据与视频由 LFS 管理 |
 | 操作系统 | Linux x86_64 或 Windows x86_64；JAX 训练后端仅支持 Linux |
@@ -72,11 +72,15 @@ git lfs pull
 
 ### 2. 安装依赖
 
-Linux：
+Linux（默认 Python 3.10）：
 
 ```bash
 sh install.sh
+# 不含 Unitree 硬件部署插件的仿真与训练也可使用 Python 3.11：
+sh install.sh --python 3.11
 ```
+
+Unitree 硬件部署与 `--all` 仅支持 Python 3.10；Unitree 机器人模型的仿真与训练可使用 Python 3.11。
 
 Windows（PowerShell）：
 

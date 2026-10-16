@@ -39,10 +39,10 @@ from motrix_env_core.renderer import RenderConfig
 from motrix_env_motrixsim.torch_env import TorchEnv
 from motrix_rl import checkpoints
 from motrix_rl.device import resolve_default_device
+from motrix_rl.numa import apply_binding
 from motrix_rl_builtin.fastsac.agent import FastSacAgent
 from motrix_rl_builtin.fastsac.async_impl.collector import Collector
 from motrix_rl_builtin.fastsac.async_impl.learner import CollectorEndpoint, Learner
-from motrix_rl_builtin.fastsac.async_impl.numa import apply_binding
 from motrix_rl_builtin.fastsac.async_impl.stats import timing_mean
 from motrix_rl_builtin.fastsac.async_impl.transport import (
     Control,

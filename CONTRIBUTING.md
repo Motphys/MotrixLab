@@ -7,7 +7,8 @@ feature proposals, and Discussions for usage questions and design discussion.
 
 MotrixLab currently targets:
 
-- Python **3.10.x** (the workspace declares `==3.10.*`).
+- Python **3.10.x / 3.11.x**, with 3.10 as the default. Unitree hardware
+  deployment and `--all` require Python 3.10.
 - Linux x86_64 and Windows x86_64 for the documented CPU simulation and viewer
   workflows. The JAX training extra is Linux-only.
 - [uv](https://docs.astral.sh/uv/) for environments, dependency resolution,
@@ -23,7 +24,8 @@ cd MotrixLab
 git lfs pull
 ```
 
-Create the complete development environment from the repository root:
+Create the complete development environment (Python 3.10 only, including Unitree)
+from the repository root:
 
 ```bash
 sh install.sh --all       # --gpu rocm switches to the AMD wheels
@@ -31,8 +33,16 @@ sh install.sh --all       # --gpu rocm switches to the AMD wheels
 
 A runtime-only environment without the dev toolchain is available via `sh install.sh`: it
 auto-detects the GPU vendor (NVIDIA/AMD) for the torch wheels and `--rslrl`
-selects the RSLRL backend. On Windows, run `install.ps1` in PowerShell. Avoid bare
-`uv sync` / `uv run`: the `cuda`/`rocm` extras are declared conflicting, so a bare
+selects the RSLRL backend. To select Python 3.11 for a non-Unitree runtime:
+
+```bash
+sh install.sh --python 3.11
+```
+
+`--all` cannot be combined with Python 3.11. On Windows, run `install.ps1` in
+PowerShell.
+
+Avoid bare `uv sync` / `uv run`: the `cuda`/`rocm` extras are declared conflicting, so a bare
 command resolves the default fork (PyPI torch) and reinstalls the environment. Run
 commands from the activated environment (`source .venv/bin/activate`); the examples
 below assume it is active, or pass `--no-sync` to one-off `uv run` calls.

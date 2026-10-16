@@ -76,7 +76,7 @@ def _wrap_configclass(cls: type[_T], **dataclass_options: Any) -> type[_T]:
             continue
 
         value = cls.__dict__[name]
-        if isinstance(value, Field) or isinstance(value, type) or callable(value) or not _requires_copy(value):
+        if isinstance(value, Field) or isinstance(value, type) or not _requires_copy(value):
             continue
 
         setattr(cls, name, field(default_factory=_copy_factory(cls.__qualname__, name, value)))

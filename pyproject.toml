@@ -71,7 +71,8 @@ dev = [
 test = [
     { include-group = "dev" },
     "hydra-core>=1.3,<1.4",
-    "motrix-deploy-unitree==0.4.0b1",
+    # Keep the existing 3.10 hardware test environment; 3.11 tests omit Unitree.
+    "motrix-deploy-unitree==0.4.0b1; python_version < '3.11'",
 ]
 
 [tool.uv.workspace]
@@ -93,6 +94,8 @@ members = [
 ]
 
 [tool.uv]
+# Resolve macOS separately so GPU-extra forks retain the PyPI Torch fallback.
+environments = ["sys_platform == 'darwin'", "sys_platform != 'darwin'"]
 package = false
 prerelease = "if-necessary-or-explicit"
 # `cuda` and `rocm` resolve torch from different indexes and can never be

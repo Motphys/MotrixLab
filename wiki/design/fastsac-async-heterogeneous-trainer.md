@@ -297,11 +297,12 @@ class FastSacCfg:
 - **进度与日志**：`Control.collector_steps` 是 per-collector 计数器数组（单写方不变），聚合求和后除以 collector 数得到「完整 num_envs 批等价步」，作为训练进度 / 日志 / checkpoint / resume 的统一基准——任意 collector 数下 `num_learning_iterations`、`learning_starts`、TensorBoard x 轴与同步版语义一致；每 collector 有独立 `StatsQueue`（快照携带 `collector_id`）、每个 learner rank 每 log 窗口发一份轻量 payload，全部汇到**父进程**——worker 完全对等，父进程聚合（return/ep_len/timing 取均值、episodes 求和、policy_lag 取 max）后渲染面板并写 TensorBoard。面板/系统采样由未绑定的父进程执行，CPU 视图是全机（所有 core）而非某个 node；多 collector 时额外输出 `async/policy_lag_collector{i}`、`async/ring_fill_collector{i}`，单 collector 的标量键保持不变。
 - **resume 语义**：多 collector 下 resume 与单 collector 相同——learner 从 checkpoint 恢复网络与优化器，所有 collector 重新 reset env 后从 checkpointed iteration 继续采样；ring / 在途 transition 不跨进程恢复。
 
-**NUMA 绑定**（拓扑决策在 `async_impl/topology.py`，绑定原语在 `async_impl/numa.py`，等价 `numactl --cpunodebind= --membind=`，best-effort，**自动分配**）：
+**NUMA 绑定**（FastSAC 拓扑决策在 `async_impl/topology.py`，collector CPU 分片策略在 `async_impl/numa.py`；通用节点发现、GPU locality 查询、spawn 预绑定与绑定原语统一在 `motrix_rl.numa`，等价 `numactl --cpunodebind= --membind=`，best-effort，**自动分配**）：
 
-- **分配策略**（`resolve_worker_topology`）：learner 绑到其 GPU 的 PCIe 本地 node（经 NVML/pynvml 查 PCI bus id + sysfs `numa_node`，与 system_metrics 同款进程内会话，不创建 CUDA context）；每个 collector 跟随其归属 learner 的 node——collector/learner 对绝不跨 NUMA 边界，transition ring、pinned staging 与权重快照全部 node 本地。单 node 宿主机 / CPU learner / GPU 拓扑未知时不绑定（OS 默认放置）。实测依据：双路双卡机器上整树 node 绑定较不绑 +58%（first-touch 内存页跨 node 是主要开销），collector 与 learner 同 node 的局部性收益远大于带宽减半的损失。
+- **GPU 查询分派**：调用方按训练 runtime 显式传入 `cuda` 或 `hip`，不根据管理库是否可用猜测硬件。CUDA 经 NVML/pynvml 查 PCI bus id，再读 sysfs `numa_node`，必要时以 `nvidia-smi topo -m` 的 CPU affinity 兜底；HIP 在独立子进程加载 Torch/HIP runtime，按继承的可见性映射查询逻辑设备 PCI 地址，再读同一 sysfs 属性，不在父进程初始化 HIP，也不回退到 NVIDIA 的物理设备序号。查询失败返回未知。CUDA 路径沿用 NVML 物理设备编号，尚不解析 `CUDA_VISIBLE_DEVICES` 重映射；AMD SMI 的物理设备枚举也不能直接视为 HIP 可见逻辑序号。
+- **分配策略**（`resolve_worker_topology`）：learner 绑到其 GPU 的 PCIe 本地 node（由上述通用 GPU locality 查询提供）；每个 collector 跟随其归属 learner 的 node——collector/learner 对绝不跨 NUMA 边界，transition ring、pinned staging 与权重快照全部 node 本地。单 node 宿主机 / CPU learner / GPU 拓扑未知时不绑定（OS 默认放置）。实测依据：双路双卡机器上整树 node 绑定较不绑 +58%（first-touch 内存页跨 node 是主要开销），collector 与 learner 同 node 的局部性收益远大于带宽减半的损失。
 - CPU affinity：`os.sched_setaffinity` 绑到 node 的 CPU 列表（sysfs `node{X}/cpulist`）；配置 `cpus_per_collector` 时进一步切成不重叠的连续分片，避免 collector 之间抢核。
-- 内存策略：libnuma 的 `set_membind`（ctypes 加载，numactl 同款调用）把该进程**后续**分配绑到本地 node——因此绑定发生在 worker 进程的第一行（父进程在 spawn 前预绑，保证 import 期分配也 node 本地），先于 env / staging / pinned buffer 的任何分配。libnuma 不可用或 node 未知时告警并沿用 OS 默认放置，单 NUMA 机器与容器行为不变。
+- 内存策略：经 libnuma 调用并检查返回值的 `set_mempolicy(MPOL_BIND)`（ctypes 加载）把该进程**后续**分配绑到本地 node——因此绑定发生在 worker 进程的第一行（父进程在 spawn 前预绑，保证 import 期分配也 node 本地），先于 env / staging / pinned buffer 的任何分配。libnuma 不可用或 node 未知时告警并沿用 OS 默认放置，单 NUMA 机器与容器行为不变。
 
 **collector 推理设备**：多 collector 改变 CPU/CUDA 推理的权衡（N 个 CUDA collector 与 learner 产生 N 倍 H2D/D2H burst 争用）。首版保持默认 `collector_inference_device="cuda"`（与单 collector 一致），以实测吞吐决定多 collector 场景默认值是否调整。
 

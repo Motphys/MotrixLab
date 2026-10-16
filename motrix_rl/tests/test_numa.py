@@ -5,9 +5,9 @@ import subprocess
 import sys
 
 import pytest
-from motrix_rl_builtin.fastsac.async_impl.numa import spawn_placement
 
 from motrix_rl import numa
+from motrix_rl.numa import spawn_placement
 
 
 def test_shared_module_import_does_not_initialize_runtime():

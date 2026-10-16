@@ -243,10 +243,8 @@ def test_select_collector_cpus_chunks_and_shares() -> None:
 
 
 def test_topology_pairs_collectors_with_owning_learner(monkeypatch) -> None:
-    from motrix_rl_builtin.fastsac.async_impl import numa
-
     monkeypatch.setattr(system_numa, "available_numa_nodes", lambda: [0, 1])
-    monkeypatch.setattr(numa, "gpu_numa_node", lambda index: {0: 0, 1: 1}.get(index))
+    monkeypatch.setattr(system_numa, "gpu_numa_node", lambda index, runtime: {0: 0, 1: 1}.get(index))
     monkeypatch.setattr("torch.cuda.device_count", lambda: 2)
     cuda = lambda n: torch.device("cuda", n)  # noqa: E731
     opts = SimpleNamespace(transition_ipc="auto", weight_ipc="auto", weight_ipc_min_bytes=0)
@@ -286,11 +284,9 @@ def test_topology_chunks_cpus_by_node_local_ordinal(monkeypatch) -> None:
     collectors past their own node's CPUs (asymmetric bindings, or a
     "leaves no CPUs" abort once the offset exceeds the node's list).
     """
-    from motrix_rl_builtin.fastsac.async_impl import numa
-
     node_cpus = {0: list(range(8)), 1: list(range(100, 108))}
     monkeypatch.setattr(system_numa, "available_numa_nodes", lambda: [0, 1])
-    monkeypatch.setattr(numa, "gpu_numa_node", lambda index: {0: 0, 1: 1}.get(index))
+    monkeypatch.setattr(system_numa, "gpu_numa_node", lambda index, runtime: {0: 0, 1: 1}.get(index))
     monkeypatch.setattr(system_numa, "numa_node_cpus", lambda node: node_cpus[node])
     monkeypatch.setattr("torch.cuda.device_count", lambda: 2)
     cuda = lambda n: torch.device("cuda", n)  # noqa: E731
@@ -319,8 +315,6 @@ def test_topology_chunks_cpus_by_node_local_ordinal(monkeypatch) -> None:
 
 
 def test_topology_unbound_without_gpu_locality(monkeypatch) -> None:
-    from motrix_rl_builtin.fastsac.async_impl import numa
-
     cuda = torch.device("cuda", 0)
     cpu = torch.device("cpu")
     opts = SimpleNamespace(transition_ipc="auto", weight_ipc="auto", weight_ipc_min_bytes=0)
@@ -338,15 +332,29 @@ def test_topology_unbound_without_gpu_locality(monkeypatch) -> None:
     assert [collector.numa_node for collector in topo.collectors] == [None, None]
 
     # multi-node host, unknown GPU locality: no binding anywhere
-    monkeypatch.setattr(numa, "gpu_numa_node", lambda index: None)
+    monkeypatch.setattr(system_numa, "gpu_numa_node", lambda index, runtime: None)
     topo = resolve_trainer_topology(2, 2, 1, None, "cuda", cuda, opts, actor_param_numel=0)
     assert [learner.numa_node for learner in topo.learners] == [None]
     assert [collector.numa_node for collector in topo.collectors] == [None, None]
 
     # index-less cuda means device 0
-    monkeypatch.setattr(numa, "gpu_numa_node", lambda index: {0: 0}.get(index))
+    monkeypatch.setattr(system_numa, "gpu_numa_node", lambda index, runtime: {0: 0}.get(index))
     topo = resolve_trainer_topology(2, 2, 1, None, "cuda", torch.device("cuda"), opts, actor_param_numel=0)
     assert [learner.numa_node for learner in topo.learners] == [0]
+
+
+@pytest.mark.parametrize(("hip_version", "runtime"), [(None, "cuda"), ("6.3", "hip")])
+def test_topology_passes_explicit_gpu_runtime(monkeypatch, hip_version, runtime) -> None:
+    from motrix_rl_builtin.fastsac.async_impl.topology import _learner_node
+
+    seen = []
+    monkeypatch.setattr(torch.version, "hip", hip_version)
+    monkeypatch.setattr(system_numa, "gpu_numa_node", lambda index, runtime: seen.append((index, runtime)) or 2)
+    assert _learner_node(torch.device("cuda:1"), multi_node=True) == 2
+    assert seen == [(1, runtime)]
+    assert _learner_node(torch.device("cpu"), multi_node=True) is None
+    assert _learner_node(torch.device("cuda:1"), multi_node=False) is None
+    assert seen == [(1, runtime)]
 
 
 def test_topology_rejects_bad_counts() -> None:

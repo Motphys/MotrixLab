@@ -4,15 +4,18 @@ This document will guide you through the installation and configuration of Motri
 
 ## System Requirements
 
--   **Python Version**: {bdg-danger-line}`3.10.*`
+-   **Python Version**: {bdg-danger-line}`3.10.* / 3.11.*`
 
-    This project requires a specific Python version, other versions are not currently supported:
+    Python 3.10 is the default.
 
     | Python Version | Support Status |
     | :------------: | :------------: |
     |     ≤ 3.9      |       ❌       |
     |      3.10      |       ✅       |
-    |     ≥ 3.11     |       ❌       |
+    |      3.11      |       ✅       |
+    |     ≥ 3.12     |       ❌       |
+
+    Unitree hardware deployment and `--all` require Python 3.10; simulation/training with Unitree robot models can use Python 3.11.
 
 -   **Package Manager**: {bdg-danger-line}`UV`
 
@@ -46,7 +49,9 @@ cd MotrixLab
 Install the runtime environment from the repository root (on Windows, run `install.ps1` in PowerShell; if the execution policy blocks it, use `powershell -ExecutionPolicy Bypass -File install.ps1`):
 
 ```bash
-sh install.sh
+sh install.sh  # Python 3.10 by default
+# Python 3.11 runtime without the Unitree hardware deployment plugin:
+sh install.sh --python 3.11
 ```
 
 This auto-detects your GPU vendor (NVIDIA → CUDA, AMD → ROCm) and installs the runtime workspace packages, the matching PyTorch wheels, the required SKRL Torch provider, and the built-in FastSAC algorithm. On Linux, `install.sh` also installs Intel TBB by default for Numba parallel kernels, including with `--all` and either GPU profile. Other platforms do not enable TBB by default for runtime installation. Development tools, docs, RSL-RL, SKRL JAX, and other optional extras are not installed unless requested.
@@ -77,7 +82,8 @@ project (run tests, modify code, build the docs), install the full development e
 sh install.sh --all
 ```
 
-`--all` enables everything in one go: the dev toolchain, test dependencies, all training backends
+`--all` includes the Unitree hardware deployment plugin, so it requires Python 3.10 and cannot be combined with `--python 3.11`.
+It enables everything in one go: the dev toolchain, test dependencies, all training backends
 (SKRL Torch is required; `--skrl-jax` and `--rslrl` add the optional backends), and the docs tooling.
 On ROCm, CUDA-only extras such as SKRL JAX are skipped. You can also select individual additions,
 e.g. `sh install.sh --docs` adds only the docs toolchain.
@@ -90,7 +96,8 @@ workspace packages and supported development extras. Backend flags select or add
 
 | Option | Values | Description |
 | ------ | ------ | ----------- |
-| `--all` | — | Full development environment: everything below is enabled in one go (dev toolchain, test dependencies, all training backends, and docs tooling) |
+| `--python` | `3.10`<br>`3.11` | Select Python; defaults to `3.10`, with `3.11` for runtime installs without the Unitree hardware deployment plugin |
+| `--all` | — | Full development environment including Unitree; Python 3.10 only (dev toolchain, test dependencies, all training backends, and docs tooling) |
 | *(none)* | — | Runtime environment; the GPU vendor is auto-detected (NVIDIA → CUDA, AMD → ROCm; CUDA as fallback when detection is impossible) |
 | `--gpu` | `cuda`<br>`rocm` | Select the torch wheel flavor explicitly, overriding auto-detection |
 | `--skrl-torch` | — | Compatibility flag; SKRL Torch is already required by the root package |

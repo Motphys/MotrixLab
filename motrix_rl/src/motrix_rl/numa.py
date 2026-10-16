@@ -11,12 +11,19 @@ and spawned processes; apply placement before runtime initialization.
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import ctypes.util
+import functools
+import json
 import logging
 import os
+import re
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 _NODE_SYSFS = Path("/sys/devices/system/node")
@@ -210,3 +217,257 @@ def apply_placement(node: NodePlacement) -> dict[str, object]:
         result["memory_error"] = str(error)
         result["memory_policy"] = "cpu-only" if actual_cpus else "inherited"
     return result
+
+
+@contextlib.contextmanager
+def spawn_placement(node: int | None, role: str):
+    """Pre-place a spawn child's import-time allocations, then restore the parent.
+
+    CPU affinity and memory policy survive fork+exec. Temporarily binding the
+    parent around ``Process.start()`` therefore places allocations made before
+    the child's worker entry point, including runtime imports, on the node.
+    """
+    if node is None:
+        yield
+        return
+    saved_affinity = os.sched_getaffinity(0)
+    saved_policy = None
+    memory_changed = False
+    try:
+        cpus = sorted(set(numa_node_cpus(node)) & saved_affinity)
+        if not cpus:
+            raise ValueError(f"{role}: no allowed CPUs on NUMA node {node}")
+        apply_cpu_affinity(cpus, role)
+        try:
+            saved_policy = get_memory_policy()
+        except (OSError, AttributeError) as error:
+            logger.warning("%s: cannot snapshot memory policy; retaining inherited policy: %s", role, error)
+        if saved_policy is not None:
+            memory_changed = apply_memory_policy(node, role)
+        yield
+    finally:
+        try:
+            os.sched_setaffinity(0, saved_affinity)
+        finally:
+            if memory_changed:
+                try:
+                    set_memory_policy(saved_policy)
+                except (OSError, AttributeError) as error:
+                    logger.warning("%s: restoring inherited memory policy failed: %s", role, error)
+
+
+def apply_binding(role: str, node: int | None, cpus: list[int]) -> None:
+    """Apply precomputed CPU affinity and best-effort node memory binding.
+
+    With no CPUs and no node this is a no-op. Placement decisions belong to
+    the caller; memory binding only affects future allocations.
+    """
+    if cpus:
+        apply_cpu_affinity(cpus, role)
+    if node is not None:
+        apply_memory_policy(node, role)
+
+
+_nvml_state: tuple[Any, list[Any]] | tuple[()] | None = None  # None: untried; (): unavailable
+
+
+def _nvml() -> tuple[Any, list[Any]] | None:
+    """Lazily initialize NVML and return ``(pynvml, pci_bus_ids)``, or ``None``.
+
+    Like ``system_metrics``, reuse an in-process session without initializing
+    CUDA. PCI bus IDs connect device indices to sysfs NUMA locality.
+    """
+    global _nvml_state
+    if _nvml_state is None:
+        try:
+            import pynvml
+
+            pynvml.nvmlInit()
+            bus_ids = [
+                pynvml.nvmlDeviceGetPciInfo(pynvml.nvmlDeviceGetHandleByIndex(index)).busId
+                for index in range(pynvml.nvmlDeviceGetCount())
+            ]
+            _nvml_state = (pynvml, bus_ids)
+        except Exception:  # ImportError (pynvml missing) or NVML init failure (no driver/GPU)
+            _nvml_state = ()
+    return _nvml_state or None
+
+
+def _normalize_pci_bus_id(bus_id: str) -> str | None:
+    """Validate a PCI address and reduce a zero-padded eight-digit domain for sysfs."""
+    if not isinstance(bus_id, str):
+        return None
+    match = re.fullmatch(r"([0-9a-fA-F]{4}|[0-9a-fA-F]{8}):([0-9a-fA-F]{2}):([0-9a-fA-F]{2})\.([0-7])", bus_id)
+    if match is None:
+        return None
+    domain, bus, device, function = (int(part, 16) for part in match.groups())
+    if domain > 0xFFFF or device > 0x1F:
+        return None
+    return f"{domain:04x}:{bus:02x}:{device:02x}.{function}"
+
+
+_HIP_PCI_PROBE = r"""
+import ctypes
+import ctypes.util
+import json
+from pathlib import Path
+
+try:
+    import torch
+
+    # Torch prepares its wheel's shared-library dependencies before HIP loads.
+    torch_lib = Path(torch.__file__).resolve().parent / "lib"
+    candidates = []
+    for name in ("amdhip64", "galaxyhip"):
+        candidates.extend(str(path) for path in sorted(torch_lib.glob("lib" + name + ".so*")))
+    for name in ("amdhip64", "galaxyhip"):
+        candidates.append(ctypes.util.find_library(name) or ("lib" + name + ".so"))
+    runtime = None
+    for candidate in candidates:
+        try:
+            library = ctypes.CDLL(candidate)
+            get_count = library.hipGetDeviceCount
+            get_bus_id = library.hipDeviceGetPCIBusId
+            runtime = library
+            break
+        except (OSError, AttributeError):
+            continue
+    if runtime is None:
+        raise RuntimeError("HIP runtime unavailable")
+    get_count.argtypes = [ctypes.POINTER(ctypes.c_int)]
+    get_count.restype = ctypes.c_int
+    get_bus_id.argtypes = [ctypes.POINTER(ctypes.c_char), ctypes.c_int, ctypes.c_int]
+    get_bus_id.restype = ctypes.c_int
+    count = ctypes.c_int()
+    if get_count(ctypes.byref(count)) != 0 or count.value < 0:
+        raise RuntimeError("HIP device enumeration failed")
+    bus_ids = []
+    for index in range(count.value):
+        buffer = ctypes.create_string_buffer(64)
+        if get_bus_id(buffer, len(buffer), index) == 0:
+            bus_ids.append(buffer.value.decode("ascii"))
+        else:
+            bus_ids.append(None)
+    print(json.dumps(bus_ids))
+except Exception:
+    print("null")
+"""
+
+
+@functools.lru_cache(maxsize=8)
+def _hip_pci_bus_ids(
+    hip_visible_devices: str | None,
+    rocr_visible_devices: str | None,
+    cuda_visible_devices: str | None,
+) -> tuple[str | None, ...] | None:
+    """Query runtime ordinals in a child, caching each visibility mapping.
+
+    Loading or initializing HIP in the pre-spawn parent is unsafe. The child
+    inherits the environment, with visibility values also explicit in the cache
+    key so changing an ordinal remapping cannot reuse an earlier probe.
+    """
+    env = os.environ.copy()
+    for name, value in (
+        ("HIP_VISIBLE_DEVICES", hip_visible_devices),
+        ("ROCR_VISIBLE_DEVICES", rocr_visible_devices),
+        ("CUDA_VISIBLE_DEVICES", cuda_visible_devices),
+    ):
+        if value is None:
+            env.pop(name, None)
+        else:
+            env[name] = value
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _HIP_PCI_PROBE],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+            env=env,
+        )
+        bus_ids = json.loads(proc.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if not isinstance(bus_ids, list):
+        return None
+    # Keep failed entries in place: dropping one would shift all later ordinals.
+    return tuple(_normalize_pci_bus_id(bus_id) for bus_id in bus_ids)
+
+
+def gpu_numa_node(device_index: int, runtime: Literal["cuda", "hip"]) -> int | None:
+    """NUMA node hosting a GPU for the explicitly selected runtime, or ``None``.
+
+    HIP queries visible runtime ordinals in an isolated subprocess, never
+    initializing HIP in the parent. CUDA retains NVML and the NVIDIA topology
+    fallback. Both read sysfs ``numa_node``; -1 means unknown. The caller owns
+    runtime selection, so importing this module never imports Torch. CUDA uses
+    physical NVML indices; CUDA_VISIBLE_DEVICES ordinal remapping is not handled.
+    """
+    if runtime not in ("cuda", "hip"):
+        raise ValueError(f"Unknown GPU runtime: {runtime!r}")
+    if device_index < 0:
+        return None
+    if runtime == "hip":
+        bus_ids = _hip_pci_bus_ids(
+            os.environ.get("HIP_VISIBLE_DEVICES"),
+            os.environ.get("ROCR_VISIBLE_DEVICES"),
+            os.environ.get("CUDA_VISIBLE_DEVICES"),
+        )
+    else:
+        session = _nvml()
+        bus_ids = session[1] if session is not None else None
+    if bus_ids is None or device_index >= len(bus_ids):
+        return None
+    bus_id = _normalize_pci_bus_id(bus_ids[device_index])
+    if bus_id is not None:
+        try:
+            node = int((Path("/sys/bus/pci/devices") / bus_id / "numa_node").read_text().strip())
+            if node >= 0:
+                return node
+        except (OSError, ValueError):
+            pass
+    # Never use NVIDIA host ordinals to guess a HIP device's locality.
+    return None if runtime == "hip" else _gpu_node_from_topology(device_index)
+
+
+@functools.lru_cache(maxsize=1)
+def _gpu_cpu_affinities() -> dict[int, frozenset[int]]:
+    """GPU index -> CPU affinity set, parsed from ``nvidia-smi topo -m``."""
+    try:
+        proc = subprocess.run(["nvidia-smi", "topo", "-m"], capture_output=True, text=True, timeout=10, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    affinities: dict[int, frozenset[int]] = {}
+    for line in proc.stdout.splitlines():
+        cells = line.split()
+        if not cells or not cells[0].lstrip("\x1b[4m").startswith("GPU"):
+            continue
+        try:
+            index = int(cells[0].lstrip("\x1b[4m").removeprefix("GPU"))
+        except ValueError:
+            continue
+        # Header/data rows differ in layout; find the multi-CPU list token.
+        for cell in cells[1:]:
+            if not re.fullmatch(r"[0-9]+(?:-[0-9]+)?(?:,[0-9]+(?:-[0-9]+)?)+|[0-9]+-[0-9]+", cell):
+                continue
+            cpus = parse_cpulist(cell)
+            if len(cpus) > 1:
+                affinities[index] = frozenset(cpus)
+                break
+    return affinities
+
+
+def _gpu_node_from_topology(device_index: int) -> int | None:
+    """Node whose CPU list overlaps the GPU's affinity the most."""
+    affinity = _gpu_cpu_affinities().get(device_index)
+    if not affinity:
+        return None
+    best_node, best_overlap = None, 0
+    for node in available_numa_nodes():
+        try:
+            overlap = len(set(numa_node_cpus(node)) & affinity)
+        except ValueError:
+            continue
+        if overlap > best_overlap:
+            best_node, best_overlap = node, overlap
+    return best_node
