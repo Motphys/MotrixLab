@@ -604,7 +604,7 @@ artifact 生成分为三个职责独立的阶段：
 deployment export 不得再按 `(rllib, train_backend, algo)` 实现 `export_rslrl_*`、`export_skrl_*` 等平行编排。
 新增训练 backend 只增加对应的 ONNX adapter，不修改 profile compiler、artifact reader 或部署控制循环；新增
 task/robot/action 语义时，在 `motrix_envs.deploy` 增加 profile compiler，在 `motrix_deploy_tasks` 增加 task 实现，
-compiler 通过 import-time 注册接入 profile registry，并直接构造该 task 的具体 spec；task 类通过唯一的
+compiler 由 package 的零参数 provider 回调注册到 profile registry，构建 profile 时直接构造该 task 的具体 spec；task 类通过唯一的
 `motrix_deploy.tasks` entry point 接入，如
 `"go2_walk/v1" = "motrix_deploy_tasks.tasks.go2_walk:Go2WalkDeployTask"`，由类上的 `spec_type` 同时支持
 manifest 解码和运行时构造，不另设 spec 插件。
@@ -877,10 +877,24 @@ CLI 读取 artifact 并实例化具体 `DeployTask`，不在创建 backend runti
 ## 10. Registry 与扩展机制
 
 只为确实需要按 artifact、环境或 runtime recipe 选择实现的组件保留发现机制。`motrix_deploy.profile` 通过
-`motrix_deploy.profiles` Python entry-point group 发现 profile compiler：entry-point 名称精确对应环境名，
-实现遵循 `(env_name: str) -> DeploymentProfile`。查询只读取安装元数据，构建时只加载唯一匹配的 compiler；未知环境、
-同名插件冲突和插件加载失败明确报错，不按 import 顺序选择实现。具体环境 package 提供 compiler，通用导出入口不硬编码
-导入 `motrix_envs`。task runtime 通过 `motrix_deploy.tasks` Python entry-point
+`motrix_deploy.profiles` Python entry-point group 发现 package provider，每个 entry point 指向一个零参数注册回调，
+名称标识 provider 而不是 Env ID。内置 provider 为 `builtin = "motrix_envs.deploy:register"`，注册 Go2 平地、
+Go2 起伏地形和 G1 dance 的 compiler；外部 package 通过自己的 provider 发布映射。
+回调调用 `register_profile_compiler(env_name, compiler)`，compiler 仍遵循 `(env_name: str) -> DeploymentProfile`，
+不在注册阶段创建环境、构建模型或读取 motion。用户打包示例集中在[部署教程](../../docs/source/zh_CN/user_guide/tutorial/advanced/motrix_deploy.md#添加部署-profile-compiler)。
+
+首次查询、列举或构建加载所有已安装 provider 并执行注册回调，每个进程完成一次发现。
+`registered_profile_compilers()` 列举的是执行注册后得到的 Env ID，不是 metadata-only 操作；
+`build_deployment_profile(env_name)` 只调用该完整环境名对应的 compiler。所有 provider 都需要满足导入依赖，
+任一 provider 缺少依赖或加载失败均可阻止发现，与请求的 Env ID 无关。未知环境、重复 provider 名称、
+重复 compiler 环境名及加载/回调失败明确报错，不按 import 顺序覆盖。提供方注册不需要 RL，依赖保持
+`motrix_rl -> motrix_deploy`；通用导出入口不硬编码导入 `motrix_envs`。
+
+发现前按 provider 名称排序，并在加载任何回调前检查重名。回调重入查询只看到当前已注册的映射，不启动另一轮发现。
+后续加载或回调失败时，已经完成的 provider 回调不会在重试时重复执行；失败回调留下的部分注册由 provider 负责恢复，
+core 不回滚其副作用。
+
+task runtime 通过 `motrix_deploy.tasks` Python entry-point
 group 按版本化 task 标识发现。`available_tasks()` 只读取已安装插件元数据；`load_task_type()` 懒加载唯一
 `DeployTask` 类，manifest codec 读取其 `spec_type` 而不实例化 task。`create_task()` 再将已解码的具体
 `TaskSpec`、`RobotSpec`、已加载的 `Policy` 和可选 `steps` 传给该类构造完整 task controller。未知名称或重复插件报错，不按 import 顺序选择实现。
@@ -1074,7 +1088,7 @@ realtime scheduler，可通过 `runtime.realtime=false` 关闭实时节奏控制
 已安装仿真 recipe 默认选择 MuJoCo；使用同一 task、artifact 和完整场景切换原生 backend：
 
 ```bash
-motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
   runtime.backend=motrixsim runtime.viewer=false runtime.realtime=false duration_s=1.0
 ```
 
@@ -1113,20 +1127,20 @@ package 暴露统一入口：
 
 ```bash
 # 只检查 artifact，不创建设备
-motrix-deploy inspect artifact=path/to/go2_walk.deploy
+mxdeploy inspect artifact=path/to/go2_walk.deploy
 
 # sim2sim 有界无窗口检查
-motrix-deploy task=go2-walk-flat/sim \
+mxdeploy task=go2-walk-flat/sim \
   artifact=path/to/go2_walk.deploy \
   runtime.viewer=false duration_s=2.0
 
 # 实时可视化
-motrix-deploy task=go2-walk-flat/sim \
+mxdeploy task=go2-walk-flat/sim \
   artifact=path/to/go2_walk.deploy \
   runtime.viewer=true
 
 # 真机入口
-motrix-deploy task=go2-walk-flat/hardware \
+mxdeploy task=go2-walk-flat/hardware \
   artifact=path/to/go2_walk.deploy \
   runtime.network_interface=enp5s0
 ```
@@ -1197,7 +1211,7 @@ mxexport deploy run_dir=/path/to/run output=artifacts/policy.deploy
 ```
 
 导出配置随 `motrix_rl` 发布，项目配置优先、包内配置兜底。依赖方向为 `motrix_rl -> motrix_deploy`；部署运行时
-消费已有 artifact，不反向依赖训练框架。入口依据 run metadata 通过已安装的 entry point 构建 deployment profile，
+消费已有 artifact，不反向依赖训练框架。入口通过已安装 provider 注册 compiler，再依据 run metadata 中的环境名构建 deployment profile，
 调用统一 policy export，最后交给 artifact writer。CLI 和
 公共 service 统一调用 metadata-driven `export_deploy_run`，不暴露同时绑定训练框架与任务的函数。不支持 policy export 时，
 错误列出 `RlFramework` 当前支持的组合；缺少 deployment profile 时，错误单独指出 task/profile 不受支持，避免把

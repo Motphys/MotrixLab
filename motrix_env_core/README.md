@@ -17,8 +17,18 @@ the built-in MotrixLab environments are required.
 from motrix_env_core import EnvCfg, SceneCfg, configclass, registry
 ```
 
-Environment implementation packages register themselves by importing their configuration and
-environment modules. The framework does not discover or import any concrete environment package.
+## Environment discovery
+
+Registry queries automatically discover installed environment providers through the
+`motrix_env_core.envs` entry-point group. Each package supplies a registration callback that uses the
+existing environment decorators; applications need no registration imports. Environment discovery
+is independent of training and Hydra Task configuration.
+
+The first query loads all installed providers, not just the provider for the requested Env ID.
+Provider dependency and registration errors are reported to the caller.
+
+See [Environment registration](../docs/source/en/user_guide/tutorial/building_envs/direct_env.md#environment-registration)
+for the package declaration and registration example shared by direct and manager environments.
 
 ## Simulator backends
 

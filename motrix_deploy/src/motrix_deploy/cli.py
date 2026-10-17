@@ -119,7 +119,7 @@ def main(argv: Sequence[str] | None = None) -> int | None:
     """Inspect an artifact or run a Hydra-configured deployment rollout."""
     if argv is not None:
         original_argv = sys.argv
-        sys.argv = ["motrix-deploy", *argv]
+        sys.argv = ["mxdeploy", *argv]
         try:
             return main()
         finally:
@@ -131,7 +131,7 @@ def main(argv: Sequence[str] | None = None) -> int | None:
         _hydra_inspect_main()
         return None
     if args == ["--version"]:
-        print(f"motrix-deploy {__version__}")
+        print(f"mxdeploy {__version__}")
         return 0
     if not args:
         sys.argv.append("--help")

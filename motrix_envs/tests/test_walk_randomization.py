@@ -10,7 +10,6 @@ import gymnasium as gym
 import numpy as np
 import pytest
 
-import motrix_envs  # noqa: F401 registers built-in environments
 from motrix_env_core.manager import ManagerEnv
 from motrix_env_core.mdp.action import JointPositionActionCfg, JointPositionActionState, JointPositionActionTerm
 from motrix_envs.locomotion.humanoid.g1 import make_g129dof_walk_flat_cfg

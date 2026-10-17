@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import motrix_envs  # noqa: F401 registers built-in environments
 from motrix_env_core import registry
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

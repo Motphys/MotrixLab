@@ -163,7 +163,8 @@ registry.env("<robot>-walk-flat")(QuadrupedWalkTask)
 registry.env("<robot>-walk-rough")(QuadrupedWalkTask)
 ```
 
-随后从 `motrix_envs/locomotion/quadruped/__init__.py` 导入新模块，确保 `import motrix_envs` 时完成注册。
+随后从 `motrix_envs/locomotion/quadruped/__init__.py` 导入新模块，让内置注册回调包含它。
+独立 package 的发布方式见[环境注册](../../tutorial/building_envs/direct_env.md#环境注册)。
 `registry.env(...)` 与 `@registry.envcfg(...)` 的 ID 必须完全一致；只提供平地配置时，只注册平地 Env ID。
 
 ## 6. 增加训练配置

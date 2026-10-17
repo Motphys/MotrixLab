@@ -3,7 +3,6 @@
 
 """Helpers for Hydra-based train/play/view command-line entry points."""
 
-import importlib
 import logging
 import sys
 from collections.abc import Callable
@@ -42,12 +41,6 @@ def run_cli(command: Callable[[], None]) -> None:
         command()
     finally:
         sys.argv = original_argv
-
-
-def import_env_modules(modules: list[str]) -> None:
-    """Import explicitly configured environment modules for registration side effects."""
-    for module in modules:
-        importlib.import_module(module)
 
 
 def to_typed_config(cfg: DictConfig, expected_type: type[CfgT]) -> CfgT:

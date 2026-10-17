@@ -173,7 +173,12 @@ class CartPoleEnv(DirectEnv):
 
 
 
-## 注册约定
+## 环境注册
+
+DirectEnv 和 ManagerEnv 使用相同的注册机制：先用一致的 Env ID 注册配置与环境，
+再发布注册回调，让已安装的应用能够发现它们。
+
+### 注册配置与环境
 
 - **配置先于环境类注册**：`@registry.env("name")` 要求同名配置已通过
   `@registry.envcfg("name")` 注册，否则报错。
@@ -183,3 +188,38 @@ class CartPoleEnv(DirectEnv):
   不要手动指定。
 - 配置 docstring 的首行与 `zh_CN:` 行分别作为环境的英文、中文描述，
   展示在环境概览中。
+
+### 发布环境 package
+
+在环境 package 的 `pyproject.toml` 中声明一个 provider 回调：
+
+```toml
+[project.entry-points."motrix_env_core.envs"]
+my-project = "my_project.envs:register"
+```
+
+在 `my_project/envs/__init__.py` 中定义零参数回调：
+
+```python
+def register() -> None:
+    # 先导入配置，再导入使用这些注册配置的环境模块。
+    from my_project.envs import my_robot_cfg  # noqa: F401
+    from my_project.envs import my_robot_env  # noqa: F401
+```
+
+在上述模块中保留 `@registry.envcfg("my-robot")` 和 `@registry.env("my-robot")`。
+一个 provider 回调可以注册多个环境；Env ID 仍由装饰器声明，不需要在 entry-point 映射中重复列出。
+
+安装 package 后，即可按名字创建环境，无需为了注册而显式导入模块：
+
+```python
+from motrix_env_core import registry
+
+env = registry.make("my-robot", num_envs=1)
+```
+
+首次环境查询会加载所有已安装的 provider，每个进程执行一次。provider 加载或注册错误会报告给调用方；
+即使请求的是另一个 Env ID，某个 provider 缺少依赖仍可能导致发现失败。请安装各 provider 所需的依赖。
+
+环境 package 负责环境注册，不负责训练 preset。使用环境的项目通过自己的配置目录或 Hydra search path
+提供 Task YAML，见[Task 配置与命令行参数覆盖](../training/task_config.md)。

@@ -18,7 +18,6 @@ from collections.abc import Iterable
 import numpy as np
 import pytest
 
-import motrix_envs  # noqa: F401 registers built-in environments
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState, NpObs
 

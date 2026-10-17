@@ -96,8 +96,11 @@ Wrapper 是唯一允许同时引用 `motrix_envs` 类型和 RL 框架类型的�
 
 系统通过两个注册表实现组件发现，避免硬编码的 import 链：
 
-- **Env Registry（`motrix_env_core.registry`）**：将字符串名称映射到 `(EnvCfg factory, EnvCfg type, {backend: EnvClass})`，并通过 `sim` 参数选择 backend。导入 `motrix_envs` 时注册内置环境。
+- **Env Registry（`motrix_env_core.registry`）**：将字符串名称映射到 `(EnvCfg factory, EnvCfg type, {backend: EnvClass})`，并通过 `sim` 参数选择 backend。首次环境查询时发现 `motrix_env_core.envs` package entry points，调用各提供方的零参数注册函数；内置提供方为 `builtin = "motrix_envs:register"`。提供方以现有装饰器注册环境，每个进程完成一次发现，支持注册回调重入查询；插件冲突或加载失败明确报错。环境发现不依赖 RL 或 Hydra Task 配置。
 - **Hydra task config**：通过 `task=<env>/<rllib>.<algo>[.<backend>]` 组合环境、算法与运行配置。
+
+环境发现按 provider 名称排序并在加载前拒绝同名提供方。回调重入查询只看到当前已注册的条目，不启动另一轮发现。
+后续提供方加载或注册失败时，已完成的回调不会重复执行；失败回调的部分注册副作用保留，恢复由提供方负责。
 
 注册通过装饰器触发，发生在模块导入时：
 

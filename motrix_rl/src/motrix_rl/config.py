@@ -92,7 +92,6 @@ class TaskConfig:
 class TrainConfig(TaskConfig):
     """Top-level schema for ``mxtrain``."""
 
-    env_modules: list[str] = field(default_factory=list)
     render: bool = False
     play: bool = False
     sim: str | None = None
@@ -103,7 +102,6 @@ class TrainConfig(TaskConfig):
 class PlayConfig:
     """Top-level schema for ``mxplay``."""
 
-    env_modules: list[str] = field(default_factory=list)
     env: str | None = None
     sim: str | None = None
     policy: str | None = None

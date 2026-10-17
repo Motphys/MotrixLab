@@ -164,7 +164,6 @@ def test_scene_init_pose_preserves_artifact_default_and_clips_servo_limits() -> 
 
 @pytest.mark.integration
 def test_environment_scene_is_resolved_by_application_before_backend() -> None:
-    import motrix_envs  # noqa: F401 registers configurations for this application test
     from motrix_env_core import registry
 
     source = registry.make_env_config("go2-walk-rough", mode="play").scene

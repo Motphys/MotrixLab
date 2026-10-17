@@ -17,7 +17,6 @@ import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-import motrix_envs  # noqa: F401 registers built-in environments
 from motrix_env_core import registry
 from motrix_env_core.renderer import RenderConfig
 from motrix_envs.locomotion.wbt.cfg import WbtEnvCfg

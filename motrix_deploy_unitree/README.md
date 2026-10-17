@@ -26,7 +26,7 @@ motrix-deploy-unitree read-lowstate <network-interface>
 With `motrix-deploy-tasks` and a matching artifact installed:
 
 ```bash
-motrix-deploy task=go2-walk-flat/hardware artifact=artifacts/go2-walk-flat.deploy \
+mxdeploy task=go2-walk-flat/hardware artifact=artifacts/go2-walk-flat.deploy \
   runtime.network_interface=<network-interface>
 ```
 

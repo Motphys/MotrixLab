@@ -19,7 +19,6 @@ from typing import Any
 import numba
 import numpy as np
 
-import motrix_envs  # noqa: F401  registers built-in environments
 from motrix_env_core import registry
 from motrix_env_core.manager import ManagerEnv
 from motrix_env_core.numba.kernel import clone_kernel_value, get_num_threads, get_threading_layer

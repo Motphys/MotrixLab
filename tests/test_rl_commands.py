@@ -21,7 +21,7 @@ def _task(config_dir: Path, seed: int) -> None:
         "# @package _global_\n"
         "defaults:\n  - /algo_base@algo: skrl.ppo\n  - _self_\n"
         "task:\n  env: external\n  rllib: skrl\n  algo: ppo\n"
-        f"num_envs: 2\nplay_num_envs: 1\nseed: {seed}\nenv_modules: []\n",
+        f"num_envs: 2\nplay_num_envs: 1\nseed: {seed}\n",
         encoding="utf-8",
     )
 
@@ -45,7 +45,6 @@ def test_project_task_composes_with_packaged_algorithm_and_explicit_override(tmp
     explicit = _compose(tmp_path, "--config-dir", str(tmp_path / "other"))
 
     assert local["task"]["env"] == "external"
-    assert local["env_modules"] == []
     assert local["algo"]["agent"]
     assert local["seed"] == 13
     assert explicit["seed"] == 29
@@ -69,7 +68,7 @@ def test_train_help_does_not_require_task_but_training_does(tmp_path):
     command = [sys.executable, "-m", "motrix_rl.commands.train"]
     help_result = subprocess.run([*command, "--help"], cwd=tmp_path, capture_output=True, text=True)
     assert help_result.returncode == 0, help_result.stderr
-    assert "env_modules" in help_result.stdout
+    assert "num_envs" in help_result.stdout
 
     train_result = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True)
     assert train_result.returncode != 0

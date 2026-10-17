@@ -182,7 +182,12 @@ simulation parameters are covered in [Setting Up the Physics Scene](scene.md).
 
 
 
-## Registration rules
+## Environment registration
+
+DirectEnv and ManagerEnv use the same registration mechanism. Register the config and environment
+under matching Env IDs, then publish a callback so installed applications can discover them.
+
+### Register configs and environments
 
 - **The config is registered before the environment class**: `@registry.env("name")`
   requires a config with the same name registered via `@registry.envcfg("name")`.
@@ -192,3 +197,41 @@ simulation parameters are covered in [Setting Up the Physics Scene](scene.md).
   to the `"np"` data backend); never specify it manually.
 - The first docstring line and the `zh_CN:` line of the config serve as the
   environment's English and Chinese descriptions shown in the environment overview.
+
+### Publish an environment package
+
+Declare one provider callback for your environment package in `pyproject.toml`:
+
+```toml
+[project.entry-points."motrix_env_core.envs"]
+my-project = "my_project.envs:register"
+```
+
+Define the zero-argument callback in `my_project/envs/__init__.py`:
+
+```python
+def register() -> None:
+    # Import configs before the environment modules that use their registrations.
+    from my_project.envs import my_robot_cfg  # noqa: F401
+    from my_project.envs import my_robot_env  # noqa: F401
+```
+
+Keep `@registry.envcfg("my-robot")` and `@registry.env("my-robot")` in those modules.
+A provider callback can register multiple environments; Env IDs remain in the decorators rather
+than being repeated as entry-point mappings.
+
+After installing the package, create the environment by name without a registration import:
+
+```python
+from motrix_env_core import registry
+
+env = registry.make("my-robot", num_envs=1)
+```
+
+The first environment query loads all installed providers, once per process. Provider loading and
+registration errors are reported to the caller; a provider with missing dependencies can prevent
+discovery even when a different Env ID was requested. Install each provider's required dependencies.
+
+Environment packages own environment registration, not training presets. The consuming project
+supplies its Task YAML files through its configuration directory or Hydra search path; see
+[Task Configuration and CLI Overrides](../training/task_config.md).

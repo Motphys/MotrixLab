@@ -9,7 +9,6 @@ import numba
 import numpy as np
 import pytest
 
-import motrix_envs  # noqa: E402, F401
 from motrix_env_core import registry  # noqa: E402
 from motrix_env_core.manager import (  # noqa: E402
     ManagerContext,

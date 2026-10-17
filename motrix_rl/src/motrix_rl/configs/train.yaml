@@ -24,7 +24,6 @@ hydra:
 # It is accepted by direct and manager environments; unset resolves to the
 # registered default (motrixsim). Torch-fronted environments reject an
 # explicitly provided simulator here because they construct their own backend.
-env_modules: [motrix_envs]
 sim: null
 logging:
   backend: tensorboard

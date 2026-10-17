@@ -16,7 +16,7 @@ from omegaconf import DictConfig  # noqa: E402
 
 from motrix_env_core.renderer import RenderConfig  # noqa: E402
 from motrix_rl import runner  # noqa: E402
-from motrix_rl.cli import import_env_modules, run_cli, to_typed_config  # noqa: E402
+from motrix_rl.cli import run_cli, to_typed_config  # noqa: E402
 from motrix_rl.config import TrainConfig  # noqa: E402
 from motrix_rl.plugins import load_plugins  # noqa: E402
 
@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 
 def run(cfg: TrainConfig) -> None:
-    import_env_modules(cfg.env_modules)
     render = RenderConfig() if cfg.render else None
 
     train_result = runner.train(

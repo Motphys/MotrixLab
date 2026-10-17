@@ -26,7 +26,7 @@ of the default runtime environment installed by `sh install.sh` (see
 
 Activate the installed environment and run `mxexport onnx` (or `python -m motrix_rl.commands.export onnx`).
 `mxexport` requires an explicit `onnx` or `deploy` subcommand; there is no default.
-No `task` selection or `env_modules` is needed: export restores the policy from the saved run without creating an environment.
+No `task` selection or registration import is needed: export restores the policy from the saved run without creating an environment. Install the RL provider used by the run; environment-provider discovery is a separate registry concern.
 The command uses the current directory's `./configs` when present, or an explicit `--config-dir <path>`;
 project files take precedence, with missing files falling back to `motrix_rl.configs`, which includes `export_onnx.yaml`.
 No repository checkout is required. Relative run and output paths are resolved from the current working directory.

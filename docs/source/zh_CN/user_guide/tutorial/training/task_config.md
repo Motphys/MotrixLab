@@ -64,7 +64,8 @@ Task 只需填写与算法基础配置不同的值，不需要复制所有算法
 
 `mxtrain` 默认使用当前工作目录下存在的 `./configs`，不会向上搜索父目录。使用 `--config-dir /path/to/configs` 可指定其他配置目录。必须显式选择 Task，没有默认的 Cartpole Task。
 
-CLI 在调用 runner 前导入 `env_modules` 列表中的模块。打包的 train/play YAML 设置 `env_modules: [motrix_envs]`；外部环境应覆写为 `'env_modules=[my_project.envs]'`，或在 Task YAML 中设置。环境注册与 Hydra 配置发现相互独立，环境 package 不提供内置 Hydra 插件。
+运行 Task 前先安装环境 package，registry 查询会自动发现已安装的 provider。
+自定义环境的打包方式见[环境注册](../building_envs/direct_env.md#环境注册)；Task YAML 的发现与环境发现相互独立。
 
 启动训练前，可以先输出 Hydra 组合后的完整配置：
 

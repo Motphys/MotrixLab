@@ -200,7 +200,7 @@ overview 表格保留三个稳定字段：
 
 生成流程为：
 
-1. 导入 `motrix_envs`，触发全部内置 Environment 注册；
+1. 导入 `motrix_env_core.registry`；首次环境查询通过 `motrix_env_core.envs` entry points 自动调用已安装提供方的注册函数；
 2. 调用 `registry.list_registered_envs()` 获取 Env ID，以及从注册 provider docstring 自动提取的双语 description；
 3. 校验每个已注册环境都具有英文首行和 `zh_CN:` 行；
 4. 使用与 Hydra Task 测试一致的发现规则枚举 `configs/task/<env-id>/` 下的 `rllib.algo[.backend]` 选项；

@@ -28,8 +28,6 @@ def test_motrix_fastsac_asynchronous_switches_trainer(tmp_path):
     from motrix_rl_builtin.fastsac.config import FastSacAsyncOptionsCfg
     from motrix_rl_builtin.fastsac.sync.train import Trainer as SyncTrainer
 
-    import motrix_envs  # noqa: F401 registers environments used by the trainer
-
     async_cfg = _compose_task_option(
         "g1-walk-flat",
         "motrix",

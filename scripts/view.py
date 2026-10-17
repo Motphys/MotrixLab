@@ -11,7 +11,6 @@ import numpy as np
 from motrixsim.render import RenderApp, RenderClosedError, RenderSettings
 from omegaconf import DictConfig
 
-import motrix_envs  # noqa: F401 registers built-in environments
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnv
 from motrix_env_core.base import ABEnv

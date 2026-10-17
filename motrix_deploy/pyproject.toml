@@ -41,7 +41,7 @@ dependencies = [
 ]
 
 [project.scripts]
-motrix-deploy = "motrix_deploy.cli:main"
+mxdeploy = "motrix_deploy.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/Motphys/MotrixLab"

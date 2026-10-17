@@ -81,8 +81,9 @@ range。
 registry.env("g1-wbt-dance1-subject1")(ManagerEnv)
 ```
 
-该模块已经由 `motrix_envs.locomotion.wbt` package 导入，因此 `import motrix_envs` 会执行注册。`envcfg` 和 `env`
-名称必须完全一致。
+该模块已经由 `motrix_envs.locomotion.wbt` package 导入，因此内置注册回调会包含它。
+独立 package 的发布方式见[环境注册](../../tutorial/building_envs/direct_env.md#环境注册)。
+`envcfg` 和 `env` 名称必须完全一致。
 
 ## 5. 新增 Training Task
 
@@ -149,7 +150,7 @@ Play 模式自动从第 0 帧开始，关闭 reset noise 和 adaptive sampler，
 
 -   Motion 通过 schema 加载和目标机器人运动学 replay，且 `fps == 1 / ctrl_dt`。
 -   `envcfg`、`env` 和 Training Task 使用相同 Env ID。
--   Package 导入路径会执行新配置与环境注册。
+-   Registry 自动发现已安装的回调，并执行新配置与环境注册。
 -   Hydra 可以发现 `motrix.fastsac` Training Task，且 `algo.asynchronous` 能选择两种执行拓扑。
 -   小规模训练的 observation、action、reward、terminated 和 truncated shape 正确。
 -   Reset 没有系统性 NaN、hard-limit 违规或立即 bad-tracking。

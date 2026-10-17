@@ -108,8 +108,6 @@ class _RecordingWriter:
 
 
 def _context(tmp_path, rl_cfg, metrics, *, num_envs, logging_interval, save_interval, resume_from=None):
-    import motrix_envs  # noqa: F401 registers environments used by the trainer
-
     (tmp_path / "checkpoints").mkdir(exist_ok=True)
     return TrainerContext(
         run=None,

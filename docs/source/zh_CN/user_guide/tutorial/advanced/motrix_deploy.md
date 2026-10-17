@@ -3,7 +3,7 @@
 将导出的 Go2 策略先在 MuJoCo 中检查，再尝试真机部署。安装任务和 MuJoCo 插件后，可用以下命令进行有界无窗口检查：
 
 ```bash
-motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
+mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
 ```
 
 下面介绍如何生成 artifact、交互控制，以及现有 Unitree 真机工作流。
@@ -24,7 +24,7 @@ mxtrain task=go2-walk-flat/rslrl.ppo
 
 ```bash
 mxexport deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
-motrix-deploy inspect artifact=artifacts/go2-walk-flat.deploy
+mxdeploy inspect artifact=artifacts/go2-walk-flat.deploy
 ```
 
 `env=go2-walk-flat` 选择最近一次包含 metadata 的 run。用 `run_dir=<run-dir>` 替代 `env` 可选择指定 run：
@@ -63,7 +63,7 @@ go2-walk-flat.deploy/
 使用开头的无窗口命令进行有界运行，或打开 viewer：
 
 ```bash
-motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
+mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
 ```
 
 按住 `W/S` 前后移动，`A/D` 横移，`Q/E` 转向。关闭窗口、按 Esc 或 Ctrl-C 退出。
@@ -93,7 +93,7 @@ runtime 负责物理推进、调度与 viewer。[进阶的显式组装](#显式�
 安装 `motrix-deploy-motrixsim` 后，将 backend 切换为 `motrixsim`，即可复用同一 artifact 和场景配方：
 
 ```bash
-motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
   runtime.backend=motrixsim runtime.viewer=true
 ```
 
@@ -109,7 +109,7 @@ python examples/deploy_to_sim.py --backend motrixsim
 让机器人执行站下动作。先检查 artifact，再将 `enp5s0` 换成实际网卡名称：
 
 ```bash
-motrix-deploy task=go2-walk-flat/hardware \
+mxdeploy task=go2-walk-flat/hardware \
   artifact=artifacts/go2-walk-flat.deploy \
   runtime.network_interface=enp5s0
 ```
@@ -149,7 +149,7 @@ motrix-deploy-unitree joint-control enp5s0 FL_thigh_joint 0.9 \
 
 ## 部署 G1 WBT 舞蹈
 
-G1 全身跟踪舞蹈任务使用同样的导出 → artifact → `motrix-deploy` 流程。artifact 内嵌伺服增益、action scale、
+G1 全身跟踪舞蹈任务使用同样的导出 → artifact → `mxdeploy` 流程。artifact 内嵌伺服增益、action scale、
 preparation 增益与时序、安全阈值以及完整的 motion 片段（以 `payloads/motion.npz` payload 形式，校验和记录在
 manifest 中），部署既不需要 Torch 也不需要 RL 环境。导出需要训练 provider 与任务环境包，但**不**执行训练：
 
@@ -159,15 +159,15 @@ RUN=runs/g1-wbt-dance/motrix/torch/fastsac/<run-dir>
 mxexport deploy run_dir="$RUN" \
   output=artifacts/g1-wbt-dance-software-pd.deploy validation.atol=3e-5
 
-motrix-deploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy
+mxdeploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy
 ```
 
 无窗口验证与 artifact 检查：
 
 ```bash
-motrix-deploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy \
+mxdeploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy \
   runtime.viewer=false
-motrix-deploy inspect artifact=artifacts/g1-wbt-dance.deploy
+mxdeploy inspect artifact=artifacts/g1-wbt-dance.deploy
 ```
 
 默认时长来自内嵌的 motion 片段；更短的运行用 `duration_s` 缩短，超长时长会在打开 backend 前被拒绝，
@@ -185,24 +185,43 @@ policy 能维持平衡：播放预算完成后 task 直接进入实测 damping �
 
 ### 添加部署 profile compiler
 
-环境 package 在 `motrix_deploy.profiles` 组中为每个完整环境名发布一个 entry point。
-例如，外部 package 可声明：
+环境 package 在 `motrix_deploy.profiles` 组中发布一个零参数注册回调。在 `pyproject.toml` 中声明 provider：
 
 ```toml
 [project.entry-points."motrix_deploy.profiles"]
-"my-walk-flat" = "my_project.deploy:build_profile"
+my-project = "my_project.deploy:register"
 ```
 
-实现 `build_profile(env_name: str) -> DeploymentProfile`，从 `motrix_deploy.profile` 导入
-`DeploymentProfile`。该 callable 将所选环境的机器人、任务、控制设置、训练空间的 observation/action 维度，
-以及任务自有 payload 编译成 profile。安装 package 后，导出对应环境的 run：
+在 `my_project/deploy/__init__.py` 中注册环境与 compiler 的映射：
+
+```python
+def register() -> None:
+    from motrix_deploy.profile import register_profile_compiler
+    from my_project.deploy.walk import build_profile
+
+    register_profile_compiler("my-walk-flat", build_profile)
+```
+
+在 `my_project/deploy/walk.py` 中实现 `build_profile(env_name: str) -> DeploymentProfile`，
+从 `motrix_deploy.profile` 导入 `DeploymentProfile`。compiler 将所选环境的机器人、任务、控制设置、
+训练空间的 observation/action 维度，以及任务自有 payload 编译成 profile。
+注册回调只声明映射，不应在其中创建环境、构建模型或读取 motion 数据。
+一个回调可以注册多个 Env ID，同一个 compiler 也可以服务多个 ID。
+
+安装 package 后，导出对应环境的 run：
 
 ```bash
 mxexport deploy run_dir=/path/to/my-walk-flat/run output=artifacts/my-walk-flat.deploy
 ```
 
-自动发现读取已安装的 entry-point metadata，只加载 run 的完整环境名所选中的 compiler。
-不需要注册 import 或 `profile_modules` 配置项，CLI 也不会硬编码 import 环境 package。
+首次 profile 查询、列举或构建会加载所有已安装的 provider 回调，每个进程执行一次。
+因此，`motrix_deploy.profile` 中的 `registered_profile_compilers()` 会先执行注册代码，再列出 Env ID；
+只有 `build_deployment_profile(env_name)` 会调用所选环境的 compiler。
+请安装每个 provider 的导入依赖：即使请求的是另一个 Env ID，某个 provider 缺少依赖仍可能导致发现失败。
+重复 provider 名称、重复 compiler Env ID，以及 provider 加载或注册失败都会报错。
+
+应用无需显式导入模块来触发 profile 注册。provider 使用部署 API，不需要依赖 RL；
+`motrix-rl` 消费这些 profile 完成导出，而不是反向依赖。
 内置 compiler 映射见
 [Motrix Environments README](https://github.com/Motphys/MotrixLab/blob/main/motrix_envs/README.md)。
 
@@ -234,7 +253,7 @@ spec = Go2WalkTaskSpec.model_validate(OmegaConf.to_container(cfg, resolve=True))
 保留同一 Go2 recipe 和 artifact，仅切换世界：
 
 ```bash
-motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
   runtime.deploy_env_id=rough
 ```
 
@@ -327,7 +346,7 @@ with runtime:
 选择原生 backend：
 
 ```bash
-motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
   runtime.backend=motrixsim runtime.viewer=false runtime.realtime=false duration_s=1.0
 ```
 
@@ -352,7 +371,7 @@ Headless 使用零速度指令；窗口模式在可用时使用 viewer keyboard 
 `/absolute/path/to/my_app/config/deploy.yaml`，不是选择或复制内置 recipe：
 
 ```bash
-motrix-deploy \
+mxdeploy \
   --config-path /absolute/path/to/my_app/config \
   --config-name deploy \
   artifact=artifacts/go2-walk-flat.deploy

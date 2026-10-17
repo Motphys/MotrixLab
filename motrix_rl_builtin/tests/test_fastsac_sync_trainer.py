@@ -14,8 +14,6 @@ from motrix_rl.contracts import TrainerContext
 def test_sync_train_closes_tensorboard_writer_when_training_fails(tmp_path, monkeypatch):
     from motrix_rl_builtin.fastsac.sync.train import Trainer
 
-    import motrix_envs  # noqa: F401 registers environments used by the trainer
-
     writer = Mock()
     monkeypatch.setattr(torch.utils.tensorboard, "SummaryWriter", Mock(return_value=writer))
     monkeypatch.setattr(Trainer, "_make_env", Mock())

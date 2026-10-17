@@ -130,9 +130,10 @@ registry.env("<robot>-walk-flat")(HumanoidVelocityTrackingEnv)
 registry.env("<robot>-walk-terrain")(HumanoidVelocityTrackingEnv)
 ```
 
-Import the new `<robot>` module from `motrix_envs/locomotion/humanoid/__init__.py`, so `import motrix_envs` performs both
-config and environment registration. Each `registry.env(...)` ID must exactly match its `@registry.envcfg(...)` ID. If
-the task only has a flat-ground config, register only that ID. See
+Import the new `<robot>` module from `motrix_envs/locomotion/humanoid/__init__.py` so the built-in registration
+callback includes it. For a standalone package, follow [Environment registration](../../tutorial/building_envs/direct_env.md#environment-registration).
+Each `registry.env(...)` ID must exactly match its `@registry.envcfg(...)` ID. If the task only has a flat-ground config,
+register only that ID. See
 [Config Overrides and Tuning](config_tuning.md) for deriving a terrain config.
 
 ## 5. Add training configs

@@ -15,7 +15,7 @@ from motrix_envs.locomotion.wbt.g1.dance import make_g129dof_wbt_dance_cfg
 from motrix_envs.locomotion.wbt.k1 import K1WbtEnvCfg
 
 
-def test_importing_builtins_registers_environments_in_core_registry():
+def test_core_registry_discovers_builtin_environments():
     assert registry.contains("cartpole")
     assert registry.contains("g1-wbt-dance")
 

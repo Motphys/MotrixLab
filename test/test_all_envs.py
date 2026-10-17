@@ -19,7 +19,6 @@ import sys
 
 import pytest
 
-import motrix_envs  # noqa: F401 registers built-in environments
 from motrix_env_core import registry
 
 _RUNNER = """
@@ -27,7 +26,6 @@ import sys
 
 import numpy as np
 
-import motrix_envs  # noqa: F401 registers built-in environments
 from motrix_env_core import registry
 
 env = registry.make(sys.argv[1], num_envs=int(sys.argv[2]))

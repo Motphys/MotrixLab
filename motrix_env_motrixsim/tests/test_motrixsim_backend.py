@@ -104,7 +104,6 @@ def test_motrixsim_runtime_reset_restores_default_state():
 
 
 def test_body_joint_position_limits_follow_body_joint_dof_order():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("g1-wbt-dance", mode="play")
@@ -124,7 +123,6 @@ def test_body_joint_position_limits_follow_body_joint_dof_order():
 
 
 def test_bodies_bake_init_snapshot():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("g1-wbt-dance", mode="play")
@@ -162,7 +160,6 @@ def test_bodies_stay_empty_for_scene_without_body_objs():
 
 
 def test_dof_position_limits_follow_global_dof_position_order():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("dm-humanoid-walk", mode="play")
@@ -181,7 +178,6 @@ def test_dof_position_limits_follow_global_dof_position_order():
 
 
 def test_geom_specs_include_only_declared_names_in_order():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("dm-finger-turn-easy", mode="play")
@@ -197,7 +193,6 @@ def test_geom_specs_include_only_declared_names_in_order():
 
 
 def test_actuator_params_support_declared_names_or_full_model_order():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("go2-walk-flat", mode="play")
@@ -231,7 +226,6 @@ def test_actuator_params_support_declared_names_or_full_model_order():
 
 
 def test_named_joint_queries_follow_declared_order():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("dm-finger-spin", mode="play")
@@ -253,7 +247,6 @@ def test_named_joint_queries_follow_declared_order():
 
 
 def test_named_joint_reset_follows_declared_order_and_partial_selection():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("dm-finger-spin", mode="play")
@@ -280,7 +273,6 @@ def test_named_joint_reset_follows_declared_order_and_partial_selection():
 
 
 def test_full_dof_reset_preserves_unsorted_environment_id_values():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("dm-finger-spin", mode="play")
@@ -303,7 +295,6 @@ def test_full_dof_reset_preserves_unsorted_environment_id_values():
 
 
 def test_body_dof_reset_matches_body_query_layout():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("g1-wbt-dance", mode="play")
@@ -331,7 +322,6 @@ def test_body_dof_reset_matches_body_query_layout():
 
 
 def test_reset_compilation_rejects_conflicting_targets():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("dm-finger-spin", mode="play")
@@ -347,7 +337,6 @@ def test_reset_compilation_rejects_conflicting_targets():
 
 
 def test_body_state_reset_is_visible_to_link_queries():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("dm-humanoid-walk", mode="play")
@@ -387,7 +376,6 @@ def test_body_state_reset_is_visible_to_link_queries():
 
 
 def test_named_joint_queries_reject_unknown_joints():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     finger_cfg = registry.make_env_config("dm-finger-spin", mode="play")
@@ -421,7 +409,6 @@ def test_sim_cfg_preserves_unspecified_solver_options():
 
 
 def test_ctrl_targets_write_routes_named_actuators_through_native_plan():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("go2-walk-flat", mode="play")
@@ -445,7 +432,6 @@ def test_ctrl_targets_write_routes_named_actuators_through_native_plan():
 
 
 def test_partial_env_ids_leave_other_rows_untouched_with_native_writes():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("dm-humanoid-walk", mode="play")
@@ -470,7 +456,6 @@ def test_partial_env_ids_leave_other_rows_untouched_with_native_writes():
 
 
 def test_ctrl_targets_reject_duplicated_actuators_with_stable_message():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("go2-walk-flat", mode="play")
@@ -486,7 +471,6 @@ def test_ctrl_targets_reject_duplicated_actuators_with_stable_message():
 
 
 def test_mixed_dof_and_native_writes_execute_in_one_program():
-    import motrix_envs  # noqa: F401
     from motrix_env_core import registry
 
     cfg = registry.make_env_config("dm-humanoid-walk", mode="play")

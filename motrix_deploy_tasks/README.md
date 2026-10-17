@@ -7,7 +7,7 @@ task. It does not provide a simulation or hardware backend.
 Install a backend plugin and use an artifact exported for the matching task:
 
 ```bash
-motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
+mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
 ```
 
 Use `go2-walk-rough/sim` for the rough scene, `runtime.backend=motrixsim` for native
@@ -19,7 +19,7 @@ for export, configuration, and hardware safety procedures.
 
 ## G1 WBT dance: MuJoCo / MotrixSim sim2sim
 
-Use the standard **export → artifact → `motrix-deploy`** pipeline. The `g1_wbt/v1` task
+Use the standard **export → artifact → `mxdeploy`** pipeline. The `g1_wbt/v1` task
 embeds the actor's motion references, servo gains, action scales, preparation gains and
 timing, and hardware-observable termination thresholds in the artifact. Deployment
 requires neither Torch nor an RL environment; export needs the training provider and task
@@ -31,16 +31,16 @@ RUN=runs/g1-wbt-dance/motrix/torch/fastsac/<run-dir>
 mxexport deploy run_dir="$RUN" \
   output=artifacts/g1-wbt-dance-software-pd.deploy validation.atol=3e-5
 
-motrix-deploy task=g1-wbt-dance/sim \
+mxdeploy task=g1-wbt-dance/sim \
   artifact=artifacts/g1-wbt-dance-software-pd.deploy
 ```
 
 Headless validation and artifact inspection:
 
 ```bash
-motrix-deploy task=g1-wbt-dance/sim \
+mxdeploy task=g1-wbt-dance/sim \
   artifact=artifacts/g1-wbt-dance-software-pd.deploy runtime.viewer=false
-motrix-deploy inspect artifact=artifacts/g1-wbt-dance-software-pd.deploy
+mxdeploy inspect artifact=artifacts/g1-wbt-dance-software-pd.deploy
 ```
 
 Notes:

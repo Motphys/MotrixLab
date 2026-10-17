@@ -84,8 +84,9 @@ Bind the Env ID to the shared implementation in the same `g1.py` module:
 registry.env("g1-wbt-dance1-subject1")(ManagerEnv)
 ```
 
-The `motrix_envs.locomotion.wbt` package already imports this module, so `import motrix_envs` executes the registration. The
-`envcfg` and `env` names must match exactly.
+The `motrix_envs.locomotion.wbt` package already imports this module, so the built-in registration callback includes it.
+For a standalone package, follow [Environment registration](../../tutorial/building_envs/direct_env.md#environment-registration).
+The `envcfg` and `env` names must match exactly.
 
 ## 5. Add Training Tasks
 
@@ -153,7 +154,7 @@ separate play environment is not required.
 
 -   The motion passes schema loading and target-robot kinematic replay, with `fps == 1 / ctrl_dt`.
 -   `envcfg`, `env`, and Training Tasks use the same Env ID.
--   The package import path executes the new config and environment registrations.
+-   Registry discovery invokes the installed callback and reaches the new config and environment registrations.
 -   Hydra discovers the `motrix.fastsac` Training Task, and `algo.asynchronous` selects either execution topology.
 -   Small-scale observation, action, reward, terminated, and truncated shapes are correct.
 -   Resets do not systematically produce NaNs, hard-limit violations, or immediate bad tracking.

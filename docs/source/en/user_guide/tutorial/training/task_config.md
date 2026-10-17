@@ -64,7 +64,9 @@ A Task only needs to contain values that differ from the algorithm base. It does
 
 `mxtrain` uses `./configs` in the current working directory when it exists; it does not search parent directories. Use `--config-dir /path/to/configs` to select another configuration directory. A Task must be selected explicitly; there is no default Cartpole Task.
 
-The CLI imports the modules in `env_modules` before calling the runner. The packaged train/play YAML sets `env_modules: [motrix_envs]`; for an external environment, override it with `'env_modules=[my_project.envs]'` or set it in the Task YAML. Environment registration and Hydra configuration discovery are independent; environment packages do not supply a built-in Hydra plugin.
+Install the environment package before running the Task; registry queries discover installed providers automatically.
+See [Environment registration](../building_envs/direct_env.md#environment-registration) to package a custom environment;
+Task YAML discovery remains separate.
 
 Print the fully composed Hydra configuration before starting training:
 

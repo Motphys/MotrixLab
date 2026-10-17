@@ -88,7 +88,7 @@ mxexport deploy run_dir=/path/to/run output=artifacts/policy.deploy
 mxexport deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
 ```
 
-`mxexport onnx` exports a saved run's best policy without a `task` selection or `env_modules`. Install the provider used by
+`mxexport onnx` exports a saved run's best policy without selecting a `task` or creating an environment. Install the provider used by
 that run; see the [ONNX export tutorial](../docs/source/en/user_guide/tutorial/advanced/export_onnx.md) for supported
 configurations. `mxexport deploy` creates a self-contained deployment artifact; specify exactly one of `run_dir` or
 `env` (the latter selects the latest metadata-backed run). Its numerical checks use `validation.*`, while ONNX export
@@ -114,9 +114,10 @@ the workspace keeps its built-in demos under root `configs/task/`, discovered th
 mandatory `TrainConfig` fields reject execution without a task. Playback uses saved run configuration and needs no task
 config directory. Environment packages do not own training configuration, and there is no built-in Hydra search-path plugin.
 
-Configuration discovery and runtime environment registration are separate. Before calling the runner, the train/play CLIs import
-the Python modules named in `env_modules`. The typed train/play configurations default to an empty list; the packaged
-train/play YAML files explicitly set `env_modules: [motrix_envs]` for built-in environments.
+Hydra configuration discovery and runtime environment discovery are separate. Core registry queries automatically load
+installed environment providers from `motrix_env_core.envs`; train/play need no registration-module configuration or
+side-effect imports. Environment packages remain independent of training/Hydra Task configs. See
+[core discovery](../motrix_env_core/README.md#environment-discovery) for callback and dependency-error semantics.
 
 In the workspace, install the extra required by the selected provider before training:
 
@@ -135,22 +136,16 @@ files not provided by the project fall back to the package. Hydra selects the fi
 same-name files from multiple directories:
 
 ```bash
-mxtrain task=my-task/skrl.ppo 'env_modules=[my_project.envs]'
-mxtrain --config-dir /path/to/project/configs task=my-task/skrl.ppo 'env_modules=[my_project.envs]'
+mxtrain task=my-task/skrl.ppo
+mxtrain --config-dir /path/to/project/configs task=my-task/skrl.ppo
 ```
 
-Configuration discovery supplies Hydra's search path; `env_modules` separately imports the module that registers the
-project's environments. Override the packaged built-in module list when using different environments. Alternatively,
-set the registration modules in a project task YAML (task presets use `# @package _global_`):
+Install the external environment package; train and play discover its registered environments automatically.
+Playback uses the same discovery: `mxplay env=my-task`. See
+[Environment registration](../docs/source/en/user_guide/tutorial/building_envs/direct_env.md#environment-registration)
+for packaging an environment.
 
-```yaml
-# @package _global_
-env_modules: [my_project.envs]
-# Include the task's environment, provider selection, and algorithm settings here.
-```
-
-Playback uses the same registration option: `mxplay env=my-task 'env_modules=[my_project.envs]'`.
-An installed project can expose packaged presets through a Hydra `SearchPathPlugin` without coupling configuration
+An installed consuming project can expose packaged training presets through a Hydra `SearchPathPlugin` without coupling configuration
 discovery to environment registration. For example, put the following in `src/hydra_plugins/my_project_searchpath.py`,
 with task YAML files in `src/my_project/configs/task/`:
 
@@ -173,6 +168,5 @@ Make `my_project.configs` an importable package (include `__init__.py`) and incl
 Package both `my_project` and `hydra_plugins/my_project_searchpath.py` in the installed distribution. Keep `hydra_plugins`
 a shared namespace package: **do not add `hydra_plugins/__init__.py`**. Hydra discovers installed plugin modules in that
 namespace; no custom entry point or working-directory import convention is needed. Once installed, run
-`mxtrain task=my-task/skrl.ppo` from any directory when the task YAML sets `env_modules`; otherwise pass
-`'env_modules=[my_project.envs]'` explicitly. Provider plugins still register separately through
-`motrix_rl.frameworks`.
+`mxtrain task=my-task/skrl.ppo` from any directory. Environment callbacks only register environments; they do not
+install Hydra search paths. RL provider plugins still register separately through `motrix_rl.frameworks`.

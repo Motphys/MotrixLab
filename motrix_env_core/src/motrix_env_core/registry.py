@@ -90,7 +90,49 @@ def _construct_env(
     return env_cls(env_cfg, num_envs=num_envs)
 
 
+ENV_ENTRY_POINT_GROUP = "motrix_env_core.envs"
+
 _envs: dict[str, EnvMeta] = {}
+_envs_discovered = False
+_envs_discovering = False
+_env_entry_points: tuple[EntryPoint, ...] | None = None
+_completed_env_entry_points = 0
+
+
+def _discover_envs() -> None:
+    """Invoke installed environment registration callbacks on the first query.
+
+    Provider names must be unique. Completed callbacks are not repeated if a
+    later load/callback fails; failures propagate and retry on the next query.
+    Failed callbacks retain any registration side effects, so providers own
+    recovery from partial registration. Reentrant queries see registrations
+    completed so far without starting another discovery pass.
+    """
+    global _envs_discovered, _envs_discovering, _env_entry_points, _completed_env_entry_points
+    if _envs_discovered or _envs_discovering:
+        return
+    _envs_discovering = True
+    try:
+        if _env_entry_points is None:
+            providers = tuple(sorted(entry_points(group=ENV_ENTRY_POINT_GROUP), key=lambda ep: (ep.name, ep.value)))
+            names = set()
+            for provider in providers:
+                if provider.name in names:
+                    raise ValueError(
+                        f"Duplicate environment provider name {provider.name!r} in entry point group "
+                        f"{ENV_ENTRY_POINT_GROUP!r}"
+                    )
+                names.add(provider.name)
+            _env_entry_points = providers
+        for entry_point in _env_entry_points[_completed_env_entry_points:]:
+            register = entry_point.load()
+            if not callable(register):
+                raise TypeError(f"Environment entry point {entry_point.name!r} must load a callable")
+            register()
+            _completed_env_entry_points += 1
+        _envs_discovered = True
+    finally:
+        _envs_discovering = False
 
 
 @dataclass
@@ -137,6 +179,7 @@ def _discover_robots() -> None:
 
 
 def _get_env_meta(name: str) -> EnvMeta:
+    _discover_envs()
     try:
         return _envs[name]
     except KeyError:
@@ -152,7 +195,8 @@ def _resolve_backend(name: str, meta: EnvMeta) -> tuple[str, type[ABEnv]]:
 
 
 def contains(name: str) -> bool:
-    """Check if an environment configuration is registered."""
+    """Discover installed environment plugins and check for a registered config."""
+    _discover_envs()
     return name in _envs
 
 
@@ -408,7 +452,8 @@ def make(
 
 
 def list_registered_envs() -> dict[str, dict[str, Any]]:
-    """List registered environments with backends and localized docstring summaries."""
+    """Discover plugins and list environments with backends and localized summaries."""
+    _discover_envs()
     result = {}
     for name, meta in _envs.items():
         result[name] = {

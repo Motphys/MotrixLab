@@ -20,6 +20,4 @@ def register() -> None:
         raise
 
 
-register()
-
 __all__ = ["core", "register", "registry"]

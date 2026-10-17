@@ -125,9 +125,10 @@ registry.env("<robot>-walk-flat")(HumanoidVelocityTrackingEnv)
 registry.env("<robot>-walk-terrain")(HumanoidVelocityTrackingEnv)
 ```
 
-随后在 `motrix_envs/locomotion/humanoid/__init__.py` 中导入新的 `<robot>` 模块，确保 `import motrix_envs` 时配置和环境
-实现都会完成注册。`registry.env(...)` 的环境 ID 必须与对应 `@registry.envcfg(...)` 的配置 ID 完全一致。若只定义平地
-配置，则只注册平地环境 ID；起伏地形配置的派生方式见[“配置覆盖与调参”](config_tuning.md)。
+随后在 `motrix_envs/locomotion/humanoid/__init__.py` 中导入新的 `<robot>` 模块，让内置注册回调包含它。
+独立 package 的发布方式见[环境注册](../../tutorial/building_envs/direct_env.md#环境注册)。
+`registry.env(...)` 的环境 ID 必须与对应 `@registry.envcfg(...)` 的配置 ID 完全一致。若只定义平地配置，则只注册平地
+环境 ID；起伏地形配置的派生方式见[“配置覆盖与调参”](config_tuning.md)。
 
 ## 5. 增加训练配置
 

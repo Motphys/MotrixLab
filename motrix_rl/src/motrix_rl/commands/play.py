@@ -10,7 +10,7 @@ from omegaconf import DictConfig
 
 from motrix_env_core.renderer import RenderConfig
 from motrix_rl import checkpoints, runner, runs
-from motrix_rl.cli import import_env_modules, run_cli, to_typed_config
+from motrix_rl.cli import run_cli, to_typed_config
 from motrix_rl.config import PlayConfig
 from motrix_rl.runs import find_metadata_for_policy, latest_metadata_run
 
@@ -104,7 +104,6 @@ def _play_render_config(target: PlayTarget, cfg: PlayConfig) -> RenderConfig:
 
 
 def run(cfg: PlayConfig) -> None:
-    import_env_modules(cfg.env_modules)
     try:
         target = _resolve_play_target(cfg)
         render = _play_render_config(target, cfg)

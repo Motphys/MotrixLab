@@ -17,7 +17,6 @@ def load_runtime():
     os.environ.setdefault("GOMP_SPINCOUNT", "0")
     import numpy as np
 
-    import motrix_envs  # noqa: F401  registers built-in environments
     from motrix_env_core import registry
 
     return np, registry

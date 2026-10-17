@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from motrix_rl.cli import import_env_modules, run_cli
+from motrix_rl.cli import run_cli
 from motrix_rl.commands.export import main as export_main
 
 
@@ -74,15 +74,3 @@ def test_cli_does_not_search_parent_directories(monkeypatch, tmp_path):
     observed = []
     run_cli(lambda: observed.append(sys.argv.copy()))
     assert observed == [original]
-
-
-def test_environment_module_imports_register_and_propagate_failures(monkeypatch, tmp_path):
-    (tmp_path / "external_env_registration.py").write_text("registered = True\n", encoding="utf-8")
-    monkeypatch.syspath_prepend(str(tmp_path))
-    try:
-        import_env_modules(["external_env_registration"])
-        assert sys.modules["external_env_registration"].registered
-        with pytest.raises(ModuleNotFoundError, match="missing_env_registration"):
-            import_env_modules(["missing_env_registration"])
-    finally:
-        sys.modules.pop("external_env_registration", None)

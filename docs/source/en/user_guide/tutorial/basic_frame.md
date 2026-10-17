@@ -98,7 +98,7 @@ mxtrain task=cartpole/rslrl.ppo
 Deployment uses an artifact rather than a training environment:
 
 ```bash
-motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
+mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
 ```
 
 This runs the exported policy headlessly in MuJoCo. See [Go2 deployment](advanced/motrix_deploy.md) for export,

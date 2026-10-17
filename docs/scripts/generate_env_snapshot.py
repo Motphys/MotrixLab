@@ -11,7 +11,6 @@ from pathlib import Path
 
 import imageio.v2 as imageio
 
-import motrix_envs  # noqa: F401 registers built-in environments
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnv
 from motrix_env_core.sim.backend import RenderConfig
