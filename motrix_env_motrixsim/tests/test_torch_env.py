@@ -8,9 +8,17 @@ import numpy as np
 import pytest
 import torch
 
+from motrix_env_core import registry
 from motrix_env_core.base import EnvCfg
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_motrixsim.torch_env import TorchEnv, TorchEnvState, TorchObs
+
+
+def test_registry_infers_torch_frontend_from_runtime_base() -> None:
+    class CustomEnvironment(TorchEnv):
+        pass
+
+    assert registry._infer_sim_backend(CustomEnvironment) == "torch"
 
 
 def test_torch_environment_state_matches_numpy_state_contract() -> None:

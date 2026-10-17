@@ -151,6 +151,7 @@ def _set_fk_pose(runtime, backend, orientation, joints):
 
 
 @pytest.mark.parametrize("backend,solver_iterations", [("mujoco", 100), ("motrixsim", 3)])
+@pytest.mark.integration
 def test_measured_fk_matches_randomized_simulator_world_orientation(profile, backend, solver_iterations):
     pytest.importorskip(backend)
     config = SimulationRuntimeConfig(

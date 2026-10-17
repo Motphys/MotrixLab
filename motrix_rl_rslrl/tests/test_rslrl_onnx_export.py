@@ -59,6 +59,7 @@ def _run_with_checkpoint(tmp_path: Path, config: TrainConfig, checkpoint: dict) 
     return run
 
 
+@pytest.mark.integration
 def test_rslrl_torch_export_uses_framework_normalizer(tmp_path: Path) -> None:
     from rsl_rl.models import MLPModel
 

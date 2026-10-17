@@ -12,6 +12,8 @@ from motrix_deploy_mujoco.runtime import MujocoRuntime
 from motrix_env_core.config.scene.actuator import MotorActuatorCfg
 from motrix_env_mujoco.compiler import MuJoCoSceneCompiler
 
+pytestmark = pytest.mark.integration
+
 
 def _servo(spec, **overrides):
     zeros = np.zeros(spec.joint_count, dtype=np.float32)
@@ -22,23 +24,24 @@ def _servo(spec, **overrides):
     return JointServoCommand(**fields)
 
 
-def test_auto_spec_inspection_reuses_original_source_spec_on_first_open(control_scene_config, monkeypatch):
-    original = MuJoCoSceneCompiler.create_spec
-    specs = []
-
-    def record_spec(compiler, scene, sim):
-        spec = original(compiler, scene, sim)
-        specs.append(spec)
-        return spec
-
-    monkeypatch.setattr(MuJoCoSceneCompiler, "create_spec", record_spec)
+def test_reopen_preserves_source_limits_and_torque_response(control_scene_config):
     runtime = MujocoRuntime(control_scene_config, 0.02)
-    assert len(specs) == 1 and runtime._source_spec is specs[0]
-    assert runtime.model is runtime.data is None
-    with runtime:
-        assert len(specs) == 1
-    with runtime:
-        assert len(specs) == 2  # Reopen starts from source, not already transformed motors.
+    spec = runtime.robot.spec
+    torque = np.linspace(-1, 1, spec.joint_count, dtype=np.float32)
+    observed = []
+    for _ in range(2):
+        with runtime:
+            np.testing.assert_allclose(runtime.robot.spec.torque_limit, spec.torque_limit)
+            initial = runtime.robot.read_state(0.1)
+            assert initial.sample_time_ns == 0
+            runtime.robot.write_command(JointTorqueCommand(torque))
+            runtime.advance_control_period()
+            state = runtime.robot.read_state(0.1)
+            assert state.sample_time_ns == 20_000_000
+            np.testing.assert_allclose(runtime.data.ctrl, torque)
+            observed.append(state)
+    np.testing.assert_allclose(observed[0].joint_position, observed[1].joint_position)
+    np.testing.assert_allclose(observed[0].joint_velocity, observed[1].joint_velocity)
 
 
 def test_torque_is_snapshotted_and_applied_directly_every_physics_substep(control_scene_config, monkeypatch):

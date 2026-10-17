@@ -88,6 +88,7 @@ def test_example_builders_are_import_safe() -> None:
 
 
 @pytest.mark.parametrize("backend", ["mujoco"])
+@pytest.mark.integration
 def test_programmatic_example_uses_shared_control_execution(tmp_path, onnx_policy, backend) -> None:
     command = [
         sys.executable,
@@ -118,6 +119,7 @@ def test_programmatic_example_uses_shared_control_execution(tmp_path, onnx_polic
     assert _result(repeated.stdout)["trace_sha256"] == result["trace_sha256"]
 
 
+@pytest.mark.integration
 def test_simulation_factory_supports_explicit_bound_control_and_world_ownership(
     control_scene_config, control_gains
 ) -> None:
@@ -168,6 +170,7 @@ def test_simulation_factory_supports_explicit_bound_control_and_world_ownership(
     assert runtime.model is None and runtime.data is None
 
 
+@pytest.mark.integration
 def test_robot_commands_do_not_advance_or_own_the_world(control_scene_config, control_gains) -> None:
     from motrix_deploy.runtime.context import ControlContext
     from motrix_deploy_mujoco.runtime import MujocoRuntime

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import onnx
+import onnxruntime as ort
 import pytest
 import torch
 from hydra import compose, initialize_config_dir
@@ -59,6 +60,7 @@ def _run_with_checkpoint(tmp_path: Path, config: TrainConfig, checkpoint: dict) 
     return run
 
 
+@pytest.mark.integration
 def test_skrl_torch_export_bakes_observation_preprocessor(tmp_path: Path) -> None:
     config = _train_config(
         "cartpole/skrl.ppo",
@@ -92,7 +94,21 @@ def test_skrl_torch_export_bakes_observation_preprocessor(tmp_path: Path) -> Non
     assert result.report.output_spec.shape == (None, 2)
     assert result.report.parity.max_abs_error < 1e-5
     model = onnx.load(result.path)
-    assert any(node.op_type == "Clip" for node in model.graph.node)
+    # Exercise the scaler's clipping behavior, not an ONNX operator spelling:
+    # observations beyond either threshold must match their boundary values.
+    from motrix_rl_skrl.torch.export import _build_reference, _extract_weights
+
+    reference = _build_reference(_extract_weights(config.algo, policy, normalizer))
+    mean = normalizer["running_mean"].numpy().astype(np.float32)
+    std = np.sqrt(normalizer["running_variance"].numpy().astype(np.float32) + 1e-8)
+    directions = np.asarray([[1, -1, 1], [-1, 1, -1]], dtype=np.float32)
+    boundary = mean + directions * 5.0 * std
+    extreme = mean + directions * 1e6 * std
+    expected = reference(extreme)
+    np.testing.assert_allclose(expected, reference(boundary), atol=1e-6, rtol=1e-5)
+    session = ort.InferenceSession(str(result.path), providers=["CPUExecutionProvider"])
+    actual = session.run(None, {session.get_inputs()[0].name: extreme})[0]
+    np.testing.assert_allclose(actual, expected, atol=1e-6, rtol=1e-5)
     properties = {item.key: item.value for item in model.metadata_props}
     assert properties["rllib"] == "skrl"
     assert properties["train_backend"] == "torch"

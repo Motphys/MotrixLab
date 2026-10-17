@@ -54,7 +54,7 @@ def test_generation_merge_matches_single_ring_byte_for_byte() -> None:
     single = _make_learner([SharedTransitionRing(16, envs, _OBS, _COBS, _ACT)], single_extends)
     for fields in whole:
         assert single.rings[0].push(*fields)
-    single.drain()
+    assert single.drain() == batches
 
     dual_extends: list = []
     rings = [SharedTransitionRing(16, envs // shards, _OBS, _COBS, _ACT) for _ in range(shards)]
@@ -64,8 +64,7 @@ def test_generation_merge_matches_single_ring_byte_for_byte() -> None:
     for fields in whole:
         for r in range(shards):
             assert rings[r].push(*shard(fields, r))
-    while dual.drain() == 0:
-        pass
+    assert dual.drain() == batches
 
     assert len(single_extends) == len(dual_extends)
     for a, b in zip(single_extends, dual_extends):
@@ -97,9 +96,8 @@ def test_generation_merge_preserves_n_step_adjacency() -> None:
         assert single.rings[0].push(*fields)
         for r in range(shards):
             assert rings[r].push(*tuple(f[r * (envs // shards) : (r + 1) * (envs // shards)] for f in fields))
-    single.drain()
-    while dual.drain() == 0:
-        pass
+    assert single.drain() == batches
+    assert dual.drain() == batches
 
     for name in ("observations", "actions", "rewards", "dones", "truncations"):
         torch.testing.assert_close(getattr(single_rb, name), getattr(dual_rb, name))

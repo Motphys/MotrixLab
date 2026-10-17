@@ -146,21 +146,25 @@ def test_flat_cfg_randomization_settings_are_wired():
 
 def test_disabled_action_delay_has_zero_cfg_default():
     assert JointPositionActionCfg().action_delay_steps == (0, 0)
-    assert JointPositionActionCfg().action_scale == pytest.approx(0.25)
 
 
 def test_walk_env_randomized_reset_samples_within_ranges():
-    env = ManagerEnv(make_g129dof_walk_flat_cfg(), num_envs=2)
+    cfg = make_g129dof_walk_flat_cfg()
+    env = ManagerEnv(cfg, num_envs=2)
     try:
         env.step(np.zeros((2, env.num_actuators), dtype=np.float32))
         env.reset(np.arange(2))
         walk = env.command_terms["walk"]
-        # Gait period ~ U(1.2, 0.8): phase dt must sit inside the inverted band.
-        base_dt = 2.0 * np.pi * 0.02 / 1.2
-        slow_dt = 2.0 * np.pi * 0.02 / 0.8
-        assert np.all(walk.phase_step >= base_dt - 1e-6)
-        assert np.all(walk.phase_step <= slow_dt + 1e-6)
+        # Phase increments invert the configured gait-period interval.
+        command_cfg = cfg.commands.walk
+        min_period = max(command_cfg.gait_period - command_cfg.gait_period_randomization_width, 0.1)
+        max_period = max(command_cfg.gait_period + command_cfg.gait_period_randomization_width, 0.1)
+        min_phase_step = 2.0 * np.pi * cfg.ctrl_dt / max_period
+        max_phase_step = 2.0 * np.pi * cfg.ctrl_dt / min_period
+        assert np.all(walk.phase_step >= min_phase_step - 1e-6)
+        assert np.all(walk.phase_step <= max_phase_step + 1e-6)
         action_state = env.action_terms["joint_position"].state
-        assert np.all((action_state.delay_steps >= 0) & (action_state.delay_steps <= 1))
+        delay_lo, delay_hi = cfg.actions.joint_position.action_delay_steps
+        assert np.all((action_state.delay_steps >= delay_lo) & (action_state.delay_steps <= delay_hi))
     finally:
         del env

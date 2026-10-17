@@ -7,9 +7,12 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from motrix_deploy.contracts import JointControlMode, JointServoCommand
 from motrix_deploy_mujoco.runtime import MujocoRuntime
+
+pytestmark = pytest.mark.integration
 
 
 def _motion_fixture(spec):

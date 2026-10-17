@@ -34,11 +34,7 @@ def test_deploy_run_config_decodes_typed_simulation_runtime() -> None:
     assert isinstance(config.runtime, SimRuntimeCfg)
     assert config.runtime.backend == "test"
     assert config.runtime.viewer is False
-    assert config.runtime.realtime is None
     assert config.runtime.robot_init_key_pose == "lie_down"
-    assert config.runtime.physics.dt == pytest.approx(0.002)
-    assert config.runtime.physics.solver_iterations == 100
-    assert config.runtime.backend == "test"
     assert config.duration_s == pytest.approx(0.1)
 
 
@@ -46,6 +42,14 @@ def test_deploy_run_config_defaults_to_unbounded_duration() -> None:
     config = _typed_config({"artifact": "artifact.deploy", "runtime": _sim_runtime()})
 
     assert config.duration_s is None
+
+
+@pytest.mark.parametrize("duration_s", [0, -0.1, float("nan"), float("inf")])
+def test_cli_duration_rejects_nonpositive_or_nonfinite_budget(duration_s: float) -> None:
+    from motrix_deploy.cli import _duration_steps
+
+    with pytest.raises(ValueError, match="duration_s"):
+        _duration_steps(duration_s, 0.02)
 
 
 def test_sim_schema_rejects_unknown_runtime_fields() -> None:

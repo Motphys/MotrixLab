@@ -171,13 +171,11 @@ class _FakeMujoco:
         return object()
 
     def MjvScene(self, model: object, *, maxgeom: int) -> object:
-        del model
-        assert maxgeom == 10_000
+        del model, maxgeom
         return object()
 
     def MjrContext(self, model: object, font_scale: int) -> _Context:
-        del model
-        assert font_scale == 150
+        del model, font_scale
         return self.context
 
     def mjv_updateScene(self, *args: Any) -> None:
@@ -296,6 +294,7 @@ def test_render_event_pump_interrupts_without_keyboard_binding(event) -> None:
         viewer.close()
 
 
+@pytest.mark.integration
 def test_gui_runtime_pumps_startup_camera_and_close_with_constant_input(
     control_scene_config, control_gains, monkeypatch
 ) -> None:

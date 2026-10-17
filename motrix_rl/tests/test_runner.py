@@ -88,6 +88,7 @@ def test_runner_train_creates_run_and_returns_result(demo_framework, tmp_path):
     assert not (result.run.run_dir / JSONL_FILENAME).exists()
 
 
+@pytest.mark.integration
 def test_training_reports_live_metrics_but_play_does_not(demo_framework, monkeypatch, tmp_path):
     received = []
 

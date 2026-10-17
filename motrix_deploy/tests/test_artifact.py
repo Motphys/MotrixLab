@@ -69,6 +69,7 @@ def test_task_payload_round_trip_and_tamper_rejection(
         write_artifact(tmp_path / "short.deploy", manifest, {"policy/model.onnx": POLICY_BYTES})
 
 
+@pytest.mark.integration
 def test_cli_inspect_outputs_json(tmp_path: Path, manifest_factory: Callable[[], DeploymentManifest]) -> None:
     output = tmp_path / "fixture.deploy"
     write_artifact(output, manifest_factory(), {"policy/model.onnx": POLICY_BYTES})

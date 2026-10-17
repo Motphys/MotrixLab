@@ -8,10 +8,13 @@ from types import SimpleNamespace
 
 import motrixsim as mtx
 import numpy as np
+import pytest
 from motrix_deploy_motrixsim.runtime import MotrixSimRuntime
 from test_native_motrixsim_runtime import config
 
 from motrix_deploy.contracts import JointControlMode, JointServoCommand, JointTorqueCommand
+
+pytestmark = pytest.mark.integration
 
 
 def set_simulation_state(

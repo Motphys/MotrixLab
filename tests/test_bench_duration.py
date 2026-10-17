@@ -80,6 +80,7 @@ def stalled_worker(connection, config):
         connection.close()
 
 
+@pytest.mark.integration
 def test_startup_timeout_reaps_spawn_workers(monkeypatch):
     processes = install_test_context(monkeypatch, stalled_worker)
     monkeypatch.setattr(duration, "STARTUP_TIMEOUT", 0.2)
@@ -117,6 +118,7 @@ def install_test_context(monkeypatch, target):
     return processes
 
 
+@pytest.mark.integration
 def test_spawn_workers_share_window_and_aggregate_counts(monkeypatch):
     processes = install_test_context(monkeypatch, fake_worker)
     results = duration.run_duration(_args(), 5)
@@ -131,6 +133,7 @@ def test_spawn_workers_share_window_and_aggregate_counts(monkeypatch):
     assert all(process.exitcode == 0 for process in processes)
 
 
+@pytest.mark.integration
 def test_worker_failure_propagates_and_reaps_processes(monkeypatch):
     processes = install_test_context(monkeypatch, failing_worker)
     with pytest.raises(RuntimeError, match="worker exited"):

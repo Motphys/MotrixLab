@@ -89,5 +89,5 @@ def test_trainer_seed_covers_python_numpy_and_torch(monkeypatch, seed):
 
     trainer._set_seed(seed)
 
-    expected = [] if seed is None else [("python", seed), ("numpy", seed), ("torch", seed), ("cuda", seed)]
-    assert calls == expected
+    expected = set() if seed is None else {("python", seed), ("numpy", seed), ("torch", seed), ("cuda", seed)}
+    assert set(calls) == expected

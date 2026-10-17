@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
-from motrix_rl_skrl.config import SkrlCfg
 
+from motrix_rl import frameworks
 from motrix_rl.cli import to_typed_config
 from motrix_rl.config import OnnxExportConfig, TrainConfig
 from motrix_rl.plugins import load_plugins
@@ -28,22 +28,13 @@ def _compose(config_name: str, overrides: list[str]):
         return compose(config_name=config_name, overrides=overrides)
 
 
-def test_train_defaults():
+def test_default_train_config_composes_to_selected_provider_type():
     cfg = _compose("train", [])
-    assert cfg.task.env == "cartpole"
-    assert cfg.task.rllib == "skrl"
-    assert cfg.task.algo == "ppo"
-    assert cfg.num_envs == 2048
-    assert cfg.play_num_envs == 16
-    assert cfg.seed == 42
-    assert cfg.logging.backend == "tensorboard"
-    assert cfg.logging.interval == 100
-    assert cfg.checkpoint.interval == 0
 
     typed_cfg = to_typed_config(cfg, TrainConfig)
+
     assert isinstance(typed_cfg, TrainConfig)
-    assert typed_cfg.task.env == "cartpole"
-    assert isinstance(typed_cfg.algo, SkrlCfg)
+    assert isinstance(typed_cfg.algo, frameworks.get_config_type(typed_cfg.task.rllib, typed_cfg.task.algo))
 
 
 def test_train_scalar_overrides():

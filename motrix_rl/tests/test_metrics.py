@@ -3,13 +3,16 @@
 
 import gzip
 import json
+import queue
 import re
 import socket
 import threading
 import time
 import weakref
+from contextlib import nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -75,6 +78,24 @@ def ingest():
     server = _Ingest()
     yield server
     server.stop()
+
+
+@pytest.fixture
+def captured_http(monkeypatch):
+    """Capture serialized protocol requests without opening a socket."""
+    requests = []
+
+    def urlopen(request, timeout):
+        requests.append(
+            {
+                "headers": {key.lower(): value for key, value in request.header_items()},
+                "body": json.loads(gzip.decompress(request.data)),
+            }
+        )
+        return nullcontext()
+
+    monkeypatch.setattr(metrics_module.urllib.request, "urlopen", urlopen)
+    return requests
 
 
 @pytest.fixture(autouse=True)
@@ -258,16 +279,18 @@ def test_exit_writes_what_a_logger_still_holds(monkeypatch, tmp_path):
 
 
 def test_run_id_prefers_environment_and_is_sanitized(monkeypatch, tmp_path):
-    monkeypatch.setenv("MOTRIX_METRICS_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("MOTRIX_METRICS_JSONL", "1")
     run_dir = tmp_path / "runs" / "cartpole" / "skrl" / "torch" / "ppo" / "26-10-12_10-00-00-000000"
 
     derived = MetricsLogger.from_env(run_dir)
     derived.close()
+    derived.join(5)
     assert derived.run_id == "cartpole__skrl__torch__ppo__26-10-12_10-00-00-000000"
 
     monkeypatch.setenv("MOTRIX_METRICS_RUN_ID", "a b/c:" + "x" * 300 + "-tail")
     explicit = MetricsLogger.from_env(run_dir)
     explicit.close()
+    explicit.join(5)
     assert RUN_ID_PATTERN.match(explicit.run_id)
     assert len(explicit.run_id) == 200
     assert explicit.run_id.endswith("x-tail")
@@ -275,9 +298,11 @@ def test_run_id_prefers_environment_and_is_sanitized(monkeypatch, tmp_path):
     monkeypatch.setenv("MOTRIX_METRICS_RUN_ID", "ok.run_1-2")
     kept = MetricsLogger.from_env(run_dir)
     kept.close()
+    kept.join(5)
     assert kept.run_id == "ok.run_1-2"
 
 
+@pytest.mark.integration
 def test_url_alone_pushes_without_writing_a_local_file(monkeypatch, tmp_path, ingest):
     monkeypatch.setenv("MOTRIX_METRICS_URL", ingest.url)
     logger = MetricsLogger.from_env(tmp_path)
@@ -342,6 +367,7 @@ def test_stuck_disk_does_not_block_emit_and_loses_nothing(tmp_path):
     assert sink.batches == [1, 499]  # the backlog goes out as one write and flush, not one per record
 
 
+@pytest.mark.integration
 def test_from_env_pushes_gzip_batches_with_bearer_token(monkeypatch, tmp_path, ingest):
     monkeypatch.setenv("MOTRIX_METRICS_URL", ingest.url + "/")
     monkeypatch.setenv("MOTRIX_METRICS_JSONL", "1")
@@ -376,6 +402,7 @@ def test_from_env_pushes_gzip_batches_with_bearer_token(monkeypatch, tmp_path, i
     assert "secret-token" not in (tmp_path / JSONL_FILENAME).read_text()
 
 
+@pytest.mark.integration
 def test_server_errors_are_retried_without_duplicating_records(tmp_path):
     ingest = _Ingest(statuses=[500])
     try:
@@ -393,6 +420,7 @@ def test_server_errors_are_retried_without_duplicating_records(tmp_path):
     assert [record["seq"] for record in ingest.records()[2:]] == [record["seq"] for record in _jsonl(tmp_path)]
 
 
+@pytest.mark.integration
 def test_service_unavailable_honours_retry_after(tmp_path):
     ingest = _Ingest(statuses=[503], headers={"Retry-After": "0"})
     try:
@@ -406,21 +434,62 @@ def test_service_unavailable_honours_retry_after(tmp_path):
         ingest.stop()
 
 
-def test_records_queued_during_backoff_do_not_trigger_early_retries(tmp_path):
-    ingest = _Ingest(statuses=[503] * 10, headers={"Retry-After": "30"})
-    try:
-        logger = _logger(tmp_path, ingest.url, flush_interval=60, batch_size=2)
-        logger.scalars({"a": 0.0}, step=0)
-        logger.scalars({"a": 1.0}, step=1)
-        _wait_until(lambda: len(ingest.requests) == 1)  # now backing off for 30 s
-        for step in range(2, 50):  # every put sees a full batch waiting
-            logger.scalars({"a": float(step)}, step=step)
-        logger.close()
-        logger.join(0.1)
-    finally:
-        ingest.stop()
+def test_records_queued_during_backoff_do_not_trigger_early_retries(monkeypatch):
+    now = [0.0]
+    waits = queue.Queue()
+    posts = []
 
-    assert len(ingest.requests) == 1
+    class ControlledCondition(threading.Condition):
+        def wait(self, timeout=None):
+            # Report every worker wait; notifications, not elapsed real time, drive it.
+            waits.put(timeout)
+            return super().wait()
+
+    monkeypatch.setattr(
+        metrics_module, "time", SimpleNamespace(monotonic=lambda: now[0], time=time.time, time_ns=time.time_ns)
+    )
+    http = HttpSink("http://metrics.invalid", batch_size=2, flush_budget=1)
+    http._cond = ControlledCondition()
+
+    def unavailable(body):
+        posts.append(json.loads(gzip.decompress(body)))
+        return False, 30.0  # the transport's parsed Retry-After
+
+    monkeypatch.setattr(http, "_post", unavailable)
+    # Start with a full batch so the first observed wait is the retry backoff.
+    for step in range(2):
+        http.put({"kind": "scalars", "step": step, "data": {"a": float(step)}})
+    http.start(lambda: {})
+    try:
+        assert waits.get(timeout=5) == 30
+        for step in range(2, 50, 2):
+            with http._cond:
+                http.put({"kind": "scalars", "step": step, "data": {}})
+                http.put({"kind": "scalars", "step": step + 1, "data": {}})
+            # Acquiring the condition ensures the worker has entered wait(). Each
+            # notification must be processed and re-enter backoff, not retry HTTP.
+            assert waits.get(timeout=5) == 30
+            assert len(posts) == 1
+        with http._cond:
+            now[0] = 29
+            http._cond.notify()
+        assert waits.get(timeout=5) == 1
+        http.close()  # flush deadline is now 30, equal to the retry deadline
+        assert waits.get(timeout=5) == 1
+        with http._cond:
+            now[0] = 30
+            http._cond.notify()
+        http.join(5)
+        assert not http._thread.is_alive()
+        assert len(posts) == 1
+        assert [record["step"] for record in posts[0]["records"]] == [0, 1]
+    finally:
+        # Also stop the worker when an assertion fails: no sender leaks into
+        # subsequent tests or retries after monkeypatch restores the real clock.
+        http._flush_budget = 0
+        http.close()
+        http.join(5)
+        assert not http._thread.is_alive()
 
 
 class _GarbageThenOk:
@@ -455,6 +524,7 @@ class _GarbageThenOk:
         self._sock.close()
 
 
+@pytest.mark.integration
 def test_malformed_replies_are_retried_and_the_sink_keeps_running(tmp_path):
     server = _GarbageThenOk()
     try:
@@ -471,6 +541,7 @@ def test_malformed_replies_are_retried_and_the_sink_keeps_running(tmp_path):
     assert sent == ["run_started", "warmup_done"]
 
 
+@pytest.mark.integration
 def test_unexpected_sender_error_does_not_stop_delivery(tmp_path, ingest):
     calls = []
 
@@ -489,6 +560,7 @@ def test_unexpected_sender_error_does_not_stop_delivery(tmp_path, ingest):
     assert [record["data"]["name"] for record in ingest.records()] == ["warmup_done"]
 
 
+@pytest.mark.integration
 def test_client_errors_drop_the_batch(tmp_path):
     ingest = _Ingest(statuses=[401, 401])
     try:
@@ -508,20 +580,26 @@ def test_client_errors_drop_the_batch(tmp_path):
     assert len(_jsonl(tmp_path)) == 2
 
 
+@pytest.mark.integration
 def test_unreachable_service_keeps_the_jsonl_and_gives_up_within_its_flush_budget(tmp_path):
-    # Emit cost under load is measured by bench/bench_live_metrics.py, not asserted here.
-    http = HttpSink("http://127.0.0.1:9", flush_interval=0.01, backoff=0.01, flush_budget=0.2)
-    logger = MetricsLogger("run-1", jsonl=JsonlSink(tmp_path / JSONL_FILENAME), http=http)
+    # A bound, non-listening socket reserves an endpoint that cannot accept HTTP;
+    # unlike a hard-coded port it cannot accidentally address another service.
+    with socket.socket() as endpoint:
+        endpoint.bind(("127.0.0.1", 0))
+        url = f"http://127.0.0.1:{endpoint.getsockname()[1]}"
+        http = HttpSink(url, flush_interval=0.01, backoff=0.01, flush_budget=0.2)
+        logger = MetricsLogger("run-1", jsonl=JsonlSink(tmp_path / JSONL_FILENAME), http=http)
 
-    for step in range(1000):
-        logger.scalars({"a": float(step)}, step=step)
-    logger.close()
-    logger.join(5)
+        for step in range(1000):
+            logger.scalars({"a": float(step)}, step=step)
+        logger.close()
+        logger.join(5)
 
     assert not http._thread.is_alive()  # gave up after its budget, well before the join timeout
     assert len(_jsonl(tmp_path)) == 1000
 
 
+@pytest.mark.integration
 def test_full_queue_drops_oldest_scalars_and_keeps_events(tmp_path, ingest):
     logger = _logger(tmp_path, ingest.url, flush_interval=60, max_queue=3)
 
@@ -537,6 +615,7 @@ def test_full_queue_drops_oldest_scalars_and_keeps_events(tmp_path, ingest):
     assert len(_jsonl(tmp_path)) == 6
 
 
+@pytest.mark.integration
 def test_idle_sink_sends_heartbeats_only_over_http(tmp_path, ingest):
     logger = _logger(tmp_path, ingest.url, flush_interval=0.01, heartbeat_interval=0.01)
 
@@ -554,25 +633,27 @@ def test_idle_sink_sends_heartbeats_only_over_http(tmp_path, ingest):
 
 
 @pytest.mark.parametrize("name", ["pipeline_pending.json", "pipeline_failed.json"])
-def test_orchestrator_fixtures_share_the_record_format(name, tmp_path, ingest):
+def test_orchestrator_fixtures_share_the_record_format(name, captured_http):
     fixture = json.loads((FIXTURES / name).read_text())
-    logger = MetricsLogger("run-1", http=HttpSink(ingest.url, "fixture-token"))
+    logger = MetricsLogger("run-1", http=HttpSink("http://metrics.invalid", "fixture-token"))
     logger.run("running")
     logger.close()
     logger.join(5)
 
     assert fixture["body"]["schema"] == SCHEMA
-    assert fixture["headers"] == {key: ingest.requests[0]["headers"][key] for key in fixture["headers"]}
+    assert fixture["headers"] == {key: captured_http[0]["headers"][key.lower()] for key in fixture["headers"]}
     for record in fixture["body"]["records"]:
         _assert_v1_record(record)
         assert record["writer"].endswith(":pipeline")
 
 
 @pytest.mark.parametrize("name", ["motrixlab_running.json", "motrixlab_scalars.json", "motrixlab_event.json"])
-def test_logger_reproduces_motrixlab_fixtures(name, tmp_path, ingest):
+def test_logger_reproduces_motrixlab_fixtures(name, captured_http):
     fixture = json.loads((FIXTURES / name).read_text())
     expected = fixture["body"]["records"]
-    logger = MetricsLogger(expected[0]["run_id"], http=HttpSink(ingest.url, "fixture-token", flush_interval=60))
+    logger = MetricsLogger(
+        expected[0]["run_id"], http=HttpSink("http://metrics.invalid", "fixture-token", flush_interval=60)
+    )
 
     for record in expected:
         data = dict(record["data"])
@@ -586,9 +667,9 @@ def test_logger_reproduces_motrixlab_fixtures(name, tmp_path, ingest):
     logger.close()
     logger.join(5)
 
-    assert len(ingest.requests) == 1
-    request = ingest.requests[0]
-    assert fixture["headers"] == {key: request["headers"][key] for key in fixture["headers"]}
+    assert len(captured_http) == 1
+    request = captured_http[0]
+    assert fixture["headers"] == {key: request["headers"][key.lower()] for key in fixture["headers"]}
     sent = request["body"]["records"]
     for record in sent:
         _assert_v1_record(record)

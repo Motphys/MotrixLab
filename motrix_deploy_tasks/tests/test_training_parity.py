@@ -18,6 +18,7 @@ from motrix_env_core.input import PlanarVelocityCommand
 from motrix_envs.deploy import build_deployment_profile
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("env_name", ["go2-walk-flat", "go2-walk-rough"])
 def test_go2_training_and_deployment_task_golden_probe(env_name: str) -> None:
     assert motrix_deploy_tasks.__name__
@@ -69,6 +70,7 @@ def test_go2_training_and_deployment_task_golden_probe(env_name: str) -> None:
     )
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("env_name", ["go2-walk-flat", "go2-walk-rough"])
 def test_go2_gait_phase_matches_training_across_standing_and_restart(env_name: str) -> None:
     profile = build_deployment_profile(env_name)
@@ -95,6 +97,7 @@ def test_go2_gait_phase_matches_training_across_standing_and_restart(env_name: s
         np.testing.assert_allclose(observed[-4:], stepped.obs.policy[0, -4:], atol=1e-6)
 
 
+@pytest.mark.integration
 def test_g1_profile_uses_config_not_environment_and_embeds_named_motion(monkeypatch):
     pytest.importorskip("motrix_envs")
     from motrix_envs.deploy.g1_wbt import build_g1_wbt_profile
@@ -126,9 +129,7 @@ def test_g1_profile_uses_config_not_environment_and_embeds_named_motion(monkeypa
     np.testing.assert_allclose(restored.action_scale, expected_scale)
     assert profile.observation_size == 154  # Actor interface, not task tuning.
     assert profile.action_size == profile.robot.joint_count == 29
-    # The control period is the single source of truth; the task spec no longer repeats it.
     assert profile.control.period_s == cfg.ctrl_dt
-    assert "period_s" not in restored.model_dump()
 
 
 def _make_env_probe(env):

@@ -126,12 +126,12 @@ def test_importing_framework_does_not_import_builtin_environments():
     assert result.returncode == 0, result.stderr
 
 
-def test_environment_backend_is_inferred_from_base_class() -> None:
-    class TorchEnv(ABEnv):
-        """Name-based stand-in: inference matches the base-class *name* in the MRO."""
+@pytest.mark.parametrize("base_class", [DirectEnv, ManagerEnv])
+def test_environment_backend_is_inferred_from_base_class(base_class) -> None:
+    class CustomEnvironment(base_class):
+        pass
 
-    assert registry._infer_sim_backend(DirectEnv) == "np"
-    assert registry._infer_sim_backend(TorchEnv) == "torch"
+    assert registry._infer_sim_backend(CustomEnvironment) == "np"
 
     class UnknownEnv(ABEnv):
         pass

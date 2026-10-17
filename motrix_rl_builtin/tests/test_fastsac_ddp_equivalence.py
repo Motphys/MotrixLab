@@ -13,7 +13,7 @@ log_alpha averaging and optimizer stepping, without any environment.
 
 from __future__ import annotations
 
-import os
+from datetime import timedelta
 
 import pytest
 import torch
@@ -74,12 +74,12 @@ def _fixed_batch(rows: int, seed: int) -> dict:
     }
 
 
-def _worker(rank: int, result_queue, seeds) -> None:
+def _worker(rank: int, result_queue, seeds, rendezvous: str) -> None:
+    import traceback
+
     import torch.distributed as dist
 
-    os.environ.update(MASTER_ADDR="127.0.0.1", MASTER_PORT=str(seeds["port"]))
-    dist.init_process_group("gloo", rank=rank, world_size=2)
-    import traceback
+    torch.set_num_threads(1)
 
     # gloo has no ReduceOp.AVG — emulate it (NCCL supports it in production)
     _orig_all_reduce = dist.all_reduce
@@ -94,6 +94,7 @@ def _worker(rank: int, result_queue, seeds) -> None:
     dist.all_reduce = _avg_all_reduce
 
     try:
+        dist.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=2, timeout=timedelta(seconds=60))
         agent = _make_agent(2, seeds["init"])
         half = _fixed_batch(64, seeds["batch"])
         # rank r sees half r of the SAME global batch
@@ -117,31 +118,58 @@ def _worker(rank: int, result_queue, seeds) -> None:
 
         buffer = io.BytesIO()
         torch.save({k: v for k, v in agent.state_dict().items() if "optimizer" not in k}, buffer)
-        if rank == 0:
-            result_queue.put(buffer.getvalue())
+        result_queue.put((rank, buffer.getvalue() if rank == 0 else None, None))
     except Exception:
-        if rank == 0:
-            result_queue.put({"__error__": traceback.format_exc()})
+        result_queue.put((rank, None, traceback.format_exc()))
+        raise
     finally:
-        dist.destroy_process_group()
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 
-def test_ddp_update_matches_single_process() -> None:
+@pytest.mark.integration
+@pytest.mark.slow
+def test_ddp_update_matches_single_process(tmp_path) -> None:
     """2-rank half-batch + grad AVG == 1-rank full batch, per update step."""
-    seeds = {"init": 1234, "batch": 42, "steps": 3, "port": 29711}
+    import io
+    from queue import Empty
+
+    seeds = {"init": 1234, "batch": 42, "steps": 3}
+    # FileStore accepts a nonexistent path and avoids shared ports entirely.
+    rendezvous = (tmp_path / "ddp-rendezvous").as_uri()
     ctx = mp.get_context("spawn")
     result_queue = ctx.Queue()
-    procs = [ctx.Process(target=_worker, args=(r, result_queue, seeds)) for r in range(2)]
-    for p in procs:
-        p.start()
-    import io
-
-    payload = result_queue.get(timeout=120)
-    if isinstance(payload, dict) and "__error__" in payload:
-        pytest.fail("DDP worker crashed:\n" + payload["__error__"])
-    ddp_state = torch.load(io.BytesIO(payload), weights_only=False)
-    for p in procs:
-        p.join(timeout=60)
+    procs = [ctx.Process(target=_worker, args=(r, result_queue, seeds, rendezvous)) for r in range(2)]
+    started = []
+    results = {}
+    try:
+        for process in procs:
+            process.start()
+            started.append(process)
+        for _ in procs:
+            try:
+                rank, payload, error = result_queue.get(timeout=120)
+            except Empty:
+                pytest.fail(f"DDP workers timed out; exit codes: {[p.exitcode for p in started]}")
+            assert error is None, f"DDP rank {rank} crashed:\n{error}"
+            results[rank] = payload
+        for process in started:
+            process.join(timeout=15)
+            assert not process.is_alive(), f"DDP worker {process.pid} did not exit"
+            assert process.exitcode == 0, f"DDP worker {process.pid} exited with {process.exitcode}"
+        assert set(results) == {0, 1}
+        ddp_state = torch.load(io.BytesIO(results[0]), weights_only=False)
+    finally:
+        for process in started:
+            if process.is_alive():
+                process.terminate()
+        for process in started:
+            process.join(timeout=5)
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=5)
+        result_queue.close()
+        result_queue.join_thread()
 
     single = _make_agent(1, seeds["init"])
     full = _fixed_batch(64, seeds["batch"])

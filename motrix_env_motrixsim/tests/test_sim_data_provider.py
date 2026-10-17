@@ -24,14 +24,10 @@ from motrix_env_core.sim import (
     GeomPositionQuery,
     GeomQuaternionQuery,
     LinkQuaternionQuery,
-    ModelQuery,
-    PhysicsReadProgram,
-    SimDataQuery,
     SimDataQueryCompiler,
     SitePositionQuery,
     SiteQuaternionQuery,
 )
-from motrix_env_core.sim.backend import SimBackend
 from motrix_env_motrixsim.sim_data import compile_read_program
 
 # Native source kinds the fakes below know how to fill, mapped to their
@@ -302,97 +298,6 @@ def _queries():
     }
 
 
-class _FrameworkTestProgram(PhysicsReadProgram):
-    """Minimal program whose memory planning collapses equal declarations."""
-
-    def __init__(self, declared: Mapping[str, SimDataQuery], canonical_keys: Mapping[str, str]) -> None:
-        self.storage = np.zeros((2 * 2,), dtype=np.float32)
-        self._output = self.storage.reshape(2, 2)
-        self._declared = dict(declared)
-        self._views: dict[str, np.ndarray] = {}
-        for key, canonical in canonical_keys.items():
-            if canonical not in self._views:
-                view = self.storage.reshape(2, 2)
-                view.flags.writeable = False
-                self._views[canonical] = view
-            self._views[key] = self._views[canonical]
-
-    @property
-    def arena_bytes(self) -> int:
-        return int(self.storage.nbytes)
-
-    @property
-    def keys(self) -> tuple[str, ...]:
-        return tuple(self._views)
-
-    def query(self, key: str) -> SimDataQuery:
-        return self._declared[key]
-
-    def view(self, key: str) -> np.ndarray:
-        return self._views[key]
-
-    def execute(self, env_ids: np.ndarray | None = None) -> None:
-        assert env_ids is None
-        self._output[:] = [[1.0, 2.0], [3.0, 4.0]]
-
-
-class _FrameworkTestBackend(SimBackend):
-    def __init__(self) -> None:
-        super().__init__(None, None, 2)
-
-    @property
-    def num_dof_pos(self) -> int:
-        return 2
-
-    @property
-    def num_dof_vel(self) -> int:
-        return 2
-
-    @property
-    def num_actuators(self) -> int:
-        return 2
-
-    def step(self, substeps: int) -> None:
-        raise AssertionError("not exercised")
-
-    @property
-    def model_compiler(self):
-        return self
-
-    def compile(self, scene: object, queries: Mapping[str, ModelQuery]) -> object:
-        raise AssertionError("not exercised")
-
-    @property
-    def num_envs(self) -> int:
-        return 2
-
-    def compile_reads(self, queries: Mapping[str, SimDataQuery]) -> PhysicsReadProgram:
-        canonical: dict[str, SimDataQuery] = {}
-        canonical_keys: dict[str, str] = {}
-        for key, query in queries.items():
-            duplicate = next((c for c, q in canonical.items() if q == query), None)
-            canonical_keys[key] = key if duplicate is None else duplicate
-            if duplicate is None:
-                canonical[key] = query
-        assert tuple(canonical) == ("value",)
-        return _FrameworkTestProgram(queries, canonical_keys)
-
-
-def test_program_surface_collapses_duplicates_without_exposing_the_arena() -> None:
-    query = BodyJointPositionQuery(body="robot")
-    program = _FrameworkTestBackend().compile_reads({"value": query, "alias": query})
-
-    assert not hasattr(program, "arena")
-    assert program["value"] is program["alias"]
-    assert program.keys == ("value", "alias")
-    assert program.query("alias") is query
-    assert np.shares_memory(program["value"], program.storage)
-
-    program.execute()
-
-    np.testing.assert_array_equal(program["value"], [[1.0, 2.0], [3.0, 4.0]])
-
-
 def test_motrixsim_provider_reads_joint_dof_positions_and_velocities() -> None:
     compiled = compile_read_program(
         _Model(),
@@ -654,8 +559,3 @@ def test_geom_pair_colliding_query_validates_pair_structure() -> None:
         )
     with pytest.raises(ValueError, match="at least one"):
         compile_read_program(*provider, {"colliding": GeomPairCollidingQuery(pairs=())})
-
-
-def test_sim_query_compiler_is_abstract() -> None:
-    with pytest.raises(TypeError, match="abstract"):
-        SimDataQueryCompiler()

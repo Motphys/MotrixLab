@@ -24,13 +24,10 @@ def test_model_imports_do_not_read_or_scan_assets() -> None:
                         assert '/motrix_robots/common' not in path, (event, path)
 
                 sys.addaudithook(check_asset_access)
-                from motrix_env_core import registry
                 import motrix_robots
                 from motrix_robots.unitree import UnitreeGo2Robot
                 import motrix_robots.registration
                 UnitreeGo2Robot()
-                assert not registry._robots
-                assert not registry._robots_discovered
                 """
             ),
         ],

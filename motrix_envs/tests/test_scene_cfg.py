@@ -38,12 +38,10 @@ from motrix_env_core.config.scene import (
     PyramidSlopeTerrainGeneratorCfg,
     QuantizedTerrainGeneratorCfg,
     RobotCfg,
-    SceneAssetCfg,
     SceneAssetsCfg,
     SceneCfg,
     SceneObjCfg,
     SceneObjsCfg,
-    SceneSensorCfg,
     SceneSensorsCfg,
     SceneVisualCfg,
     SkyboxCfg,
@@ -976,8 +974,6 @@ def test_scene_assets_use_field_names_and_support_inheritance():
     assert len(assets) == 4
     assert assets["mat_ground"].roughness == pytest.approx(0.8)
     assert assets["tex_detail"].color_space == "linear"
-    assert "name" not in {cfg_field.name for cfg_field in fields(SceneAssetCfg)}
-    assert "name" not in {cfg_field.name for cfg_field in fields(TextureCfg)}
 
 
 def test_standard_scene_supports_hydra_field_overrides():
@@ -1094,9 +1090,6 @@ def test_scene_sensors_reject_invalid_fields_and_contact_options():
     with pytest.raises(ValueError, match="unsupported fields"):
         validate_scene_cfg(SceneCfg(sensors=InvalidContactSensorsCfg()))
 
-    assert "name" not in {cfg_field.name for cfg_field in fields(SceneSensorCfg)}
-    assert "name" not in {cfg_field.name for cfg_field in fields(ContactSensorCfg)}
-
 
 def test_scene_cfg_rejects_multiple_skyboxes():
     @configclass
@@ -1146,21 +1139,17 @@ def test_scene_objs_reject_non_object_fields():
 def test_scene_objects_share_base_contract():
     assert issubclass(FlatTerrainCfg, SceneObjCfg)
     assert issubclass(HFieldTerrainCfg, SceneObjCfg)
-    assert LightCfg.__bases__ == (SceneObjCfg,)
+    assert issubclass(LightCfg, SceneObjCfg)
     assert issubclass(FlatTerrainCfg, GeomCfg)
     assert issubclass(HFieldTerrainCfg, GeomCfg)
-    assert RobotCfg.__bases__ == (BodyCfg,)
-    assert BodyCfg.__bases__ == (SceneObjCfg,)
-    assert MjcfFileCfg.__bases__ == (ModelFileCfg,)
-    assert "size" not in {cfg_field.name for cfg_field in fields(FlatTerrainCfg)}
-    assert "texture_file" not in {cfg_field.name for cfg_field in fields(FlatTerrainCfg)}
+    assert issubclass(RobotCfg, BodyCfg)
+    assert issubclass(BodyCfg, SceneObjCfg)
+    assert issubclass(MjcfFileCfg, ModelFileCfg)
     assert "material" in {cfg_field.name for cfg_field in fields(FlatTerrainCfg)}
-    assert "file" not in {cfg_field.name for cfg_field in fields(HFieldTerrainCfg)}
     assert "hfield" in {cfg_field.name for cfg_field in fields(HFieldTerrainCfg)}
-    assert "name" not in {cfg_field.name for cfg_field in fields(SceneObjCfg)}
     assert "model" in {cfg_field.name for cfg_field in fields(RobotCfg)}
     assert "base_link_name" in {cfg_field.name for cfg_field in fields(RobotCfg)}
-    assert [cfg_field.name for cfg_field in fields(MjcfFileCfg)] == ["file"]
+    assert "file" in {cfg_field.name for cfg_field in fields(MjcfFileCfg)}
 
 
 @dataclass

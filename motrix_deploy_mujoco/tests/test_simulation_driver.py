@@ -17,6 +17,8 @@ from motrix_deploy.runtime.scheduler import FixedStepScheduler
 from motrix_deploy_mujoco.runtime import MujocoRuntime
 from motrix_env_core.input import ConstantPlanarVelocityBinding
 
+pytestmark = pytest.mark.integration
+
 
 def bind_task(simulation, task, *, steps=3, period_s=None):
     period_s = simulation.control_period_s if period_s is None else period_s

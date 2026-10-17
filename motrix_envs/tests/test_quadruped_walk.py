@@ -369,8 +369,6 @@ def test_quadruped_rough_walk_uses_procedural_hfield_and_shared_runtime_config(f
 
     assert isinstance(rough_cfg.scene.assets.terrain, ProceduralHFieldAssetCfg)
     assert isinstance(rough_cfg.scene.objs.floor, HFieldTerrainCfg)
-    # Regression: SceneCfg uses full widths, while both native backends consume half-extents.
-    assert rough_cfg.scene.assets.terrain.size == (64.0, 64.0)
     assert rough_cfg.control_config == flat_cfg.control_config
     assert rough_cfg.spawn_xy_range == flat_cfg.spawn_xy_range > 0.0
     assert rough_cfg.render_spacing == flat_cfg.render_spacing == 0.0

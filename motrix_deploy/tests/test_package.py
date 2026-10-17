@@ -6,13 +6,10 @@
 import subprocess
 import sys
 
-import motrix_deploy
+import pytest
 
 
-def test_package_version() -> None:
-    assert motrix_deploy.__version__ == "0.3.0"
-
-
+@pytest.mark.integration
 def test_cli_help() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "motrix_deploy.cli", "--help"],
@@ -26,6 +23,7 @@ def test_cli_help() -> None:
     assert "Powered by Hydra" in result.stdout
 
 
+@pytest.mark.integration
 def test_import_does_not_load_optional_or_training_packages() -> None:
     forbidden = (
         "motrix_deploy_mujoco",

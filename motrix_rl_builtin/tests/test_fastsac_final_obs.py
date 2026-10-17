@@ -268,6 +268,7 @@ def _producer(ring, count):
             time.sleep(0.0001)
 
 
+@pytest.mark.integration
 def test_spawned_producer_and_slow_consumer_preserve_slot_payloads():
     ring = _ring(capacity=5)
     count = 100

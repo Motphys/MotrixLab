@@ -156,7 +156,16 @@ def test_staggered_collectors_backpressure_and_wrap_preserve_final_rows():
 
 
 @pytest.mark.parametrize("n_steps", [1, 3])
-@pytest.mark.parametrize("path", ["cpu", "cuda-staged", "cuda-mixed", "cuda-ipc"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "cpu",
+        *[
+            pytest.param(path, marks=[pytest.mark.integration, pytest.mark.slow])
+            for path in ("cuda-staged", "cuda-mixed", "cuda-ipc")
+        ],
+    ],
+)
 def test_multi_collector_bootstraps_at_each_envs_final_boundary(n_steps, path):
     if path != "cpu" and not torch.cuda.is_available():
         pytest.skip("CUDA unavailable")

@@ -63,6 +63,7 @@ def _write_linear_model(
     onnx.save(model, path)
 
 
+@pytest.mark.integration
 def test_onnx_policy_validates_io_and_runs_float32(tmp_path: Path) -> None:
     path = tmp_path / "policy.onnx"
     _write_linear_model(path)
@@ -78,6 +79,7 @@ def test_onnx_policy_validates_io_and_runs_float32(tmp_path: Path) -> None:
     assert output.dtype == np.float32
 
 
+@pytest.mark.integration
 def test_onnx_policy_accepts_dynamic_model_batch_for_single_sample_runtime(tmp_path: Path) -> None:
     path = tmp_path / "policy.onnx"
     _write_linear_model(path, dynamic_batch=True)
@@ -92,6 +94,7 @@ def test_onnx_policy_accepts_dynamic_model_batch_for_single_sample_runtime(tmp_p
     np.testing.assert_array_equal(output, [4.0, 5.0])
 
 
+@pytest.mark.integration
 def test_onnx_policy_rejects_manifest_name_mismatch(tmp_path: Path) -> None:
     path = tmp_path / "policy.onnx"
     _write_linear_model(path, output_name="actual_action")
@@ -104,6 +107,7 @@ def test_onnx_policy_rejects_manifest_name_mismatch(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.integration
 def test_onnx_policy_rejects_non_finite_input(tmp_path: Path) -> None:
     path = tmp_path / "policy.onnx"
     _write_linear_model(path)
@@ -117,6 +121,7 @@ def test_onnx_policy_rejects_non_finite_input(tmp_path: Path) -> None:
         runtime.infer(np.array([np.nan, 0.0, 0.0, 0.0], dtype=np.float32))
 
 
+@pytest.mark.integration
 def test_onnx_policy_rejects_non_finite_output(tmp_path: Path) -> None:
     path = tmp_path / "policy.onnx"
     _write_linear_model(path, nan_output=True)

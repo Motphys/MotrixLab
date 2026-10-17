@@ -272,13 +272,16 @@ def test_collector_rejects_unsupported_device() -> None:
         resolve_collector_inference_device("meta")
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA device-index test requires a GPU")
-def test_collector_rejects_unavailable_cuda_index() -> None:
-    invalid_device = f"cuda:{torch.cuda.device_count()}"
+def test_collector_rejects_unavailable_cuda_index(monkeypatch) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    invalid_device = "cuda:1"
     with pytest.raises(RuntimeError, match="but only"):
         resolve_collector_inference_device(invalid_device)
 
 
+@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA collector test requires a GPU")
 def test_cuda_collector_uses_flat_weight_copy_and_reuses_staging() -> None:
     collector, source_actor, source_normalizer, weight_tx = _collector("cuda")
@@ -331,6 +334,8 @@ def test_cuda_collector_uses_flat_weight_copy_and_reuses_staging() -> None:
     )
 
 
+@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA collector test requires a GPU")
 def test_cuda_fp32_deterministic_matches_cpu() -> None:
     cpu_collector, _, _, _ = _collector("cpu")
@@ -343,6 +348,8 @@ def test_cuda_fp32_deterministic_matches_cpu() -> None:
     torch.testing.assert_close(cuda_actions, cpu_actions, rtol=2e-4, atol=2e-4)
 
 
+@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA collector test requires a GPU")
 def test_compiled_cuda_stochastic_actions_change_and_stay_in_bounds() -> None:
     collector, _, _, _ = _collector("cuda", compile=True)

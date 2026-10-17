@@ -57,6 +57,7 @@ def _run_with_checkpoint(tmp_path: Path, config: TrainConfig, checkpoint: dict) 
     return run
 
 
+@pytest.mark.integration
 def test_fastsac_export_restores_actor_and_normalizer(tmp_path: Path) -> None:
     from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
     from motrix_rl_builtin.fastsac.networks import Actor

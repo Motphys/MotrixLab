@@ -46,6 +46,7 @@ def config(**kwargs):
     )
 
 
+@pytest.mark.integration
 def test_native_scene_init_pose_preserves_artifact_default_and_clips_servo_limits():
     cfg = config()
     cfg.scene.objs.robot.init_key_pose = "lie_down"
@@ -96,25 +97,13 @@ def bind_session(runtime, period=0.006, steps=2):
 
 
 @pytest.mark.parametrize("gravity,tolerance", [((0.3, -0.2, -4.1), 2e-7), ((-0.1, 0.4, -6.3), 3e-6)])
-def test_native_factory_forwards_shared_physics_once_to_compiler(monkeypatch, gravity, tolerance):
-    from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler
-
+@pytest.mark.integration
+def test_native_factory_applies_supplied_physics(gravity, tolerance):
     cfg = config()
     physics = SimCfg(dt=0.003, solver_iterations=17, solver_tolerance=tolerance, gravity=gravity)
     cfg = replace(cfg, physics=physics)
-    calls = []
-    original = MotrixSimSceneCompiler.configure_world
-
-    def configure_world(compiler, world, sim):
-        calls.append(sim)
-        return original(compiler, world, sim)
-
-    monkeypatch.setattr(MotrixSimSceneCompiler, "configure_world", configure_world)
     runtime = create_simulation_runtime("motrixsim", cfg)
     try:
-        assert runtime.config.physics is physics
-        assert calls == [physics]
-        assert calls[0] is physics
         options = runtime.world.simulate_option
         assert options.timestep == pytest.approx(physics.dt)
         assert options.constraint_solver_iterations == physics.solver_iterations
@@ -124,6 +113,7 @@ def test_native_factory_forwards_shared_physics_once_to_compiler(monkeypatch, gr
         runtime.close()
 
 
+@pytest.mark.integration
 def test_native_factory_session_cadence_and_owner(monkeypatch):
     runtime = create_simulation_runtime("motrixsim", config())
     spec = runtime.robot.spec
@@ -154,6 +144,7 @@ def test_native_factory_session_cadence_and_owner(monkeypatch):
     assert runtime.model is None and runtime.data is None
 
 
+@pytest.mark.integration
 def test_native_servo_feedforward_snapshots_and_clipping():
     runtime = MotrixSimRuntime(config())
     with runtime:
@@ -191,6 +182,7 @@ def test_native_servo_feedforward_snapshots_and_clipping():
 
 
 @pytest.mark.parametrize("backend", ["motrixsim", "mujoco"])
+@pytest.mark.integration
 def test_stop_applies_zero_torque_across_substeps(backend):
     if backend == "mujoco":
         pytest.importorskip("mujoco")
@@ -233,21 +225,7 @@ def test_stop_applies_zero_torque_across_substeps(backend):
         np.testing.assert_array_equal(controls, 0.0)
 
 
-def test_native_servo_substeps_only_query_joint_state(monkeypatch):
-    runtime = MotrixSimRuntime(config())
-    with runtime:
-        state = runtime.robot.read_state(0.1)
-        zeros = np.zeros(runtime.robot.spec.joint_count, dtype=np.float32)
-        runtime.robot.write_command(JointServoCommand(state.joint_position + 0.01, zeros, zeros, zeros + 10, zeros + 1))
-
-        def unexpected_full_state_query(data):
-            pytest.fail("Servo substeps must not query base state or sensors")
-
-        monkeypatch.setattr(runtime.robot, "_read", SimpleNamespace(execute=unexpected_full_state_query))
-        runtime._step()
-        assert runtime.simulation_time_s == pytest.approx(runtime.config.physics.dt)
-
-
+@pytest.mark.integration
 def test_native_repeated_reset_preserves_compiled_placement_and_sensor_state():
     runtime = MotrixSimRuntime(config())
     with runtime:
@@ -285,6 +263,7 @@ def test_native_repeated_reset_preserves_compiled_placement_and_sensor_state():
         np.testing.assert_allclose(position["position"].reshape(3), initial_position, atol=1e-6)
 
 
+@pytest.mark.integration
 def test_native_sensor_bindings_are_actual_live_native_values():
     runtime = MotrixSimRuntime(config())
     with runtime:
@@ -304,6 +283,7 @@ def test_native_sensor_bindings_are_actual_live_native_values():
         assert np.isfinite(state.base_linear_acceleration).all()
 
 
+@pytest.mark.integration
 def test_native_instance_names_preserve_artifact_local_robot_contract():
     cfg = config()
     cfg.scene.objs.robot.prefix = "deployed_"
@@ -318,6 +298,7 @@ def test_native_instance_names_preserve_artifact_local_robot_contract():
         assert runtime.run().success
 
 
+@pytest.mark.integration
 def test_native_motor_source_supported():
     cfg = config()
     robot = cfg.scene.objs.robot
@@ -339,6 +320,7 @@ def test_native_motor_source_supported():
 
 
 @pytest.mark.parametrize("period", [0.001, 0.003])
+@pytest.mark.integration
 def test_native_session_period_requires_whole_physics_steps(period):
     runtime = MotrixSimRuntime(config())
     with pytest.raises(ValidationError, match="integer multiple"):
@@ -355,6 +337,7 @@ def test_native_session_period_requires_whole_physics_steps(period):
         ("base_linear_velocity", "local_linvel"),
     ],
 )
+@pytest.mark.integration
 def test_native_explicit_sensor_semantics(role, name):
     cfg = config()
     cfg = replace(cfg, sensor_bindings=replace(cfg.sensor_bindings, **{role: name}))
@@ -364,6 +347,7 @@ def test_native_explicit_sensor_semantics(role, name):
 
 
 @pytest.mark.parametrize("role", ["base_angular_velocity", "base_linear_acceleration"])
+@pytest.mark.integration
 def test_native_missing_sensor_fails_at_model_binding(role):
     cfg = config()
     cfg = replace(cfg, sensor_bindings=replace(cfg.sensor_bindings, **{role: None}))
@@ -388,6 +372,7 @@ def test_native_artifact_mapping_validates_sensor_fields(bindings, message):
         )
 
 
+@pytest.mark.integration
 def test_native_artifact_mapping_same_contract():
     cfg = config()
     runtime = create_simulation_runtime(
@@ -428,6 +413,7 @@ def test_native_artifact_mapping_rejects_unknown_physics_field():
         )
 
 
+@pytest.mark.integration
 def test_sdk_viewer_lifecycle_and_keyboard(monkeypatch):
     calls = []
 

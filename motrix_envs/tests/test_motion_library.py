@@ -74,6 +74,33 @@ def test_library_concatenates_corpus_in_task_order(tmp_path):
     np.testing.assert_array_equal(clip.reference_body_pos_w, np.concatenate([a.body_pos_w[:, 2], b.body_pos_w[:, 2]]))
     assert clip.joint_pos.shape == (10, 2)
     assert clip.tracked_bodies_ang_vel_w.shape == (10, 2, 3)
+    individual_clips = [
+        WbtMotionClip.create(
+            motion,
+            _TASK_ORDER["joint_names"],
+            _TASK_ORDER["tracked_body_names"],
+            _TASK_ORDER["reference_body_name"],
+            _TASK_ORDER["root_body_name"],
+        )
+        for motion in (a, b)
+    ]
+    for field in (
+        "joint_pos",
+        "joint_vel",
+        "tracked_bodies_pos_w",
+        "tracked_bodies_quat_w",
+        "tracked_bodies_lin_vel_w",
+        "tracked_bodies_ang_vel_w",
+        "root_body_pos_w",
+        "root_body_quat_w",
+        "root_body_lin_vel_w",
+        "root_body_ang_vel_w",
+        "reference_body_pos_w",
+        "reference_body_quat_w",
+    ):
+        np.testing.assert_array_equal(
+            getattr(clip, field), np.concatenate([getattr(part, field) for part in individual_clips])
+        )
 
 
 def test_library_emits_per_frame_clip_boundaries(tmp_path):
@@ -86,9 +113,11 @@ def test_library_emits_per_frame_clip_boundaries(tmp_path):
     assert clip.frame_clip_end.dtype == np.int64
 
 
-def test_library_single_file_matches_clip_create(tmp_path):
+@pytest.mark.parametrize("directory_source", [False, True])
+def test_library_single_file_matches_clip_create(tmp_path, directory_source):
     _write_motion_npz(tmp_path / "only.npz", num_frames=6)
-    library_clip = MotionLibrary([tmp_path / "only.npz"], **_TASK_ORDER).assemble()
+    source = tmp_path if directory_source else tmp_path / "only.npz"
+    library_clip = MotionLibrary([source], **_TASK_ORDER).assemble()
     single_clip = WbtMotionClip.create(
         MotrixMotion(tmp_path / "only.npz"),
         _TASK_ORDER["joint_names"],

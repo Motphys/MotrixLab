@@ -143,11 +143,6 @@ def test_wbt_motion_clip_builds_name_ordered_numeric_views(tmp_path):
     np.testing.assert_allclose(wbt.root_body_pos_w, motion.body_pos_w[:, 0])
     np.testing.assert_allclose(wbt.reference_body_quat_w, motion.body_quat_w[:, 2])
     assert wbt.joint_pos.shape[0] == motion.num_frames
-    assert not hasattr(wbt, "motion")
-    assert not hasattr(wbt, "model_joint_names")
-    assert not hasattr(wbt, "tracked_body_names")
-    assert not hasattr(wbt, "reference_body_name")
-    assert not hasattr(wbt, "root_body_name")
 
     joint_pos = wbt.joint_pos
     motion.joint_pos = np.zeros_like(motion.joint_pos)

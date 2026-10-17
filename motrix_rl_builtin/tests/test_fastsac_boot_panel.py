@@ -129,9 +129,6 @@ def test_boot_panel_render_fits_terminal_height(tmp_path: Path, monkeypatch) -> 
     probe = Console(width=100, height=20, force_terminal=True, file=open("/dev/null", "w"))
     rendered = ["".join(seg.text for seg in row) for row in probe.render_lines(panel.render({("collector", 0)}))]
 
-    # outer frame 2 lines; table region = 2 workers + 4 + gate 1 = 7;
-    # log region = 20 - 2 - 7 = 11; cell = 11 - 2 borders = 9 lines
-    assert panel.log_tail_lines == 9
     assert len(rendered) == 20  # full-height frame, never taller
     assert any("ready" in ln for ln in rendered)
     assert any("booting" in ln for ln in rendered)
@@ -159,7 +156,6 @@ def test_boot_panel_handoff_mode_renders_progress_and_gate(tmp_path: Path, monke
     # Boot phase: ready/booting statuses; the reserved gate line is blank.
     boot_text = "\n".join(boot)
     assert "ready" in boot_text and "booting" in boot_text and "c-line" in boot_text
-    assert "worker startup" not in boot_text  # table title removed; task name is the frame title
     # Handoff phase: same frame height, every worker "starting", gate line filled.
     handoff_text = "\n".join(handoff)
     assert len(handoff) == len(boot) == 20

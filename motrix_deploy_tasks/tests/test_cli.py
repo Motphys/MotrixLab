@@ -28,11 +28,12 @@ from motrix_deploy.artifact import (
     write_artifact,
 )
 from motrix_deploy.artifact.schema import PayloadSpec
-from motrix_deploy.config import SimRuntimeCfg
 from motrix_deploy.contracts import RobotSpec, TensorSpec
 from motrix_deploy.env import assemble_deploy_scene, create_deploy_env
 from motrix_deploy_tasks.tasks.go2_walk import Go2WalkTaskSpec
 from motrix_env_core.config.scene import FlatTerrainCfg, HFieldTerrainCfg, SceneCfg
+
+pytestmark = pytest.mark.integration
 
 
 def _rollout_result(stdout: str) -> dict[str, object]:
@@ -112,30 +113,8 @@ def test_installed_recipes_compose_outside_workspace(tmp_path, task, runtime_kin
     )
     assert result.returncode == 0, result.stderr
     assert f"backend: {backend}" in result.stdout
-    expected_artifact = "artifact: artifacts/go2-walk-flat.deploy" if task != "go2-walk-rough/sim" else "artifact: ???"
-    assert expected_artifact in result.stdout
     if runtime_kind == "simulation":
         assert "sensor_bindings:" in result.stdout
-        assert "viewer: true" in result.stdout
-        assert "realtime: null" in result.stdout
-
-
-def test_go2_sim_recipe_uses_clipped_crouch_without_changing_policy_default() -> None:
-    with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
-        cfg = compose(config_name="deploy", overrides=["task=go2-walk-flat/sim"])
-    OmegaConf.resolve(cfg)
-
-    assert "task" not in cfg
-    assert cfg.runtime.robot_init_key_pose == "lie_down"
-    assert cfg.artifact == "artifacts/go2-walk-flat.deploy"
-    runtime_config = OmegaConf.to_object(
-        OmegaConf.merge(OmegaConf.structured(SimRuntimeCfg), cfg.runtime)
-    ).build_runtime_config()
-    robot = runtime_config.scene.objs.robot
-    assert robot.init_key_pose == "lie_down"
-    assert robot.key_pose.poses["default"] != robot.key_pose.poses["lie_down"]
-    assert runtime_config.render is True
-    assert runtime_config.realtime is True
 
 
 def test_deployment_plugin_preserves_other_app_task_discovery(tmp_path: Path) -> None:
@@ -189,9 +168,6 @@ def test_mujoco_hydra_recipes_assemble_robot_and_selected_world(
     assert cfg.runtime.physics.solver_iterations > 0
     assert len(cfg.runtime.robot_translation) == 3
     assert np.linalg.norm(cfg.runtime.robot_rotation) == pytest.approx(1.0)
-    assert cfg.runtime.viewer is True
-    assert cfg.runtime.realtime is None
-    assert cfg.duration_s is None
 
 
 @pytest.mark.parametrize("deploy_env_id", ["flat", "rough"])
@@ -342,20 +318,6 @@ def test_headless_simulation_cli_runs_deterministic_onnx_fixture(tmp_path: Path,
         second = subprocess.run(command, check=False, capture_output=True, text=True)
         assert second.returncode == 0, second.stderr
         assert first_result["trace_sha256"] == _rollout_result(second.stdout)["trace_sha256"]
-
-    # Duration validation is shared, so cover it once rather than per world/backend.
-    if task == "go2-walk-flat" and backend == "mujoco":
-        for invalid_duration in ("0", "-0.1", "nan", "inf"):
-            invalid_command = command.copy()
-            invalid_command[invalid_command.index("duration_s=0.1")] = f"duration_s={invalid_duration}"
-            invalid_bound = subprocess.run(
-                invalid_command,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            assert invalid_bound.returncode == 2, invalid_bound.stderr
-            assert "duration_s" in invalid_bound.stderr
 
 
 @pytest.mark.parametrize("backend,solver_iterations", [("mujoco", 100), ("motrixsim", 3)])

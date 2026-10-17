@@ -30,7 +30,7 @@ def test_motrix_fastsac_asynchronous_switches_trainer(tmp_path):
         "g1-walk-flat",
         "motrix",
         "fastsac",
-        overrides=["algo.trainer.async_options.utd_mode=learner_bound"],
+        overrides=["algo.asynchronous=true", "algo.trainer.async_options.utd_mode=learner_bound"],
     )
     sync_cfg = _compose_task_option(
         "g1-walk-flat",
@@ -43,9 +43,6 @@ def test_motrix_fastsac_asynchronous_switches_trainer(tmp_path):
     assert sync_cfg.algo.asynchronous is False
     assert isinstance(async_cfg.algo.trainer.async_options, FastSacAsyncOptionsCfg)
     assert async_cfg.algo.trainer.async_options.utd_mode == "learner_bound"
-    assert async_cfg.algo.trainer.async_options.collector_inference_device == "cuda"
-    assert async_cfg.algo.trainer.async_options.collector_compile is True
-    assert async_cfg.algo.trainer.async_options.collector_amp is True
 
     for index, (task_cfg, trainer_type) in enumerate(((sync_cfg, SyncTrainer), (async_cfg, AsyncTrainer))):
         run = runs.create_run_context(

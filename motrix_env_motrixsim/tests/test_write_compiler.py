@@ -32,7 +32,12 @@ def test_write_program_executes_native_program_with_selected_ids() -> None:
 
     program.execute(numpy.asarray([2, 0], dtype=numpy.int64))
 
-    assert native.execute_calls == [(data, (0, 2))]
+    assert len(native.execute_calls) == 1
+    executed_data, selected_ids = native.execute_calls[0]
+    assert executed_data is data
+    assert selected_ids is not None
+    assert len(selected_ids) == 2
+    assert set(selected_ids) == {0, 2}
 
 
 def test_write_program_executes_full_batch_without_env_ids() -> None:

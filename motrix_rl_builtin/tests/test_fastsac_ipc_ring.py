@@ -28,6 +28,8 @@ from motrix_rl_builtin.fastsac.buffer import SimpleReplayBuffer
 CAPACITY, N_ENV, OBS, CRI, ACT = 5, 3, 4, 6, 2
 FEAT = OBS + CRI + ACT + 3
 
+pytestmark = [pytest.mark.integration, pytest.mark.slow]
+
 cuda_only = pytest.mark.skipif(not torch.cuda.is_available(), reason="IPC ring requires a GPU")
 
 

@@ -202,6 +202,7 @@ def test_actuation_rejects_duplicate_motor_indices_and_unknown_joints() -> None:
 
 
 @pytest.mark.parametrize("module", ["config", "sensor"])
+@pytest.mark.integration
 def test_hardware_configuration_imports_without_models_assets_or_sdk(module: str) -> None:
     script = textwrap.dedent(
         f"""

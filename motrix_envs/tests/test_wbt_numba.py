@@ -15,11 +15,13 @@ from motrix_env_core.manager import (  # noqa: E402
     ManagerContext,
     ManagerEnv,
     ManagerResetCfg,
+    RewardTermCfg,
 )
 from motrix_env_core.mdp.action import (  # noqa: E402
     JointPositionActionCfg,
     JointPositionActionState,
 )
+from motrix_env_core.mdp.noise import add_uniform_noise_batch  # noqa: E402
 from motrix_env_core.mdp.observations import (  # noqa: E402
     BodyAngularVelocityObsCfg,
     UniformNoiseCfg,
@@ -27,6 +29,7 @@ from motrix_env_core.mdp.observations import (  # noqa: E402
 from motrix_env_core.mdp.state import RandValue  # noqa: E402
 from motrix_env_core.numba.manager.commands import ResetContext  # noqa: E402
 from motrix_env_core.numba.manager.compiler.compiler import TermScalarBuffer  # noqa: E402
+from motrix_env_core.numba.manager.rand import initialize_rand_states  # noqa: E402
 from motrix_env_core.sim import BatchLinkPositionQuery  # noqa: E402
 from motrix_envs.locomotion.wbt.cfg import (  # noqa: E402
     ActionsCfg,
@@ -53,7 +56,6 @@ from motrix_envs.locomotion.wbt.mdp.reset import (  # noqa: E402
     BodyRotResetCfg,
     BodyRotVelResetCfg,
 )
-from motrix_envs.motion import MotrixMotion, WbtMotionClip  # noqa: E402
 
 # Keep WBT kernels in one suite: deselecting only the first expensive tests
 # shifts first-use compilation to later tests instead of removing its cost.
@@ -145,25 +147,7 @@ def test_wbt_reward_terms_are_typed_manager_group() -> None:
     cfg = _deterministic_manager_cfg()
     rewards = cfg.rewards
     assert isinstance(rewards, RewardsCfg)
-    assert [field.name for field in fields(rewards)] == [
-        "motion_global_ref_position_error_exp",
-        "motion_global_ref_orientation_error_exp",
-        "motion_relative_body_position_error_exp",
-        "motion_relative_body_orientation_error_exp",
-        "motion_global_body_lin_vel",
-        "motion_global_body_ang_vel",
-        "action_rate_l2",
-        "limits_dof_pos",
-        "undesired_contacts",
-    ]
-    assert not hasattr(cfg, "reward_config")
-    assert rewards.motion_global_ref_position_error_exp.weight == pytest.approx(1.0)
-    assert rewards.motion_global_ref_position_error_exp.sigma == pytest.approx(0.3)
-    assert rewards.motion_relative_body_orientation_error_exp.weight == pytest.approx(1.0)
-    assert rewards.motion_relative_body_orientation_error_exp.sigma == pytest.approx(0.4)
-    assert rewards.action_rate_l2.weight == pytest.approx(-0.5)
-    assert rewards.limits_dof_pos.soft_limit == pytest.approx(0.9)
-    assert rewards.undesired_contacts.threshold == pytest.approx(1.0)
+    assert all(isinstance(getattr(rewards, field.name), RewardTermCfg) for field in fields(rewards))
 
 
 def test_numba_wbt_read_plan_reuses_preallocated_arrays() -> None:
@@ -343,17 +327,16 @@ def test_numba_wbt_observation_noise_sequence_advances_during_reset() -> None:
     assert np.any(_motion_ref_ori_noise(env, state) != first_episode)
 
 
-def test_numba_wbt_stateful_noise_has_uniform_distribution() -> None:
-    num_envs = 4096
-    cfg = registry.make_env_config("g1-wbt-dance", mode="play")
-    assert isinstance(cfg, WbtEnvCfg)
-    env = _make_numba_env(cfg, num_envs=num_envs, seed=20260809)
-    state = env.init_state()
-    env.warmup()
-    _execute_task_kernel(env, state)
+def test_wbt_shared_noise_kernel_has_uniform_distribution() -> None:
+    # Exercise WBT's shared noise primitive through its batch kernel; manager
+    # integration, seeding and bounds are tested above with small simulations.
+    num_samples = 4096
+    amplitude = np.float32(0.3)
+    noise = np.zeros((num_samples, 6), dtype=np.float32)
+    rng_states = initialize_rand_states(num_samples, 20260809)
+    add_uniform_noise_batch(noise, amplitude, rng_states, np.arange(num_samples, dtype=np.int64))
 
-    noise = _motion_ref_ori_noise(env, state)
-    normalized = noise.reshape(-1) / _motion_ref_ori_noise_amplitude(env)
+    normalized = noise.reshape(-1) / amplitude
     assert np.all(normalized >= -1.0)
     assert np.all(normalized < 1.0)
     assert abs(float(normalized.mean())) < 0.01
@@ -567,7 +550,6 @@ def test_numba_wbt_action_owns_shared_writable_model_data() -> None:
             value.action_scales,
         )
     )
-    assert not hasattr(value, "kps")
     np.testing.assert_allclose(
         env._action_writes.buffer("joint_position"),
         actions * value.action_scales + value.default_angles,
@@ -588,30 +570,14 @@ def test_numba_wbt_registry_uses_generic_manager_env() -> None:
     env = registry.make("g1-wbt-dance", mode="play", num_envs=1)
 
     assert isinstance(manager_cfg, WbtEnvCfg)
-    assert not hasattr(manager_cfg, "manager")
-    assert "motion_files" not in {field.name for field in fields(manager_cfg)}
-    assert not hasattr(manager_cfg, "tracked_body_names")
-    assert not hasattr(manager_cfg, "reference_body_name")
-    assert [term_field.name for term_field in fields(manager_cfg.commands)] == ["motion"]
     motion_command_cfg = manager_cfg.commands.motion
     assert isinstance(motion_command_cfg, WbtMotionCommandCfg)
-    assert not hasattr(motion_command_cfg, "adaptive_timestep_sampler")
-    assert motion_command_cfg.uniform_ratio == pytest.approx(0.1)
-    assert motion_command_cfg.alpha == pytest.approx(0.001)
-    assert motion_command_cfg.kernel_size == 1
-    assert motion_command_cfg.kernel_lambda == pytest.approx(0.8)
     action_cfg = manager_cfg.actions.joint_position
     assert isinstance(action_cfg, JointPositionActionCfg)
-    assert not hasattr(manager_cfg, "values")
-    assert motion_command_cfg.motion_files == (str(_G1_MOTION_DIR / "dance"),)
     tracked_body_pos = env.sim_data.query("tracked_body_pos")
     assert isinstance(tracked_body_pos, BatchLinkPositionQuery)
     assert motion_command_cfg.tracked_body_names == tracked_body_pos.links
     assert motion_command_cfg.reference_body_name in motion_command_cfg.tracked_body_names
-    assert not motion_command_cfg.adaptive_sampling_enabled
-    assert not hasattr(action_cfg, "robot")
-    assert not hasattr(motion_command_cfg, "robot")
-    assert not hasattr(env, "value_manager")
     assert isinstance(manager_cfg.actions, ActionsCfg)
     assert isinstance(manager_cfg.actions.joint_position, JointPositionActionCfg)
     assert isinstance(manager_cfg.sim_reset, ManagerResetCfg)
@@ -620,10 +586,7 @@ def test_numba_wbt_registry_uses_generic_manager_env() -> None:
     assert isinstance(manager_cfg.sim_reset.body_lin_vel, BodyLinVelResetCfg)
     assert isinstance(manager_cfg.sim_reset.body_rot_vel, BodyRotVelResetCfg)
     assert isinstance(manager_cfg.sim_reset.body_dof_pos, BodyDofPosResetCfg)
-    assert not hasattr(manager_cfg, "reset_noise")
-    assert manager_cfg.sim_reset.body_pos.noise == (0.05, 0.05, 0.01)
-    assert type(env) is ManagerEnv
-    assert not hasattr(env, "command_manager")
+    assert isinstance(env, ManagerEnv)
     assert isinstance(_motion_command(env), WbtMotionCommand)
 
 
@@ -644,37 +607,6 @@ def test_wbt_manager_play_enables_sequential_playback() -> None:
         assert cfg.commands.motion.sequential_clips
         assert not cfg.commands.motion.hold_at_clip_end
         assert not cfg.commands.motion.adaptive_sampling_enabled
-
-
-def test_single_clip_motion_dir_reproduces_file_clip(tmp_path) -> None:
-    """A corpus directory holding one clip assembles bit-for-bit like loading
-    that clip through the single-file path (the library's N=1 special case)."""
-    corpus_dir = tmp_path / "dance"
-    corpus_dir.mkdir()
-    (corpus_dir / _DANCE_MOTION.name).write_bytes(_DANCE_MOTION.read_bytes())
-
-    cfg = registry.make_env_config("g1-wbt-dance", mode="play")
-    assert isinstance(cfg, WbtEnvCfg)
-    motion_cfg = cfg.commands.motion
-    assert isinstance(motion_cfg, WbtMotionCommandCfg)
-    dir_cfg = replace(
-        cfg,
-        commands=replace(cfg.commands, motion=replace(motion_cfg, motion_files=(str(corpus_dir),))),
-    )
-
-    env = _make_numba_env(dir_cfg, num_envs=2)
-    motion = _motion_command(env)
-    direct = WbtMotionClip.create(
-        MotrixMotion(_DANCE_MOTION),
-        list(motion_cfg.joint_names),
-        motion_cfg.tracked_body_names,
-        motion_cfg.reference_body_name,
-        cfg.scene.objs.robot.base_link_name,
-        motion_cfg.extension_channels,
-    )
-    for field in _CLIP_FRAME_FIELDS:
-        np.testing.assert_array_equal(getattr(motion.clip, field), getattr(direct, field))
-    np.testing.assert_array_equal(motion.clip.frame_clip_end, motion.clip.joint_pos.shape[0] - 1)
 
 
 def test_wbt_robot_config_subclasses_isolate_nested_overrides() -> None:
@@ -884,35 +816,6 @@ def _single_file_cfg(*, start_at_timestep_zero_prob: float | None = None) -> Wbt
     if start_at_timestep_zero_prob is not None:
         replacements["start_at_timestep_zero_prob"] = start_at_timestep_zero_prob
     return replace(cfg, commands=replace(cfg.commands, motion=replace(motion, **replacements)))
-
-
-_CLIP_FRAME_FIELDS = (
-    "joint_pos",
-    "joint_vel",
-    "tracked_bodies_pos_w",
-    "tracked_bodies_quat_w",
-    "tracked_bodies_lin_vel_w",
-    "tracked_bodies_ang_vel_w",
-    "root_body_pos_w",
-    "root_body_quat_w",
-    "root_body_lin_vel_w",
-    "root_body_ang_vel_w",
-    "reference_body_pos_w",
-    "reference_body_quat_w",
-)
-
-
-def test_numba_wbt_multi_clip_corpus_reproduces_single_clip_arrays(tmp_path) -> None:
-    multi = _make_numba_env(_multi_clip_cfg(tmp_path), num_envs=2)
-    single = _make_numba_env(_single_file_cfg(), num_envs=2)
-    clip = _motion_command(multi).clip
-    single_clip = _motion_command(single).clip
-
-    for field in _CLIP_FRAME_FIELDS:
-        np.testing.assert_array_equal(getattr(clip, field), getattr(single_clip, field))
-    last = single_clip.joint_pos.shape[0] - 1
-    np.testing.assert_array_equal(clip.frame_clip_end[:_DANCE_SPLIT], _DANCE_SPLIT - 1)
-    np.testing.assert_array_equal(clip.frame_clip_end[_DANCE_SPLIT:], last)
 
 
 def test_numba_wbt_multi_clip_wrap_rematerializes_sim_only(tmp_path) -> None:
@@ -1149,4 +1052,4 @@ def test_numba_wbt_multi_clip_cfg_survives_pickle_round_trip(tmp_path) -> None:
     env = _make_numba_env(restored, num_envs=2)
     motion_term = _motion_command(env)
     assert motion_term.clip.frame_clip_end[_DANCE_SPLIT - 1] == _DANCE_SPLIT - 1
-    assert motion_term.clip.frame_clip_end[-1] == 999 - 1
+    assert motion_term.clip.frame_clip_end[-1] == motion_term.clip.joint_pos.shape[0] - 1

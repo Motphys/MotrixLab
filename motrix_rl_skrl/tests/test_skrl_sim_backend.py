@@ -45,9 +45,7 @@ def _make_env(sim_backend: str):
         )
     else:
         env = Mock(spec=TorchEnv)
-        env.device = (
-            torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
-        )
+        env.device = torch.device("cpu")
         state = TorchEnvState(
             data=None,
             obs=TorchObs(torch.zeros((_NUM_ENVS, _OBS_DIM), device=env.device)),

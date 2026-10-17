@@ -227,8 +227,16 @@ tensorboard --logdir runs/{env-name}
 ### 测试
 
 ```bash
-python -m pytest
+# 与 PR CI 一致的快速测试（不执行集成、慢速或 Numba 编译测试）
+python -m pytest -m "not slow and not integration and not numba"
+# CPU 编译回归、跨模块/进程集成分别执行
+python -m pytest -m "not integration and (slow or numba)"
+python -m pytest -m integration
 ```
+
+`integration` 包含真实 HTTP、子进程/分布式、ONNX round-trip 及完整 simulator 集成等跨系统契约；
+依赖要求由对应 package/测试声明。真实 GPU 测试同样标记为 `integration`，仅在配置好运行时的专用环境执行；
+无 GPU 时的 skip 不替代执行分层。完整执行不加 `-m`，会包含这些测试。
 
 RL 测试按所有权组织：`motrix_rl/tests` 覆盖公共契约与控制面；`motrix_rl_builtin/tests`、
 `motrix_rl_skrl/tests`、`motrix_rl_rslrl/tests` 覆盖各插件实现；根目录 `tests/` 覆盖 workspace CLI 和 task 配置集成。

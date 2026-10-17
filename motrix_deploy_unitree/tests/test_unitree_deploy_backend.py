@@ -1077,6 +1077,7 @@ def test_joint_control_cli_dispatches_artifact_and_motion_defaults(monkeypatch) 
     assert calls[0]["return_duration"] == pytest.approx(2.0)
 
 
+@pytest.mark.integration
 def test_plugin_runtime_uses_production_interface_with_injected_sdk(monkeypatch) -> None:
     bus = _Bus()
     monkeypatch.setattr("motrix_deploy_unitree.interface._load_sdk_bindings", bus.sdk)

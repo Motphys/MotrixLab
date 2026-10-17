@@ -56,9 +56,7 @@ def _make_env(sim_backend: str):
         )
     else:
         env = Mock(spec=TorchEnv)
-        env.device = (
-            torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
-        )
+        env.device = torch.device("cpu")
         state = TorchEnvState(
             data=None,
             obs=TorchObs(torch.zeros((_NUM_ENVS, _OBS_DIM), device=env.device)),
@@ -285,6 +283,7 @@ def _collect_in_spawn(sim_backend: str, tmp_path) -> tuple[torch.Tensor, ...]:
     return tuple(tensor.clone() for tensor in views)
 
 
+@pytest.mark.integration
 @pytest.mark.skipif(
     platform.machine().lower() not in {"amd64", "x86_64"},
     reason="FastSAC async shared memory currently supports x86-64 only",
