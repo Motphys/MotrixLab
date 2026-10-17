@@ -163,7 +163,7 @@ MotrixLab 会在解析 framework 前，从这个 group 加载已安装的 entry 
 
 ## Step 5：添加 Hydra 训练配置
 
-Provider 注册时会自动安装 `MyPpoCfg` 对应的结构化 schema。然后添加算法默认值：
+Provider 注册时会自动安装 `MyPpoCfg` 对应的结构化 schema。自定义算法与 Task YAML 保留在 workspace 的 `configs/` 下；内置算法默认配置位于 `motrix_rl/src/motrix_rl/configs/algo_base/`。然后添加自定义算法默认值：
 
 ```yaml
 # configs/algo_base/myrl.ppo.yaml
@@ -201,7 +201,7 @@ seed: 42
 如果后端已经在启动路径中完成注册，可以直接用 CLI：
 
 ```bash
-python scripts/train.py task=cartpole/myrl.ppo
+mxtrain task=cartpole/myrl.ppo
 ```
 
 如果是外部实验包，使用自己的 Hydra config root，并在进入训练入口前导入 backend 注册模块。无需额外的 Python task registry。

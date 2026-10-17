@@ -69,13 +69,13 @@ python scripts/view.py env=pendulum
 
 ```bash
 # Train with default parameters
-python scripts/train.py task=pendulum/skrl.ppo
+mxtrain task=pendulum/skrl.ppo
 
 # Customize parallel environments
-python scripts/train.py task=pendulum/skrl.ppo num_envs=1024
+mxtrain task=pendulum/skrl.ppo num_envs=1024
 
 # Enable rendering during training
-python scripts/train.py task=pendulum/skrl.ppo render=true
+mxtrain task=pendulum/skrl.ppo render=true
 ```
 
 ### 3. View Training Progress
@@ -88,10 +88,10 @@ tensorboard --logdir runs/pendulum
 
 ```bash
 # Auto-discover best policy (recommended)
-python scripts/play.py env=pendulum
+mxplay env=pendulum
 
 # Manually specify a checkpoint from a metadata-backed run
-python scripts/play.py env=pendulum policy=/path/to/run/checkpoints/policy-file
+mxplay env=pendulum policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **Tip**: Policies are auto-selected from `runs/pendulum/`. Use `policy=...` to select a checkpoint whose parent run contains `metadata.json`.

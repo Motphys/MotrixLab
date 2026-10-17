@@ -121,7 +121,7 @@ python scripts/view.py env=point_mass
 ### 2. 开始训练
 
 ```bash
-python scripts/train.py task=point_mass/skrl.ppo
+mxtrain task=point_mass/skrl.ppo
 ```
 
 ### 3. 查看训练进度
@@ -133,7 +133,7 @@ tensorboard --logdir runs/point_mass
 ### 4. 测试训练结果
 
 ```bash
-python scripts/play.py env=point_mass
+mxplay env=point_mass
 ```
 
 ---

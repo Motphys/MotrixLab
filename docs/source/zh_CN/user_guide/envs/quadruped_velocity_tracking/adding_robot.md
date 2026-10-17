@@ -193,7 +193,7 @@ SKRL 配置选择 `/algo_base@algo: skrl.ppo`，并将 `task.rllib` 设为 `skrl
 python scripts/view.py robot=<robot-config-id>
 python scripts/view.py env=<robot>-walk-flat
 python scripts/view.py env=<robot>-walk-rough
-python scripts/train.py task=<robot>-walk-flat/rslrl.ppo
+mxtrain task=<robot>-walk-flat/rslrl.ppo
 ```
 
 预览时重点检查默认姿态、动作方向、四脚接触、足端位置参考系和粗糙地形出生高度。

@@ -129,7 +129,7 @@ Task for the same robot first, and tune algorithm hyperparameters only after the
 Use a small smoke test for Hydra composition, registry creation, tensor shapes, and the training path:
 
 ```bash
-python scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac \
+mxtrain task=g1-wbt-dance1-subject1/motrix.fastsac \
   algo.asynchronous=true num_envs=64 algo.trainer.num_learning_iterations=100
 ```
 
@@ -137,13 +137,13 @@ Check for missing motion, joint, or body names; systematic NaNs, joint-limit vio
 reset; and verify that `state.reward_terms` and `state.metrics` reach the logs. Then start the default training run:
 
 ```bash
-python scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac algo.asynchronous=true
+mxtrain task=g1-wbt-dance1-subject1/motrix.fastsac algo.asynchronous=true
 ```
 
 After training creates a metadata-backed run, play the policy:
 
 ```bash
-python scripts/play.py env=g1-wbt-dance1-subject1 num_envs=16
+mxplay env=g1-wbt-dance1-subject1 num_envs=16
 ```
 
 Play mode starts at frame 0, disables reset noise and adaptive sampling, and restarts from the beginning at the clip end. A
@@ -158,5 +158,5 @@ separate play environment is not required.
 -   Small-scale observation, action, reward, terminated, and truncated shapes are correct.
 -   Resets do not systematically produce NaNs, hard-limit violations, or immediate bad tracking.
 -   Reward, termination, and adaptive-sampling metrics reach the logs.
--   `play.py` discovers the run and plays the policy from frame 0 through the complete clip.
+-   `mxplay` discovers the run and plays the policy from frame 0 through the complete clip.
 -   The new motion includes source and license information and is managed through Git LFS.

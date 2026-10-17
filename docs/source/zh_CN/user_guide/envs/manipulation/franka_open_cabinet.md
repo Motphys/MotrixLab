@@ -234,13 +234,13 @@ Franka Emika Panda 是一个 7 自由度机械臂，由以下主要部分组成�
 ### 训练
 
 ```bash
-python scripts/train.py task=franka-open-cabinet/skrl.ppo
+mxtrain task=franka-open-cabinet/skrl.ppo
 ```
 
 ### 策略评估
 
 ```bash
-python scripts/play.py env=franka-open-cabinet
+mxplay env=franka-open-cabinet
 ```
 
 ### TensorBoard

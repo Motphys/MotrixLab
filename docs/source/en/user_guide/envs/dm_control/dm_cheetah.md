@@ -108,7 +108,7 @@ python scripts/view.py env=dm-cheetah
 ### 2. Start Training
 
 ```bash
-python scripts/train.py task=dm-cheetah/skrl.ppo
+mxtrain task=dm-cheetah/skrl.ppo
 ```
 
 ### 3. View Training Progress
@@ -120,7 +120,7 @@ tensorboard --logdir runs/dm-cheetah
 ### 4. Test Training Results
 
 ```bash
-python scripts/play.py env=dm-cheetah
+mxplay env=dm-cheetah
 ```
 
 ---

@@ -8,7 +8,7 @@ from pathlib import Path
 import onnx
 import pytest
 import torch
-from hydra import compose, initialize_config_dir
+from hydra import compose, initialize_config_module
 from hydra.core.global_hydra import GlobalHydra
 from tensordict import TensorDict
 
@@ -31,8 +31,10 @@ def _train_config(task: str, overrides: list[str]) -> TrainConfig:
     from motrix_rl.plugins import load_plugins
 
     load_plugins()
-    with initialize_config_dir(version_base=None, config_dir=CONFIG_DIR):
-        config = compose(config_name="train", overrides=[f"task={task}", *overrides])
+    with initialize_config_module(version_base=None, config_module="motrix_rl.configs"):
+        config = compose(
+            config_name="train", overrides=[f"hydra.searchpath=[file://{CONFIG_DIR}]", f"task={task}", *overrides]
+        )
     return to_typed_config(config, TrainConfig)
 
 

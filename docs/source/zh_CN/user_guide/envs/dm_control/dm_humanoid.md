@@ -193,9 +193,9 @@ python scripts/view.py env=dm-humanoid-run
 ### 2. 开始训练
 
 ```bash
-python scripts/train.py task=dm-humanoid-stand/skrl.ppo
-python scripts/train.py task=dm-humanoid-walk/skrl.ppo
-python scripts/train.py task=dm-humanoid-run/skrl.ppo
+mxtrain task=dm-humanoid-stand/skrl.ppo
+mxtrain task=dm-humanoid-walk/skrl.ppo
+mxtrain task=dm-humanoid-run/skrl.ppo
 ```
 
 ### 3. 查看训练进度
@@ -207,9 +207,9 @@ tensorboard --logdir runs/dm-humanoid-walk
 ### 4. 测试训练结果
 
 ```bash
-python scripts/play.py env=dm-humanoid-stand
-python scripts/play.py env=dm-humanoid-walk
-python scripts/play.py env=dm-humanoid-run
+mxplay env=dm-humanoid-stand
+mxplay env=dm-humanoid-walk
+mxplay env=dm-humanoid-run
 ```
 
 ---

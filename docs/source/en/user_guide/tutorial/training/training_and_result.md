@@ -12,16 +12,16 @@ A Task recipe selects an RL provider, but it does not install that provider. If 
 
 ### Selecting a Task
 
-The training entry point uses Hydra's `task=<environment>/<framework>.<algorithm>[.<backend>]` option. A Task selects the environment, RL provider, runtime settings, and algorithm hyperparameters as one reproducible recipe:
+The training entry point requires Hydra's `task=<environment>/<framework>.<algorithm>[.<backend>]` option: the packaged configuration uses a `task: null` placeholder so `--help` works without a Task, but actual training requires an explicit Task. A Task selects the environment, RL provider, runtime settings, and algorithm hyperparameters as one reproducible recipe:
 
 ```bash
-# Train the default Cartpole SKRL PPO Task
-python scripts/train.py task=cartpole/skrl.ppo
+# Select the Cartpole SKRL PPO Task explicitly
+mxtrain task=cartpole/skrl.ppo
 
 # Select another framework or algorithm
-python scripts/train.py task=cartpole/rslrl.ppo
-python scripts/train.py task=g1-walk-flat/motrix.fastsac
-python scripts/train.py task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
+mxtrain task=cartpole/rslrl.ppo
+mxtrain task=g1-walk-flat/motrix.fastsac
+mxtrain task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
 ```
 
 Built-in RL methods and their training backends:
@@ -32,59 +32,59 @@ Built-in RL methods and their training backends:
 | `rslrl.ppo`      | `torch`          | RSLRL PPO                                                   |
 | `motrix.fastsac` | `torch`          | FastSAC; `algo.asynchronous` selects the execution topology |
 
-Run `python scripts/train.py --help` to list the Tasks available in the current checkout. See [Task Configuration and CLI Overrides](task_config.md) for the Task file layout and override rules.
+Run these commands from the repository root: the CLI discovers `./configs` in the current working directory when it exists, without searching parent directories. Run `mxtrain --help` to list the Tasks available in the current checkout. See [Task Configuration and CLI Overrides](task_config.md) for the Task file layout and override rules.
 
 ### Selecting Training and Simulation Backends
 
 ```bash
 # Override the training backend (auto-selected when task.train_backend is null)
-python scripts/train.py task=cartpole/skrl.ppo task.train_backend=jax
-python scripts/train.py task=cartpole/skrl.ppo task.train_backend=torch
+mxtrain task=cartpole/skrl.ppo task.train_backend=jax
+mxtrain task=cartpole/skrl.ppo task.train_backend=torch
 
 # Specify the simulator injected into manager-based environments
-python scripts/train.py task=g1-wbt-dance sim=motrixsim
+mxtrain task=g1-wbt-dance/motrix.fastsac sim=motrixsim
 ```
 
 ### Training Scale and Random Seed
 
 ```bash
 # Number of parallel environments
-python scripts/train.py task=cartpole/skrl.ppo num_envs=1024
+mxtrain task=cartpole/skrl.ppo num_envs=1024
 
 # Fixed random seed (reproducible) / choose a random seed at runtime
-python scripts/train.py task=cartpole/skrl.ppo seed=42
-python scripts/train.py task=cartpole/skrl.ppo seed=null
+mxtrain task=cartpole/skrl.ppo seed=42
+mxtrain task=cartpole/skrl.ppo seed=null
 ```
 
 ```{note}
-Hydra can override typed algorithm fields directly. For example: `algo.agent.learning_rate=5e-4`. Field paths depend on the selected Task; the complete defaults are in `configs/algo_base/`.
+Hydra can override typed algorithm fields directly. For example: `algo.agent.learning_rate=5e-4`. Field paths depend on the selected Task; the complete defaults are in `motrix_rl/src/motrix_rl/configs/algo_base/`.
 ```
 
 ### Auto-play and Resume
 
 ```bash
 # After training finishes successfully, play the best policy of this run
-python scripts/train.py task=g1-walk-flat/motrix.fastsac play=true
+mxtrain task=g1-walk-flat/motrix.fastsac play=true
 
 # Resume from a run directory or a checkpoint
-python scripts/train.py task=g1-walk-flat/motrix.fastsac \
+mxtrain task=g1-walk-flat/motrix.fastsac \
   resume=/path/to/run
 
 # Enable rendering to monitor the training process
-python scripts/train.py task=cartpole/skrl.ppo render=true
+mxtrain task=cartpole/skrl.ppo render=true
 ```
 
-Training and playback are separate operations: `play=true` replays the best policy after a successful training run, while `scripts/play.py` reopens a saved run later. Export a trained policy artifact with:
+Training and playback are separate operations: `play=true` replays the best policy after a successful training run, while `mxplay` reopens a saved run later. Export a trained policy artifact with:
 
 ```bash
-python scripts/export_onnx.py run_dir=/path/to/run output=/tmp/policy.onnx
+mxexport onnx run_dir=/path/to/run output=/tmp/policy.onnx
 ```
 
 ### Common Hydra Overrides
 
 | Override             | Description                                                               | Default source        |
 | -------------------- | ------------------------------------------------------------------------- | --------------------- |
-| `task=...`           | Environment, framework, algorithm, backend delta                          | `cartpole/skrl.ppo`   |
+| `task=...`           | Environment, framework, algorithm, backend delta                          | Required for training      |
 | `task.train_backend` | Training backend (`jax` / `torch`)                                        | Selected Task         |
 | `sim`                | Simulator for manager environments; leave unset for np-style environments | `null` / auto-select  |
 | `num_envs`           | Number of parallel training environments                                  | Selected Task         |
@@ -115,14 +115,14 @@ Playback (play) does not require re-specifying the RL method — the correct `rl
 
 ```bash
 # Auto-discover and play the best policy of the latest run (recommended)
-python scripts/play.py env=cartpole
+mxplay env=cartpole
 
 # Specify a checkpoint (must be able to locate metadata.json above it)
-python scripts/play.py env=g1-walk-flat \
+mxplay env=g1-walk-flat \
   policy=/path/to/run/checkpoints/latest.pt
 
 # Specify the number of playback environments
-python scripts/play.py env=cartpole num_envs=100
+mxplay env=cartpole num_envs=100
 ```
 
 ```{note}

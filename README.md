@@ -98,7 +98,7 @@ Activate the installed environment (Windows PowerShell: `.venv\Scripts\Activate.
 
 ```bash
 source .venv/bin/activate
-python scripts/train.py task=microduck-walk-flat/motrix.fastsac play=true
+mxtrain task=microduck-walk-flat/motrix.fastsac play=true
 ```
 
 While training, the built-in dashboard shows live run progress, episode statistics, throughput, rewards, and system health:
@@ -124,7 +124,7 @@ Training finishes in minutes: mean return and episode length typically converge 
 Replay the latest trained policy without retraining (for example, after stopping training early with Ctrl+C):
 
 ```bash
-python scripts/play.py env=microduck-walk-flat
+mxplay env=microduck-walk-flat
 ```
 
 A trained microduck policy replayed in the viewer:

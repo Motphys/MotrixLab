@@ -70,13 +70,13 @@ python scripts/view.py env=acrobot
 
 ```bash
 # 使用默认参数训练
-python scripts/train.py task=acrobot/skrl.ppo
+mxtrain task=acrobot/skrl.ppo
 
 # 自定义并行环境数
-python scripts/train.py task=acrobot/skrl.ppo num_envs=1024
+mxtrain task=acrobot/skrl.ppo num_envs=1024
 
 # 开启训练时渲染
-python scripts/train.py task=acrobot/skrl.ppo render=true
+mxtrain task=acrobot/skrl.ppo render=true
 ```
 
 ### 3. 查看训练进度
@@ -89,10 +89,10 @@ tensorboard --logdir runs/acrobot
 
 ```bash
 # 自动发现最佳策略（推荐）
-python scripts/play.py env=acrobot
+mxplay env=acrobot
 
 # 手动指定带 metadata 的 run 中的 checkpoint
-python scripts/play.py env=acrobot policy=/path/to/run/checkpoints/policy-file
+mxplay env=acrobot policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **提示**：策略会从 `runs/acrobot/` 中自动选择。使用 `policy=...` 时，checkpoint 所属 run 必须包含 `metadata.json`。

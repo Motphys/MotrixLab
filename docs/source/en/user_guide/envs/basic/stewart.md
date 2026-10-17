@@ -163,8 +163,8 @@ python scripts/view.py env=stewart-disturb-xy
 ### 2. Start Training
 
 ```bash
-python scripts/train.py task=stewart-static/skrl.ppo
-python scripts/train.py task=stewart-disturb-xy/skrl.ppo
+mxtrain task=stewart-static/skrl.ppo
+mxtrain task=stewart-disturb-xy/skrl.ppo
 ```
 
 ### Training Notes
@@ -183,8 +183,8 @@ tensorboard --logdir runs/stewart-disturb-xy
 ### 4. Test Training Results
 
 ```bash
-python scripts/play.py env=stewart-static
-python scripts/play.py env=stewart-disturb-xy
+mxplay env=stewart-static
+mxplay env=stewart-disturb-xy
 ```
 
 ---

@@ -164,8 +164,8 @@ python scripts/view.py env=dm-lqr-6-2
 ### 2. 开始训练
 
 ```bash
-python scripts/train.py task=dm-lqr-2-1/skrl.ppo
-python scripts/train.py task=dm-lqr-6-2/skrl.ppo
+mxtrain task=dm-lqr-2-1/skrl.ppo
+mxtrain task=dm-lqr-6-2/skrl.ppo
 ```
 
 ### 3. 查看训练曲线
@@ -178,8 +178,8 @@ tensorboard --logdir runs/dm-lqr-6-2
 ### 4. 测试训练结果
 
 ```bash
-python scripts/play.py env=dm-lqr-2-1
-python scripts/play.py env=dm-lqr-6-2
+mxplay env=dm-lqr-2-1
+mxplay env=dm-lqr-6-2
 ```
 
 ---

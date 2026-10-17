@@ -308,13 +308,13 @@ The environment uses a consecutive success counter:
 ### Training
 
 ```bash
-python scripts/train.py task=shadow-hand-repose/skrl.ppo
+mxtrain task=shadow-hand-repose/skrl.ppo
 ```
 
 ### Policy Evaluation
 
 ```bash
-python scripts/play.py env=shadow-hand-repose
+mxplay env=shadow-hand-repose
 ```
 
 ### Environment Visualization

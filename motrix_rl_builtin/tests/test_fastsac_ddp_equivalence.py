@@ -29,7 +29,7 @@ def _make_agent(world_size: int, seed: int) -> object:
     from motrix_rl_builtin.fastsac.config import FastSacAgentCfg
     from omegaconf import OmegaConf
 
-    yaml_path = Path(__file__).resolve().parents[2] / "configs" / "algo_base" / "motrix.fastsac.yaml"
+    yaml_path = Path(__file__).resolve().parents[2] / "motrix_rl/src/motrix_rl/configs/algo_base/motrix.fastsac.yaml"
     base = OmegaConf.merge(OmegaConf.structured(FastSacAgentCfg), OmegaConf.load(yaml_path)["agent"])
     cfg = OmegaConf.to_object(
         OmegaConf.merge(

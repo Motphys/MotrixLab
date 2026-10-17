@@ -145,7 +145,7 @@ python scripts/view.py env=dm-manipulator-bring-ball
 建议显式指定训练后端（JAX / PyTorch 二选一）：
 
 ```bash
-python scripts/train.py task=dm-manipulator-bring-ball/skrl.ppo.torch
+mxtrain task=dm-manipulator-bring-ball/skrl.ppo.torch
 ```
 
 ### 3. 查看训练进度
@@ -157,7 +157,7 @@ tensorboard --logdir runs/dm-manipulator-bring-ball
 ### 4. 测试训练结果
 
 ```bash
-python scripts/play.py env=dm-manipulator-bring-ball
+mxplay env=dm-manipulator-bring-ball
 ```
 
 ---

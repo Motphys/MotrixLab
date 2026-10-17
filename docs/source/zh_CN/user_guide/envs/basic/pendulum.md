@@ -71,13 +71,13 @@ python scripts/view.py env=pendulum
 
 ```bash
 # 默认参数训练
-python scripts/train.py task=pendulum/skrl.ppo
+mxtrain task=pendulum/skrl.ppo
 
 # 自定义并行环境数
-python scripts/train.py task=pendulum/skrl.ppo num_envs=1024
+mxtrain task=pendulum/skrl.ppo num_envs=1024
 
 # 开启训练时渲染
-python scripts/train.py task=pendulum/skrl.ppo render=true
+mxtrain task=pendulum/skrl.ppo render=true
 ```
 
 ### 3. 查看训练进度
@@ -90,10 +90,10 @@ tensorboard --logdir runs/pendulum
 
 ```bash
 # 自动寻找最新/最优策略（推荐）
-python scripts/play.py env=pendulum
+mxplay env=pendulum
 
 # 手动指定带 metadata 的 run 中的 checkpoint
-python scripts/play.py env=pendulum policy=/path/to/run/checkpoints/policy-file
+mxplay env=pendulum policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **提示**：策略默认在 `runs/pendulum/` 下自动发现。使用 `policy=...` 时，checkpoint 所属 run 必须包含 `metadata.json`。

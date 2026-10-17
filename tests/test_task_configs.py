@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from hydra import compose, initialize_config_dir
+from hydra import compose, initialize_config_dir, initialize_config_module
 from hydra.core.global_hydra import GlobalHydra
 from hydra.core.object_type import ObjectType
 from hydra.errors import MissingConfigException
@@ -24,8 +24,9 @@ from omegaconf import MISSING, OmegaConf
 from motrix_rl import frameworks, runs
 from motrix_rl.config import TaskConfig
 
-CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
-RSLRL_BASE_CONFIG = CONFIG_DIR / "algo_base" / "rslrl.ppo.yaml"
+ROOT = Path(__file__).resolve().parents[1]
+CONFIG_DIR = ROOT / "configs"
+RSLRL_BASE_CONFIG = ROOT / "motrix_rl/src/motrix_rl/configs/algo_base/rslrl.ppo.yaml"
 
 
 def _discover_task_specs():
@@ -63,7 +64,7 @@ def _compose_task_option(
     rllib: str,
     algo: str,
     backend: str | None = None,
-    config_dir=CONFIG_DIR,
+    config_dir: Path | None = None,
     overrides: list[str] | None = None,
 ):
     option = f"{env}/{rllib}.{algo}" + (f".{backend}" if backend else "")
@@ -71,8 +72,14 @@ def _compose_task_option(
 
     load_plugins()
     GlobalHydra.instance().clear()
-    with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
-        cfg = compose(config_name="train", overrides=[f"task={option}", *(overrides or [])])
+    initializer = (
+        initialize_config_module(version_base=None, config_module="motrix_rl.configs")
+        if config_dir is None
+        else initialize_config_dir(version_base=None, config_dir=str(config_dir))
+    )
+    searchpath = [f"hydra.searchpath=[file://{CONFIG_DIR}]"] if config_dir is None else []
+    with initializer:
+        cfg = compose(config_name="train", overrides=[*searchpath, f"task={option}", *(overrides or [])])
     result = OmegaConf.to_object(cfg)
     if not isinstance(result, TaskConfig):
         raise TypeError(f"Expected TaskConfig, got {type(result).__name__}")

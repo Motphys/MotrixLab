@@ -10,12 +10,12 @@ import pytest
 
 import motrix_deploy_tasks
 from motrix_deploy.contracts import RobotState
+from motrix_deploy.profile import build_deployment_profile
 from motrix_deploy.runtime import ControlContext
 from motrix_deploy_tasks.tasks.g1_wbt import G1WbtTaskSpec
 from motrix_deploy_tasks.tasks.go2_walk import Go2WalkPolicyProcessor, Go2WalkTaskSpec
 from motrix_env_core import registry
 from motrix_env_core.input import PlanarVelocityCommand
-from motrix_envs.deploy import build_deployment_profile
 
 
 @pytest.mark.integration

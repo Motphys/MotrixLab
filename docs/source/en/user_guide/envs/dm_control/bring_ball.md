@@ -143,7 +143,7 @@ python scripts/view.py env=dm-manipulator-bring-ball
 ### 2. Start Training
 
 ```bash
-python scripts/train.py task=dm-manipulator-bring-ball/skrl.ppo.torch
+mxtrain task=dm-manipulator-bring-ball/skrl.ppo.torch
 ```
 
 ### 3. View Training Progress
@@ -155,7 +155,7 @@ tensorboard --logdir runs/dm-manipulator-bring-ball
 ### 4. Test Training Results
 
 ```bash
-python scripts/play.py env=dm-manipulator-bring-ball
+mxplay env=dm-manipulator-bring-ball
 ```
 
 ---

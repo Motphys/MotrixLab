@@ -14,14 +14,22 @@ env = registry.make("cartpole", num_envs=1)
 The package includes the `basic`, `locomotion`, and `manipulation` environment families. Environment names used by
 training and playback commands remain unchanged.
 
-Install the `deploy` extra and import `motrix_envs.deploy` to register the deployment profile compilers owned by the
-built-in environments:
+Install the `deploy` extra to use the built-in deployment profile compilers with `mxexport deploy`:
 
-```python
-from motrix_envs.deploy import build_deployment_profile
-
-profile = build_deployment_profile("go2-walk-rough")
+```bash
+mxexport deploy env=go2-walk-rough output=artifacts/go2-walk-rough.deploy
 ```
+
+The installed package publishes these `motrix_deploy.profiles` entry points:
+
+| Environment name | Compiler |
+| --- | --- |
+| `go2-walk-flat`, `go2-walk-rough` | `motrix_envs.deploy.go2_walk:build_go2_walk_profile` |
+| `g1-wbt-dance` | `motrix_envs.deploy.g1_wbt:build_g1_wbt_profile` |
+
+No registration import is needed for profile discovery. See the
+[deployment tutorial](../docs/source/en/user_guide/tutorial/advanced/motrix_deploy.md#add-a-deployment-profile-compiler)
+for the plugin contract and an external-package example.
 
 ## Framework API
 

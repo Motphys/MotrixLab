@@ -27,6 +27,6 @@ physical parameters.
 
 ```bash
 python scripts/view.py env=go1-stairs-terrain-walk
-python scripts/train.py task=go1-stairs-terrain-walk/skrl.ppo
-python scripts/play.py env=go1-stairs-terrain-walk
+mxtrain task=go1-stairs-terrain-walk/skrl.ppo
+mxplay env=go1-stairs-terrain-walk
 ```

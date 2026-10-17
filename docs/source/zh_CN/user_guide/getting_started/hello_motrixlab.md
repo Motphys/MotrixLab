@@ -19,7 +19,7 @@ python scripts/view.py env=cartpole
 开始训练倒立摆平衡任务：
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo
+mxtrain task=cartpole/skrl.ppo
 ```
 
 训练过程会自动：
@@ -38,7 +38,7 @@ python scripts/train.py task=cartpole/skrl.ppo
 如果您想要在训练过程中观察模型的学习过程，可以启用可视化渲染：
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo render=true
+mxtrain task=cartpole/skrl.ppo render=true
 ```
 
 ### 🎮 交互式渲染控制
@@ -67,10 +67,10 @@ tensorboard --logdir runs/cartpole
 
 ```bash
 # 自动寻找最佳策略测试（推荐）
-python scripts/play.py env=cartpole
+mxplay env=cartpole
 
 # 手动指定带 metadata 的 run 中的 checkpoint
-python scripts/play.py env=cartpole policy=/path/to/run/checkpoints/policy-file
+mxplay env=cartpole policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **提示**：系统会自动在 `runs/cartpole/` 下寻找最新 run 的最佳策略。手动指定的 checkpoint 必须属于包含 `metadata.json` 和 `task_config.yaml` 的 run。

@@ -21,7 +21,7 @@ python scripts/view.py env=cartpole
 ### 2. Start Training
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo
+mxtrain task=cartpole/skrl.ppo
 ```
 
 ### 3. View Training Progress
@@ -33,7 +33,7 @@ tensorboard --logdir runs/cartpole
 ### 4. Test Training Results
 
 ```bash
-python scripts/play.py env=cartpole
+mxplay env=cartpole
 ```
 
 > **Tip**: The system finds the latest metadata-backed run under `runs/cartpole/` and loads its `best_policy` artifact. Use `policy=...` to select another checkpoint from a metadata-backed run.

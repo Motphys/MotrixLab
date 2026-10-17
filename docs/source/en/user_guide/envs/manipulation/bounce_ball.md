@@ -417,7 +417,7 @@ python scripts/view.py env=bounce_ball
 ### 2. Start Training
 
 ```bash
-python scripts/train.py task=bounce_ball/skrl.ppo
+mxtrain task=bounce_ball/skrl.ppo
 ```
 
 ### 3. View Training Progress
@@ -429,7 +429,7 @@ tensorboard --logdir runs/bounce_ball
 ### 4. Test Training Results
 
 ```bash
-python scripts/play.py env=bounce_ball
+mxplay env=bounce_ball
 ```
 
 ---

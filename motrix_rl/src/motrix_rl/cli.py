@@ -3,14 +3,51 @@
 
 """Helpers for Hydra-based train/play/view command-line entry points."""
 
+import importlib
 import logging
+import sys
+from collections.abc import Callable
+from pathlib import Path
 from typing import TypeVar
 
+from hydra.core.plugins import Plugins
 from omegaconf import DictConfig, OmegaConf
+
+from motrix_rl.commands.searchpath import ProjectConfigSearchPath
 
 logger = logging.getLogger(__name__)
 
 CfgT = TypeVar("CfgT")
+
+
+def run_cli(command: Callable[[], None]) -> None:
+    """Use the launch directory's configs unless Hydra receives an explicit path.
+
+    Pass the directory through Hydra's native --config-dir handling so package
+    configs remain available and Hydra controls composition and diagnostics.
+    """
+    Plugins.instance().register(ProjectConfigSearchPath)
+    args = sys.argv[1:]
+    explicit_path = any(
+        arg in ("--config-dir", "--config-path", "-cp") or arg.startswith(("--config-dir=", "--config-path=", "-cp="))
+        for arg in args
+    )
+    config_dir = Path.cwd() / "configs"
+    if explicit_path or not config_dir.is_dir():
+        command()
+        return
+    original_argv = sys.argv
+    sys.argv = [original_argv[0], "--config-dir", str(config_dir), *args]
+    try:
+        command()
+    finally:
+        sys.argv = original_argv
+
+
+def import_env_modules(modules: list[str]) -> None:
+    """Import explicitly configured environment modules for registration side effects."""
+    for module in modules:
+        importlib.import_module(module)
 
 
 def to_typed_config(cfg: DictConfig, expected_type: type[CfgT]) -> CfgT:

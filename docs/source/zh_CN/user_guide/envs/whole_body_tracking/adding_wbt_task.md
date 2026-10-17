@@ -126,7 +126,7 @@ algo:
 先用小规模 smoke test 验证 Hydra composition、registry、tensor shape 和一步训练流程：
 
 ```bash
-python scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac \
+mxtrain task=g1-wbt-dance1-subject1/motrix.fastsac \
   algo.asynchronous=true num_envs=64 algo.trainer.num_learning_iterations=100
 ```
 
@@ -134,13 +134,13 @@ python scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac \
 `state.reward_terms` 与 `state.metrics` 能进入日志。随后使用默认规模训练：
 
 ```bash
-python scripts/train.py task=g1-wbt-dance1-subject1/motrix.fastsac algo.asynchronous=true
+mxtrain task=g1-wbt-dance1-subject1/motrix.fastsac algo.asynchronous=true
 ```
 
 生成 metadata-backed run 后回放策略：
 
 ```bash
-python scripts/play.py env=g1-wbt-dance1-subject1 num_envs=16
+mxplay env=g1-wbt-dance1-subject1 num_envs=16
 ```
 
 Play 模式自动从第 0 帧开始，关闭 reset noise 和 adaptive sampler，并在 clip 结束后从头重播，无需单独注册 play 环境。
@@ -154,5 +154,5 @@ Play 模式自动从第 0 帧开始，关闭 reset noise 和 adaptive sampler，
 -   小规模训练的 observation、action、reward、terminated 和 truncated shape 正确。
 -   Reset 没有系统性 NaN、hard-limit 违规或立即 bad-tracking。
 -   Reward、termination 和 adaptive-sampling 指标能够写入日志。
--   `play.py` 可以发现 run，并从第 0 帧完整回放策略。
+-   `mxplay` 可以发现 run，并从第 0 帧完整回放策略。
 -   新 motion 包含来源与许可说明，并由 Git LFS 管理。

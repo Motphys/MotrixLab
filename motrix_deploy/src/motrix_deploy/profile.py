@@ -5,6 +5,7 @@
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from importlib import metadata
 
 from motrix_deploy.artifact.schema import ControlSpec, TaskSpec
 from motrix_deploy.contracts import RobotSpec
@@ -26,51 +27,34 @@ class DeploymentProfile:
 
 ProfileCompiler = Callable[[str], DeploymentProfile]
 
-_PROFILE_COMPILERS: dict[str, ProfileCompiler] = {}
-
-
-def register_profile_compiler(*env_names: str) -> Callable[[ProfileCompiler], ProfileCompiler]:
-    """Register one profile compiler for one or more environment names."""
-    if not env_names:
-        raise ValueError("At least one environment name is required")
-    if any(not env_name for env_name in env_names):
-        raise ValueError("Environment names must be non-empty")
-    if len(set(env_names)) != len(env_names):
-        raise ValueError("Environment names must be unique")
-
-    def register(compiler: ProfileCompiler) -> ProfileCompiler:
-        duplicates = set(env_names) & set(_PROFILE_COMPILERS)
-        if duplicates:
-            names = ", ".join(sorted(duplicates))
-            raise ValueError(f"Deployment profile compiler already registered for: {names}")
-        for env_name in env_names:
-            _PROFILE_COMPILERS[env_name] = compiler
-        return compiler
-
-    return register
+PROFILE_COMPILER_ENTRY_POINT_GROUP = "motrix_deploy.profiles"
 
 
 def build_deployment_profile(env_name: str) -> DeploymentProfile:
-    """Build a deployment profile using the compiler registered for an environment."""
-    try:
-        compiler = _PROFILE_COMPILERS[env_name]
-    except KeyError as error:
-        supported = ", ".join(sorted(_PROFILE_COMPILERS)) or "none"
+    """Load only the installed compiler for this exact environment name and call it."""
+    entries = tuple(metadata.entry_points(group=PROFILE_COMPILER_ENTRY_POINT_GROUP))
+    matches = [entry for entry in entries if entry.name == env_name]
+    if not matches:
+        supported = ", ".join(sorted({entry.name for entry in entries})) or "none"
         raise ValueError(
             f"No deployment profile compiler for environment {env_name!r}; supported environments: {supported}"
-        ) from error
+        )
+    if len(matches) != 1:
+        raise ValueError(f"Multiple deployment profile compiler plugins provide {env_name!r}")
+    compiler = matches[0].load()
+    if not callable(compiler):
+        raise TypeError(f"Deployment profile compiler plugin {env_name!r} must provide a callable")
     return compiler(env_name)
 
 
 def registered_profile_compilers() -> tuple[str, ...]:
-    """Return environment names with a compiler registered in this process."""
-    return tuple(sorted(_PROFILE_COMPILERS))
+    """List installed compiler environment names without importing implementations."""
+    return tuple(sorted({entry.name for entry in metadata.entry_points(group=PROFILE_COMPILER_ENTRY_POINT_GROUP)}))
 
 
 __all__ = [
     "DeploymentProfile",
     "ProfileCompiler",
     "build_deployment_profile",
-    "register_profile_compiler",
     "registered_profile_compilers",
 ]

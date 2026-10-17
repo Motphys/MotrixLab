@@ -1,22 +1,13 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-import importlib.util
-import sys
 from pathlib import Path
 
 import pytest
 
 from motrix_rl import runs
+from motrix_rl.commands import play
 from motrix_rl.config import PlayConfig
-
-PLAY_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "play.py"
-PLAY_MODULE_SPEC = importlib.util.spec_from_file_location("motrix_test_play_script", PLAY_SCRIPT)
-if PLAY_MODULE_SPEC is None or PLAY_MODULE_SPEC.loader is None:
-    raise ImportError(f"Unable to load {PLAY_SCRIPT}")
-play = importlib.util.module_from_spec(PLAY_MODULE_SPEC)
-sys.modules[PLAY_MODULE_SPEC.name] = play
-PLAY_MODULE_SPEC.loader.exec_module(play)
 
 
 def _metadata_run(tmp_path: Path, env_name: str = "go2", sim: str | None = None) -> Path:

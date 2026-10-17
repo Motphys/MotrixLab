@@ -24,6 +24,13 @@ of the default runtime environment installed by `sh install.sh` (see
 
 ## Export the Model
 
+Activate the installed environment and run `mxexport onnx` (or `python -m motrix_rl.commands.export onnx`).
+`mxexport` requires an explicit `onnx` or `deploy` subcommand; there is no default.
+No `task` selection or `env_modules` is needed: export restores the policy from the saved run without creating an environment.
+The command uses the current directory's `./configs` when present, or an explicit `--config-dir <path>`;
+project files take precedence, with missing files falling back to `motrix_rl.configs`, which includes `export_onnx.yaml`.
+No repository checkout is required. Relative run and output paths are resolved from the current working directory.
+
 Suppose training produced this run directory:
 
 ```text
@@ -33,7 +40,7 @@ runs/cartpole/skrl/torch/ppo/<timestamp>/
 Export it to an explicit output path:
 
 ```bash
-python scripts/export_onnx.py \
+mxexport onnx \
   run_dir=runs/cartpole/skrl/torch/ppo/<timestamp> \
   output=artifacts/cartpole.onnx
 ```
@@ -43,7 +50,7 @@ If a path contains spaces, quote the complete Hydra argument, for example `"run_
 When `output` is omitted, the model is written next to the best checkpoint as `policy.onnx`:
 
 ```bash
-python scripts/export_onnx.py \
+mxexport onnx \
   run_dir=runs/cartpole/skrl/torch/ppo/<timestamp>
 ```
 
@@ -105,7 +112,7 @@ In most cases, only `run_dir` and `output` are needed. Override these Hydra para
 For example, export with opset 17 and more validation samples:
 
 ```bash
-python scripts/export_onnx.py \
+mxexport onnx \
   run_dir=<run-dir> \
   output=policy.onnx \
   opset=17 \

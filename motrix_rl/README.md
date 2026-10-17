@@ -67,22 +67,112 @@ through forwarding extras; do not use its exported requirements to install these
 [PyTorch wheel index](https://pytorch.org/get-started/locally/) in the consuming installer/project explicitly. In particular,
 a `rocm` extra's Torch version alone does not guarantee a ROCm build. GPU selection is explicit, not hardware auto-detection.
 
-## Workspace training
+## Usage
 
-Environment-specific training presets live under `configs/task/`, while shared provider defaults live under
-`configs/algo_base/`. From the workspace root, select a preset with Hydra's `task=<env-id>/<method>` syntax (run from the
-activated workspace environment, `source .venv/bin/activate`):
+Installing `motrix-rl` provides `mxtrain`, `mxplay`, and `mxexport`, backed by `motrix_rl.commands.train`,
+`motrix_rl.commands.play`, and the `motrix_rl.commands.export` dispatcher. `mxexport` requires an explicit
+`onnx` or `deploy` subcommand; there is no default subcommand. Their primary Hydra configurations ship in
+`motrix_rl.configs`; the commands do not require a repository checkout or a particular working directory.
+For training and playback, install an environment package and the selected provider too.
+For the built-in environments, activate the installed workspace environment (`source .venv/bin/activate`) and run from
+the workspace root:
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo
-python scripts/train.py task=cartpole/rslrl.ppo
-python scripts/train.py task=g1-walk-rough/motrix.fastsac
+mxtrain task=cartpole/skrl.ppo
+mxtrain task=cartpole/rslrl.ppo
+mxtrain task=g1-walk-rough/motrix.fastsac
+mxplay env=cartpole
+mxplay env=cartpole policy=/path/to/run
+mxexport onnx run_dir=/path/to/run output=artifacts/policy.onnx
+mxexport deploy run_dir=/path/to/run output=artifacts/policy.deploy
+mxexport deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
 ```
 
-Install the extra required by the selected provider before training:
+`mxexport onnx` exports a saved run's best policy without a `task` selection or `env_modules`. Install the provider used by
+that run; see the [ONNX export tutorial](../docs/source/en/user_guide/tutorial/advanced/export_onnx.md) for supported
+configurations. `mxexport deploy` creates a self-contained deployment artifact; specify exactly one of `run_dir` or
+`env` (the latter selects the latest metadata-backed run). Its numerical checks use `validation.*`, while ONNX export
+uses `parity.*`. The `export_onnx.yaml` and `export_deploy.yaml` configurations ship in `motrix_rl.configs` and follow
+the same project-first discovery described below, falling back to packaged files when the project does not provide them.
+
+Deployment profile compilers come from installed environment plugins, without hardcoded environment imports in the CLI.
+See the [deployment tutorial](../docs/source/en/user_guide/tutorial/advanced/motrix_deploy.md#add-a-deployment-profile-compiler)
+for the plugin contract. `motrix-rl` depends on `motrix-deploy` for artifact creation; `motrix-deploy` does not depend on RL.
+
+The equivalent module commands are `python -m motrix_rl.commands.train`, `python -m motrix_rl.commands.play`, and
+`python -m motrix_rl.commands.export onnx` / `python -m motrix_rl.commands.export deploy`. The subcommands are implemented
+in `motrix_rl.commands.export_onnx` and `motrix_rl.commands.export_deploy`; the repository's export scripts are thin
+wrappers around those commands. In an already installed uv environment, use
+`uv run --no-sync mxtrain ...` (or `mxplay` / `mxexport`) to avoid re-resolving GPU profiles.
+Run artifacts are written under `runs/` relative to the working directory by default.
+
+Primary train/play configurations and shared provider defaults ship in `motrix_rl.configs`, with sources under
+`motrix_rl/src/motrix_rl/configs/` (`algo_base/` for defaults). Concrete task presets belong to the consuming project:
+the workspace keeps its built-in demos under root `configs/task/`, discovered through the current directory's
+`./configs`, just like an external project. The packaged train configuration uses a `task: null` placeholder so bare
+`--help` works without choosing a default environment. Actual training requires an explicit `task=...` selection;
+mandatory `TrainConfig` fields reject execution without a task. Playback uses saved run configuration and needs no task
+config directory. Environment packages do not own training configuration, and there is no built-in Hydra search-path plugin.
+
+Configuration discovery and runtime environment registration are separate. Before calling the runner, the train/play CLIs import
+the Python modules named in `env_modules`. The typed train/play configurations default to an empty list; the packaged
+train/play YAML files explicitly set `env_modules: [motrix_envs]` for built-in environments.
+
+In the workspace, install the extra required by the selected provider before training:
 
 ```bash
 sh install.sh --skrl-jax   # JAX (Linux only)
 sh install.sh --skrl-torch # PyTorch (default)
 sh install.sh --rslrl      # RSLRL (PyTorch only)
 ```
+
+## External project integration
+
+The CLI discovers `./configs` in the current working directory when it exists. It does not search parent directories,
+and a missing default directory is ignored. An explicit `--config-dir <path>` overrides this default directory.
+The selected project directory takes precedence over packaged defaults, including same-name `algo_base` configurations;
+files not provided by the project fall back to the package. Hydra selects the first matching file, rather than merging
+same-name files from multiple directories:
+
+```bash
+mxtrain task=my-task/skrl.ppo 'env_modules=[my_project.envs]'
+mxtrain --config-dir /path/to/project/configs task=my-task/skrl.ppo 'env_modules=[my_project.envs]'
+```
+
+Configuration discovery supplies Hydra's search path; `env_modules` separately imports the module that registers the
+project's environments. Override the packaged built-in module list when using different environments. Alternatively,
+set the registration modules in a project task YAML (task presets use `# @package _global_`):
+
+```yaml
+# @package _global_
+env_modules: [my_project.envs]
+# Include the task's environment, provider selection, and algorithm settings here.
+```
+
+Playback uses the same registration option: `mxplay env=my-task 'env_modules=[my_project.envs]'`.
+An installed project can expose packaged presets through a Hydra `SearchPathPlugin` without coupling configuration
+discovery to environment registration. For example, put the following in `src/hydra_plugins/my_project_searchpath.py`,
+with task YAML files in `src/my_project/configs/task/`:
+
+```python
+from hydra.core.config_search_path import ConfigSearchPath
+from hydra.plugins.search_path_plugin import SearchPathPlugin
+
+
+class MyProjectSearchPathPlugin(SearchPathPlugin):
+    def manipulate_search_path(self, search_path: ConfigSearchPath) -> None:
+        if not any(
+            item.provider == "main" and item.path == "pkg://motrix_rl.configs"
+            for item in search_path.get_path()
+        ):
+            return
+        search_path.append(provider="my_project", path="pkg://my_project.configs")
+```
+
+Make `my_project.configs` an importable package (include `__init__.py`) and include its YAML resources in the wheel.
+Package both `my_project` and `hydra_plugins/my_project_searchpath.py` in the installed distribution. Keep `hydra_plugins`
+a shared namespace package: **do not add `hydra_plugins/__init__.py`**. Hydra discovers installed plugin modules in that
+namespace; no custom entry point or working-directory import convention is needed. Once installed, run
+`mxtrain task=my-task/skrl.ppo` from any directory when the task YAML sets `env_modules`; otherwise pass
+`'env_modules=[my_project.envs]'` explicitly. Provider plugins still register separately through
+`motrix_rl.frameworks`.

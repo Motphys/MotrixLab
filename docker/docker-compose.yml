@@ -16,10 +16,10 @@ services:
               count: all
               capabilities: [gpu]
     command:
-      - scripts/train.py
-      - train_backend=${MOTRIX_TRAIN_BACKEND:-jax}
+      - mxtrain
+      - task=${MOTRIX_ENV:-cartpole}/skrl.ppo
+      - task.train_backend=${MOTRIX_TRAIN_BACKEND:-jax}
       - num_envs=${MOTRIX_NUM_ENVS:-2048}
-      - env=${MOTRIX_ENV:-cartpole}
     restart: no
 
   motrixlab-tensorboard:

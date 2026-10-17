@@ -57,7 +57,7 @@ class DeploymentExportConfig:
     """Typed Hydra configuration for deployment artifact export."""
 
     env: str | None = None
-    run: str | None = None
+    run_dir: str | None = None
     output: str | None = None
     validation: OnnxParityConfig = field(
         default_factory=lambda: OnnxParityConfig(atol=1e-5),
@@ -90,8 +90,9 @@ class TaskConfig:
 
 @dataclass
 class TrainConfig(TaskConfig):
-    """Top-level schema for ``scripts/train.py``."""
+    """Top-level schema for ``mxtrain``."""
 
+    env_modules: list[str] = field(default_factory=list)
     render: bool = False
     play: bool = False
     sim: str | None = None
@@ -100,8 +101,9 @@ class TrainConfig(TaskConfig):
 
 @dataclass
 class PlayConfig:
-    """Top-level schema for ``scripts/play.py``."""
+    """Top-level schema for ``mxplay``."""
 
+    env_modules: list[str] = field(default_factory=list)
     env: str | None = None
     sim: str | None = None
     policy: str | None = None

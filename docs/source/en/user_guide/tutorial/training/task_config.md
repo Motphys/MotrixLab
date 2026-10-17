@@ -53,7 +53,7 @@ algo:
 
 This configuration:
 
-1. Loads the complete SKRL PPO base from `configs/algo_base/skrl.ppo.yaml`.
+1. Loads the complete SKRL PPO base from `motrix_rl/src/motrix_rl/configs/algo_base/skrl.ppo.yaml`.
 2. Selects the environment registered as `my-robot`.
 3. Sets the number of parallel environments used for training and play.
 4. Overrides the total training timesteps with `100000`.
@@ -62,22 +62,26 @@ A Task only needs to contain values that differ from the algorithm base. It does
 
 ### Inspect and run the Task
 
+`mxtrain` uses `./configs` in the current working directory when it exists; it does not search parent directories. Use `--config-dir /path/to/configs` to select another configuration directory. A Task must be selected explicitly; there is no default Cartpole Task.
+
+The CLI imports the modules in `env_modules` before calling the runner. The packaged train/play YAML sets `env_modules: [motrix_envs]`; for an external environment, override it with `'env_modules=[my_project.envs]'` or set it in the Task YAML. Environment registration and Hydra configuration discovery are independent; environment packages do not supply a built-in Hydra plugin.
+
 Print the fully composed Hydra configuration before starting training:
 
 ```bash
-python scripts/train.py --cfg job --resolve task=my-robot/skrl.ppo
+mxtrain --cfg job --resolve task=my-robot/skrl.ppo
 ```
 
 This command does not start training. After verifying `task.env`, `num_envs`, and `algo.trainer.timesteps`, start the run:
 
 ```bash
-python scripts/train.py task=my-robot/skrl.ppo
+mxtrain task=my-robot/skrl.ppo
 ```
 
 List all Tasks available in the repository with:
 
 ```bash
-python scripts/train.py --help
+mxtrain --help
 ```
 
 ## Adjust Task runtime settings
@@ -146,7 +150,7 @@ algo:
         timesteps: 20000
 ```
 
-See [`configs/algo_base/skrl.ppo.yaml`](../../../../../configs/algo_base/skrl.ppo.yaml) for the complete field set and per-field comments.
+See [`motrix_rl/src/motrix_rl/configs/algo_base/skrl.ppo.yaml`](https://github.com/Motphys/MotrixLab/blob/main/motrix_rl/src/motrix_rl/configs/algo_base/skrl.ppo.yaml) for the complete field set and per-field comments.
 
 ### RSLRL PPO
 
@@ -167,7 +171,7 @@ algo:
         entropy_coef: 0.005
 ```
 
-See [`configs/algo_base/rslrl.ppo.yaml`](../../../../../configs/algo_base/rslrl.ppo.yaml) for the complete field set and per-field comments.
+See [`motrix_rl/src/motrix_rl/configs/algo_base/rslrl.ppo.yaml`](https://github.com/Motphys/MotrixLab/blob/main/motrix_rl/src/motrix_rl/configs/algo_base/rslrl.ppo.yaml) for the complete field set and per-field comments.
 
 ### Motrix FastSAC
 
@@ -182,7 +186,7 @@ FastSAC uses one algorithm identity for both execution topologies. Its main fiel
     -   `weight_publish_interval` and `weight_poll_interval`: policy synchronization cadence.
     -   `max_ingest_per_iter` and `idle_sleep_s`: learner ingestion and idle backoff.
 
-See [`configs/algo_base/motrix.fastsac.yaml`](../../../../../configs/algo_base/motrix.fastsac.yaml) for the complete field set and per-field comments.
+See [`motrix_rl/src/motrix_rl/configs/algo_base/motrix.fastsac.yaml`](https://github.com/Motphys/MotrixLab/blob/main/motrix_rl/src/motrix_rl/configs/algo_base/motrix.fastsac.yaml) for the complete field set and per-field comments.
 
 ## Override parameters from the CLI
 
@@ -191,7 +195,7 @@ The MotrixLab CLI uses Hydra's `key=value` syntax. CLI values apply only to the 
 ### Override runtime settings
 
 ```bash
-python scripts/train.py \
+mxtrain \
   task=my-robot/skrl.ppo \
   num_envs=64 \
   seed=7 \
@@ -202,7 +206,7 @@ python scripts/train.py \
 Enable training rendering and play the policy afterward:
 
 ```bash
-python scripts/train.py task=my-robot/skrl.ppo render=true play=true
+mxtrain task=my-robot/skrl.ppo render=true play=true
 ```
 
 ### Override algorithm settings
@@ -210,7 +214,7 @@ python scripts/train.py task=my-robot/skrl.ppo render=true play=true
 SKRL PPO:
 
 ```bash
-python scripts/train.py \
+mxtrain \
   task=my-robot/skrl.ppo \
   algo.agent.learning_rate=5e-4 \
   algo.agent.learning_epochs=8 \
@@ -220,7 +224,7 @@ python scripts/train.py \
 RSLRL PPO:
 
 ```bash
-python scripts/train.py \
+mxtrain \
   task=cartpole/rslrl.ppo \
   algo.algorithm.learning_rate=5e-4 \
   algo.algorithm.entropy_coef=0.005 \
@@ -230,7 +234,7 @@ python scripts/train.py \
 FastSAC:
 
 ```bash
-python scripts/train.py \
+mxtrain \
   task=g1-walk-flat/motrix.fastsac \
   algo.asynchronous=true \
   algo.agent.actor_learning_rate=1e-4 \
@@ -244,20 +248,20 @@ python scripts/train.py \
 Use lowercase `true` and `false` for booleans:
 
 ```bash
-python scripts/train.py task=my-robot/skrl.ppo render=true
+mxtrain task=my-robot/skrl.ppo render=true
 ```
 
 Use `null` to clear nullable fields:
 
 ```bash
-python scripts/train.py task=my-robot/skrl.ppo seed=null
-python scripts/train.py task=my-robot/skrl.ppo algo.agent.learning_rate_scheduler=null
+mxtrain task=my-robot/skrl.ppo seed=null
+mxtrain task=my-robot/skrl.ppo algo.agent.learning_rate_scheduler=null
 ```
 
 Quote lists so the shell does not interpret brackets:
 
 ```bash
-python scripts/train.py \
+mxtrain \
   task=my-robot/skrl.ppo \
   'algo.models.policy.hiddens=[128,64]' \
   'algo.models.value.hiddens=[128,64]'
@@ -274,7 +278,7 @@ Training uses structured schemas. Existing fields do not need a `+` prefix. Add 
 Combine CLI overrides with `--cfg job --resolve` to inspect the exact values that would be used:
 
 ```bash
-python scripts/train.py \
+mxtrain \
   --cfg job \
   --resolve \
   task=my-robot/skrl.ppo \
@@ -316,13 +320,13 @@ algo:
 Train with the JAX delta:
 
 ```bash
-python scripts/train.py task=go2-walk-flat/skrl.ppo.jax
+mxtrain task=go2-walk-flat/skrl.ppo.jax
 ```
 
 Overriding the backend directly also selects the JAX trainer:
 
 ```bash
-python scripts/train.py task=go2-walk-flat/skrl.ppo task.train_backend=jax
+mxtrain task=go2-walk-flat/skrl.ppo task.train_backend=jax
 ```
 
 This form does not load backend-specific values from `skrl.ppo.jax.yaml`. Select the `.jax` or `.torch` Task directly when a backend delta exists.
@@ -334,12 +338,16 @@ After creating and tuning a basic Task, the following details explain how its fi
 ### Configuration directories
 
 ```text
-configs/
+motrix_rl/src/motrix_rl/configs/
 ├── train.yaml
-├── algo_base/
-│   ├── skrl.ppo.yaml
-│   ├── rslrl.ppo.yaml
-│   └── motrix.fastsac.yaml
+├── play.yaml
+└── algo_base/
+    ├── skrl.ppo.yaml
+    ├── rslrl.ppo.yaml
+    └── motrix.fastsac.yaml
+
+configs/
+├── view.yaml
 └── task/
     └── <env>/
         ├── <rllib>.<algo>.yaml
@@ -350,8 +358,8 @@ Each layer has a separate responsibility:
 
 | Layer               | Location                                           | Purpose                                                               |
 | ------------------- | -------------------------------------------------- | --------------------------------------------------------------------- |
-| Entry configuration | `configs/train.yaml`                               | Defines shared runtime values and the default Task                    |
-| Algorithm base      | `configs/algo_base/<rllib>.<algo>.yaml`            | Defines the complete field set and base values for an algorithm       |
+| Entry configuration | `motrix_rl/src/motrix_rl/configs/train.yaml` | Defines shared runtime values; `task: null` is a placeholder, and training requires an explicit Task |
+| Algorithm base      | `motrix_rl/src/motrix_rl/configs/algo_base/<rllib>.<algo>.yaml`            | Defines the complete field set and base values for an algorithm       |
 | Shared Task         | `configs/task/<env>/<rllib>.<algo>.yaml`           | Selects the environment and algorithm and stores task-specific tuning |
 | Backend delta       | `configs/task/<env>/<rllib>.<algo>.<backend>.yaml` | Stores backend-specific differences                                   |
 | CLI override        | `key=value`                                        | Overrides the final value for one run                                 |
@@ -410,18 +418,18 @@ Hydra validates field names and types against the structured schema registered b
 
 ## Play and View overrides
 
-`scripts/play.py` and `scripts/view.py` use the same `key=value` syntax:
+`mxplay` restores the saved run configuration without requiring the training Task directory. It and `scripts/view.py` use the same `key=value` syntax:
 
 ```bash
 python scripts/view.py env=cartpole num_envs=4
-python scripts/play.py env=cartpole num_envs=1
-python scripts/play.py policy=/path/to/checkpoint.pt num_envs=1
+mxplay env=cartpole num_envs=1
+mxplay policy=/path/to/checkpoint.pt num_envs=1
 ```
 
 Play loads the `task_config.yaml` stored with a training run. To temporarily override algorithm settings, use `rl` as the algorithm root. Since `rl` starts as an empty mapping, add the path with `+`:
 
 ```bash
-python scripts/play.py \
+mxplay \
   env=cartpole \
   '+rl.agent.learning_rate=1e-4'
 ```

@@ -16,7 +16,7 @@ From the repository root:
 ```bash
 sh install.sh --all
 source .venv/bin/activate
-python scripts/train.py task=go2-walk-flat/rslrl.ppo
+mxtrain task=go2-walk-flat/rslrl.ppo
 ```
 
 Training results are saved under `runs/go2-walk-flat/`. Skip training if you already have a metadata-backed run.
@@ -24,13 +24,24 @@ Training results are saved under `runs/go2-walk-flat/`. Skip training if you alr
 ## 2. Export and inspect the artifact
 
 ```bash
-python scripts/export_deploy.py env=go2-walk-flat
+mxexport deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
 motrix-deploy inspect artifact=artifacts/go2-walk-flat.deploy
 ```
 
-Export selects the latest run and creates `artifacts/go2-walk-flat.deploy/`. To select a specific run, use
-`run=<run-dir>` instead of `env`; `output=<new-artifact-dir>` changes the destination. Existing artifact directories are
-not overwritten. Confirm that inspection reports `valid: true`.
+`env=go2-walk-flat` selects the latest metadata-backed run. To select a specific run, use
+`run_dir=<run-dir>` instead of `env`: exactly one of `env` and `run_dir` must be set. `output=<new-artifact-dir>` changes
+the destination; when omitted, it defaults to `artifacts/<env-name>.deploy`. Existing artifact directories are not
+overwritten. Confirm that inspection reports `valid: true`.
+
+`mxexport` requires an explicit `onnx` or `deploy` subcommand. The equivalent module command is
+`python -m motrix_rl.commands.export deploy`. Export uses the current directory's `./configs` when present, or an
+explicit `--config-dir <path>`; project files take precedence and missing files fall back to `motrix_rl.configs`.
+Both `export_deploy.yaml` and `export_onnx.yaml` ship there, so export does not require a repository checkout.
+Deployment export keeps its numerical-check options under `validation.*` (for example `validation.atol=3e-5`),
+not the ONNX subcommand's `parity.*`.
+
+Export runs in `motrix-rl` and requires the training provider and an installed profile compiler for the environment.
+The dependency is one-way: `motrix-rl` uses `motrix-deploy` to create artifacts; `motrix-deploy` has no RL dependency.
 
 The artifact directory is self-contained:
 
@@ -151,7 +162,7 @@ Export needs the training provider and task environment packages, but does **not
 ```bash
 source .venv/bin/activate
 RUN=runs/g1-wbt-dance/motrix/torch/fastsac/<run-dir>
-python scripts/export_deploy.py run="$RUN" \
+mxexport deploy run_dir="$RUN" \
   output=artifacts/g1-wbt-dance-software-pd.deploy validation.atol=3e-5
 
 motrix-deploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy
@@ -180,6 +191,29 @@ deliberately leaned pose that only the tracking policy can balance: after the pl
 damping directly, and ending upright requires the motion clip itself to finish at the standing pose.
 
 ## Advanced usage
+
+### Add a deployment profile compiler
+
+An environment package publishes one entry point per exact environment name in the
+`motrix_deploy.profiles` group. For example, an external package can declare:
+
+```toml
+[project.entry-points."motrix_deploy.profiles"]
+"my-walk-flat" = "my_project.deploy:build_profile"
+```
+
+Implement `build_profile(env_name: str) -> DeploymentProfile`, importing `DeploymentProfile` from
+`motrix_deploy.profile`. The callable compiles the selected environment's robot, task, control settings, training-space
+observation/action sizes, and any task-owned payloads into that profile. Install the package, then export a matching run:
+
+```bash
+mxexport deploy run_dir=/path/to/my-walk-flat/run output=artifacts/my-walk-flat.deploy
+```
+
+Discovery reads installed entry-point metadata and loads only the compiler selected by the run's exact environment name.
+It does not require registration imports or a `profile_modules` configuration option, and the CLI does not hardcode
+imports of environment packages. Built-in compiler mappings are listed in the
+[Motrix Environments README](https://github.com/Motphys/MotrixLab/blob/main/motrix_envs/README.md).
 
 ### Load a task spec from YAML
 

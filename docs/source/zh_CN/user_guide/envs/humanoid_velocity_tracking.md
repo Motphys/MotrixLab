@@ -91,14 +91,14 @@ MotrixLab 已为下列机器人提供平地和程序化起伏高度场配置。�
 
 ```bash
 python scripts/view.py env=ENV_ID num_envs=1
-python scripts/train.py task=ENV_ID/TRAINING_CONFIG
-python scripts/play.py env=ENV_ID num_envs=16
+mxtrain task=ENV_ID/TRAINING_CONFIG
+mxplay env=ENV_ID num_envs=16
 ```
 
 例如，使用 FastSAC 异步训练 K1 起伏地形任务：
 
 ```bash
-python scripts/train.py task=k1-walk-rough/motrix.fastsac algo.asynchronous=true
+mxtrain task=k1-walk-rough/motrix.fastsac algo.asynchronous=true
 ```
 
-`view.py` 使用随机动作，仅用于检查场景和模型；训练后的步态需要通过 `play.py` 回放策略查看。
+`view.py` 使用随机动作，仅用于检查场景和模型；训练后的步态需要通过 `mxplay` 回放策略查看。

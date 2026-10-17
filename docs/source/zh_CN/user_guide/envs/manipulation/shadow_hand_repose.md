@@ -297,13 +297,13 @@ actuator_ctrls = targets
 ### 训练
 
 ```bash
-python scripts/train.py task=shadow-hand-repose/skrl.ppo
+mxtrain task=shadow-hand-repose/skrl.ppo
 ```
 
 ### 策略评估
 
 ```bash
-python scripts/play.py env=shadow-hand-repose
+mxplay env=shadow-hand-repose
 ```
 
 ### 环境可视化

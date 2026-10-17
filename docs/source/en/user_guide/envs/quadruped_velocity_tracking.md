@@ -115,15 +115,15 @@ Choose an environment ID and one of its training configs from the table, then re
 
 ```bash
 python scripts/view.py env=ENV_ID num_envs=1
-python scripts/train.py task=ENV_ID/TRAINING_CONFIG
-python scripts/play.py env=ENV_ID num_envs=16
+mxtrain task=ENV_ID/TRAINING_CONFIG
+mxplay env=ENV_ID num_envs=16
 ```
 
 For example, train the Go2 rough-terrain task with RSL-RL PPO:
 
 ```bash
-python scripts/train.py task=go2-walk-rough/rslrl.ppo
+mxtrain task=go2-walk-rough/rslrl.ppo
 ```
 
-`view.py` applies random actions and is intended for scene and model inspection. Use `play.py` with a trained policy to
+`view.py` applies random actions and is intended for scene and model inspection. Use `mxplay` with a trained policy to
 inspect the learned gait.

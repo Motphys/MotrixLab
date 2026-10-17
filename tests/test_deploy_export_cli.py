@@ -3,24 +3,17 @@
 
 """Hydra configuration and composition tests for deployment export."""
 
-import importlib.util
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from hydra import compose, initialize_config_dir
+from hydra import compose, initialize_config_module
 from hydra.core.global_hydra import GlobalHydra
 
 from motrix_rl.cli import to_typed_config
+from motrix_rl.commands import export_deploy
 from motrix_rl.config import DeploymentExportConfig, OnnxParityConfig
-
-ROOT = Path(__file__).resolve().parents[1]
-CONFIG_DIR = str(ROOT / "configs/deploy")
-_SCRIPT_SPEC = importlib.util.spec_from_file_location("export_deploy_cli", ROOT / "scripts/export_deploy.py")
-assert _SCRIPT_SPEC is not None and _SCRIPT_SPEC.loader is not None
-export_deploy = importlib.util.module_from_spec(_SCRIPT_SPEC)
-_SCRIPT_SPEC.loader.exec_module(export_deploy)
 
 
 @pytest.fixture(autouse=True)
@@ -31,9 +24,9 @@ def _clear_hydra():
 
 
 def test_export_config_composes_hydra_overrides() -> None:
-    with initialize_config_dir(version_base=None, config_dir=CONFIG_DIR):
+    with initialize_config_module(version_base=None, config_module="motrix_rl.configs"):
         cfg = compose(
-            config_name="export",
+            config_name="export_deploy",
             overrides=[
                 "env=go2-walk-rough",
                 "validation.samples=8",
@@ -44,7 +37,7 @@ def test_export_config_composes_hydra_overrides() -> None:
 
     assert typed == DeploymentExportConfig(
         env="go2-walk-rough",
-        run=None,
+        run_dir=None,
         output=None,
         validation=OnnxParityConfig(seed=1, samples=8, atol=1e-5, rtol=1e-5),
     )
@@ -74,7 +67,7 @@ def test_export_cli_forwards_typed_validation_config(
         lambda path: SimpleNamespace(run_dir=run_dir, metadata=SimpleNamespace(env_name="go2-walk-rough")),
     )
     cfg = DeploymentExportConfig(
-        run=str(run_dir),
+        run_dir=str(run_dir),
         output=str(artifact_path),
         validation=OnnxParityConfig(seed=7, samples=4, atol=2e-5, rtol=3e-5),
     )
@@ -133,9 +126,9 @@ def test_export_cli_selects_latest_environment_run_and_default_output(
     "cfg",
     [
         DeploymentExportConfig(),
-        DeploymentExportConfig(env="go2-walk-rough", run="runs/example"),
+        DeploymentExportConfig(env="go2-walk-rough", run_dir="runs/example"),
     ],
 )
 def test_export_cli_requires_exactly_one_run_selector(cfg: DeploymentExportConfig) -> None:
-    with pytest.raises(ValueError, match="Exactly one of env and run"):
+    with pytest.raises(ValueError, match="Exactly one of env and run_dir"):
         export_deploy.run(cfg)

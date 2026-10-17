@@ -4,9 +4,9 @@
 """Generate a documentation video from the latest playable environment policy.
 
 Examples:
-    uv run docs/scripts/generate_video.py cartpole
-    uv run docs/scripts/generate_video.py cartpole --output cartpole_demo.mp4 --force
-    uv run docs/scripts/generate_video.py g1-wbt-dance  # records one complete motion clip
+    python docs/scripts/generate_video.py cartpole
+    python docs/scripts/generate_video.py cartpole --output cartpole_demo.mp4 --force
+    python docs/scripts/generate_video.py g1-wbt-dance  # records one complete motion clip
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ def _default_train_command(env_name: str) -> str | None:
         config = candidates[sorted(candidates)[0]]
     if config is None:
         return None
-    return f"uv run scripts/train.py task={env_name}/{config.stem}"
+    return f"python -m motrix_rl.commands.train task={env_name}/{config.name.removesuffix('.yaml')}"
 
 
 def _recording_path(env_name: str, output: Path | None) -> Path:
