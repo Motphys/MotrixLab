@@ -41,10 +41,51 @@ dependencies = [
     # ONNX export of trained policies; onnxruntime (for the parity check and
     # deployment inference) comes in via motrix-deploy.
     "onnx==1.20.1",
-    # Default training backend; also required by scripts/view.py. The exact
-    # version and wheel index are chosen by the workspace root `cuda`/`rocm`
-    # extras (see the root pyproject.toml tool.uv.sources).
+    # Default training backend; GPU profiles below optionally pin its version
+    # and, when consumed from source with uv, its wheel index.
     "torch>=2.7,<3",
+]
+
+[project.optional-dependencies]
+cuda = [
+    "torch==2.7.0; sys_platform == 'linux' or sys_platform == 'win32'",
+    "torchvision==0.22.0; sys_platform == 'linux' or sys_platform == 'win32'",
+    "torchaudio==2.7.0; sys_platform == 'linux' or sys_platform == 'win32'",
+]
+# ROCm wheels are available only for Linux x86_64.
+rocm = [
+    "amdsmi; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torch==2.11.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "triton-rocm==3.6.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+[tool.uv]
+conflicts = [[{ extra = "cuda" }, { extra = "rocm" }]]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm72"
+url = "https://download.pytorch.org/whl/rocm7.2"
+explicit = true
+
+[tool.uv.sources]
+# Keep default installs on PyPI; only explicit GPU extras select these indexes.
+torch = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'", extra = "cuda" },
+    { index = "pytorch-rocm72", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'", extra = "rocm" },
+]
+torchvision = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'", extra = "cuda" },
+]
+torchaudio = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'", extra = "cuda" },
+]
+triton-rocm = [
+    { index = "pytorch-rocm72", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'", extra = "rocm" },
 ]
 
 [project.urls]

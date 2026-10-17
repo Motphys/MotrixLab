@@ -2,20 +2,48 @@ version = 1
 revision = 3
 requires-python = ">=3.10, <3.12"
 resolution-markers = [
-    "python_full_version >= '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm'",
-    "python_full_version < '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm'",
-    "python_full_version >= '3.11' and sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm'",
-    "python_full_version < '3.11' and sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm'",
-    "python_full_version >= '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm'",
-    "python_full_version < '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm'",
-    "python_full_version >= '3.11' and sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm'",
-    "python_full_version < '3.11' and sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm'",
-    "(python_full_version >= '3.11' and platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (python_full_version >= '3.11' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (python_full_version >= '3.11' and sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')",
-    "(python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (python_full_version < '3.11' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (python_full_version < '3.11' and sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')",
-    "python_full_version >= '3.11' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm'",
-    "python_full_version < '3.11' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm'",
-    "python_full_version >= '3.11' and sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm'",
-    "python_full_version < '3.11' and sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm'",
+    "python_full_version >= '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm'",
+    "(python_full_version >= '3.11' and platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (python_full_version >= '3.11' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (python_full_version >= '3.11' and sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')",
+    "(python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (python_full_version < '3.11' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (python_full_version < '3.11' and sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')",
+    "python_full_version >= '3.11' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm'",
+    "(python_full_version >= '3.11' and platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (python_full_version >= '3.11' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (python_full_version >= '3.11' and sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')",
+    "(python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (python_full_version < '3.11' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (python_full_version < '3.11' and sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')",
+    "python_full_version >= '3.11' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm'",
+    "(python_full_version >= '3.11' and platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (python_full_version >= '3.11' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (python_full_version >= '3.11' and sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')",
+    "(python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (python_full_version < '3.11' and platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (python_full_version < '3.11' and sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')",
+    "python_full_version >= '3.11' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version >= '3.11' and sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
+    "python_full_version < '3.11' and sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm'",
 ]
 supported-markers = [
     "sys_platform == 'darwin'",
@@ -24,6 +52,9 @@ supported-markers = [
 conflicts = [[
     { package = "motrix-lab", extra = "cuda" },
     { package = "motrix-lab", extra = "rocm" },
+], [
+    { package = "motrix-rl", extra = "cuda" },
+    { package = "motrix-rl", extra = "rocm" },
 ]]
 
 [manifest]
@@ -122,8 +153,8 @@ name = "astunparse"
 version = "1.6.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "six", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "wheel", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "six", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "wheel", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f3/af/4182184d3c338792894f34a62672919db7ca008c89abee9b564dd34d8029/astunparse-1.6.3.tar.gz", hash = "sha256:5ad93a8456f0d084c3456d059fd9a92cce667963232cbf763eac3bc5b7940872", size = 18290, upload-time = "2019-12-22T18:12:13.129Z" }
 wheels = [
@@ -219,12 +250,12 @@ name = "chex"
 version = "0.1.90"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "jax", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "jaxlib", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "toolz", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "typing-extensions", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "absl-py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "jax", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "jaxlib", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "toolz", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "typing-extensions", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/77/70/53c7d404ce9e2a94009aea7f77ef6e392f6740e071c62683a506647c520f/chex-0.1.90.tar.gz", hash = "sha256:d3c375aeb6154b08f1cccd2bee4ed83659ee2198a6acf1160d2fe2e4a6c87b5c", size = 92363, upload-time = "2025-07-23T19:50:47.945Z" }
 wheels = [
@@ -236,7 +267,7 @@ name = "click"
 version = "8.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/76/d4/81420972a676e8ffea40450d8c8c92943e7218a78fe9b64359836cc9876b/click-8.4.2.tar.gz", hash = "sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6", size = 338000, upload-time = "2026-06-24T17:45:15.148Z" }
 wheels = [
@@ -290,7 +321,7 @@ dependencies = [
     { name = "questionary" },
     { name = "termcolor" },
     { name = "tomlkit" },
-    { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c4/ad/ad4e6fafa0627f38ebd3c65ad63767f3f07e0b33b72cbff0d3cadddf6ecb/commitizen-4.19.2.tar.gz", hash = "sha256:af0fb25f2fb60956b9d64eecd6e3ec7b710c2f9b012ce8728cb32c728c2c5a8a", size = 69721, upload-time = "2026-10-07T07:31:13.903Z" }
 wheels = [
@@ -337,7 +368,7 @@ wheels = [
 
 [package.optional-dependencies]
 toml = [
-    { name = "tomli", marker = "python_full_version <= '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "tomli", marker = "python_full_version <= '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 
 [[package]]
@@ -345,7 +376,7 @@ name = "cuda-bindings"
 version = "13.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "cuda-pathfinder", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/21/8464d133752951c154feafb3b65c297e7d80f301183d220bec4c830f1441/cuda_bindings-13.3.1-cp310-cp310-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:120fcc53d57903df529c3486962c56528cba5b7d6c57c99537320ed9922c8b86", size = 6073403, upload-time = "2026-05-29T23:11:36.22Z" },
@@ -374,37 +405,37 @@ wheels = [
 
 [package.optional-dependencies]
 cublas = [
-    { name = "nvidia-cublas", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cublas", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 cudart = [
-    { name = "nvidia-cuda-runtime", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cuda-runtime", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 cufft = [
-    { name = "nvidia-cufft", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cufft", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 cufile = [
-    { name = "nvidia-cufile", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cufile", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cuda-cupti", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 curand = [
-    { name = "nvidia-curand", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-curand", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 cusolver = [
-    { name = "nvidia-cusolver", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cusolver", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cusparse", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-nvjitlink", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cuda-nvrtc", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-nvtx", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 
 [[package]]
@@ -484,7 +515,7 @@ epath = [
     { name = "zipp" },
 ]
 epy = [
-    { name = "typing-extensions", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "typing-extensions", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 
 [[package]]
@@ -492,7 +523,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.11' or sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11' or sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -531,16 +562,16 @@ name = "flax"
 version = "0.10.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jax", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "msgpack", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "numpy", marker = "(python_full_version >= '3.11' and sys_platform != 'darwin') or (python_full_version < '3.11' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "optax", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "orbax-checkpoint", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "pyyaml", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "rich", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "tensorstore", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "treescope", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "typing-extensions", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "jax", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "msgpack", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "numpy", marker = "(python_full_version >= '3.11' and sys_platform != 'darwin') or (python_full_version < '3.11' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (python_full_version < '3.11' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "optax", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "orbax-checkpoint", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "pyyaml", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "rich", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "tensorstore", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "treescope", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "typing-extensions", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/45/5d/6fa18b5dcb737f0c454ad3c116c4faebbb51f164d81109255391a0462c5e/flax-0.10.4.tar.gz", hash = "sha256:57ae44d3f111fc85cff9049adb9684ce8ebd44e87bd8ca776ed52422c2d85021", size = 5179580, upload-time = "2025-02-27T00:11:00.913Z" }
 wheels = [
@@ -610,7 +641,7 @@ name = "google-pasta"
 version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "six", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "six", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/35/4a/0bd53b36ff0323d10d5f24ebd67af2de10a1117f5cf4d7add90df92756f1/google-pasta-0.2.0.tar.gz", hash = "sha256:c9f2c8dfc8f96d0d5808299920721be30c9eec37f2389f28904f454565c8a16e", size = 40430, upload-time = "2020-03-13T18:57:50.34Z" }
 wheels = [
@@ -668,7 +699,7 @@ name = "h5py"
 version = "3.15.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4d/6a/0d79de0b025aa85dc8864de8e97659c94cf3d23148394a954dc5ca52f8c8/h5py-3.15.1.tar.gz", hash = "sha256:c86e3ed45c4473564de55aa83b6fc9e5ead86578773dfbd93047380042e26b69", size = 426236, upload-time = "2025-10-16T10:35:27.404Z" }
 wheels = [
@@ -694,7 +725,7 @@ name = "humanfriendly"
 version = "10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyreadline3", marker = "sys_platform == 'win32' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "pyreadline3", marker = "sys_platform == 'win32' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/cc/3f/2c29224acb2e2df4d2046e4c73ee2662023c58ff5b113c4c1adac0886c43/humanfriendly-10.0.tar.gz", hash = "sha256:6b0b831ce8f15f7300721aa49829fc4e83921a9a301cc7f606be6686a2288ddc", size = 360702, upload-time = "2021-09-17T21:40:43.31Z" }
 wheels = [
@@ -804,11 +835,11 @@ name = "jax"
 version = "0.4.34"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jaxlib", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "ml-dtypes", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "opt-einsum", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "scipy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "jaxlib", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "ml-dtypes", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "opt-einsum", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "scipy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/19/6a/cacfcdf77841a4562e555ef35e0dbc5f8ca79c9f1010aaa4cf3973e79c69/jax-0.4.34.tar.gz", hash = "sha256:44196854f40c5f9cea3142824b9f1051f85afc3fcf7593ec5479fc8db01c58db", size = 1848472, upload-time = "2024-10-04T14:37:12.698Z" }
 wheels = [
@@ -817,8 +848,8 @@ wheels = [
 
 [package.optional-dependencies]
 cuda12 = [
-    { name = "jax-cuda12-plugin", extra = ["with-cuda"], marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "jaxlib", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "jax-cuda12-plugin", extra = ["with-cuda"], marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "jaxlib", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 
 [[package]]
@@ -835,7 +866,7 @@ name = "jax-cuda12-plugin"
 version = "0.4.34"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jax-cuda12-pjrt", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "jax-cuda12-pjrt", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0e/d7/149043aad22811f11ae5339fcfd3ce9176cf00a09cc05d6a0e4d3a3f7e8a/jax_cuda12_plugin-0.4.34-cp310-cp310-manylinux2014_aarch64.whl", hash = "sha256:1b037a408b9d9de59367c9513a9445b705da526657a0c4d593e84234312261e7", size = 14884290, upload-time = "2024-10-04T14:39:36.188Z" },
@@ -846,16 +877,16 @@ wheels = [
 
 [package.optional-dependencies]
 with-cuda = [
-    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cuda-cupti-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cuda-nvcc-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cuda-runtime-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cufft-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cusolver-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cusparse-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-nccl-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-cuda-cupti-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-cuda-nvcc-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-cuda-runtime-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-cufft-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-cusolver-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-cusparse-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-nccl-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 
 [[package]]
@@ -863,9 +894,9 @@ name = "jaxlib"
 version = "0.4.34"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ml-dtypes", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "scipy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "ml-dtypes", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "scipy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/24/31/2e254fe2fc23201775a7d0ccd1bcde892cfa349eb805744b81b15e0dcf74/jaxlib-0.4.34-cp310-cp310-macosx_10_14_x86_64.whl", hash = "sha256:b7a212a3cb5c6acc201c32ae4f4b5f5a9ac09457fbb77ba8db5ce7e7d4adc214", size = 87399257, upload-time = "2024-10-04T14:37:26.654Z" },
@@ -897,14 +928,14 @@ name = "keras"
 version = "3.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "h5py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "ml-dtypes", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "namex", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "optree", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "packaging", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "rich", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "absl-py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "h5py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "ml-dtypes", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "namex", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "optree", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "packaging", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "rich", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9b/b8/8df141314a64a31d3a21762658826f716cdf4c261c7fcdb3f729958def55/keras-3.12.0.tar.gz", hash = "sha256:536e3f8385a05ae04e82e08715a1a59988578087e187b04cb0a6fad11743f07f", size = 1129187, upload-time = "2025-10-27T20:23:11.574Z" }
 wheels = [
@@ -1302,11 +1333,7 @@ dependencies = [
 
 [package.optional-dependencies]
 cuda = [
-    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "torchaudio", version = "2.7.0", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'aarch64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (platform_python_implementation != 'CPython' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torchaudio", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (sys_platform == 'win32' and extra == 'extra-10-motrix-lab-cuda') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torchvision", version = "0.22.0", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'aarch64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (platform_python_implementation != 'CPython' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torchvision", version = "0.22.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (sys_platform == 'win32' and extra == 'extra-10-motrix-lab-cuda') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "motrix-rl", extra = ["cuda"], marker = "(extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 docs = [
     { name = "autodocsumm" },
@@ -1321,9 +1348,7 @@ docs = [
     { name = "tensorboard" },
 ]
 rocm = [
-    { name = "amdsmi", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "triton-rocm", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "motrix-rl", extra = ["rocm"], marker = "(extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 rslrl = [
     { name = "motrix-rl-rslrl" },
@@ -1350,7 +1375,7 @@ test = [
     { name = "commitizen" },
     { name = "dprint-py" },
     { name = "hydra-core" },
-    { name = "motrix-deploy-unitree", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "motrix-deploy-unitree", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -1358,7 +1383,6 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "amdsmi", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm'" },
     { name = "autodocsumm", marker = "extra == 'docs'" },
     { name = "motrix-deploy", editable = "motrix_deploy" },
     { name = "motrix-deploy-motrixsim", editable = "motrix_deploy_motrixsim" },
@@ -1370,6 +1394,8 @@ requires-dist = [
     { name = "motrix-env-mujoco", editable = "motrix_env_mujoco" },
     { name = "motrix-envs", editable = "motrix_envs" },
     { name = "motrix-rl", editable = "motrix_rl" },
+    { name = "motrix-rl", extras = ["cuda"], marker = "extra == 'cuda'", editable = "motrix_rl" },
+    { name = "motrix-rl", extras = ["rocm"], marker = "extra == 'rocm'", editable = "motrix_rl" },
     { name = "motrix-rl-builtin", editable = "motrix_rl_builtin" },
     { name = "motrix-rl-rslrl", marker = "extra == 'rslrl'", editable = "motrix_rl_rslrl" },
     { name = "motrix-rl-skrl", editable = "motrix_rl_skrl" },
@@ -1383,11 +1409,6 @@ requires-dist = [
     { name = "sphinx-togglebutton", marker = "extra == 'docs'" },
     { name = "sphinxcontrib-video", marker = "extra == 'docs'" },
     { name = "tensorboard", marker = "extra == 'docs'", specifier = "==2.20.0" },
-    { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm'", specifier = "==2.11.0", index = "https://download.pytorch.org/whl/rocm7.2", conflict = { package = "motrix-lab", extra = "rocm" } },
-    { name = "torch", marker = "(sys_platform == 'linux' and extra == 'cuda') or (sys_platform == 'win32' and extra == 'cuda')", specifier = "==2.7.0", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "motrix-lab", extra = "cuda" } },
-    { name = "torchaudio", marker = "(sys_platform == 'linux' and extra == 'cuda') or (sys_platform == 'win32' and extra == 'cuda')", specifier = "==2.7.0", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torchvision", marker = "(sys_platform == 'linux' and extra == 'cuda') or (sys_platform == 'win32' and extra == 'cuda')", specifier = "==0.22.0", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "triton-rocm", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm'", specifier = "==3.6.0", index = "https://download.pytorch.org/whl/rocm7.2" },
 ]
 provides-extras = ["rslrl", "skrl-jax", "unitree", "docs", "cuda", "tbb", "rocm"]
 
@@ -1423,13 +1444,28 @@ dependencies = [
     { name = "omegaconf" },
     { name = "onnx" },
     { name = "rich" },
-    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+]
+
+[package.optional-dependencies]
+cuda = [
+    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torchaudio", version = "2.7.0", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (platform_python_implementation != 'CPython' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torchaudio", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'linux' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torchvision", version = "0.22.0", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (platform_python_implementation != 'CPython' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torchvision", version = "0.22.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'linux' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform == 'win32' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+]
+rocm = [
+    { name = "amdsmi", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "triton-rocm", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "amdsmi", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm'" },
     { name = "gymnasium", specifier = "==1.1.1" },
     { name = "hydra-core", specifier = ">=1.3,<1.4" },
     { name = "motrix-deploy", editable = "motrix_deploy" },
@@ -1440,7 +1476,13 @@ requires-dist = [
     { name = "onnx", specifier = "==1.20.1" },
     { name = "rich", specifier = ">=13" },
     { name = "torch", specifier = ">=2.7,<3" },
+    { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm'", specifier = "==2.11.0", index = "https://download.pytorch.org/whl/rocm7.2", conflict = { package = "motrix-rl", extra = "rocm" } },
+    { name = "torch", marker = "(sys_platform == 'linux' and extra == 'cuda') or (sys_platform == 'win32' and extra == 'cuda')", specifier = "==2.7.0", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "motrix-rl", extra = "cuda" } },
+    { name = "torchaudio", marker = "(sys_platform == 'linux' and extra == 'cuda') or (sys_platform == 'win32' and extra == 'cuda')", specifier = "==2.7.0", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "motrix-rl", extra = "cuda" } },
+    { name = "torchvision", marker = "(sys_platform == 'linux' and extra == 'cuda') or (sys_platform == 'win32' and extra == 'cuda')", specifier = "==0.22.0", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "motrix-rl", extra = "cuda" } },
+    { name = "triton-rocm", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm'", specifier = "==3.6.0", index = "https://download.pytorch.org/whl/rocm7.2", conflict = { package = "motrix-rl", extra = "rocm" } },
 ]
+provides-extras = ["cuda", "rocm"]
 
 [[package]]
 name = "motrix-rl-builtin"
@@ -1450,9 +1492,9 @@ dependencies = [
     { name = "gymnasium" },
     { name = "motrix-rl" },
     { name = "numpy" },
-    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 
 [package.metadata]
@@ -1470,9 +1512,9 @@ source = { editable = "motrix_rl_rslrl" }
 dependencies = [
     { name = "motrix-rl" },
     { name = "rsl-rl-lib" },
-    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 
 [package.metadata]
@@ -1489,16 +1531,16 @@ source = { editable = "motrix_rl_skrl" }
 dependencies = [
     { name = "motrix-rl" },
     { name = "skrl" },
-    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 
 [package.optional-dependencies]
 jax = [
-    { name = "flax", marker = "sys_platform == 'linux' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "jax", extra = ["cuda12"], marker = "sys_platform == 'linux' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "tensorflow", marker = "sys_platform == 'linux' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "flax", marker = "sys_platform == 'linux' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "jax", extra = ["cuda12"], marker = "sys_platform == 'linux' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "tensorflow", marker = "sys_platform == 'linux' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 
 [package.metadata]
@@ -1617,10 +1659,10 @@ name = "mypy"
 version = "1.20.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "librt", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "librt", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
     { name = "mypy-extensions" },
     { name = "pathspec" },
-    { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
     { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/04/af/e3d4b3e9ec91a0ff9aabfdb38692952acf49bbb899c2e4c29acb3a6da3ae/mypy-1.20.2.tar.gz", hash = "sha256:e8222c26daaafd9e8626dec58ae36029f82585890589576f769a650dd20fd665", size = 3817349, upload-time = "2026-04-21T17:12:28.473Z" }
@@ -1844,7 +1886,7 @@ name = "nvidia-cudnn-cu12"
 version = "9.7.1.26"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/2e/ec5dda717eeb1de3afbbbb611ca556f9d6d057470759c6abd36d72f0063b/nvidia_cudnn_cu12-9.7.1.26-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:848a61d40ef3b32bd4e1fadb599f0cf04a4b942fbe5fb3be572ad75f9b8c53ef", size = 725862213, upload-time = "2025-02-06T22:14:57.169Z" },
@@ -1857,7 +1899,7 @@ name = "nvidia-cudnn-cu13"
 version = "9.19.0.56"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cublas", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/84/26025437c1e6b61a707442184fa0c03d083b661adf3a3eecfd6d21677740/nvidia_cudnn_cu13-9.19.0.56-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:6ed29ffaee1176c612daf442e4dd6cfeb6a0caa43ddcbeb59da94953030b1be4", size = 433781201, upload-time = "2026-02-03T20:40:53.805Z" },
@@ -1870,7 +1912,7 @@ name = "nvidia-cufft"
 version = "12.0.0.61"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-nvjitlink", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8b/ae/f417a75c0259e85c1d2f83ca4e960289a5f814ed0cea74d18c353d3e989d/nvidia_cufft-12.0.0.61-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:2708c852ef8cd89d1d2068bdbece0aa188813a0c934db3779b9b1faa8442e5f5", size = 214053554, upload-time = "2025-09-04T08:31:38.196Z" },
@@ -1883,7 +1925,7 @@ name = "nvidia-cufft-cu12"
 version = "11.3.3.41"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/72/95/6157cb45a49f5090a470de42353a22a0ed5b13077886dca891b4b0e350fe/nvidia_cufft_cu12-11.3.3.41-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:68509dcd7e3306e69d0e2d8a6d21c8b25ed62e6df8aac192ce752f17677398b5", size = 193108626, upload-time = "2025-01-23T17:55:49.192Z" },
@@ -1934,9 +1976,9 @@ name = "nvidia-cusolver"
 version = "12.0.4.66"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cusparse", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-nvjitlink", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cublas", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-cusparse", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-nvjitlink", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/c3/b30c9e935fc01e3da443ec0116ed1b2a009bb867f5324d3f2d7e533e776b/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:02c2457eaa9e39de20f880f4bd8820e6a1cfb9f9a34f820eb12a155aa5bc92d2", size = 223467760, upload-time = "2025-09-04T08:33:04.222Z" },
@@ -1949,9 +1991,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.7.2.55"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cusparse-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-cusparse-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8c/ce/4214a892e804b20bf66d04f04a473006fc2d3dac158160ef85f1bc906639/nvidia_cusolver_cu12-11.7.2.55-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:0fd9e98246f43c15bee5561147ad235dfdf2d037f5d07c9d41af3f7f72feb7cc", size = 260094827, upload-time = "2025-01-23T17:58:17.586Z" },
@@ -1964,7 +2006,7 @@ name = "nvidia-cusparse"
 version = "12.6.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-nvjitlink", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/94/5c26f33738ae35276672f12615a64bd008ed5be6d1ebcb23579285d960a9/nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:80bcc4662f23f1054ee334a15c72b8940402975e0eab63178fc7e670aa59472c", size = 162155568, upload-time = "2025-09-04T08:33:42.864Z" },
@@ -1977,7 +2019,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.5.7.53"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2e/a2/313db0453087f5324a5900380ca2e57e050c8de76f407b5e11383dc762ae/nvidia_cusparse_cu12-12.5.7.53-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d869c6146ca80f4305b62e02d924b4aaced936f8173e3cef536a67eed2a91af1", size = 291963692, upload-time = "2025-01-23T17:59:40.325Z" },
@@ -2215,11 +2257,11 @@ name = "optax"
 version = "0.2.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "chex", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "jax", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "jaxlib", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "absl-py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "chex", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "jax", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "jaxlib", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c0/75/1e011953c48be502d4d84fa8458e91be7c6f983002511669bddd7b1a065f/optax-0.2.5.tar.gz", hash = "sha256:b2e38c7aea376186deae758ba7a258e6ef760c6f6131e9e11bc561c65386d594", size = 258548, upload-time = "2025-06-10T17:00:47.544Z" }
 wheels = [
@@ -2231,7 +2273,7 @@ name = "optree"
 version = "0.18.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "typing-extensions", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/83/8e/09d899ad531d50b79aa24e7558f604980fe4048350172e643bb1b9983aec/optree-0.18.0.tar.gz", hash = "sha256:3804fb6ddc923855db2dc4805b4524c66e00f1ef30b166be4aadd52822b13e06", size = 165178, upload-time = "2025-11-14T08:58:31.234Z" }
 wheels = [
@@ -2268,18 +2310,18 @@ name = "orbax-checkpoint"
 version = "0.11.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "etils", extra = ["epath", "epy"], marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "humanize", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "jax", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "msgpack", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nest-asyncio", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "protobuf", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "pyyaml", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "simplejson", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "tensorstore", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "typing-extensions", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "absl-py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "etils", extra = ["epath", "epy"], marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "humanize", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "jax", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "msgpack", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nest-asyncio", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "protobuf", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "pyyaml", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "simplejson", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "tensorstore", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "typing-extensions", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7e/b4/262439a3fe00064b53a5182c0149447304f5a2d5a328a92d64390c18d189/orbax_checkpoint-0.11.5.tar.gz", hash = "sha256:8331ff594980a241ba43eb59dd683e5b590b339cff32a7b72d78cb5a350030b4", size = 249258, upload-time = "2025-02-11T19:33:45.364Z" }
 wheels = [
@@ -2536,12 +2578,12 @@ name = "pytest"
 version = "8.3.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "exceptiongroup", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "exceptiongroup", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
-    { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ae/3c/c9d525a414d506893f0cd8a8d0de7706446213181570cdbd766691164e40/pytest-8.3.5.tar.gz", hash = "sha256:f4efe70cc14e511565ac476b57c279e12a855b11f48f212af1080ef2263d3845", size = 1450891, upload-time = "2025-03-02T12:54:54.503Z" }
 wheels = [
@@ -2643,9 +2685,9 @@ version = "1.9.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
     { name = "rich" },
-    { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f7/ea/21e4867ea0ef881ffd4c0550fc21a061435e50d6324bcd034396633cbc18/rich_click-1.9.8.tar.gz", hash = "sha256:4008f921da88b5d91646c134ec881c1500e5a6b3f093e90e8f29400e09608371", size = 75363, upload-time = "2026-05-28T19:54:59.144Z" }
 wheels = [
@@ -2662,13 +2704,12 @@ dependencies = [
     { name = "onnx" },
     { name = "onnxscript" },
     { name = "tensordict" },
-    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torchvision", version = "0.22.0", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'aarch64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (platform_python_implementation != 'CPython' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torchvision", version = "0.22.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda') or (sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torchvision", version = "0.26.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torchvision", version = "0.26.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "torchvision", version = "0.22.0", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (platform_python_implementation != 'CPython' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torchvision", version = "0.22.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform == 'linux' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torchvision", version = "0.26.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or extra != 'extra-9-motrix-rl-cuda' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/aa/5b/5bea7c110c389f9336ebe5ad7cd9abbcbbb64d7de0d0f50c2af8fa2ce321/rsl_rl_lib-4.0.1.tar.gz", hash = "sha256:76a194e4834946716cc0e44dcd2be8b2254ac969c2452b145cd268c9cc908bf7", size = 41069, upload-time = "2026-02-09T09:15:10.927Z" }
 wheels = [
@@ -2806,7 +2847,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "alabaster" },
     { name = "babel" },
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
     { name = "docutils" },
     { name = "imagesize" },
     { name = "jinja2" },
@@ -2820,7 +2861,7 @@ dependencies = [
     { name = "sphinxcontrib-jsmath" },
     { name = "sphinxcontrib-qthelp" },
     { name = "sphinxcontrib-serializinghtml" },
-    { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6f/6d/be0b61178fe2cdcb67e2a92fc9ebb488e3c51c4f74a36a7824c0adf23425/sphinx-8.1.3.tar.gz", hash = "sha256:43c1911eecb0d3e161ad78611bc905d1ad0e523e4ddc202a58a821773dc4c927", size = 8184611, upload-time = "2024-10-13T20:27:13.93Z" }
 wheels = [
@@ -3008,9 +3049,9 @@ dependencies = [
     { name = "orjson" },
     { name = "packaging" },
     { name = "pyvers" },
-    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/50/bc/2411956883bf1c7531e107dd79225ca47ce4a42d9306da015f625a6f08c5/tensordict-0.11.0-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:269a94f6afd8229718f8a657bf093f2c861dd24223625fdadfed446cf4cdf86e", size = 813584, upload-time = "2026-01-26T11:35:55.172Z" },
@@ -3028,27 +3069,27 @@ name = "tensorflow"
 version = "2.20.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "astunparse", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "flatbuffers", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "gast", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "google-pasta", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "grpcio", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "h5py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "keras", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "libclang", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "ml-dtypes", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "opt-einsum", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "packaging", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "protobuf", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "requests", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "setuptools", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "six", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "tensorboard", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "termcolor", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "typing-extensions", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "wrapt", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "absl-py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "astunparse", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "flatbuffers", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "gast", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "google-pasta", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "grpcio", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "h5py", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "keras", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "libclang", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "ml-dtypes", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "opt-einsum", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "packaging", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "protobuf", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "requests", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "setuptools", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "six", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "tensorboard", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "termcolor", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "typing-extensions", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "wrapt", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/16/0e/9408083cb80d85024829eb78aa0aa799ca9f030a348acac35631b5191d4b/tensorflow-2.20.0-cp310-cp310-macosx_12_0_arm64.whl", hash = "sha256:e5f169f8f5130ab255bbe854c5f0ae152e93d3d1ac44f42cb1866003b81a5357", size = 200387116, upload-time = "2025-08-13T16:50:38.945Z" },
@@ -3066,8 +3107,8 @@ name = "tensorstore"
 version = "0.1.78"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ml-dtypes", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "ml-dtypes", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9f/ee/05eb424437f4db63331c90e4605025eedc0f71da3faff97161d5d7b405af/tensorstore-0.1.78.tar.gz", hash = "sha256:e26074ffe462394cf54197eb76d6569b500f347573cd74da3f4dd5f510a4ad7c", size = 6913502, upload-time = "2025-10-06T17:44:29.649Z" }
 wheels = [
@@ -3138,27 +3179,27 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "fsspec", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "jinja2", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "networkx", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cublas-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cuda-cupti-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cuda-nvrtc-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cuda-runtime-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cudnn-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cufft-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cufile-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-curand-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cusolver-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cusparse-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cusparselt-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-nccl-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-nvtx-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'x86_64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "sympy", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "triton", version = "3.3.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "filelock", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "fsspec", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "jinja2", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "networkx", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-cublas-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cuda-cupti-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cuda-nvrtc-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cuda-runtime-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cudnn-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cufft-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cufile-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-curand-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cusolver-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cusparse-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-cusparselt-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-nccl-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "nvidia-nvtx-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'x86_64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "sympy", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "triton", version = "3.3.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.7.0%2Bcu128-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:b1f0cdd0720ad60536deb5baa427b782fd920dd4fcf72e244d32974caafa3b9e", upload-time = "2025-05-14T03:33:41Z" },
@@ -3180,20 +3221,20 @@ resolution-markers = [
     "python_full_version < '3.11' and sys_platform != 'darwin'",
 ]
 dependencies = [
-    { name = "cuda-bindings", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "cuda-toolkit", extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "filelock", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')" },
-    { name = "fsspec", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')" },
-    { name = "jinja2", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')" },
-    { name = "networkx", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cudnn-cu13", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-cusparselt-cu13", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-nccl-cu13", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "nvidia-nvshmem-cu13", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "setuptools", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')" },
-    { name = "sympy", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')" },
-    { name = "triton", version = "3.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "typing-extensions", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm')" },
+    { name = "cuda-bindings", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "cuda-toolkit", extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "filelock", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "fsspec", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "jinja2", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "networkx", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-cudnn-cu13", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-cusparselt-cu13", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-nccl-cu13", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "nvidia-nvshmem-cu13", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "setuptools", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "sympy", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "triton", version = "3.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "typing-extensions", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ac/f2/c1690994afe461aae2d0cac62251e6802a703dec0a6c549c02ecd0de92a9/torch-2.11.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:2c0d7fcfbc0c4e8bb5ebc3907cbc0c6a0da1b8f82b1fc6e14e914fa0b9baf74e", size = 80526521, upload-time = "2026-03-23T18:12:06.86Z" },
@@ -3215,14 +3256,14 @@ resolution-markers = [
     "python_full_version < '3.11' and sys_platform != 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "fsspec", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "jinja2", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "networkx", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "setuptools", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "sympy", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "triton-rocm", marker = "(sys_platform == 'linux' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "filelock", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "fsspec", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "jinja2", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "networkx", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "setuptools", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "sympy", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "triton-rocm", marker = "(sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/rocm7.2/torch-2.11.0%2Brocm7.2-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:0ead1a0e9bbc84484207cd905e9a424a6c7dcde94eb03d59c3da8972e4c964fe", upload-time = "2026-04-28T19:36:24Z" },
@@ -3238,7 +3279,7 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
 ]
 dependencies = [
-    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'" },
+    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (platform_python_implementation != 'CPython' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu128/torchaudio-2.7.0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:dba5b20318d6f39753fc49b6b7267d7adb2c748997f716ef7838d5f048798f06", upload-time = "2025-04-22T18:30:29Z" },
@@ -3254,7 +3295,7 @@ resolution-markers = [
     "(python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.11' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform != 'darwin' and sys_platform != 'linux')",
 ]
 dependencies = [
-    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform == 'linux' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu128/torchaudio-2.7.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:d62b6e9b792ad37af6d1289ba283e1029e71b4ff9cd3c6cf7f0e7776f23254b2", upload-time = "2025-04-22T18:30:28Z" },
@@ -3272,9 +3313,9 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
 ]
 dependencies = [
-    { name = "numpy", marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'aarch64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (platform_python_implementation != 'CPython' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "pillow", marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'aarch64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (platform_python_implementation != 'CPython' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_machine != 'aarch64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (platform_python_implementation != 'CPython' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "numpy", marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (platform_python_implementation != 'CPython' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "pillow", marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (platform_python_implementation != 'CPython' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (platform_python_implementation != 'CPython' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.22.0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:566224d7b4f00bc6366bed1d62f834ca80f8e57fe41e10e4a5636bfa3ffb984e", upload-time = "2025-04-22T18:30:20Z" },
@@ -3290,9 +3331,9 @@ resolution-markers = [
     "(python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.11' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform != 'darwin' and sys_platform != 'linux')",
 ]
 dependencies = [
-    { name = "numpy", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda') or (sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "pillow", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda') or (sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-10-motrix-lab-cuda') or (sys_platform == 'darwin' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform == 'linux' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "numpy", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform == 'linux' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "pillow", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform == 'linux' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (platform_python_implementation != 'CPython' and sys_platform == 'linux' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform == 'linux' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform == 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.22.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:59df5a550113a80ce523047066eaaedb168c69482da88c3ab246716ab45ba092", upload-time = "2025-04-22T18:30:20Z" },
@@ -3308,11 +3349,14 @@ source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.11' and sys_platform == 'darwin'",
     "python_full_version < '3.11' and sys_platform == 'darwin'",
+    "python_full_version >= '3.11' and sys_platform != 'darwin'",
+    "python_full_version < '3.11' and sys_platform != 'darwin'",
 ]
 dependencies = [
-    { name = "numpy", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "pillow", marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "numpy", marker = "sys_platform == 'darwin' or extra != 'extra-9-motrix-rl-cuda' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "pillow", marker = "sys_platform == 'darwin' or extra != 'extra-9-motrix-rl-cuda' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/74/b4/cdfee31e0402ea035135462cb0ab496e974d56fab6b4e7a1f0cbccb8cd28/torchvision-0.26.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:a06d4772a8e13e772906ed736cc53ec6639e5e60554f8e5fa6ca165aabebc464", size = 1863503, upload-time = "2026-03-23T18:13:01.384Z" },
@@ -3326,34 +3370,11 @@ wheels = [
 ]
 
 [[package]]
-name = "torchvision"
-version = "0.26.0+cu128"
-source = { registry = "https://download.pytorch.org/whl/cu128" }
-resolution-markers = [
-    "python_full_version >= '3.11' and sys_platform != 'darwin'",
-    "python_full_version < '3.11' and sys_platform != 'darwin'",
-]
-dependencies = [
-    { name = "numpy", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "pillow", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra != 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
-]
-wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:2a04bf491eb22e6487defe6cead6ffaabbce13fb5981b8eb3540050f96cb0599", upload-time = "2026-04-09T23:21:33Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:f44bfc61b9be80bcf52a762d34da363cea3125d10c01f37e271583803c7bb97b", upload-time = "2026-03-23T15:36:21Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp310-cp310-win_amd64.whl", hash = "sha256:ed0770e00b96d8aa675718e20db69c740c927f027c9c8b1330251f8a973221b6", upload-time = "2026-04-09T23:21:33Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:ed1324dbbbecb5a0149ed4ce8f9308465a1eef85ca2d2370dbb14805bf1c90aa", upload-time = "2026-04-09T23:21:34Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:8f2629d056570c929b0a1d5473d9cb0320b90bda1764bda353553a72cc6b2069", upload-time = "2026-03-23T15:36:22Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp311-cp311-win_amd64.whl", hash = "sha256:d26091b15cd6e3c74c148d9b68c9a901ad6fb9b0f66fa3ea3ab09f04132a07d3", upload-time = "2026-04-09T23:21:35Z" },
-]
-
-[[package]]
 name = "tqdm"
 version = "4.67.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a8/4b/29b4ef32e036bb34e4ab51796dd745cdba7ed47ad142a9f4a1eb8e0c744d/tqdm-4.67.1.tar.gz", hash = "sha256:f8aef9c52c08c13a65f30ea34f4e5aac3fd1a34959879d7e59e63027286627f2", size = 169737, upload-time = "2024-11-24T20:12:22.481Z" }
 wheels = [
@@ -3365,7 +3386,7 @@ name = "treescope"
 version = "0.1.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f0/2a/d13d3c38862632742d2fe2f7ae307c431db06538fd05ca03020d207b5dcc/treescope-0.1.10.tar.gz", hash = "sha256:20f74656f34ab2d8716715013e8163a0da79bdc2554c16d5023172c50d27ea95", size = 138870, upload-time = "2025-08-08T05:43:48.048Z" }
 wheels = [
@@ -3383,7 +3404,7 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
 ]
 dependencies = [
-    { name = "setuptools", marker = "(sys_platform != 'darwin' and extra == 'extra-10-motrix-lab-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm')" },
+    { name = "setuptools", marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/76/04/d54d3a6d077c646624dc9461b0059e23fd5d30e0dbe67471e3654aec81f9/triton-3.3.0-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fad99beafc860501d7fcc1fb7045d9496cbe2c882b1674640304949165a916e7", size = 156441993, upload-time = "2025-04-09T20:27:25.107Z" },

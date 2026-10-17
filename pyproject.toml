@@ -35,30 +35,16 @@ docs = [
     "sphinx-design",
     "tensorboard==2.20.0",
 ]
-# Mutually exclusive GPU wheel profiles: `cuda` pulls the NVIDIA wheels from
-# the pytorch-cu128 index, `rocm` the AMD wheels from the pytorch-rocm72
-# index. Select exactly one with `uv sync --extra cuda` or
-# `uv sync --extra rocm`; the extras are declared conflicting so uv keeps
-# both branches in the single uv.lock. Without any extra, torch resolves
-# from the default index (PyPI).
-cuda = [
-    "torch==2.7.0; sys_platform == 'linux' or sys_platform == 'win32'",
-    "torchvision==0.22.0; sys_platform == 'linux' or sys_platform == 'win32'",
-    "torchaudio==2.7.0; sys_platform == 'linux' or sys_platform == 'win32'",
-]
+# GPU profiles are owned by the installable RL package. Keep the workspace
+# installation entry points without duplicating versions or index routing.
+cuda = ["motrix-rl[cuda]==0.4.0b1"]
 # TBB threading layer for numba parallel manager kernels on many-core
 # machines (see motrix-env-core's tbb extra); optional, combines with any
 # GPU profile.
 tbb = [
     "motrix-env-core[tbb]==0.4.0b1",
 ]
-# ROCm wheels only exist for Linux x86_64; the markers keep other platforms
-# from resolving these requirements against the default (PyPI) index.
-rocm = [
-    "amdsmi; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "torch==2.11.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "triton-rocm==3.6.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
-]
+rocm = ["motrix-rl[rocm]==0.4.0b1"]
 
 [dependency-groups]
 dev = [
@@ -98,25 +84,9 @@ members = [
 environments = ["sys_platform == 'darwin'", "sys_platform != 'darwin'"]
 package = false
 prerelease = "if-necessary-or-explicit"
-# `cuda` and `rocm` resolve torch from different indexes and can never be
-# installed together; declaring them conflicting lets uv keep both branches
-# (as separate forks) in the same uv.lock.
-conflicts = [
-    [
-        { extra = "cuda" },
-        { extra = "rocm" },
-    ],
-]
-
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-rocm72"
-url = "https://download.pytorch.org/whl/rocm7.2"
-explicit = true
+# The forwarding extras are mutually exclusive. uv also collects motrix-rl's
+# member-local conflicts when resolving this workspace.
+conflicts = [[{ extra = "cuda" }, { extra = "rocm" }]]
 
 [[tool.uv.index]]
 name = "pypi"
@@ -137,23 +107,6 @@ motrix-rl = { workspace = true }
 motrix-rl-builtin = { workspace = true }
 motrix-rl-skrl = { workspace = true }
 motrix-rl-rslrl = { workspace = true }
-# The `extra = "rocm"` entry routes torch requirements declared in the rocm
-# extra to the ROCm index; the `extra = "cuda"` entry does the same for the
-# cuda extra. Requirements outside both extras (bare sync) fall back to the
-# default index.
-torch = [
-    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'", extra = "cuda" },
-    { index = "pytorch-rocm72", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'", extra = "rocm" },
-]
-torchvision = [
-    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-torchaudio = [
-    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-triton-rocm = [
-    { index = "pytorch-rocm72", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
