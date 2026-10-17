@@ -14,6 +14,7 @@ from motrix_env_core.config.scene import FlatTerrainCfg, HFieldTerrainCfg
 from motrix_envs.config.scene import StandardSceneObjsCfg
 from motrix_envs.locomotion.quadruped.cfg import (
     Commands,
+    FootLateralRewardCfg,
     QuadrupedSceneCfg,
     QuadrupedWalkEnvCfg,
     QuadrupedWalkRandomizationCfg,
@@ -40,6 +41,8 @@ class Go2WalkDirectEnvCfg(QuadrupedWalkEnvCfg):
             lower=np.array([-1.0, -0.5, -0.5], dtype=np.float32),
             upper=np.array([1.0, 0.5, 0.5], dtype=np.float32),
             standing_probability=0.1,
+            single_axis_probability=0.45,
+            boundary_probability=0.15,
             resampling_seconds_range=(5.0, 10.0),
         )
     )
@@ -68,18 +71,47 @@ class Go2WalkDirectEnvCfg(QuadrupedWalkEnvCfg):
 
     reward_config: RewardConfig = RewardConfig(
         scales=RewardScales(
-            similar_to_default=-1,
+            tracking_lin_vel=2.0,
+            flat_orientation=-2.5,
+            stand_still=-1.0,
+            # feet_slide=-0.1,
+            # dof_acc=-2.5e-7,
+            # action_smoothness=-0.01,
+            # contact=0.1,
         ),
         tracking_ang_vel_sigma=0.05,
         target_foot_height=0.05,
         base_height_target=0.35,
+        foot_lateral_terms=(
+            FootLateralRewardCfg(
+                name="rear_swing_width",
+                feet=("rear_left", "rear_right"),
+                phase="swing",
+                target_abs_y=0.145,
+                width_tolerance=0.02,
+                width_scale=-0.05,
+            ),
+        ),
     )
 
     def for_play(self) -> "Go2WalkDirectEnvCfg":
         """Return a deterministic Go2 evaluation config."""
 
         cfg = super().for_play()
-        return replace(cfg, noise_config=replace(cfg.noise_config, level=0.0))
+        velocity = replace(
+            cfg.commands.velocity,
+            lower=np.array([0.5, 0.0, 0.0], dtype=np.float32),
+            upper=np.array([0.5, 0.0, 0.0], dtype=np.float32),
+            standing_probability=0.0,
+            single_axis_probability=0.0,
+            boundary_probability=0.0,
+            resampling_seconds_range=None,
+        )
+        return replace(
+            cfg,
+            commands=replace(cfg.commands, velocity=velocity),
+            noise_config=replace(cfg.noise_config, level=0.0),
+        )
 
 
 @registry.envcfg("go2-walk-rough")
@@ -109,8 +141,21 @@ class Go2WalkRoughDirectEnvCfg(Go2WalkDirectEnvCfg):
         ),
     )
     reward_config: RewardConfig = RewardConfig(
+        scales=RewardScales(
+            tracking_lin_vel=2.0,
+            stand_still=-1.0,
+        ),
         target_foot_height=0.1,
+        # Rough terrain needs free lateral foothold selection, so it does not
+        # inherit the flat-ground foot-placement regularizers.
+        foot_lateral_terms=(),
     )
+
+    def for_play(self) -> "Go2WalkRoughDirectEnvCfg":
+        """Return a deterministic rough-terrain evaluation config."""
+
+        cfg = QuadrupedWalkEnvCfg.for_play(self)
+        return replace(cfg, noise_config=replace(cfg.noise_config, level=0.0))
 
 
 registry.env("go2-walk-flat")(QuadrupedWalkTask)

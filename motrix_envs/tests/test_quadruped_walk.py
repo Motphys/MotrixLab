@@ -81,6 +81,17 @@ def test_quadruped_reward_scales_are_structured_and_not_shared():
     assert go1 is not go2
 
 
+def test_go2_flat_walk_keeps_spaces_and_exposes_gait_terms():
+    env = registry.make("go2-walk-flat", num_envs=2, mode="train")
+    state = env.init_state()
+    assert env.policy_observation_space.shape == (49,)
+    assert env.action_space.shape == (12,)
+    env._feet_phase[:] = 0.75
+    env.feet_contact[:, :2] = True
+    state = env.step(np.zeros((2, 12), dtype=np.float32))
+    assert "rear_swing_width" in state.reward_terms
+
+
 def test_go2_velocity_commands_remain_constant_before_resampling_interval():
     np.random.seed(7)
     env = registry.make("go2-walk-flat", num_envs=64, mode="train")
@@ -256,6 +267,19 @@ def test_random_planar_velocity_binding_can_sample_a_standing_batch():
     )
 
     np.testing.assert_array_equal(binding.read_command(batch_size=5).values, np.zeros((5, 3), dtype=np.float32))
+
+
+def test_random_planar_velocity_binding_covers_single_axis_and_boundaries():
+    binding = RandomPlanarVelocityBinding(
+        np.array([-1.0, -0.5, -0.5], dtype=np.float32),
+        np.array([1.0, 0.5, 0.5], dtype=np.float32),
+        rng=np.random.default_rng(9),
+        single_axis_probability=1.0,
+        boundary_probability=1.0,
+    )
+    commands = binding.read_command(batch_size=32).values
+    assert np.all(np.sum(np.abs(commands) > 1e-6, axis=1) == 1)
+    assert np.all(np.isin(commands, [-1.0, -0.5, 0.0, 0.5, 1.0]))
 
 
 def test_go2_partial_reset_only_resamples_finished_environments(monkeypatch: pytest.MonkeyPatch):
@@ -509,7 +533,7 @@ def test_swing_height_reward_prefers_target_height(quadruped_env):
     assert np.all(off_target_reward > 0.0)
 
 
-def test_swing_contact_penalty_detects_dragging_feet(quadruped_env):
+def test_contact_penalties_distinguish_swing_contacts_from_world_slide(quadruped_env):
     feet_phase = np.full((1, quadruped_env._num_feet), 0.75, dtype=np.float32)
     no_contacts = np.zeros((1, quadruped_env._num_feet), dtype=bool)
     all_contacts = np.ones((1, quadruped_env._num_feet), dtype=bool)
@@ -522,6 +546,16 @@ def test_swing_contact_penalty_detects_dragging_feet(quadruped_env):
 
     np.testing.assert_array_equal(no_drag, np.zeros((1,), dtype=np.float32))
     np.testing.assert_array_equal(all_drag, np.ones((1,), dtype=np.float32))
+
+    quadruped_env._previous_feet_pos[:] = 0.0
+    quadruped_env.feet_pos[:] = np.array([-0.1, 0.0, 0.0], dtype=np.float32)
+    quadruped_env._previous_feet_world_pos[:] = 0.0
+    quadruped_env._feet_world_pos[:] = 0.0
+    np.testing.assert_allclose(quadruped_env._reward_feet_slide(None, None, None), 0.0)
+
+    # A moving contact foot must still produce a slide penalty.
+    quadruped_env._feet_world_pos[:, :, 0] = quadruped_env.cfg.ctrl_dt
+    np.testing.assert_allclose(quadruped_env._reward_feet_slide(None, None, None), 1.0)
 
 
 @pytest.mark.parametrize("robot_name", ["go1", "go2", "anymalc"])

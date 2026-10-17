@@ -15,6 +15,9 @@ from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import (
     ContactSensorCfg,
     ContactSensorReduce,
+    FrameObjectKind,
+    FrameSensorCfg,
+    FrameSensorType,
     NoiseTerrainGeneratorCfg,
     ProceduralHFieldAssetCfg,
     SceneSensorsCfg,
@@ -37,6 +40,20 @@ class QuadrupedTaskSensorsCfg(SceneSensorsCfg):
     front_right_contact: ContactSensorCfg = MISSING
     rear_left_contact: ContactSensorCfg = MISSING
     rear_right_contact: ContactSensorCfg = MISSING
+    front_left_world_pos: FrameSensorCfg = MISSING
+    front_right_world_pos: FrameSensorCfg = MISSING
+    rear_left_world_pos: FrameSensorCfg = MISSING
+    rear_right_world_pos: FrameSensorCfg = MISSING
+
+
+def _world_position_sensor(geom_name: str | None) -> FrameSensorCfg:
+    if geom_name is None:
+        raise ValueError("Quadruped task requires a contact geom name for every leg")
+    return FrameSensorCfg(
+        object_type=FrameObjectKind.geom,
+        object_name=geom_name,
+        sensor_type=FrameSensorType.framepos,
+    )
 
 
 @configclass
@@ -55,6 +72,10 @@ class QuadrupedSceneCfg(StandardSceneCfg):
             front_right_contact=_contact_sensor(front_right),
             rear_left_contact=_contact_sensor(rear_left),
             rear_right_contact=_contact_sensor(rear_right),
+            front_left_world_pos=_world_position_sensor(front_left),
+            front_right_world_pos=_world_position_sensor(front_right),
+            rear_left_world_pos=_world_position_sensor(rear_left),
+            rear_right_world_pos=_world_position_sensor(rear_right),
         )
 
 
@@ -160,10 +181,19 @@ class VelocityCommandCfg:
     lower: NDArray[np.float32] = np.array([0.5, 0.0, 0.0], dtype=np.float32)
     upper: NDArray[np.float32] = np.array([0.5, 0.0, 0.0], dtype=np.float32)
     standing_probability: float = 0.0
+    single_axis_probability: float = 0.0
+    boundary_probability: float = 0.0
     standing_threshold: float = 0.05
     resampling_seconds_range: tuple[float, float] | None = None
 
     def validate(self) -> None:
+        for name, value in {
+            "standing_probability": self.standing_probability,
+            "single_axis_probability": self.single_axis_probability,
+            "boundary_probability": self.boundary_probability,
+        }.items():
+            if not np.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be finite and inside [0, 1], got {value}")
         if self.resampling_seconds_range is not None:
             low, high = self.resampling_seconds_range
             if not np.isfinite(low) or not np.isfinite(high) or low <= 0.0 or low > high:
@@ -199,6 +229,62 @@ class RewardScales:
     contact: float = 0.24
     swing_feet_z: float = 2.0
     swing_contact: float = -1.0
+    flat_orientation: float = 0.0
+    stand_still: float = 0.0
+    feet_slide: float = 0.0
+    dof_acc: float = 0.0
+    action_smoothness: float = 0.0
+
+
+@configclass
+class FootLateralRewardCfg:
+    """A body-frame lateral foot-placement reward for a named set of feet."""
+
+    name: str = ""
+    feet: tuple[str, ...] = ()
+    phase: str = "swing"
+    target_abs_y: float | None = None
+    min_abs_y: float | None = None
+    max_abs_y: float | None = None
+    width_tolerance: float = 0.02
+    width_scale: float = 0.0
+    lateral_speed_tolerance: float = 0.15
+    lateral_speed_scale: float = 0.0
+    speed_only_outside_band: bool = True
+
+    def validate(self) -> None:
+        if not self.name:
+            raise ValueError("foot lateral reward name must not be empty")
+        if not self.feet or len(set(self.feet)) != len(self.feet):
+            raise ValueError(f"foot lateral reward {self.name!r} must name unique feet")
+        if self.phase not in {"swing", "stance"}:
+            raise ValueError(f"foot lateral reward {self.name!r} phase must be 'swing' or 'stance'")
+        if not np.isfinite(self.width_tolerance) or self.width_tolerance <= 0.0:
+            raise ValueError(f"foot lateral reward {self.name!r} width_tolerance must be positive")
+        if not np.isfinite(self.lateral_speed_tolerance) or self.lateral_speed_tolerance <= 0.0:
+            raise ValueError(f"foot lateral reward {self.name!r} lateral_speed_tolerance must be positive")
+        if not np.isfinite(self.width_scale) or not np.isfinite(self.lateral_speed_scale):
+            raise ValueError(f"foot lateral reward {self.name!r} scales must be finite")
+
+        has_target = self.target_abs_y is not None
+        has_band = self.min_abs_y is not None or self.max_abs_y is not None
+        if has_target == has_band:
+            raise ValueError(
+                f"foot lateral reward {self.name!r} must define either target_abs_y or min_abs_y and max_abs_y"
+            )
+        if has_target:
+            if not np.isfinite(self.target_abs_y) or self.target_abs_y < 0.0:
+                raise ValueError(f"foot lateral reward {self.name!r} target_abs_y must be non-negative")
+            return
+        if self.min_abs_y is None or self.max_abs_y is None:
+            raise ValueError(f"foot lateral reward {self.name!r} band requires min_abs_y and max_abs_y")
+        if (
+            not np.isfinite(self.min_abs_y)
+            or not np.isfinite(self.max_abs_y)
+            or self.min_abs_y < 0.0
+            or self.min_abs_y > self.max_abs_y
+        ):
+            raise ValueError(f"foot lateral reward {self.name!r} must define a non-negative ordered band")
 
 
 @configclass
@@ -209,6 +295,16 @@ class RewardConfig:
     target_foot_height: float = 0.1
     swing_feet_height_sigma: float = 0.05
     base_height_target: float = 0.3
+    stand_still_threshold: float = 0.05
+    foot_lateral_terms: tuple[FootLateralRewardCfg, ...] = ()
+
+    def validate(self) -> None:
+        names: set[str] = set()
+        for term in self.foot_lateral_terms:
+            term.validate()
+            if term.name in names:
+                raise ValueError(f"duplicate foot lateral reward name {term.name!r}")
+            names.add(term.name)
 
 
 @configclass
@@ -238,6 +334,7 @@ class QuadrupedWalkEnvCfg(DirectEnvCfg):
         super().validate()
         self.randomization.validate()
         self.commands.velocity.validate()
+        self.reward_config.validate()
         if not np.isfinite(self.termination_min_up_z) or not -1.0 <= self.termination_min_up_z <= 1.0:
             raise ValueError("termination_min_up_z must be finite and inside [-1, 1]")
         if (
@@ -263,6 +360,7 @@ class QuadrupedWalkEnvCfg(DirectEnvCfg):
 __all__ = [
     "Commands",
     "ControlConfig",
+    "FootLateralRewardCfg",
     "NoiseConfig",
     "QuadrupedWalkRandomizationCfg",
     "QuadrupedSceneCfg",
