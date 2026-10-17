@@ -15,7 +15,7 @@ motrix-deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy run
 ```bash
 sh install.sh --all
 source .venv/bin/activate
-python scripts/train.py task=go2-walk-flat/rslrl.ppo
+mxtrain task=go2-walk-flat/rslrl.ppo
 ```
 
 训练结果保存在 `runs/go2-walk-flat/`。已有包含 metadata 的 run 时可跳过训练。
@@ -23,12 +23,23 @@ python scripts/train.py task=go2-walk-flat/rslrl.ppo
 ## 2. 导出并检查 artifact
 
 ```bash
-python scripts/export_deploy.py env=go2-walk-flat
+mxexport deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
 motrix-deploy inspect artifact=artifacts/go2-walk-flat.deploy
 ```
 
-导出会选择最近一次 run，并创建 `artifacts/go2-walk-flat.deploy/`。用 `run=<run-dir>` 替代 `env` 可选择指定 run，
-`output=<new-artifact-dir>` 可更改输出位置。已有 artifact 目录不会被覆盖。确认检查结果为 `valid: true`。
+`env=go2-walk-flat` 选择最近一次包含 metadata 的 run。用 `run_dir=<run-dir>` 替代 `env` 可选择指定 run：
+`env` 与 `run_dir` 必须且只能设置一个。`output=<new-artifact-dir>` 可更改输出位置，省略时默认为
+`artifacts/<env-name>.deploy`。已有 artifact 目录不会被覆盖。确认检查结果为 `valid: true`。
+
+`mxexport` 必须显式选择 `onnx` 或 `deploy` 子命令。等价模块命令是
+`python -m motrix_rl.commands.export deploy`。导出会使用当前目录下存在的 `./configs`，也可通过
+`--config-dir <path>` 显式指定；项目文件优先，缺失文件回退到 `motrix_rl.configs`。
+其中打包了 `export_deploy.yaml` 与 `export_onnx.yaml`，因此导出不需要仓库 checkout。
+部署导出的数值检查选项仍使用 `validation.*`（例如 `validation.atol=3e-5`），
+而不是 ONNX 子命令的 `parity.*`。
+
+导出由 `motrix-rl` 执行，需要训练 provider 和该环境已安装的 profile compiler。
+依赖是单向的：`motrix-rl` 使用 `motrix-deploy` 创建 artifact；`motrix-deploy` 不依赖 RL。
 
 artifact 目录自包含：
 
@@ -145,7 +156,7 @@ manifest 中），部署既不需要 Torch 也不需要 RL 环境。导出需要
 ```bash
 source .venv/bin/activate
 RUN=runs/g1-wbt-dance/motrix/torch/fastsac/<run-dir>
-python scripts/export_deploy.py run="$RUN" \
+mxexport deploy run_dir="$RUN" \
   output=artifacts/g1-wbt-dance-software-pd.deploy validation.atol=3e-5
 
 motrix-deploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy
@@ -171,6 +182,29 @@ policy 能维持平衡：播放预算完成后 task 直接进入实测 damping �
 站立姿态结束。
 
 ## 进阶说明
+
+### 添加部署 profile compiler
+
+环境 package 在 `motrix_deploy.profiles` 组中为每个完整环境名发布一个 entry point。
+例如，外部 package 可声明：
+
+```toml
+[project.entry-points."motrix_deploy.profiles"]
+"my-walk-flat" = "my_project.deploy:build_profile"
+```
+
+实现 `build_profile(env_name: str) -> DeploymentProfile`，从 `motrix_deploy.profile` 导入
+`DeploymentProfile`。该 callable 将所选环境的机器人、任务、控制设置、训练空间的 observation/action 维度，
+以及任务自有 payload 编译成 profile。安装 package 后，导出对应环境的 run：
+
+```bash
+mxexport deploy run_dir=/path/to/my-walk-flat/run output=artifacts/my-walk-flat.deploy
+```
+
+自动发现读取已安装的 entry-point metadata，只加载 run 的完整环境名所选中的 compiler。
+不需要注册 import 或 `profile_modules` 配置项，CLI 也不会硬编码 import 环境 package。
+内置 compiler 映射见
+[Motrix Environments README](https://github.com/Motphys/MotrixLab/blob/main/motrix_envs/README.md)。
 
 ### 从 YAML 加载 task spec
 

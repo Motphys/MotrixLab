@@ -53,7 +53,7 @@ algo:
 
 这个配置完成了四件事：
 
-1. 从 `configs/algo_base/skrl.ppo.yaml` 加载完整的 SKRL PPO 基础配置。
+1. 从 `motrix_rl/src/motrix_rl/configs/algo_base/skrl.ppo.yaml` 加载完整的 SKRL PPO 基础配置。
 2. 选择注册名为 `my-robot` 的环境。
 3. 设置训练和播放使用的并行环境数量。
 4. 将训练总步数覆盖为 `100000`。
@@ -62,22 +62,26 @@ Task 只需填写与算法基础配置不同的值，不需要复制所有算法
 
 ### 检查最终配置
 
+`mxtrain` 默认使用当前工作目录下存在的 `./configs`，不会向上搜索父目录。使用 `--config-dir /path/to/configs` 可指定其他配置目录。必须显式选择 Task，没有默认的 Cartpole Task。
+
+CLI 在调用 runner 前导入 `env_modules` 列表中的模块。打包的 train/play YAML 设置 `env_modules: [motrix_envs]`；外部环境应覆写为 `'env_modules=[my_project.envs]'`，或在 Task YAML 中设置。环境注册与 Hydra 配置发现相互独立，环境 package 不提供内置 Hydra 插件。
+
 启动训练前，可以先输出 Hydra 组合后的完整配置：
 
 ```bash
-python scripts/train.py --cfg job --resolve task=my-robot/skrl.ppo
+mxtrain --cfg job --resolve task=my-robot/skrl.ppo
 ```
 
 该命令不会开始训练。确认 `task.env`、`num_envs` 和 `algo.trainer.timesteps` 符合预期后，再启动训练：
 
 ```bash
-python scripts/train.py task=my-robot/skrl.ppo
+mxtrain task=my-robot/skrl.ppo
 ```
 
 运行以下命令可以查看仓库中所有可选 Task：
 
 ```bash
-python scripts/train.py --help
+mxtrain --help
 ```
 
 ## 调整 Task 的运行参数
@@ -146,7 +150,7 @@ algo:
         timesteps: 20000
 ```
 
-完整字段和逐字段注释见 [`configs/algo_base/skrl.ppo.yaml`](../../../../../configs/algo_base/skrl.ppo.yaml)。
+完整字段和逐字段注释见 [`motrix_rl/src/motrix_rl/configs/algo_base/skrl.ppo.yaml`](https://github.com/Motphys/MotrixLab/blob/main/motrix_rl/src/motrix_rl/configs/algo_base/skrl.ppo.yaml)。
 
 ### RSLRL PPO
 
@@ -167,7 +171,7 @@ algo:
         entropy_coef: 0.005
 ```
 
-完整字段和逐字段注释见 [`configs/algo_base/rslrl.ppo.yaml`](../../../../../configs/algo_base/rslrl.ppo.yaml)。
+完整字段和逐字段注释见 [`motrix_rl/src/motrix_rl/configs/algo_base/rslrl.ppo.yaml`](https://github.com/Motphys/MotrixLab/blob/main/motrix_rl/src/motrix_rl/configs/algo_base/rslrl.ppo.yaml)。
 
 ### Motrix FastSAC
 
@@ -182,7 +186,7 @@ FastSAC 使用同一个算法身份支持两种执行拓扑，主要字段和配
     -   `weight_publish_interval`、`weight_poll_interval`：策略权重同步频率。
     -   `max_ingest_per_iter`、`idle_sleep_s`：Learner 数据摄取和空闲退避参数。
 
-完整字段和逐字段注释见 [`configs/algo_base/motrix.fastsac.yaml`](../../../../../configs/algo_base/motrix.fastsac.yaml)。
+完整字段和逐字段注释见 [`motrix_rl/src/motrix_rl/configs/algo_base/motrix.fastsac.yaml`](https://github.com/Motphys/MotrixLab/blob/main/motrix_rl/src/motrix_rl/configs/algo_base/motrix.fastsac.yaml)。
 
 ## 使用 CLI 临时覆盖参数
 
@@ -191,7 +195,7 @@ MotrixLab CLI 使用 Hydra 的 `key=value` 参数语法。CLI 覆盖只影响本
 ### 覆盖运行参数
 
 ```bash
-python scripts/train.py \
+mxtrain \
   task=my-robot/skrl.ppo \
   num_envs=64 \
   seed=7 \
@@ -202,7 +206,7 @@ python scripts/train.py \
 开启训练渲染，并在训练完成后播放：
 
 ```bash
-python scripts/train.py task=my-robot/skrl.ppo render=true play=true
+mxtrain task=my-robot/skrl.ppo render=true play=true
 ```
 
 ### 覆盖算法参数
@@ -210,7 +214,7 @@ python scripts/train.py task=my-robot/skrl.ppo render=true play=true
 SKRL PPO：
 
 ```bash
-python scripts/train.py \
+mxtrain \
   task=my-robot/skrl.ppo \
   algo.agent.learning_rate=5e-4 \
   algo.agent.learning_epochs=8 \
@@ -220,7 +224,7 @@ python scripts/train.py \
 RSLRL PPO：
 
 ```bash
-python scripts/train.py \
+mxtrain \
   task=cartpole/rslrl.ppo \
   algo.algorithm.learning_rate=5e-4 \
   algo.algorithm.entropy_coef=0.005 \
@@ -230,7 +234,7 @@ python scripts/train.py \
 FastSAC：
 
 ```bash
-python scripts/train.py \
+mxtrain \
   task=g1-walk-flat/motrix.fastsac \
   algo.asynchronous=true \
   algo.agent.actor_learning_rate=1e-4 \
@@ -244,20 +248,20 @@ python scripts/train.py \
 布尔值使用小写 `true` 或 `false`：
 
 ```bash
-python scripts/train.py task=my-robot/skrl.ppo render=true
+mxtrain task=my-robot/skrl.ppo render=true
 ```
 
 使用 `null` 清空可空字段：
 
 ```bash
-python scripts/train.py task=my-robot/skrl.ppo seed=null
-python scripts/train.py task=my-robot/skrl.ppo algo.agent.learning_rate_scheduler=null
+mxtrain task=my-robot/skrl.ppo seed=null
+mxtrain task=my-robot/skrl.ppo algo.agent.learning_rate_scheduler=null
 ```
 
 列表建议使用引号，避免 shell 解释方括号：
 
 ```bash
-python scripts/train.py \
+mxtrain \
   task=my-robot/skrl.ppo \
   'algo.models.policy.hiddens=[128,64]' \
   'algo.models.value.hiddens=[128,64]'
@@ -274,7 +278,7 @@ python scripts/train.py \
 将 CLI 覆盖和 `--cfg job --resolve` 组合，可以查看本次运行最终会使用的值：
 
 ```bash
-python scripts/train.py \
+mxtrain \
   --cfg job \
   --resolve \
   task=my-robot/skrl.ppo \
@@ -316,13 +320,13 @@ algo:
 使用 JAX 差异配置训练：
 
 ```bash
-python scripts/train.py task=go2-walk-flat/skrl.ppo.jax
+mxtrain task=go2-walk-flat/skrl.ppo.jax
 ```
 
 直接覆盖后端也可以选择 JAX 训练器：
 
 ```bash
-python scripts/train.py task=go2-walk-flat/skrl.ppo task.train_backend=jax
+mxtrain task=go2-walk-flat/skrl.ppo task.train_backend=jax
 ```
 
 这种写法不会加载 `skrl.ppo.jax.yaml` 中的后端专用参数。当后端差异文件存在时，应直接选择带 `.jax` 或 `.torch` 后缀的 Task。
@@ -334,12 +338,16 @@ python scripts/train.py task=go2-walk-flat/skrl.ppo task.train_backend=jax
 ### 配置目录
 
 ```text
-configs/
+motrix_rl/src/motrix_rl/configs/
 ├── train.yaml
-├── algo_base/
-│   ├── skrl.ppo.yaml
-│   ├── rslrl.ppo.yaml
-│   └── motrix.fastsac.yaml
+├── play.yaml
+└── algo_base/
+    ├── skrl.ppo.yaml
+    ├── rslrl.ppo.yaml
+    └── motrix.fastsac.yaml
+
+configs/
+├── view.yaml
 └── task/
     └── <env>/
         ├── <rllib>.<algo>.yaml
@@ -350,8 +358,8 @@ configs/
 
 | 配置层       | 位置                                               | 用途                               |
 | ------------ | -------------------------------------------------- | ---------------------------------- |
-| 入口配置     | `configs/train.yaml`                               | 定义通用训练参数和默认 Task        |
-| 算法基础配置 | `configs/algo_base/<rllib>.<algo>.yaml`            | 提供某种算法的完整字段和基础值     |
+| 入口配置     | `motrix_rl/src/motrix_rl/configs/train.yaml` | 定义通用训练参数；`task: null` 为占位，训练时必须显式选择 Task |
+| 算法基础配置 | `motrix_rl/src/motrix_rl/configs/algo_base/<rllib>.<algo>.yaml`            | 提供某种算法的完整字段和基础值     |
 | 共享 Task    | `configs/task/<env>/<rllib>.<algo>.yaml`           | 选择环境和算法，并保存任务调优参数 |
 | 后端差异配置 | `configs/task/<env>/<rllib>.<algo>.<backend>.yaml` | 保存后端独有的增量参数             |
 | CLI 覆盖     | `key=value`                                        | 临时覆盖本次运行的最终配置         |
@@ -410,18 +418,18 @@ Hydra 会根据 provider 注册的结构化 schema 检查字段名和类型。�
 
 ## Play 和 View 的参数覆盖
 
-`scripts/play.py` 和 `scripts/view.py` 同样使用 `key=value` 语法：
+`mxplay` 恢复已保存的 run 配置，不需要训练 Task 目录。它和 `scripts/view.py` 同样使用 `key=value` 语法：
 
 ```bash
 python scripts/view.py env=cartpole num_envs=4
-python scripts/play.py env=cartpole num_envs=1
-python scripts/play.py policy=/path/to/checkpoint.pt num_envs=1
+mxplay env=cartpole num_envs=1
+mxplay policy=/path/to/checkpoint.pt num_envs=1
 ```
 
 Play 默认读取训练 run 中保存的 `task_config.yaml`。如需临时覆盖其中的算法参数，使用 `rl` 作为算法配置根节点。因为 `rl` 初始为空，需要用 `+` 添加路径：
 
 ```bash
-python scripts/play.py \
+mxplay \
   env=cartpole \
   '+rl.agent.learning_rate=1e-4'
 ```

@@ -99,7 +99,7 @@ python scripts/view.py env=dm-reacher
 ### 2. 开始训练
 
 ```bash
-python scripts/train.py task=dm-reacher/skrl.ppo
+mxtrain task=dm-reacher/skrl.ppo
 ```
 
 ### 3. 查看训练进度
@@ -111,7 +111,7 @@ tensorboard --logdir runs/dm-reacher
 ### 4. 测试训练结果
 
 ```bash
-python scripts/play.py env=dm-reacher
+mxplay env=dm-reacher
 ```
 
 ---

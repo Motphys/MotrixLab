@@ -1,7 +1,9 @@
 defaults:
   - train_schema
   - _self_
-  - task: cartpole/skrl.ppo
+  # A null selection allows --help without a project task. The typed schema
+  # still requires a complete task recipe before training can start.
+  - task: null
   # Console logging only; don't drop a <job>.log file in the working dir.
   - override hydra/job_logging: stdout
 
@@ -22,6 +24,7 @@ hydra:
 # It is accepted by direct and manager environments; unset resolves to the
 # registered default (motrixsim). Torch-fronted environments reject an
 # explicitly provided simulator here because they construct their own backend.
+env_modules: [motrix_envs]
 sim: null
 logging:
   backend: tensorboard

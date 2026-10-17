@@ -145,15 +145,15 @@ python scripts/view.py env=dm-finger-turn-hard
 ### 2. Start Training
 
 ```bash
-python scripts/train.py task=dm-finger-spin/skrl.ppo task.train_backend=torch
+mxtrain task=dm-finger-spin/skrl.ppo task.train_backend=torch
 ```
 
 ```bash
-python scripts/train.py task=dm-finger-turn-easy/skrl.ppo task.train_backend=torch
+mxtrain task=dm-finger-turn-easy/skrl.ppo task.train_backend=torch
 ```
 
 ```bash
-python scripts/train.py task=dm-finger-turn-hard/skrl.ppo task.train_backend=torch
+mxtrain task=dm-finger-turn-hard/skrl.ppo task.train_backend=torch
 ```
 
 ### 3. View Training Progress
@@ -164,10 +164,10 @@ tensorboard --logdir runs/dm-finger-spin
 
 ### 4. Test Training Results
 
-`scripts/play.py` auto-discovers the latest metadata-backed run under `runs/{env-name}/` and loads its `best_policy` artifact. Use `policy=...` to select a checkpoint explicitly:
+`mxplay` auto-discovers the latest metadata-backed run under `runs/{env-name}/` and loads its `best_policy` artifact. Use `policy=...` to select a checkpoint explicitly:
 
 ```bash
-python scripts/play.py env=dm-finger-turn-hard
+mxplay env=dm-finger-turn-hard
 ```
 
 ---

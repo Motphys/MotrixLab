@@ -199,7 +199,7 @@ Use this progression:
 python scripts/view.py robot=<robot-config-id>
 python scripts/view.py env=<robot>-walk-flat
 python scripts/view.py env=<robot>-walk-rough
-python scripts/train.py task=<robot>-walk-flat/rslrl.ppo
+mxtrain task=<robot>-walk-flat/rslrl.ppo
 ```
 
 During preview, inspect the default pose, action direction, all four foot contacts, foot-position reference frames, and

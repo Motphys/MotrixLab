@@ -8,7 +8,7 @@ import io as io_module
 import numpy as np
 
 from motrix_deploy.artifact.schema import ControlSpec
-from motrix_deploy.profile import DeploymentProfile, register_profile_compiler
+from motrix_deploy.profile import DeploymentProfile
 from motrix_deploy_tasks.tasks.g1_wbt import G1WbtMotion, G1WbtTaskSpec
 from motrix_env_core import registry
 from motrix_envs.deploy.robot import build_robot_model, build_robot_spec, read_position_servo_gains
@@ -17,7 +17,6 @@ from motrix_envs.motion.library import expand_motion_paths
 from motrix_envs.motion.loader import MotrixMotion
 
 
-@register_profile_compiler("g1-wbt-dance")
 def build_g1_wbt_profile(env_name: str) -> DeploymentProfile:
     """Embed actor reference channels and hardware-observable safety thresholds."""
     cfg = registry.make_env_config(env_name)

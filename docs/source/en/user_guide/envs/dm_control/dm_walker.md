@@ -26,19 +26,19 @@ Walker2D is a 2D planar bipedal robot with multiple joints and actuators:
 1. **dm-stander**: Static standing task (move_speed = 0.0)
 
 ```bash
-python scripts/train.py task=dm-stander/skrl.ppo
+mxtrain task=dm-stander/skrl.ppo
 ```
 
 2. **dm-walker**: Walking task (move_speed = 1.0)
 
 ```bash
-python scripts/train.py task=dm-walker/skrl.ppo
+mxtrain task=dm-walker/skrl.ppo
 ```
 
 3. **dm-runner**: Running task (move_speed = 5.0)
 
 ```bash
-python scripts/train.py task=dm-runner/skrl.ppo
+mxtrain task=dm-runner/skrl.ppo
 ```
 
 ## Quick Start
@@ -54,9 +54,9 @@ python scripts/view.py env=dm-runner
 ### 2. Start Training
 
 ```bash
-python scripts/train.py task=dm-stander/skrl.ppo
-python scripts/train.py task=dm-walker/skrl.ppo
-python scripts/train.py task=dm-runner/skrl.ppo
+mxtrain task=dm-stander/skrl.ppo
+mxtrain task=dm-walker/skrl.ppo
+mxtrain task=dm-runner/skrl.ppo
 ```
 
 ### 3. View Training Progress
@@ -68,9 +68,9 @@ tensorboard --logdir runs/dm-walker
 ### 4. Test Training Results
 
 ```bash
-python scripts/play.py env=dm-stander
-python scripts/play.py env=dm-walker
-python scripts/play.py env=dm-runner
+mxplay env=dm-stander
+mxplay env=dm-walker
+mxplay env=dm-runner
 ```
 
 ## Reward Function Design

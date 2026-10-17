@@ -876,9 +876,11 @@ CLI 读取 artifact 并实例化具体 `DeployTask`，不在创建 backend runti
 
 ## 10. Registry 与扩展机制
 
-只为确实需要按 artifact、环境或 runtime recipe 选择实现的组件保留 registry。`motrix_deploy.profile` 提供
-profile compiler registry；`motrix_envs.deploy` import 具体 compiler 时通过
-`register_profile_compiler()` 装饰器按环境名自动注册。task runtime 通过 `motrix_deploy.tasks` Python entry-point
+只为确实需要按 artifact、环境或 runtime recipe 选择实现的组件保留发现机制。`motrix_deploy.profile` 通过
+`motrix_deploy.profiles` Python entry-point group 发现 profile compiler：entry-point 名称精确对应环境名，
+实现遵循 `(env_name: str) -> DeploymentProfile`。查询只读取安装元数据，构建时只加载唯一匹配的 compiler；未知环境、
+同名插件冲突和插件加载失败明确报错，不按 import 顺序选择实现。具体环境 package 提供 compiler，通用导出入口不硬编码
+导入 `motrix_envs`。task runtime 通过 `motrix_deploy.tasks` Python entry-point
 group 按版本化 task 标识发现。`available_tasks()` 只读取已安装插件元数据；`load_task_type()` 懒加载唯一
 `DeployTask` 类，manifest codec 读取其 `spec_type` 而不实例化 task。`create_task()` 再将已解码的具体
 `TaskSpec`、`RobotSpec`、已加载的 `Policy` 和可选 `steps` 传给该类构造完整 task controller。未知名称或重复插件报错，不按 import 顺序选择实现。
@@ -1186,13 +1188,17 @@ artifact 的维度以 policy tensor shapes 为唯一来源。compiler 不恢复 
 
 ### 13.4 Deployment export 入口
 
-统一入口根据环境选择最新的 run 并生成默认 artifact 路径，不暴露训练框架专属子命令：
+`motrix_rl` 提供 `mxexport onnx` 和 `mxexport deploy` 子命令；必须显式选择格式，不按训练框架拆分子命令。
+部署导出恰好指定 `run_dir` 或 `env`，后者选择环境的最新 metadata-backed run。默认输出为 `artifacts/<env>.deploy`：
 
 ```bash
-python scripts/export_deploy.py env=go2-walk-rough
+mxexport deploy env=go2-walk-rough
+mxexport deploy run_dir=/path/to/run output=artifacts/policy.deploy
 ```
 
-入口先调用统一 policy export，再依据 task metadata 选择 deployment profile，最后交给 artifact writer。CLI 和
+导出配置随 `motrix_rl` 发布，项目配置优先、包内配置兜底。依赖方向为 `motrix_rl -> motrix_deploy`；部署运行时
+消费已有 artifact，不反向依赖训练框架。入口依据 run metadata 通过已安装的 entry point 构建 deployment profile，
+调用统一 policy export，最后交给 artifact writer。CLI 和
 公共 service 统一调用 metadata-driven `export_deploy_run`，不暴露同时绑定训练框架与任务的函数。不支持 policy export 时，
 错误列出 `RlFramework` 当前支持的组合；缺少 deployment profile 时，错误单独指出 task/profile 不受支持，避免把
 模型导出能力和任务部署能力混为一谈。

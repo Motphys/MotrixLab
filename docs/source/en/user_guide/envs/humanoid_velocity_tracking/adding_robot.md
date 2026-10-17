@@ -166,8 +166,8 @@ Use this progression:
 python scripts/view.py robot=<robot-config-id>
 python scripts/view.py env=<robot>-walk-flat
 python scripts/view.py env=<robot>-walk-terrain
-python scripts/train.py task=<robot>-walk-flat/motrix.fastsac
-python scripts/train.py task=<robot>-walk-flat/motrix.fastsac algo.asynchronous=false
+mxtrain task=<robot>-walk-flat/motrix.fastsac
+mxtrain task=<robot>-walk-flat/motrix.fastsac algo.asynchronous=false
 python -m pytest motrix_envs/tests/test_humanoid_walk.py -q
 python -m pytest motrix_rl/tests/test_task_configs.py -q
 ```

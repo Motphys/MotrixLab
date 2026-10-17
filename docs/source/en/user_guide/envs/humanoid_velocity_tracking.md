@@ -94,15 +94,15 @@ Choose an environment ID and one of its training configs from the table, then re
 
 ```bash
 python scripts/view.py env=ENV_ID num_envs=1
-python scripts/train.py task=ENV_ID/TRAINING_CONFIG
-python scripts/play.py env=ENV_ID num_envs=16
+mxtrain task=ENV_ID/TRAINING_CONFIG
+mxplay env=ENV_ID num_envs=16
 ```
 
 For example, train the K1 uneven-terrain task with asynchronous FastSAC:
 
 ```bash
-python scripts/train.py task=k1-walk-rough/motrix.fastsac algo.asynchronous=true
+mxtrain task=k1-walk-rough/motrix.fastsac algo.asynchronous=true
 ```
 
-`view.py` applies random actions and is intended for scene and model inspection. Use `play.py` with a trained policy to
+`view.py` applies random actions and is intended for scene and model inspection. Use `mxplay` with a trained policy to
 inspect the learned gait.

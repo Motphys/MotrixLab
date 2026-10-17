@@ -98,7 +98,7 @@ If you only want to run the training container without using Docker Compose:
 docker run --gpus all \
     -v $(pwd)/runs:/root/motrixlab/runs \
     motphys/motrixlab:latest \
-    scripts/train.py task=cartpole/skrl.ppo task.train_backend=jax num_envs=2048
+    mxtrain task=cartpole/skrl.ppo task.train_backend=jax num_envs=2048
 ```
 
 ### Persisting Training Results

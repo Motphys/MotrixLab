@@ -19,7 +19,7 @@ This will open a visualization window showing the cartpole physics simulation en
 Start training the cartpole balancing task:
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo
+mxtrain task=cartpole/skrl.ppo
 ```
 
 The training process will automatically:
@@ -38,7 +38,7 @@ Training results will be saved in the `runs/cartpole/` directory, including:
 If you want to observe the model's learning process during training, you can enable visualization rendering:
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo render=true
+mxtrain task=cartpole/skrl.ppo render=true
 ```
 
 ### 🎮 Interactive Rendering Control
@@ -67,10 +67,10 @@ After training is complete, test the trained policy:
 
 ```bash
 # Automatically find best policy for testing (recommended)
-python scripts/play.py env=cartpole
+mxplay env=cartpole
 
 # Manually specify a checkpoint from a metadata-backed run
-python scripts/play.py env=cartpole policy=/path/to/run/checkpoints/policy-file
+mxplay env=cartpole policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **Tip**: The system automatically finds the latest run and its best policy under `runs/cartpole/`. A manually selected checkpoint must belong to a run containing `metadata.json` and `task_config.yaml`.

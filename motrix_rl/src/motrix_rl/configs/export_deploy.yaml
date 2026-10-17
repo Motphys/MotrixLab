@@ -11,7 +11,7 @@ hydra:
     chdir: false
 
 env: null
-run: null
+run_dir: null
 output: null
 validation:
   seed: 1

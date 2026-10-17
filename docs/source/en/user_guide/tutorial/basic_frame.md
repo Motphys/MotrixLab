@@ -47,7 +47,8 @@ MotrixLab is a UV workspace. The packages are grouped by ownership rather than t
 | `motrix_rl_builtin` | Policy training and updates | Built-in Motrix FastSAC provider |
 | `motrix_rl_skrl` | Policy training and updates | SKRL PPO provider for Torch (required) and optional JAX extra |
 | `motrix_rl_rslrl` | Policy training and updates | RSL-RL PPO provider for Torch (optional) |
-| `configs/`, `scripts/` | Configuration and orchestration | Hydra algorithm configs and Task recipes; train / play / view / export entry points |
+| `motrix_rl.configs`, `motrix_rl.commands` | Configuration and orchestration | Packaged train/play configs and algorithm defaults; installed `mxtrain` / `mxplay` entry points |
+| `configs/`, `scripts/` | Workspace recipes and tools | Concrete Task recipes and view config; view / export tools and thin train/play wrappers |
 | `motrix_deploy` | Policy deployment | Framework-independent artifacts, runtime contracts, and deployment CLI |
 | `motrix_deploy_mujoco` | Policy deployment | MuJoCo deployment backend plugin |
 | `motrix_deploy_motrixsim` | Policy deployment | MotrixSim deployment backend plugin |
@@ -58,13 +59,28 @@ A simulation backend (such as `motrix_env_motrixsim`) is isolated behind the `Si
 when using an environment you normally do not need to care which one it is. To select or integrate a
 backend, see [SimBackend: Decoupling from the Simulator](building_envs/sim_backend.md).
 
+The configuration and command sources are laid out as follows:
+
+```text
+motrix_rl/src/motrix_rl/
+├── commands/           # mxtrain / mxplay
+└── configs/
+    ├── train.yaml
+    ├── play.yaml
+    └── algo_base/
+configs/
+├── task/               # workspace training recipes
+└── view.yaml
+scripts/                # view/export tools; thin train/play wrappers
+```
+
 ## One full training run
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo num_envs=1024
+mxtrain task=cartpole/skrl.ppo num_envs=1024
 ```
 
-1. Hydra composes `configs/train.yaml`, `configs/algo_base/skrl.ppo.yaml`, and
+1. Hydra composes `motrix_rl/src/motrix_rl/configs/train.yaml`, `motrix_rl/src/motrix_rl/configs/algo_base/skrl.ppo.yaml`, and
    `configs/task/cartpole/skrl.ppo.yaml`; `num_envs=1024` only overrides this run.
 2. The runner resolves the SKRL PPO provider and automatically picks an available JAX/Torch backend.
 3. The trainer creates the registered `cartpole` environment through the registry and starts optimizing.
@@ -73,8 +89,8 @@ python scripts/train.py task=cartpole/skrl.ppo num_envs=1024
 The same environment can have several Task recipes without touching the environment implementation:
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo
-python scripts/train.py task=cartpole/rslrl.ppo
+mxtrain task=cartpole/skrl.ppo
+mxtrain task=cartpole/rslrl.ppo
 ```
 
 ## Run an exported policy

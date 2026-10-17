@@ -19,5 +19,10 @@ dependencies = [
     "omegaconf>=2.3,<2.4",
 ]
 
+[project.entry-points."motrix_deploy.profiles"]
+go2-walk-flat = "motrix_envs.deploy.go2_walk:build_go2_walk_profile"
+go2-walk-rough = "motrix_envs.deploy.go2_walk:build_go2_walk_profile"
+g1-wbt-dance = "motrix_envs.deploy.g1_wbt:build_g1_wbt_profile"
+
 [project.optional-dependencies]
 deploy = ["motrix-deploy==0.4.0b1", "motrix-deploy-tasks==0.4.0b1"]

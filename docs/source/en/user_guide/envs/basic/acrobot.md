@@ -70,13 +70,13 @@ python scripts/view.py env=acrobot
 
 ```bash
 # Train with default parameters
-python scripts/train.py task=acrobot/skrl.ppo
+mxtrain task=acrobot/skrl.ppo
 
 # Customize parallel environments
-python scripts/train.py task=acrobot/skrl.ppo num_envs=1024
+mxtrain task=acrobot/skrl.ppo num_envs=1024
 
 # Enable rendering during training
-python scripts/train.py task=acrobot/skrl.ppo render=true
+mxtrain task=acrobot/skrl.ppo render=true
 ```
 
 ### 3. View Training Progress
@@ -89,10 +89,10 @@ tensorboard --logdir runs/acrobot
 
 ```bash
 # Auto-discover best policy (recommended)
-python scripts/play.py env=acrobot
+mxplay env=acrobot
 
 # Manually specify a checkpoint from a metadata-backed run
-python scripts/play.py env=acrobot policy=/path/to/run/checkpoints/policy-file
+mxplay env=acrobot policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **Tip**: Policies are auto-selected from `runs/acrobot/`. Use `policy=...` to select a checkpoint whose parent run contains `metadata.json`.

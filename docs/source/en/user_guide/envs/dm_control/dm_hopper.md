@@ -115,8 +115,8 @@ python scripts/view.py env=dm-hopper-hop
 ### 2. Start Training
 
 ```bash
-python scripts/train.py task=dm-hopper-stand/skrl.ppo
-python scripts/train.py task=dm-hopper-hop/skrl.ppo
+mxtrain task=dm-hopper-stand/skrl.ppo
+mxtrain task=dm-hopper-hop/skrl.ppo
 ```
 
 ### 3. View Training Progress
@@ -128,8 +128,8 @@ tensorboard --logdir runs/dm-hopper-stand
 ### 4. Test Training Results
 
 ```bash
-python scripts/play.py env=dm-hopper-stand
-python scripts/play.py env=dm-hopper-hop
+mxplay env=dm-hopper-stand
+mxplay env=dm-hopper-hop
 ```
 
 ---

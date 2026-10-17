@@ -162,7 +162,7 @@ MotrixLab loads installed entry points from this group before resolving a framew
 
 ## Step 5: Add Hydra Training Configuration
 
-Registering the provider installs the structured Hydra schema for `MyPpoCfg`. Add the algorithm's source-of-truth values:
+Registering the provider installs the structured Hydra schema for `MyPpoCfg`. Keep custom algorithm and Task YAML in your workspace's `configs/`; built-in algorithm defaults live in `motrix_rl/src/motrix_rl/configs/algo_base/`. Add the custom algorithm's source-of-truth values:
 
 ```yaml
 # configs/algo_base/myrl.ppo.yaml
@@ -200,7 +200,7 @@ The Task's `rllib`, `algo`, and `train_backend` values must match the framework 
 If the backend is registered on the startup path, use the shared CLI:
 
 ```bash
-python scripts/train.py task=cartpole/myrl.ppo
+mxtrain task=cartpole/myrl.ppo
 ```
 
 For an external experiment package, use its Hydra config root and import the backend registration module before entering the training function. No separate Python Task registry is required.

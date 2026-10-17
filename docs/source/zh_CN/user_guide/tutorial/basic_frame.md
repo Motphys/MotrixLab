@@ -42,7 +42,8 @@ MotrixLab 是一个 UV workspace。下面按所有权而不是按单一整体运
 | `motrix_rl_builtin` | 策略的训练与更新 | 内置 Motrix FastSAC provider |
 | `motrix_rl_skrl` | 策略的训练与更新 | SKRL PPO Torch provider（必需）及可选 JAX extra |
 | `motrix_rl_rslrl` | 策略的训练与更新 | RSL-RL PPO Torch provider（可选） |
-| `configs/`、`scripts/` | 配置与编排 | Hydra 算法配置与 Task 配方；train / play / view / export 入口 |
+| `motrix_rl.configs`、`motrix_rl.commands` | 配置与编排 | 打包的 train/play 配置与算法默认值；安装后的 `mxtrain` / `mxplay` 入口 |
+| `configs/`、`scripts/` | Workspace 配方与工具 | 具体 Task 配方与 view 配置；view / export 工具及 train/play 薄包装 |
 | `motrix_deploy` | 策略的部署 | 框架无关 artifact、运行时契约与部署 CLI |
 | `motrix_deploy_mujoco` | 策略的部署 | MuJoCo 部署 backend plugin |
 | `motrix_deploy_motrixsim` | 策略的部署 | MotrixSim 部署 backend plugin |
@@ -52,13 +53,28 @@ MotrixLab 是一个 UV workspace。下面按所有权而不是按单一整体运
 仿真后端（如 `motrix_env_motrixsim`）通过 `SimBackend` 接口隔离在环境框架之下，使用环境时通常
 无需关心它；需要选择或接入仿真后端时，见[SimBackend：与仿真器解耦](building_envs/sim_backend.md)。
 
+配置与命令源码的目录如下：
+
+```text
+motrix_rl/src/motrix_rl/
+├── commands/           # mxtrain / mxplay
+└── configs/
+    ├── train.yaml
+    ├── play.yaml
+    └── algo_base/
+configs/
+├── task/               # workspace 训练配方
+└── view.yaml
+scripts/                # view/export 工具；train/play 薄包装
+```
+
 ## 一次训练的完整流程
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo num_envs=1024
+mxtrain task=cartpole/skrl.ppo num_envs=1024
 ```
 
-1. Hydra 组合 `configs/train.yaml`、`configs/algo_base/skrl.ppo.yaml` 和
+1. Hydra 组合 `motrix_rl/src/motrix_rl/configs/train.yaml`、`motrix_rl/src/motrix_rl/configs/algo_base/skrl.ppo.yaml` 和
    `configs/task/cartpole/skrl.ppo.yaml`，`num_envs=1024` 只覆盖本次运行的值。
 2. runner 解析 SKRL PPO provider，并从可用的 JAX/Torch 后端中自动选择。
 3. trainer 通过环境注册表创建 `cartpole` 环境并开始优化。
@@ -67,8 +83,8 @@ python scripts/train.py task=cartpole/skrl.ppo num_envs=1024
 同一环境可以拥有多份 Task 配方，不需要修改环境实现：
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo
-python scripts/train.py task=cartpole/rslrl.ppo
+mxtrain task=cartpole/skrl.ppo
+mxtrain task=cartpole/rslrl.ppo
 ```
 
 ## 运行导出的策略

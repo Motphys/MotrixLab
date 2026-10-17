@@ -38,15 +38,18 @@ BACKENDS = ["jax", "torch"]
 
 def run_command(env: str, backend: str, extra_args: list[str]) -> int:
     """Run a single training command."""
-    backend_task = Path("configs/task") / env / f"skrl.ppo.{backend}.yaml"
-    task_option = f"{env}/skrl.ppo.{backend}" if backend_task.exists() else f"{env}/skrl.ppo"
+    config_dir = Path(__file__).resolve().parents[1] / "configs"
+    backend_task = config_dir / "task" / env / f"skrl.ppo.{backend}.yaml"
+    task_option = f"{env}/skrl.ppo.{backend}" if backend_task.is_file() else f"{env}/skrl.ppo"
     cmd = [
-        "uv",
-        "run",
-        "scripts/train.py",
+        sys.executable,
+        "-m",
+        "motrix_rl.commands.train",
+        "--config-dir",
+        str(config_dir),
         f"task={task_option}",
     ] + extra_args
-    if not backend_task.exists():
+    if not backend_task.is_file():
         cmd.append(f"task.train_backend={backend}")
 
     print(f"\n{'=' * 80}")
@@ -83,7 +86,7 @@ def main():
         "--extra-args",
         nargs=argparse.REMAINDER,
         default=[],
-        help="Extra arguments to pass to train.py",
+        help="Extra arguments to pass to mxtrain",
     )
     parser.add_argument(
         "--stop-on-error",

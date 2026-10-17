@@ -7,7 +7,7 @@ import numpy as np
 from motrix_robots.unitree import UnitreeGo2Robot
 
 from motrix_deploy.artifact import ControlSpec
-from motrix_deploy.profile import DeploymentProfile, register_profile_compiler
+from motrix_deploy.profile import DeploymentProfile
 from motrix_deploy_tasks.tasks.go2_walk import Go2WalkTaskSpec
 from motrix_env_core import registry
 from motrix_envs.deploy.robot import build_robot_model, build_robot_spec, read_position_servo_gains
@@ -19,8 +19,6 @@ GO2_COMMAND_SCALES = {
 }
 
 
-@register_profile_compiler("go2-walk-flat")
-@register_profile_compiler("go2-walk-rough")
 def build_go2_walk_profile(env_name: str) -> DeploymentProfile:
     """Compile one registered Go2 walking environment into a deployment profile."""
     env = registry.make(env_name, num_envs=1, mode="train")

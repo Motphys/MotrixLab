@@ -4,7 +4,7 @@
 """SKRL Configuration Classes
 
 This module provides configuration classes for SKRL RL framework integration.
-The configuration structure matches configs/algo_base/skrl.ppo.yaml with a hierarchical
+The configuration structure matches motrix_rl.configs/algo_base/skrl.ppo.yaml with a hierarchical
 design following the same pattern as RslrlConfig.
 
 Configuration Hierarchy:
@@ -27,7 +27,7 @@ from omegaconf import MISSING
 class SkrlPolicyCfg:
     """Configuration for SKRL policy (GaussianMixin) model.
 
-    Corresponds to the policy section in configs/algo_base/skrl.ppo.yaml.
+    Corresponds to the policy section in motrix_rl.configs/algo_base/skrl.ppo.yaml.
     """
 
     clip_actions: bool = MISSING
@@ -143,7 +143,7 @@ class SkrlPolicyCfg:
 class SkrlValueCfg:
     """Configuration for SKRL value (DeterministicMixin) model.
 
-    Corresponds to the value section in configs/algo_base/skrl.ppo.yaml.
+    Corresponds to the value section in motrix_rl.configs/algo_base/skrl.ppo.yaml.
     """
 
     clip_actions: bool = MISSING
@@ -254,7 +254,7 @@ class SkrlValueCfg:
 class SkrlModelsCfg:
     """Configuration for SKRL models section.
 
-    Corresponds to the models section in configs/algo_base/skrl.ppo.yaml.
+    Corresponds to the models section in motrix_rl.configs/algo_base/skrl.ppo.yaml.
     """
 
     separate: bool = MISSING
@@ -274,7 +274,7 @@ class SkrlModelsCfg:
 class SkrlMemoryCfg:
     """Configuration for SKRL memory.
 
-    Corresponds to the memory section in configs/algo_base/skrl.ppo.yaml.
+    Corresponds to the memory section in motrix_rl.configs/algo_base/skrl.ppo.yaml.
     """
 
     class_name: str = MISSING
@@ -291,7 +291,7 @@ class SkrlMemoryCfg:
 class SkrlAgentCfg:
     """Configuration for SKRL PPO agent.
 
-    Corresponds to the agent section in configs/algo_base/skrl.ppo.yaml.
+    Corresponds to the agent section in motrix_rl.configs/algo_base/skrl.ppo.yaml.
     Field names match PPO_DEFAULT_CONFIG from SKRL.
     """
 
@@ -359,7 +359,7 @@ class SkrlAgentCfg:
 class SkrlTrainerCfg:
     """Configuration for SKRL sequential trainer.
 
-    Corresponds to the trainer section in configs/algo_base/skrl.ppo.yaml.
+    Corresponds to the trainer section in motrix_rl.configs/algo_base/skrl.ppo.yaml.
     """
 
     timesteps: int = MISSING

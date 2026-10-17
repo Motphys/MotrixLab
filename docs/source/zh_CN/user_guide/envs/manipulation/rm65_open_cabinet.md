@@ -242,13 +242,13 @@ RM65 机器人在该环境中包含以下主要部分：
 ### 训练
 
 ```bash
-python scripts/train.py task=rm65-open-cabinet/skrl.ppo task.train_backend=torch
+mxtrain task=rm65-open-cabinet/skrl.ppo task.train_backend=torch
 ```
 
 ### 策略评估
 
 ```bash
-python scripts/play.py env=rm65-open-cabinet
+mxplay env=rm65-open-cabinet
 ```
 
 ### TensorBoard

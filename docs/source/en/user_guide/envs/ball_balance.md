@@ -25,13 +25,13 @@ python scripts/view.py env=microduck-ball-balance
 Train with the built-in Motrix FastSAC config (the only training config provided for this task; `num_envs=2048`, 20000 iterations):
 
 ```bash
-python scripts/train.py task=microduck-ball-balance/motrix.fastsac
+mxtrain task=microduck-ball-balance/motrix.fastsac
 ```
 
 Evaluate a trained policy:
 
 ```bash
-python scripts/play.py env=microduck-ball-balance
+mxplay env=microduck-ball-balance
 ```
 
 ## Action space

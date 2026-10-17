@@ -237,10 +237,10 @@ python scripts/view.py env=dm-quadruped-fetch
 ### 2. Start Training
 
 ```bash
-python scripts/train.py task=dm-quadruped-walk/skrl.ppo
-python scripts/train.py task=dm-quadruped-run/skrl.ppo
-python scripts/train.py task=dm-quadruped-escape/skrl.ppo
-python scripts/train.py task=dm-quadruped-fetch/skrl.ppo
+mxtrain task=dm-quadruped-walk/skrl.ppo
+mxtrain task=dm-quadruped-run/skrl.ppo
+mxtrain task=dm-quadruped-escape/skrl.ppo
+mxtrain task=dm-quadruped-fetch/skrl.ppo
 ```
 
 ### 3. View Training Progress
@@ -255,10 +255,10 @@ tensorboard --logdir runs/dm-quadruped-fetch
 ### 4. Test Training Results
 
 ```bash
-python scripts/play.py env=dm-quadruped-walk
-python scripts/play.py env=dm-quadruped-run
-python scripts/play.py env=dm-quadruped-escape
-python scripts/play.py env=dm-quadruped-fetch
+mxplay env=dm-quadruped-walk
+mxplay env=dm-quadruped-run
+mxplay env=dm-quadruped-escape
+mxplay env=dm-quadruped-fetch
 ```
 
 ---

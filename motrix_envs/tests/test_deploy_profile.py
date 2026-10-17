@@ -9,9 +9,9 @@ import numpy as np
 import pytest
 from motrix_robots.unitree import UnitreeGo2Robot
 
+from motrix_deploy.profile import build_deployment_profile, registered_profile_compilers
 from motrix_deploy_tasks.tasks.go2_walk import Go2WalkTaskSpec
 from motrix_env_core import registry
-from motrix_envs.deploy import build_deployment_profile, registered_profile_compilers
 from motrix_envs.deploy.robot import (
     build_robot_model,
     build_robot_spec,

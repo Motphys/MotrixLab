@@ -93,7 +93,7 @@ The actual checkpoint files live under the `checkpoints/` subdirectory, and `man
 ```
 
 -   Paths in `manifest.json` are relative to the `checkpoints/` directory.
--   **`best_policy`** (`kind: policy`): used for playback / export / evaluation; this is what `play.py` loads by default.
+-   **`best_policy`** (`kind: policy`): used for playback / export / evaluation; this is what `mxplay` loads by default.
 -   **`latest_training_state`** (`kind: training_state`): used for resume, and should contain the full state needed to continue training, such as the optimizer, observation normalizer, replay buffer, and `global_step`.
 -   The same physical file can be **registered as both artifacts**. For example, FastSAC's `latest.pt` (a complete state dict) can be used for both playback and resume, so `best_policy` and `latest_training_state` both point to it.
 
@@ -106,16 +106,16 @@ The actual checkpoint files live under the `checkpoints/` subdirectory, and `man
 
     ```bash
     # Auto-discover and play the best policy of the latest run
-    python scripts/play.py env=g1-walk-flat
+    mxplay env=g1-walk-flat
 
     # Specify a checkpoint (must be able to locate metadata.json above it)
-    python scripts/play.py env=g1-walk-flat policy=/path/to/run/checkpoints/latest.pt
+    mxplay env=g1-walk-flat policy=/path/to/run/checkpoints/latest.pt
     ```
 
 -   **Resume**: set `resume=` to a run directory or checkpoint path, and the framework resolves `latest_training_state` from it to continue training.
 
     ```bash
-    python scripts/train.py task=g1-walk-flat/motrix.fastsac \
+    mxtrain task=g1-walk-flat/motrix.fastsac \
       resume=/path/to/run
     ```
 

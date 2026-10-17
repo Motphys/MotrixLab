@@ -25,13 +25,13 @@ python scripts/view.py env=microduck-ball-balance
 使用内置的 Motrix FastSAC 配置训练（该任务目前只提供这一个训练配置，`num_envs=2048`，训练 20000 次迭代）：
 
 ```bash
-python scripts/train.py task=microduck-ball-balance/motrix.fastsac
+mxtrain task=microduck-ball-balance/motrix.fastsac
 ```
 
 加载训练结果评估：
 
 ```bash
-python scripts/play.py env=microduck-ball-balance
+mxplay env=microduck-ball-balance
 ```
 
 ## 动作空间

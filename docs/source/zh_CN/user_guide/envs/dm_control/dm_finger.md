@@ -159,15 +159,15 @@ python scripts/view.py env=dm-finger-turn-hard
 建议显式指定训练后端（JAX / PyTorch 二选一）：
 
 ```bash
-python scripts/train.py task=dm-finger-spin/skrl.ppo task.train_backend=torch
+mxtrain task=dm-finger-spin/skrl.ppo task.train_backend=torch
 ```
 
 ```bash
-python scripts/train.py task=dm-finger-turn-easy/skrl.ppo task.train_backend=torch
+mxtrain task=dm-finger-turn-easy/skrl.ppo task.train_backend=torch
 ```
 
 ```bash
-python scripts/train.py task=dm-finger-turn-hard/skrl.ppo task.train_backend=torch
+mxtrain task=dm-finger-turn-hard/skrl.ppo task.train_backend=torch
 ```
 
 ### 3. 查看训练进度
@@ -178,10 +178,10 @@ tensorboard --logdir runs/dm-finger-spin
 
 ### 4. 测试训练结果
 
-`scripts/play.py` 默认会在 `runs/{env-name}/` 下查找最新的 metadata-backed run，并加载其 `best_policy` artifact；也可以用 `policy=...` 显式指定 checkpoint：
+`mxplay` 默认会在 `runs/{env-name}/` 下查找最新的 metadata-backed run，并加载其 `best_policy` artifact；也可以用 `policy=...` 显式指定 checkpoint：
 
 ```bash
-python scripts/play.py env=dm-finger-turn-hard
+mxplay env=dm-finger-turn-hard
 ```
 
 ---

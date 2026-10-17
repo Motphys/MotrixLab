@@ -26,8 +26,9 @@ MotrixLab 是构建在 MotrixSim 仿真后端之上的强化学习框架，提�
 - `motrix_deploy_unitree`：Unitree 硬件配置、sensor/actuation 接线与 SDK2 DDS 硬件后端插件
 - `motrix_deploy_tasks`：具体部署任务实现
 
-`scripts/` 提供训练、可视化、评估入口。内置环境由环境 package 注册并通过项目 registry 暴露；simulator backend
-通过项目 backend registry 选择，core package 不依赖任何具体 simulator 实现。
+`motrix_rl.commands.train` / `play` 提供安装后的 `mxtrain` / `mxplay` 入口，`scripts/` 保留可视化等工具。
+内置环境由环境 package 注册并通过项目 registry 暴露；simulator backend 通过项目 backend registry 选择，
+core package 不依赖任何具体 simulator 实现。
 
 ## 编码规范
 
@@ -88,7 +89,7 @@ Python 方法，由 manager 运行时契约定义（`wiki/design/manager/runtime
 ### RL 任务配置规范
 
 - RL provider 配置使用对应插件包的 `@dataclass` 配置类：SKRL 使用 `motrix_rl_skrl.config.SkrlCfg`，RSLRL 使用 `motrix_rl_rslrl.cfg.RslrlCfg`，FastSAC 使用 `motrix_rl_builtin.fastsac.config.FastSacCfg`。
-- provider 配置的字段结构必须与对应的 `configs/algo_base/*.yaml` 保持一致；不要使用已经删除的 `@rlcfg` 或旧的嵌套结构。
+- provider 配置的字段结构必须与对应的 `motrix_rl/src/motrix_rl/configs/algo_base/*.yaml` 保持一致；不要使用已经删除的 `@rlcfg` 或旧的嵌套结构。
 - 超参数在配置对象初始化或明确的配置组装流程中赋值；同一环境的多个变体应通过配置复用，子变体只覆写实际差异。
 - SKRL 和 RSLRL 的 provider 配置结构不同，不要为了统一接口强行增加无用的兼容层；框架通过 provider 的 `config_type` 和 trainer context 选择对应实现。
 
@@ -154,28 +155,28 @@ sh install.sh --python 3.11
 
 ## 常用命令
 
-train/play/view CLI 由 [Hydra](https://hydra.cc/) 驱动，参数使用 `key=value` 语法（不是 `--flag`）。可用选项见
-`configs/*.yaml`。
+train/play/view CLI 由 [Hydra](https://hydra.cc/) 驱动，参数使用 `key=value` 语法（不是 `--flag`）。
+CLI 用法与项目配置接入见 [motrix_rl/README.md](motrix_rl/README.md)。
 
 ### 训练
 
 SKRL（默认）：
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo
+mxtrain task=cartpole/skrl.ppo
 ```
 
 RSLRL：
 
 ```bash
-python scripts/train.py task=cartpole/rslrl.ppo
+mxtrain task=cartpole/rslrl.ppo
 ```
 
 直接覆写框架运行时设置和类型化 RL 参数：
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo num_envs=64 algo.agent.learning_rate=1e-3
-python scripts/train.py task=cartpole/skrl.ppo logging.interval=20 checkpoint.interval=100
+mxtrain task=cartpole/skrl.ppo num_envs=64 algo.agent.learning_rate=1e-3
+mxtrain task=cartpole/skrl.ppo logging.interval=20 checkpoint.interval=100
 ```
 
 ### 环境可视化
@@ -195,19 +196,25 @@ python scripts/view.py robot=g1-29dof
 ### 评估
 
 ```bash
-python scripts/play.py env=cartpole
+mxplay env=cartpole
 ```
 
 指定 policy 文件：
 
 ```bash
-python scripts/play.py env=cartpole policy=<path/to/best.[pickle/pt]>
+mxplay env=cartpole policy=<path/to/best.[pickle/pt]>
 ```
 
 ### ONNX 导出
 
 ```bash
-python scripts/export_onnx.py run_dir=<run-dir> output=/tmp/policy.onnx
+mxexport onnx run_dir=<run-dir> output=/tmp/policy.onnx
+```
+
+### 部署 artifact 导出
+
+```bash
+mxexport deploy run_dir=<run-dir> output=artifacts/policy.deploy
 ```
 
 ### 渲染
@@ -215,7 +222,7 @@ python scripts/export_onnx.py run_dir=<run-dir> output=/tmp/policy.onnx
 训练时开启可视化：
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo render=true
+mxtrain task=cartpole/skrl.ppo render=true
 ```
 
 ### TensorBoard

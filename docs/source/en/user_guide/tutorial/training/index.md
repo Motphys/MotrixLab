@@ -5,7 +5,7 @@ Once an environment is registered, training an RL task takes three steps:
 ```text
 Create a Task config       pick the environment, RL framework, algorithm, hyperparameters
       ↓
-python scripts/train.py task=...   Hydra composes the config and starts training
+mxtrain task=...   Hydra composes the config and starts training
       ↓
 runs/{env}/...             stores metadata, logs, and checkpoints
 ```

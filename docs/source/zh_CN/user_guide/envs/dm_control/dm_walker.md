@@ -102,9 +102,9 @@ python scripts/view.py env=dm-runner
 ### 2. 开始训练
 
 ```bash
-python scripts/train.py task=dm-stander/skrl.ppo
-python scripts/train.py task=dm-walker/skrl.ppo
-python scripts/train.py task=dm-runner/skrl.ppo
+mxtrain task=dm-stander/skrl.ppo
+mxtrain task=dm-walker/skrl.ppo
+mxtrain task=dm-runner/skrl.ppo
 ```
 
 ### 3. 查看训练进度
@@ -116,9 +116,9 @@ tensorboard --logdir runs/dm-walker
 ### 4. 测试训练结果
 
 ```bash
-python scripts/play.py env=dm-stander
-python scripts/play.py env=dm-walker
-python scripts/play.py env=dm-runner
+mxplay env=dm-stander
+mxplay env=dm-walker
+mxplay env=dm-runner
 ```
 
 ---

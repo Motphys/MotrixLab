@@ -94,7 +94,7 @@ python scripts/view.py env=cartpole
 ### 2. 开始训练
 
 ```bash
-python scripts/train.py task=cartpole/skrl.ppo
+mxtrain task=cartpole/skrl.ppo
 ```
 
 ### 3. 查看训练进度
@@ -106,7 +106,7 @@ tensorboard --logdir runs/cartpole
 ### 4. 测试训练结果
 
 ```bash
-python scripts/play.py env=cartpole
+mxplay env=cartpole
 ```
 
 ---

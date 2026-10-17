@@ -4,7 +4,7 @@
 from pathlib import Path
 
 import pytest
-from hydra import compose, initialize_config_dir
+from hydra import compose, initialize_config_dir, initialize_config_module
 from hydra.core.global_hydra import GlobalHydra
 
 from motrix_rl import frameworks
@@ -24,12 +24,19 @@ def _clear_hydra():
 
 def _compose(config_name: str, overrides: list[str]):
     load_plugins()
-    with initialize_config_dir(version_base=None, config_dir=CONFIG_DIR):
+    initializer = (
+        initialize_config_module(version_base=None, config_module="motrix_rl.configs")
+        if config_name in ("train", "play", "export_onnx")
+        else initialize_config_dir(version_base=None, config_dir=CONFIG_DIR)
+    )
+    if config_name == "train":
+        overrides = [f"hydra.searchpath=[file://{CONFIG_DIR}]", *overrides]
+    with initializer:
         return compose(config_name=config_name, overrides=overrides)
 
 
-def test_default_train_config_composes_to_selected_provider_type():
-    cfg = _compose("train", [])
+def test_selected_train_config_composes_to_selected_provider_type():
+    cfg = _compose("train", ["task=cartpole/skrl.ppo"])
 
     typed_cfg = to_typed_config(cfg, TrainConfig)
 
@@ -58,7 +65,7 @@ def test_train_scalar_overrides():
 
 
 def test_train_nested_algo_override():
-    cfg = _compose("train", ["algo.agent.learning_rate=1e-3", "seed=7"])
+    cfg = _compose("train", ["task=cartpole/skrl.ppo", "algo.agent.learning_rate=1e-3", "seed=7"])
     assert cfg.algo.agent.learning_rate == 1e-3
     assert cfg.seed == 7
 

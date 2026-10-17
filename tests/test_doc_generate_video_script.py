@@ -59,12 +59,13 @@ def test_sim_override_replaces_metadata_sim_field(monkeypatch, tmp_path):
 
 def test_missing_policy_prints_train_command(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(generate_video, "RUNS_ROOT", tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     assert generate_video.main(["cartpole"]) == 2
 
     error = capsys.readouterr().err
     assert "No playable policy" in error
-    assert "uv run scripts/train.py task=cartpole/skrl.ppo" in error
+    assert "python -m motrix_rl.commands.train task=cartpole/skrl.ppo" in error
 
 
 def test_video_config_records_by_default_and_places_bare_output_in_docs_video_dir():

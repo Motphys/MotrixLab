@@ -28,7 +28,7 @@ environment packages, but does **not** train.
 ```bash
 source .venv/bin/activate
 RUN=runs/g1-wbt-dance/motrix/torch/fastsac/<run-dir>
-python scripts/export_deploy.py run="$RUN" \
+mxexport deploy run_dir="$RUN" \
   output=artifacts/g1-wbt-dance-software-pd.deploy validation.atol=3e-5
 
 motrix-deploy task=g1-wbt-dance/sim \

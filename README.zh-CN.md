@@ -98,7 +98,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 ```bash
 source .venv/bin/activate
-python scripts/train.py task=microduck-walk-flat/motrix.fastsac play=true
+mxtrain task=microduck-walk-flat/motrix.fastsac play=true
 ```
 
 训练过程中，内置面板会实时显示运行进度、回合统计、吞吐、奖励与系统健康状态：
@@ -124,7 +124,7 @@ microduck 的训练数分钟内即可完成：平均回报与回合长度通常�
 无需重新训练即可回放最近一次训练得到的策略（例如提前 Ctrl+C 中断训练之后）：
 
 ```bash
-python scripts/play.py env=microduck-walk-flat
+mxplay env=microduck-walk-flat
 ```
 
 训练好的 microduck 策略在查看器中的回放效果：

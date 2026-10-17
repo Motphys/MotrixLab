@@ -2,7 +2,10 @@
 
 `motrix-deploy` runs exported policies without a training framework. It provides deployment artifacts,
 robot/task contracts, shared control execution, runtime plugin discovery, and the `motrix-deploy` CLI.
-Install the task and runtime plugins needed for your target.
+Install the task and runtime plugins needed for your target. `motrix-deploy` does not depend on `motrix-rl`:
+training-run export belongs to `motrix-rl`, which depends on this package, while deployment runs independently.
+Create artifacts with `mxexport deploy run_dir=<run-dir> output=artifacts/policy.deploy`; see the
+[deployment tutorial](../docs/source/en/user_guide/tutorial/advanced/motrix_deploy.md) for export and profile compiler plugins.
 
 With the Go2 task and a simulation backend installed:
 
