@@ -52,6 +52,21 @@ _使用 MotrixLab 训练的 microduck 行走策略，由 MotrixRender 实时渲�
 
 ## 🚀 快速开始
 
+### 仅安装框架（PyPI）
+
+`motrixlab` 聚合包面向 Python 3.10/3.11，默认安装环境 core、部署运行时、RL
+控制平面、内置 FastSAC provider 以及 MotrixSim 环境后端：
+
+```bash
+python -m pip install motrixlab
+# 包含 beta 预发布版本：
+python -m pip install --pre motrixlab
+```
+
+此安装不包含内置任务环境、机器人资产、其他 RL provider 或部署 backend 插件。
+请自行提供任务 package；需要仓库内置任务集和 GPU 自动配置时，使用下文的源码安装。
+范围与使用方式见[聚合包 README](motrixlab/README.md)。聚合包将在对应 release 发布后可用。
+
 ### 前置条件
 
 | 要求 | 说明 |

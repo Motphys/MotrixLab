@@ -63,6 +63,7 @@ test = [
 
 [tool.uv.workspace]
 members = [
+    "motrixlab",
     "motrix_robots",
     "motrix_deploy",
     "motrix_deploy_mujoco",

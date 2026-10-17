@@ -96,6 +96,9 @@ jobs:
           uv build --wheel motrix_env_core --out-dir dist/env-core
           uv build --wheel motrix_deploy --out-dir dist/deploy
           uv build --wheel motrix_rl --out-dir dist/rl
+          uv build --wheel motrix_rl_builtin --out-dir dist/rl-builtin
+          uv build --wheel motrix_env_motrixsim --out-dir dist/env-motrixsim
+          uv build --wheel motrixlab --out-dir dist/motrixlab
 
       - name: Upload distribution packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -109,7 +112,7 @@ jobs:
     needs: build
     if: github.repository == 'Motphys/MotrixLab'
     runs-on: ubuntu-latest
-    # Distinct GitHub environments keep the three Trusted Publisher registrations
+    # Distinct GitHub environments keep the six Trusted Publisher registrations
     # unique: PyPI binds at most one project to a repository/workflow/environment.
     environment: pypi-env-core
     timeout-minutes: 10
@@ -172,5 +175,74 @@ jobs:
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: dist/rl
+          repository-url: ${{ (github.event_name == 'release' || inputs.index == 'pypi') && env.PYPI_URL || env.TESTPYPI_URL }}
+          skip-existing: true
+
+  publish-rl-builtin:
+    name: Publish motrix-rl-builtin
+    needs: publish-rl
+    if: github.repository == 'Motphys/MotrixLab'
+    runs-on: ubuntu-latest
+    environment: pypi-rl-builtin
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # PyPI Trusted Publishing OIDC token.
+    steps:
+      - name: Download distribution packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dists
+          path: dist/
+      - name: Publish to the target index
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/rl-builtin
+          repository-url: ${{ (github.event_name == 'release' || inputs.index == 'pypi') && env.PYPI_URL || env.TESTPYPI_URL }}
+          skip-existing: true
+
+  publish-env-motrixsim:
+    name: Publish motrix-env-motrixsim
+    needs: publish-rl
+    if: github.repository == 'Motphys/MotrixLab'
+    runs-on: ubuntu-latest
+    environment: pypi-env-motrixsim
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # PyPI Trusted Publishing OIDC token.
+    steps:
+      - name: Download distribution packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dists
+          path: dist/
+      - name: Publish to the target index
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/env-motrixsim
+          repository-url: ${{ (github.event_name == 'release' || inputs.index == 'pypi') && env.PYPI_URL || env.TESTPYPI_URL }}
+          skip-existing: true
+
+  publish-motrixlab:
+    name: Publish motrixlab
+    needs: [publish-rl-builtin, publish-env-motrixsim]
+    if: github.repository == 'Motphys/MotrixLab'
+    runs-on: ubuntu-latest
+    environment: pypi-motrixlab
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # PyPI Trusted Publishing OIDC token.
+    steps:
+      - name: Download distribution packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dists
+          path: dist/
+      - name: Publish to the target index
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/motrixlab
           repository-url: ${{ (github.event_name == 'release' || inputs.index == 'pypi') && env.PYPI_URL || env.TESTPYPI_URL }}
           skip-existing: true
