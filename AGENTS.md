@@ -11,6 +11,7 @@ MotrixLab 是构建在 MotrixSim 仿真后端之上的强化学习框架，提�
 
 项目使用 UV workspace，包含以下 package：
 
+- `motrixlab`：仅声明依赖的 PyPI 聚合包，默认安装 core、deploy、RL、builtin provider 与 MotrixSim 环境后端
 - `motrix_env_core`：backend 无关的环境框架、配置与机器人 registry
 - `motrix_env_motrixsim`：MotrixSim 仿真后端（SimBackend、scene compiler、renderer、torch frontend）
 - `motrix_env_mujoco`：仅用于编译的 MuJoCo scene 后端
@@ -274,4 +275,4 @@ prek run --all-files
 ## 备注
 
 - JAX 与 PyTorch backend 均支持 CUDA。
-- MotrixSim package 使用内部 PyPI server。
+- MotrixSim（`motrixsim` / `motrixsim-core`）通过公开 PyPI 分发。

@@ -52,6 +52,24 @@ _Microduck locomotion policies trained with MotrixLab, rendered in MotrixRender 
 
 ## 🚀 Quick Start
 
+### Framework-only PyPI installation
+
+The `motrixlab` metapackage provides the environment core, deployment runtime, RL
+control plane, built-in FastSAC provider, and MotrixSim environment backend for
+Python 3.10/3.11:
+
+```bash
+python -m pip install motrixlab
+# Include beta releases:
+python -m pip install --pre motrixlab
+```
+
+This installation excludes built-in task environments, robot assets, other RL
+providers, and deployment backend plugins. Supply your own task package, or use
+the source installation below for the repository's task collection and GPU-aware
+setup. See the [metapackage README](motrixlab/README.md) for scope and usage.
+The package becomes available when the corresponding release is published.
+
 ### Prerequisites
 
 | Requirement | Notes |
