@@ -474,10 +474,16 @@ class Trainer(TrainerBase):
                 pass
 
         def _panel_data_ready() -> bool:
-            """The training panel's quiescence gate (see _render_panel)."""
+            """Wait for all learners' first updates, including lazy compilation."""
             return (
                 all(v is not None for v in per_collector_stats.values())
-                and any(v is not None for v in learner_payloads.values())
+                # Initial payloads do not mean lazy compilation/first updates
+                # completed. Short runs may legitimately finish in replay warmup.
+                and all(
+                    v is not None
+                    and (v["training_started"] or control.collector_steps >= num_iterations * num_collectors)
+                    for v in learner_payloads.values()
+                )
                 and control.collector_steps > 0
             )
 
@@ -487,7 +493,8 @@ class Trainer(TrainerBase):
                 f"c{i} {'✓' if per_collector_stats[i] is not None else '…'}" for i in range(num_collectors)
             )
             payload_marks = " ".join(
-                f"l{r} {'✓' if learner_payloads[r] is not None else '…'}" for r in range(num_learners)
+                f"l{r} " + ("✓" if p is not None and p["training_started"] else "initializing first update…")
+                for r, p in learner_payloads.items()
             )
             return f"panel data — stats: {stats_marks} | payloads: {payload_marks} | steps: {control.collector_steps}"
 
@@ -547,6 +554,10 @@ class Trainer(TrainerBase):
                 if abort_reason is None:
                     while not _panel_data_ready():
                         _drain_worker_stats()
+                        # A run shorter than replay warmup may end without an
+                        # update payload; let normal shutdown collect its result.
+                        if all(not p.is_alive() for p in p_learners):
+                            break
                         try:
                             process_name, traceback_text = error_queue.get_nowait()
                         except Empty:
@@ -643,15 +654,12 @@ class Trainer(TrainerBase):
                 panel_rate_samples.pop(0)
             t0, s0 = panel_rate_samples[0]
             t1, s1 = panel_rate_samples[-1]
-            # Short-window init: as soon as steps flow, compute over the
-            # available span (floor 1s against div-by-tiny) so the panel
-            # shows a real — if rough — rate immediately; None (warming up)
-            # only means "no steps flowed in the window" (pre-start or a
-            # genuine throughput stall).
-            if s1 > s0:
-                span = max(t1 - t0, 1.0)
-                sps = (s1 - s0) * num_envs / span
-                iters = (s1 - s0) / span
+            # An empty initial window has no rate yet. Once a time span
+            # exists, zero progress is a measured zero, not replay warmup.
+            span = t1 - t0
+            if span > 0:
+                sps = (s1 - s0) * num_envs / max(span, 1.0)
+                iters = (s1 - s0) / max(span, 1.0)
             else:
                 sps = None
                 iters = None

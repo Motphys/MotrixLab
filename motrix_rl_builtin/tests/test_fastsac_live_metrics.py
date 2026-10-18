@@ -400,6 +400,7 @@ class _Stage(NamedTuple):
     payload: bool = True
     episodes: int = 2
     mean_return: float = 1.5
+    updates: int | None = None
 
 
 def _snapshot(collector_id: int, stage: _Stage) -> dict:
@@ -423,6 +424,7 @@ def _payload(step: int, checkpoint_path: str | None) -> dict:
         "step": step,
         "sps": 100.0,
         "updates": 2 * step,
+        "training_started": True,
         "metrics": None if warming else {"qf_loss": 0.25, "actor_loss": -1.5},
         "warming": warming,
         "learn_ms": 1.0,
@@ -471,7 +473,14 @@ class _Workers:
             for collector in collectors:
                 collector["stats_queue"].put(_snapshot(collector["collector_id"], stage))
             if stage.payload:
-                args["panel_queue"].put(_payload(control.collector_steps // NUM_COLLECTORS, checkpoint_path))
+                payload = _payload(control.collector_steps // NUM_COLLECTORS, checkpoint_path)
+                if stage.updates is not None:
+                    payload["updates"] = stage.updates
+                    payload["training_started"] = stage.updates > 0
+                args["panel_queue"].put(payload)
+                if payload["updates"] == 0:
+                    self._wait(lambda: args["panel_queue"].empty() or control.stop)
+                    continue
                 logged += 1
                 if self.live:
                     self._wait(lambda: self.sink.count("scalars") >= logged or control.stop)
@@ -549,6 +558,56 @@ def _train_async(tmp_path, monkeypatch, workers: _Workers, *, num_iterations: in
         tmp_path, rl_cfg, metrics, num_envs=NUM_ENVS, logging_interval=10, save_interval=0, resume_from=resume_from
     )
     return async_train.Trainer(context=context), writer
+
+
+def test_async_panel_waits_for_first_learner_update(tmp_path, monkeypatch):
+    from motrix_rl_builtin.fastsac.async_impl import train as async_train
+
+    sink = _RecordingSink(tmp_path / "metrics.jsonl")
+    workers = _Workers(sink, [_Stage((10, 10), updates=0), _Stage((20, 20))])
+    trainer, _ = _train_async(tmp_path, monkeypatch, workers, num_iterations=30)
+    panels = []
+    monkeypatch.setattr(async_train, "emit_training_panel", lambda live, stats, **kwargs: panels.append(stats))
+
+    trainer.train()
+
+    assert panels
+    assert all(panel.iteration >= 20 for panel in panels)
+
+
+def test_async_run_can_finish_without_any_training_update(tmp_path, monkeypatch):
+    sink = _RecordingSink(tmp_path / "metrics.jsonl")
+    workers = _Workers(sink, [_Stage((10, 10), updates=0)])
+    trainer, _ = _train_async(tmp_path, monkeypatch, workers, num_iterations=10)
+
+    trainer.train()
+
+    assert checkpoints.final_checkpoint_path("pt", tmp_path).exists()
+
+
+def test_async_panel_reports_zero_throughput_after_collection_stalls(tmp_path, monkeypatch):
+    from motrix_rl_builtin.fastsac.async_impl import train as async_train
+
+    panels = []
+
+    class StalledWorkers(_Workers):
+        def learner(self, process):
+            result = super().learner(process)
+            # Hold fixed collection progress across two measured windows.
+            self._wait(lambda: len(panels) >= 3 or process.arguments["control"].stop)
+            return result
+
+    sink = _RecordingSink(tmp_path / "metrics.jsonl")
+    workers = StalledWorkers(sink, [_Stage((20, 20))])
+    trainer, _ = _train_async(tmp_path, monkeypatch, workers, num_iterations=30)
+    monkeypatch.setattr(async_train, "emit_training_panel", lambda live, stats, **kwargs: panels.append(stats))
+
+    trainer.train()
+
+    assert len(panels) >= 3
+    assert panels[-1].steps_per_second == 0.0
+    assert panels[-1].iterations_per_second == 0.0
+    assert not panels[-1].warming
 
 
 def test_async_trainer_emits_tensorboard_tags_events_and_collector_env_steps(tmp_path, monkeypatch):

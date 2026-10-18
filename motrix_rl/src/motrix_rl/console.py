@@ -57,7 +57,7 @@ class TrainingPanelStats:
     learn_ms: float
     learn_percent: float
     warming: bool = False
-    # Rolling-window iteration rate; None = same "warming up" semantics as
+    # Rolling-window iteration rate; None = same unavailable-rate semantics as
     # steps_per_second. Falls back to the cumulative average when absent.
     iterations_per_second: float | None = None
     training_metrics: Mapping[str, Any] | None = None
@@ -194,7 +194,7 @@ def _iter_rate_text(stats: TrainingPanelStats) -> str:
     if stats.iterations_per_second is not None:
         return f"{stats.iterations_per_second:,.0f} iter/s"
     if stats.steps_per_second is None:
-        return "warming up"
+        return "warming up" if stats.warming else "measuring…"
     return f"{stats.iteration / max(stats.elapsed_seconds, 1e-9):,.0f} iter/s"
 
 
@@ -214,7 +214,11 @@ def format_training_panel(stats: TrainingPanelStats, *, title: str = "rl") -> st
     pct = 100.0 * stats.iteration / max(stats.total_iterations, 1)
     eta = _eta_seconds(stats)
     eta_text = f" - eta ~{hms(eta)}" if eta is not None else ""
-    sps_text = f"{stats.steps_per_second:.0f} env-steps/s" if stats.steps_per_second is not None else "warming up"
+    sps_text = (
+        f"{stats.steps_per_second:.0f} env-steps/s"
+        if stats.steps_per_second is not None
+        else ("warming up" if stats.warming else "measuring…")
+    )
     header = (
         f" {title} - iter {stats.iteration}/{stats.total_iterations} ({pct:.1f}%) - "
         f"{sps_text} - {hms(stats.elapsed_seconds)}{eta_text}"
@@ -773,7 +777,7 @@ def render_training_panel(stats: TrainingPanelStats, *, title: str = "rl", view:
                 Text(
                     f"{stats.steps_per_second:,.0f} env-steps/s"
                     if stats.steps_per_second is not None
-                    else "warming up",
+                    else ("warming up" if stats.warming else "measuring…"),
                     style="bold cyan",
                 ),
                 Text(_iter_rate_text(stats), style="white"),

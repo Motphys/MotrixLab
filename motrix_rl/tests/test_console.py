@@ -37,6 +37,25 @@ def test_format_value_uses_scientific_notation_for_large_floats() -> None:
     assert _format_value(-1_234_567.0, signed=True) == "-1.235e+06"
 
 
+@pytest.mark.parametrize("rich", [False, True])
+@pytest.mark.parametrize(
+    ("rate", "warming", "expected"),
+    [(None, False, "measuring…"), (None, True, "warming up"), (0.0, False, "0 env-steps/s")],
+)
+def test_throughput_distinguishes_missing_measurement_from_replay_warmup(rich, rate, warming, expected):
+    stats = _panel_stats(steps_per_second=rate, iterations_per_second=rate, warming=warming)
+    if rich:
+        console = Console(width=120, force_terminal=False)
+        with console.capture() as capture:
+            console.print(render_training_panel(stats))
+        text = capture.get()
+    else:
+        text = format_training_panel(stats)
+    assert expected in text
+    if not warming:
+        assert "warming up" not in text
+
+
 def test_format_training_panel_groups_timing_metrics() -> None:
     stats = TrainingPanelStats(
         iteration=1,

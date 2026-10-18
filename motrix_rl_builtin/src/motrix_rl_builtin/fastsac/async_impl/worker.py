@@ -689,6 +689,7 @@ def run_learner_process(
             # global progress basis (identical on every DDP rank; the single
             # learner's own position when num_collectors == 1).
             trained = learner.maybe_train(step)
+            first_update = trained and not train_started
             if trained:
                 train_started = True
                 elapsed_learn_s = time.perf_counter() - t_l
@@ -711,7 +712,9 @@ def run_learner_process(
                 else:
                     # Data arrived, but replay/batch readiness still gated training.
                     learner_gate_wait_samples_ms.append(idle_ms)
-            if step >= next_log:
+            if step >= next_log or first_update:
+                # Publish first-update completion immediately: the startup
+                # handoff must not wait an entire user logging interval.
                 # One compact payload per log window to the parent (panel +
                 # TensorBoard live there; see train.py). All ranks send.
                 now = time.time()
@@ -745,6 +748,7 @@ def run_learner_process(
                     "step": step,
                     "sps": sps,
                     "updates": learner.update_idx,
+                    "training_started": train_started,
                     "metrics": metrics_log,
                     "warming": warming,
                     "learn_ms": timing_mean(learner_train_samples_ms) if learner_train_samples_ms else 0.0,
