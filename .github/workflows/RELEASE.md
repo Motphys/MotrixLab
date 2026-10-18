@@ -275,7 +275,7 @@ motrix-env-core → motrix-deploy → motrix-rl
 ```
 
 `motrixlab` is the integration workspace member, distinct from the development-only
-root project `motrix-lab`. It requires Python `>=3.10,<3.12` and depends on
+root project `motrix-lab`. It requires Python `>=3.10,<3.14` and depends on
 `motrix-env-core`, `motrix-deploy`, `motrix-rl`, `motrix-rl-builtin`, and
 `motrix-env-motrixsim`, each pinned to the same version as the integration package.
 Its `motrixlab` import namespace provides a thin, lazy dispatcher for the sole `mxlab`
@@ -314,7 +314,7 @@ GitHub Release event.
 ### Clean installation verification
 
 After all six TestPyPI jobs succeed, test outside the checkout in a fresh
-Python 3.10 or 3.11 virtual environment. Set `VERSION` to the exact version
+Python 3.10–3.13 virtual environment. Set `VERSION` to the exact version
 from that run (including any beta suffix):
 
 ```bash
@@ -367,8 +367,8 @@ from TestPyPI; the subsequent installation resolves third-party dependencies
 from PyPI. Do not use `--extra-index-url` to mix the two indexes, or an older
 production package may mask a missing test artifact. This is an actual install
 and import check, not a GPU simulation or training test. Record the platform,
-Python version, commands, and results; repeat with Python 3.11 for both supported
-interpreters.
+Python version, commands, and results; repeat with Python 3.11, 3.12, and 3.13
+for all supported interpreters.
 
 After production publication, use another fresh environment outside the
 checkout and install `"motrixlab==$VERSION"` with

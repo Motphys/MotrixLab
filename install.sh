@@ -27,7 +27,7 @@ usage() {
     echo "  --docs                 Include the docs toolchain (sphinx) for building the documentation"
     echo "  --gpu cuda|rocm|hygon  GPU profile (default: auto-detected from the kernel driver)"
     echo "                         Hygon skips accelerator packages; install DTK-compatible Torch yourself."
-    echo "  --python 3.10|3.11     Python version (default: uv's interpreter selection; --all requires 3.10)"
+    echo "  --python 3.10|3.11|3.12|3.13  Python version (default: uv's interpreter selection; --all requires 3.10)"
     echo "  --skrl-torch           Training backend: SKRL on PyTorch (default)"
     echo "  --skrl-jax             Training backend: SKRL on JAX (Linux only)"
     echo "  --rslrl                Training backend: RSL-RL on PyTorch"
@@ -57,10 +57,10 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --python)
-            [ $# -ge 2 ] || { echo "error: $1 requires a value (3.10 or 3.11)" >&2; exit 1; }
+            [ $# -ge 2 ] || { echo "error: $1 requires a value (3.10, 3.11, 3.12 or 3.13)" >&2; exit 1; }
             case "$2" in
-                3.10|3.11) PYTHON="$2" ;;
-                *) echo "error: invalid --python value: $2 (expected 3.10 or 3.11)" >&2; exit 1 ;;
+                3.10|3.11|3.12|3.13) PYTHON="$2" ;;
+                *) echo "error: invalid --python value: $2 (expected 3.10, 3.11, 3.12 or 3.13)" >&2; exit 1 ;;
             esac
             shift
             ;;
@@ -95,7 +95,7 @@ if [ -n "$GPU" ] && [ "$GPU" != cuda ] && [ "$GPU" != rocm ] && [ "$GPU" != hygo
     exit 1
 fi
 
-if [ -n "$ALL" ] && [ "$PYTHON" = 3.11 ]; then
+if [ -n "$ALL" ] && [ -n "$PYTHON" ] && [ "$PYTHON" != 3.10 ]; then
     echo "error: --all includes Unitree, which requires Python 3.10; use --python 3.10 or omit --all" >&2
     exit 1
 fi

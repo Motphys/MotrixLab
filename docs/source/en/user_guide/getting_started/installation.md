@@ -11,7 +11,7 @@ Both paths provide `mxlab` for training, playback, visualization, export, and de
 
 ## System requirements
 
-- **Python**: 3.10 or 3.11. The repository defaults to Python 3.10. The Unitree hardware deployment plugin and the full development environment that includes it require Python 3.10. Simulation and training with Unitree robot models are not subject to this restriction.
+- **Python**: 3.10–3.13. The repository defaults to Python 3.10. The Unitree hardware deployment plugin and the full development environment that includes it require Python 3.10. Simulation and training with Unitree robot models are not subject to this restriction.
 - **Operating system and architecture**: Linux x86_64 or Windows x86_64. GPU runtime support also depends on your drivers and the selected PyTorch build.
 - **Package manager**: Repository installation uses [uv](https://docs.astral.sh/uv/getting-started/installation/). Your own project can use pip or uv.
 - **Git and Git LFS**: Required only for repository installation, to obtain source code and assets such as robot meshes and motion data.
@@ -40,8 +40,8 @@ Linux:
 
 ```bash
 sh install.sh
-# Use Python 3.11 without the Unitree hardware deployment plugin:
-sh install.sh --python 3.11
+# Use Python 3.11–3.13 without the Unitree hardware deployment plugin (3.13 shown):
+sh install.sh --python 3.13
 ```
 
 Windows PowerShell:
@@ -115,7 +115,7 @@ When reinstalling, include any other options you still need in the same invocati
 
 | Option | Description |
 | ------ | ----------- |
-| `--python 3.10` / `--python 3.11` | Select Python; defaults to 3.10, and `--all` requires 3.10 |
+| `--python 3.10` / `3.11` / `3.12` / `3.13` | Select Python; defaults to 3.10, and `--all` requires 3.10 |
 | `--gpu cuda` / `--gpu rocm` | Select a GPU dependency profile explicitly, overriding detection; ROCm is Linux-only |
 | `--gpu hygon` | Linux Hygon DCU environment; preserve the external DTK accelerator stack and provide compatible Torch yourself; do not combine with `--skrl-jax` |
 | `--rslrl` | Add the RSL-RL provider |
@@ -163,7 +163,7 @@ source .venv/bin/activate
 python -m pip install motrixlab
 ```
 
-On Windows PowerShell, create the environment with `py -3.10 -m venv .venv`, then activate it with `.venv\Scripts\Activate.ps1`. You can also choose Python 3.11.
+On Windows PowerShell, create the environment with `py -3.10 -m venv .venv`, then activate it with `.venv\Scripts\Activate.ps1`. You can also choose Python 3.11–3.13.
 
 To allow beta releases:
 
@@ -186,10 +186,12 @@ Before adding the dependency, make sure your project's `pyproject.toml` restrict
 
 ```toml
 [project]
-requires-python = ">=3.10,<3.12"
+requires-python = ">=3.10,<3.14"
 ```
 
-`uv init --python 3.10` selects an interpreter, but the initialized Python requirement may still have no upper bound. uv resolves dependencies for the entire Python range declared by your project. Selecting a Python 3.10 interpreter is not sufficient if the project still declares support for Python 3.12 and later.
+`uv init --python 3.10` selects an interpreter, but the initialized Python requirement may still have no upper bound. uv resolves dependencies for the entire Python range declared by your project. Selecting a Python 3.10 interpreter is not sufficient if the project still declares support for Python 3.14 and later.
+
+The package metadata and `install.sh --python` accept Python 3.10–3.13. The runtime CI matrix is configured for all four versions across the fast, Numba, and full suites; non-3.10 jobs omit the Unitree hardware plugin and ignore its tests. The Unitree hardware plugin and `--all` installation remain limited to Python 3.10. Dependency resolution and CI configuration alone do not establish that runtime tests have passed on Python 3.12/3.13.
 
 Then add the dependency:
 

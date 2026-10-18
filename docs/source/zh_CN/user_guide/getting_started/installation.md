@@ -11,7 +11,7 @@ MotrixLab 支持两种使用方式。请根据你是在仓库中运行现有任�
 
 ## 系统要求
 
-- **Python**：3.10 或 3.11。仓库默认使用 Python 3.10；Unitree 硬件部署插件及包含该插件的完整开发环境仅支持 Python 3.10。Unitree 机器人模型的仿真与训练不受此限制。
+- **Python**：3.10–3.13。仓库默认使用 Python 3.10；Unitree 硬件部署插件及包含该插件的完整开发环境仅支持 Python 3.10。Unitree 机器人模型的仿真与训练不受此限制。
 - **系统与架构**：Linux x86_64 或 Windows x86_64。具体 GPU 运行能力还取决于驱动和所选的 PyTorch 构建。
 - **包管理工具**：仓库安装使用 [uv](https://docs.astral.sh/uv/getting-started/installation/)；自己的项目可以使用 pip 或 uv。
 - **Git 与 Git LFS**：仅仓库安装需要，用于获取源码及机器人网格、运动数据等资产。
@@ -40,8 +40,8 @@ Linux：
 
 ```bash
 sh install.sh
-# 使用 Python 3.11，不包含 Unitree 硬件部署插件：
-sh install.sh --python 3.11
+# 使用 Python 3.11–3.13，不包含 Unitree 硬件部署插件（以 3.13 为例）：
+sh install.sh --python 3.13
 ```
 
 Windows PowerShell：
@@ -115,7 +115,7 @@ sh install.sh --docs
 
 | 参数 | 说明 |
 | ---- | ---- |
-| `--python 3.10` / `--python 3.11` | 选择 Python 版本；默认 3.10，`--all` 要求 3.10 |
+| `--python 3.10` / `3.11` / `3.12` / `3.13` | 选择 Python 版本；默认 3.10，`--all` 要求 3.10 |
 | `--gpu cuda` / `--gpu rocm` | 显式选择 GPU 依赖配置，覆盖自动探测；ROCm 仅限 Linux |
 | `--gpu hygon` | Linux 海光 DCU 环境；保留外部 DTK 加速栈，需自行提供兼容的 Torch，不与 `--skrl-jax` 组合 |
 | `--rslrl` | 添加 RSL-RL provider |
@@ -163,7 +163,7 @@ source .venv/bin/activate
 python -m pip install motrixlab
 ```
 
-Windows PowerShell 可使用 `py -3.10 -m venv .venv` 创建环境，然后运行 `.venv\Scripts\Activate.ps1` 激活。也可以选择 Python 3.11。
+Windows PowerShell 可使用 `py -3.10 -m venv .venv` 创建环境，然后运行 `.venv\Scripts\Activate.ps1` 激活。也可以选择 Python 3.11–3.13。
 
 允许安装 beta 版本时：
 
@@ -186,10 +186,12 @@ cd my-robot-project
 
 ```toml
 [project]
-requires-python = ">=3.10,<3.12"
+requires-python = ">=3.10,<3.14"
 ```
 
-`uv init --python 3.10` 选择的是解释器，初始化得到的 Python 版本范围仍可能没有上界。uv 会为项目声明的整个 Python 范围解析依赖，因此不能只确认当前解释器是 3.10，而让项目仍声明支持 3.12 及以上版本。
+`uv init --python 3.10` 选择的是解释器，初始化得到的 Python 版本范围仍可能没有上界。uv 会为项目声明的整个 Python 范围解析依赖，因此不能只确认当前解释器是 3.10，而让项目仍声明支持 3.14 及以上版本。
+
+包元数据和 `install.sh --python` 接受 Python 3.10–3.13。运行时 CI 的 fast、Numba 和 full 测试矩阵均配置了这四个版本；非 3.10 job 不安装 Unitree 硬件插件，并忽略其测试。Unitree 硬件插件与 `--all` 安装仍仅支持 Python 3.10。依赖解析通过及 CI 配置本身不代表 Python 3.12/3.13 的运行时测试已通过。
 
 然后添加依赖：
 

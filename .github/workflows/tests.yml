@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11"]
+        python: ["3.10", "3.11", "3.12", "3.13"]
         suite: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["full"]' || '["fast","numba"]') }}
     steps:
       - name: Resolve numba cache dir
@@ -63,8 +63,8 @@ jobs:
           if [ '${{ matrix.python }}' = '3.10' ]; then
             sh install.sh --all --python 3.10
           else
-            # Unitree/DDS remains outside Python 3.11 runtime support.
-            uv sync --frozen --python 3.11 --extra cuda --extra rslrl --extra skrl-jax --extra tbb --group test
+            # Unitree/DDS runtime support remains limited to Python 3.10.
+            uv sync --frozen --python '${{ matrix.python }}' --extra cuda --extra rslrl --extra skrl-jax --extra tbb --group test
           fi
           .venv/bin/python -c 'import sys; assert ".".join(map(str, sys.version_info[:2])) == "${{ matrix.python }}"'
 
@@ -76,7 +76,7 @@ jobs:
             numba) selection='not integration and (slow or numba)' ;;
           esac
           set --
-          if [ '${{ matrix.python }}' = '3.11' ]; then
+          if [ '${{ matrix.python }}' != '3.10' ]; then
             set -- --ignore=motrix_deploy_unitree
           fi
           .venv/bin/python -m pytest -q --strict-markers --disable-warnings \

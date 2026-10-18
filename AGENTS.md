@@ -135,7 +135,7 @@ Python 方法，由 manager 运行时契约定义（`wiki/design/manager/runtime
 
 ## 开发环境
 
-项目使用 UV 管理依赖，默认 Python 3.10；不含 Unitree 硬件部署插件的仿真与训练也支持 Python 3.11。
+项目使用 UV 管理依赖，默认 Python 3.10；不含 Unitree 硬件部署插件的仿真与训练也支持 Python 3.11–3.13。
 Unitree 硬件部署插件与包含该插件的 `--all` 安装仍仅支持 Python 3.10；Unitree 机器人模型的仿真与训练不受此限制。
 根开发环境默认安装 `motrixlab`，提供 `mxlab` CLI。可用的依赖组与 extras 见 `pyproject.toml`。
 
@@ -149,8 +149,8 @@ sh install.sh --all
 
 ```bash
 sh install.sh
-# 不含 Unitree 硬件部署插件的 Python 3.11 运行环境：
-sh install.sh --python 3.11
+# 不含 Unitree 硬件部署插件的 Python 3.11–3.13 运行环境（以 3.13 为例）：
+sh install.sh --python 3.13
 ```
 
 避免裸 `uv run` / `uv sync`：`cuda`/`rocm` extras 声明为互斥，裸命令会解析到默认 fork（PyPI torch）

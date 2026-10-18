@@ -19,8 +19,11 @@ access to repository contents and uses no repository secrets.
 Runs on pull requests, pushes to `main` or `stable`, manual dispatch, and daily at 02:00 UTC
 (10:00 China Standard Time). Scheduled runs use the default branch. Each job installs the uv
 workspace with Git LFS assets on Linux, the supported public CI environment.
+The configured matrix includes Python 3.10, 3.11, 3.12, and 3.13 for every suite below.
+Python 3.10 uses `--all`; the other versions omit the Unitree hardware plugin and ignore
+`motrix_deploy_unitree` tests.
 
-PR and push runs have two independent, parallel jobs:
+PR and push runs have two independent, parallel suites per Python version:
 
 - **fast**: `pytest -m "not slow and not integration and not numba"`.
 - **numba**: `pytest -m "not integration and (slow or numba)"`. This includes the two expensive
@@ -30,8 +33,9 @@ PR and push runs have two independent, parallel jobs:
 
 These selections partition all non-integration tests, including future `slow` tests. They run on
 all PRs rather than relying on path filters that might miss a transitive dependency change.
-A failure in either job does not cancel the other job. Both should be required checks for merging;
-replace any branch-protection requirement for the old `pytest` job with these two checks.
+A failure in one matrix job does not cancel the others. Both suites on every Python version should
+be required checks for merging; replace any branch-protection requirement for the old `pytest` job
+with these matrix checks.
 
 Nightly and manual dispatch run the **full** suite, including
 `test/test_all_envs.py::test_all_demos`. The full-environment subprocess smoke test is excluded
@@ -220,7 +224,7 @@ Publishes six distributions to a Python package index: `motrix-env-core`,
 thin, lazy `mxlab` CLI, distinct from the development-only root project `motrix-lab`.
 Its five commands are `train`, `play`, `export-onnx`, `export-deploy`, and `deploy`.
 Command implementations remain in `motrix_rl.commands` and `motrix_deploy.cli`.
-It requires Python `>=3.10,<3.12` and pins all five component distributions to its own version.
+It requires Python `>=3.10,<3.14` and pins all five component distributions to its own version.
 It does not include the full development workspace, built-in tasks/robot assets,
 SKRL/RSLRL providers, or deployment backend plugins.
 
@@ -267,7 +271,7 @@ The distinct environments are required because PyPI binds at most one project
 to a repository/workflow/environment combination. These external registrations
 and environment protections are not configured or verified by this repository
 change. See the [release guide's clean installation verification](RELEASE.md#clean-installation-verification)
-for testing all six TestPyPI wheels in a fresh Python 3.10/3.11 environment,
+for testing all six TestPyPI wheels in fresh Python 3.10–3.13 environments,
 resolving third-party dependencies from public PyPI without mixing indexes.
 
 # Release Pipeline

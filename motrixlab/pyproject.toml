@@ -7,7 +7,7 @@ name = "motrixlab"
 version = "0.4.0b1"
 description = "MotrixLab framework with built-in reinforcement learning and the MotrixSim backend."
 authors = [{ name = "Motphys", email = "developers@motphys.com" }]
-requires-python = ">=3.10,<3.12"
+requires-python = ">=3.10,<3.14"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]

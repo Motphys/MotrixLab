@@ -7,7 +7,7 @@ provider, and MotrixSim simulation backend.
 
 ## Installation
 
-Use Python 3.10 or 3.11:
+Use Python 3.10–3.13:
 
 ```bash
 python -m pip install motrixlab

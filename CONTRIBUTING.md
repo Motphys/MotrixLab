@@ -7,7 +7,7 @@ feature proposals, and Discussions for usage questions and design discussion.
 
 MotrixLab currently targets:
 
-- Python **3.10.x / 3.11.x**, with 3.10 as the default. Unitree hardware
+- Python **3.10–3.13**, with 3.10 as the default. Unitree hardware
   deployment and `--all` require Python 3.10.
 - Linux x86_64 and Windows x86_64 for the documented CPU simulation and viewer
   workflows. The JAX training extra is Linux-only.
@@ -33,13 +33,14 @@ sh install.sh --all       # --gpu rocm switches to the AMD wheels
 
 A runtime-only environment without the dev toolchain is available via `sh install.sh`: it
 auto-detects the GPU vendor (NVIDIA/AMD) for the torch wheels and `--rslrl`
-selects the RSLRL backend. To select Python 3.11 for a non-Unitree runtime:
+selects the RSLRL backend. To select Python 3.11–3.13 for a non-Unitree runtime
+(example using 3.13):
 
 ```bash
-sh install.sh --python 3.11
+sh install.sh --python 3.13
 ```
 
-`--all` cannot be combined with Python 3.11. On Windows, run `install.ps1` in
+`--all` cannot be combined with Python 3.11–3.13. On Windows, run `install.ps1` in
 PowerShell.
 
 Avoid bare `uv sync` / `uv run`: the `cuda`/`rocm` extras are declared conflicting, so a bare
