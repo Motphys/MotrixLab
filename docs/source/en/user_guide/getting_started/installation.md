@@ -115,7 +115,7 @@ When reinstalling, include any other options you still need in the same invocati
 
 | Option | Description |
 | ------ | ----------- |
-| `--python 3.10` / `3.11` / `3.12` / `3.13` | Select Python; defaults to 3.10, and `--all` requires 3.10 |
+| `--python VERSION` | Select Python: `3.10`, `3.11`, `3.12`, or `3.13`; defaults to 3.10, and `--all` requires 3.10 |
 | `--gpu cuda` / `--gpu rocm` | Select a GPU dependency profile explicitly, overriding detection; ROCm is Linux-only |
 | `--gpu hygon` | Linux Hygon DCU environment; preserve the external DTK accelerator stack and provide compatible Torch yourself; do not combine with `--skrl-jax` |
 | `--rslrl` | Add the RSL-RL provider |
@@ -190,8 +190,6 @@ requires-python = ">=3.10,<3.14"
 ```
 
 `uv init --python 3.10` selects an interpreter, but the initialized Python requirement may still have no upper bound. uv resolves dependencies for the entire Python range declared by your project. Selecting a Python 3.10 interpreter is not sufficient if the project still declares support for Python 3.14 and later.
-
-The package metadata and `install.sh --python` accept Python 3.10–3.13. The runtime CI matrix is configured for all four versions across the fast, Numba, and full suites; non-3.10 jobs omit the Unitree hardware plugin and ignore its tests. The Unitree hardware plugin and `--all` installation remain limited to Python 3.10. Dependency resolution and CI configuration alone do not establish that runtime tests have passed on Python 3.12/3.13.
 
 Then add the dependency:
 

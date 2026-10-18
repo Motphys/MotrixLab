@@ -115,7 +115,7 @@ sh install.sh --docs
 
 | 参数 | 说明 |
 | ---- | ---- |
-| `--python 3.10` / `3.11` / `3.12` / `3.13` | 选择 Python 版本；默认 3.10，`--all` 要求 3.10 |
+| `--python VERSION` | 选择 Python 版本，可选 `3.10`、`3.11`、`3.12`、`3.13`；默认 3.10，`--all` 要求 3.10 |
 | `--gpu cuda` / `--gpu rocm` | 显式选择 GPU 依赖配置，覆盖自动探测；ROCm 仅限 Linux |
 | `--gpu hygon` | Linux 海光 DCU 环境；保留外部 DTK 加速栈，需自行提供兼容的 Torch，不与 `--skrl-jax` 组合 |
 | `--rslrl` | 添加 RSL-RL provider |
@@ -190,8 +190,6 @@ requires-python = ">=3.10,<3.14"
 ```
 
 `uv init --python 3.10` 选择的是解释器，初始化得到的 Python 版本范围仍可能没有上界。uv 会为项目声明的整个 Python 范围解析依赖，因此不能只确认当前解释器是 3.10，而让项目仍声明支持 3.14 及以上版本。
-
-包元数据和 `install.sh --python` 接受 Python 3.10–3.13。运行时 CI 的 fast、Numba 和 full 测试矩阵均配置了这四个版本；非 3.10 job 不安装 Unitree 硬件插件，并忽略其测试。Unitree 硬件插件与 `--all` 安装仍仅支持 Python 3.10。依赖解析通过及 CI 配置本身不代表 Python 3.12/3.13 的运行时测试已通过。
 
 然后添加依赖：
 
