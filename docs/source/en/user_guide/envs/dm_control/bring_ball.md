@@ -137,13 +137,13 @@ Default weights (from `BringBallCfg`):
 ### 1. Environment Preview (random actions)
 
 ```bash
-python scripts/view.py env=dm-manipulator-bring-ball
+mxlab view env=dm-manipulator-bring-ball
 ```
 
 ### 2. Start Training
 
 ```bash
-mxtrain task=dm-manipulator-bring-ball/skrl.ppo.torch
+mxlab train task=dm-manipulator-bring-ball/skrl.ppo.torch
 ```
 
 ### 3. View Training Progress
@@ -155,7 +155,7 @@ tensorboard --logdir runs/dm-manipulator-bring-ball
 ### 4. Test Training Results
 
 ```bash
-mxplay env=dm-manipulator-bring-ball
+mxlab play env=dm-manipulator-bring-ball
 ```
 
 ---

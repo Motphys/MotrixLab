@@ -143,15 +143,15 @@ Turn 的核心是 tip 触达并对准目标点：目标点位于 spinner 周围�
 ### 1. 环境预览（随机动作）
 
 ```bash
-python scripts/view.py env=dm-finger-spin
+mxlab view env=dm-finger-spin
 ```
 
 ```bash
-python scripts/view.py env=dm-finger-turn-easy
+mxlab view env=dm-finger-turn-easy
 ```
 
 ```bash
-python scripts/view.py env=dm-finger-turn-hard
+mxlab view env=dm-finger-turn-hard
 ```
 
 ### 2. 开始训练
@@ -159,15 +159,15 @@ python scripts/view.py env=dm-finger-turn-hard
 建议显式指定训练后端（JAX / PyTorch 二选一）：
 
 ```bash
-mxtrain task=dm-finger-spin/skrl.ppo task.train_backend=torch
+mxlab train task=dm-finger-spin/skrl.ppo task.train_backend=torch
 ```
 
 ```bash
-mxtrain task=dm-finger-turn-easy/skrl.ppo task.train_backend=torch
+mxlab train task=dm-finger-turn-easy/skrl.ppo task.train_backend=torch
 ```
 
 ```bash
-mxtrain task=dm-finger-turn-hard/skrl.ppo task.train_backend=torch
+mxlab train task=dm-finger-turn-hard/skrl.ppo task.train_backend=torch
 ```
 
 ### 3. 查看训练进度
@@ -178,10 +178,10 @@ tensorboard --logdir runs/dm-finger-spin
 
 ### 4. 测试训练结果
 
-`mxplay` 默认会在 `runs/{env-name}/` 下查找最新的 metadata-backed run，并加载其 `best_policy` artifact；也可以用 `policy=...` 显式指定 checkpoint：
+`mxlab play` 默认会在 `runs/{env-name}/` 下查找最新的 metadata-backed run，并加载其 `best_policy` artifact；也可以用 `policy=...` 显式指定 checkpoint：
 
 ```bash
-mxplay env=dm-finger-turn-hard
+mxlab play env=dm-finger-turn-hard
 ```
 
 ---

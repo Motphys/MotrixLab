@@ -17,7 +17,7 @@ sim2real vertical slice。`motrix_deploy` 是独立于训练框架的策略部�
 
 ## 1. 背景与架构定位
 
-现有 `scripts/play.py` 从 run metadata 和 checkpoint manifest 发现训练产物，再创建对应 RL framework 的
+`mxlab play`（实现位于 `motrix_rl.commands.play`）从 run metadata 和 checkpoint manifest 发现训练产物，再创建对应 RL framework 的
 trainer 进行回放。这个入口适合在训练环境内评估策略，但它仍依赖 SKRL、RSLRL 或 FastSAC 的模型与环境
 封装，不能作为稳定的跨仿真器或真机部署接口。
 
@@ -54,7 +54,7 @@ motrix_rl checkpoint + run metadata + task snapshot
                            (sim2sim)                    (sim2real)
 ```
 
-`scripts/play.py` 继续承担训练框架内 playback，不改名、不转化为部署入口。两条路径可以消费相同的源
+`mxlab play` 承担训练框架内 playback，`mxlab deploy` 承担部署。两条路径可以消费相同的源
 checkpoint，但职责不同：play 验证训练实现，deploy 验证可移植 artifact 和设备控制链路。
 
 ## 2. 设计目标
@@ -898,7 +898,8 @@ task runtime 通过 `motrix_deploy.tasks` Python entry-point
 group 按版本化 task 标识发现。`available_tasks()` 只读取已安装插件元数据；`load_task_type()` 懒加载唯一
 `DeployTask` 类，manifest codec 读取其 `spec_type` 而不实例化 task。`create_task()` 再将已解码的具体
 `TaskSpec`、`RobotSpec`、已加载的 `Policy` 和可选 `steps` 传给该类构造完整 task controller。未知名称或重复插件报错，不按 import 顺序选择实现。
-`motrix_deploy` core 发布指向 `motrix_deploy.cli:main` 的 console script，不反向 import 具体环境、task 或 SDK；
+`motrixlab` 提供唯一的 `mxlab` console script，`mxlab deploy` 惰性调用 `motrix_deploy.cli` 中的内部 adapter；
+`motrix_deploy` core 不发布独立 CLI，不反向 import 具体环境、task 或 SDK；
 具体部署 recipe 通过已安装 Hydra search-path plugin 提供的 `task` group 选择；外部应用也可显式指定 Hydra config path/name。
 
 runtime 插件由 `motrix_deploy.runtime.factory` 通过 `motrix_deploy.backends` Python entry-point group 发现；
@@ -1088,7 +1089,7 @@ realtime scheduler，可通过 `runtime.realtime=false` 关闭实时节奏控制
 已安装仿真 recipe 默认选择 MuJoCo；使用同一 task、artifact 和完整场景切换原生 backend：
 
 ```bash
-mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
   runtime.backend=motrixsim runtime.viewer=false runtime.realtime=false duration_s=1.0
 ```
 
@@ -1123,24 +1124,24 @@ motrix_deploy_motrixsim/src/motrix_deploy_motrixsim/
 
 ## 12. CLI 设计
 
-package 暴露统一入口：
+`motrixlab` 集成包暴露统一的 `mxlab deploy` 入口，惰性分发到 `motrix_deploy.cli`：
 
 ```bash
 # 只检查 artifact，不创建设备
-mxdeploy inspect artifact=path/to/go2_walk.deploy
+mxlab deploy inspect artifact=path/to/go2_walk.deploy
 
 # sim2sim 有界无窗口检查
-mxdeploy task=go2-walk-flat/sim \
+mxlab deploy task=go2-walk-flat/sim \
   artifact=path/to/go2_walk.deploy \
   runtime.viewer=false duration_s=2.0
 
 # 实时可视化
-mxdeploy task=go2-walk-flat/sim \
+mxlab deploy task=go2-walk-flat/sim \
   artifact=path/to/go2_walk.deploy \
   runtime.viewer=true
 
 # 真机入口
-mxdeploy task=go2-walk-flat/hardware \
+mxlab deploy task=go2-walk-flat/hardware \
   artifact=path/to/go2_walk.deploy \
   runtime.network_interface=enp5s0
 ```
@@ -1202,12 +1203,14 @@ artifact 的维度以 policy tensor shapes 为唯一来源。compiler 不恢复 
 
 ### 13.4 Deployment export 入口
 
-`motrix_rl` 提供 `mxexport onnx` 和 `mxexport deploy` 子命令；必须显式选择格式，不按训练框架拆分子命令。
+`motrixlab` 集成包通过薄层惰性 CLI 提供 `mxlab export-onnx` 和 `mxlab export-deploy` 子命令；
+命令实现仍在 `motrix_rl.commands`，部署入口 `mxlab deploy` 分发到 `motrix_deploy.cli`。
+两个导出命令直接选择输出格式，不按训练框架拆分，也不需要第三级命令。
 部署导出恰好指定 `run_dir` 或 `env`，后者选择环境的最新 metadata-backed run。默认输出为 `artifacts/<env>.deploy`：
 
 ```bash
-mxexport deploy env=go2-walk-rough
-mxexport deploy run_dir=/path/to/run output=artifacts/policy.deploy
+mxlab export-deploy env=go2-walk-rough
+mxlab export-deploy run_dir=/path/to/run output=artifacts/policy.deploy
 ```
 
 导出配置随 `motrix_rl` 发布，项目配置优先、包内配置兜底。依赖方向为 `motrix_rl -> motrix_deploy`；部署运行时

@@ -24,7 +24,7 @@ $v_y$ 和 `yaw_rate` 固定为 0。
 该任务不随机化物理参数。
 
 ```bash
-python scripts/view.py env=go1-stairs-terrain-walk
-mxtrain task=go1-stairs-terrain-walk/skrl.ppo
-mxplay env=go1-stairs-terrain-walk
+mxlab view env=go1-stairs-terrain-walk
+mxlab train task=go1-stairs-terrain-walk/skrl.ppo
+mxlab play env=go1-stairs-terrain-walk
 ```

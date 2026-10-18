@@ -62,7 +62,7 @@ Task 只需填写与算法基础配置不同的值，不需要复制所有算法
 
 ### 检查最终配置
 
-`mxtrain` 默认使用当前工作目录下存在的 `./configs`，不会向上搜索父目录。使用 `--config-dir /path/to/configs` 可指定其他配置目录。必须显式选择 Task，没有默认的 Cartpole Task。
+`mxlab train` 默认使用当前工作目录下存在的 `./configs`，不会向上搜索父目录。使用 `--config-dir /path/to/configs` 可指定其他配置目录。必须显式选择 Task，没有默认的 Cartpole Task。
 
 运行 Task 前先安装环境 package，registry 查询会自动发现已安装的 provider。
 自定义环境的打包方式见[环境注册](../building_envs/direct_env.md#环境注册)；Task YAML 的发现与环境发现相互独立。
@@ -70,19 +70,19 @@ Task 只需填写与算法基础配置不同的值，不需要复制所有算法
 启动训练前，可以先输出 Hydra 组合后的完整配置：
 
 ```bash
-mxtrain --cfg job --resolve task=my-robot/skrl.ppo
+mxlab train --cfg job --resolve task=my-robot/skrl.ppo
 ```
 
 该命令不会开始训练。确认 `task.env`、`num_envs` 和 `algo.trainer.timesteps` 符合预期后，再启动训练：
 
 ```bash
-mxtrain task=my-robot/skrl.ppo
+mxlab train task=my-robot/skrl.ppo
 ```
 
 运行以下命令可以查看仓库中所有可选 Task：
 
 ```bash
-mxtrain --help
+mxlab train --help
 ```
 
 ## 调整 Task 的运行参数
@@ -196,7 +196,7 @@ MotrixLab CLI 使用 Hydra 的 `key=value` 参数语法。CLI 覆盖只影响本
 ### 覆盖运行参数
 
 ```bash
-mxtrain \
+mxlab train \
   task=my-robot/skrl.ppo \
   num_envs=64 \
   seed=7 \
@@ -207,7 +207,7 @@ mxtrain \
 开启训练渲染，并在训练完成后播放：
 
 ```bash
-mxtrain task=my-robot/skrl.ppo render=true play=true
+mxlab train task=my-robot/skrl.ppo render=true play=true
 ```
 
 ### 覆盖算法参数
@@ -215,7 +215,7 @@ mxtrain task=my-robot/skrl.ppo render=true play=true
 SKRL PPO：
 
 ```bash
-mxtrain \
+mxlab train \
   task=my-robot/skrl.ppo \
   algo.agent.learning_rate=5e-4 \
   algo.agent.learning_epochs=8 \
@@ -225,7 +225,7 @@ mxtrain \
 RSLRL PPO：
 
 ```bash
-mxtrain \
+mxlab train \
   task=cartpole/rslrl.ppo \
   algo.algorithm.learning_rate=5e-4 \
   algo.algorithm.entropy_coef=0.005 \
@@ -235,7 +235,7 @@ mxtrain \
 FastSAC：
 
 ```bash
-mxtrain \
+mxlab train \
   task=g1-walk-flat/motrix.fastsac \
   algo.asynchronous=true \
   algo.agent.actor_learning_rate=1e-4 \
@@ -249,20 +249,20 @@ mxtrain \
 布尔值使用小写 `true` 或 `false`：
 
 ```bash
-mxtrain task=my-robot/skrl.ppo render=true
+mxlab train task=my-robot/skrl.ppo render=true
 ```
 
 使用 `null` 清空可空字段：
 
 ```bash
-mxtrain task=my-robot/skrl.ppo seed=null
-mxtrain task=my-robot/skrl.ppo algo.agent.learning_rate_scheduler=null
+mxlab train task=my-robot/skrl.ppo seed=null
+mxlab train task=my-robot/skrl.ppo algo.agent.learning_rate_scheduler=null
 ```
 
 列表建议使用引号，避免 shell 解释方括号：
 
 ```bash
-mxtrain \
+mxlab train \
   task=my-robot/skrl.ppo \
   'algo.models.policy.hiddens=[128,64]' \
   'algo.models.value.hiddens=[128,64]'
@@ -279,7 +279,7 @@ mxtrain \
 将 CLI 覆盖和 `--cfg job --resolve` 组合，可以查看本次运行最终会使用的值：
 
 ```bash
-mxtrain \
+mxlab train \
   --cfg job \
   --resolve \
   task=my-robot/skrl.ppo \
@@ -321,13 +321,13 @@ algo:
 使用 JAX 差异配置训练：
 
 ```bash
-mxtrain task=go2-walk-flat/skrl.ppo.jax
+mxlab train task=go2-walk-flat/skrl.ppo.jax
 ```
 
 直接覆盖后端也可以选择 JAX 训练器：
 
 ```bash
-mxtrain task=go2-walk-flat/skrl.ppo task.train_backend=jax
+mxlab train task=go2-walk-flat/skrl.ppo task.train_backend=jax
 ```
 
 这种写法不会加载 `skrl.ppo.jax.yaml` 中的后端专用参数。当后端差异文件存在时，应直接选择带 `.jax` 或 `.torch` 后缀的 Task。
@@ -348,7 +348,6 @@ motrix_rl/src/motrix_rl/configs/
     └── motrix.fastsac.yaml
 
 configs/
-├── view.yaml
 └── task/
     └── <env>/
         ├── <rllib>.<algo>.yaml
@@ -419,18 +418,18 @@ Hydra 会根据 provider 注册的结构化 schema 检查字段名和类型。�
 
 ## Play 和 View 的参数覆盖
 
-`mxplay` 恢复已保存的 run 配置，不需要训练 Task 目录。它和 `scripts/view.py` 同样使用 `key=value` 语法：
+`mxlab play` 恢复已保存的 run 配置，不需要训练 Task 目录。它和 `mxlab view` 同样使用 `key=value` 语法：
 
 ```bash
-python scripts/view.py env=cartpole num_envs=4
-mxplay env=cartpole num_envs=1
-mxplay policy=/path/to/checkpoint.pt num_envs=1
+mxlab view env=cartpole num_envs=4
+mxlab play env=cartpole num_envs=1
+mxlab play policy=/path/to/checkpoint.pt num_envs=1
 ```
 
 Play 默认读取训练 run 中保存的 `task_config.yaml`。如需临时覆盖其中的算法参数，使用 `rl` 作为算法配置根节点。因为 `rl` 初始为空，需要用 `+` 添加路径：
 
 ```bash
-mxplay \
+mxlab play \
   env=cartpole \
   '+rl.agent.learning_rate=1e-4'
 ```

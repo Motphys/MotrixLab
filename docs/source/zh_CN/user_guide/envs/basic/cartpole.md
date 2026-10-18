@@ -88,13 +88,13 @@ reward = 1.0  # 每步固定奖励
 ### 1. 环境预览
 
 ```bash
-python scripts/view.py env=cartpole
+mxlab view env=cartpole
 ```
 
 ### 2. 开始训练
 
 ```bash
-mxtrain task=cartpole/skrl.ppo
+mxlab train task=cartpole/skrl.ppo
 ```
 
 ### 3. 查看训练进度
@@ -106,7 +106,7 @@ tensorboard --logdir runs/cartpole
 ### 4. 测试训练结果
 
 ```bash
-mxplay env=cartpole
+mxlab play env=cartpole
 ```
 
 ---

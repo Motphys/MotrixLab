@@ -117,7 +117,7 @@ environment construction.
 Preview the robot and verify joint ordering, the default pose, PD parameters, sole sites, and collision-geom names:
 
 ```bash
-python scripts/view.py robot=<robot-config-id>
+mxlab view robot=<robot-config-id>
 ```
 
 ## 4. Register the environment implementation
@@ -164,11 +164,11 @@ dynamics and training behavior.
 Use this progression:
 
 ```bash
-python scripts/view.py robot=<robot-config-id>
-python scripts/view.py env=<robot>-walk-flat
-python scripts/view.py env=<robot>-walk-terrain
-mxtrain task=<robot>-walk-flat/motrix.fastsac
-mxtrain task=<robot>-walk-flat/motrix.fastsac algo.asynchronous=false
+mxlab view robot=<robot-config-id>
+mxlab view env=<robot>-walk-flat
+mxlab view env=<robot>-walk-terrain
+mxlab train task=<robot>-walk-flat/motrix.fastsac
+mxlab train task=<robot>-walk-flat/motrix.fastsac algo.asynchronous=false
 python -m pytest motrix_envs/tests/test_humanoid_walk.py -q
 python -m pytest motrix_rl/tests/test_task_configs.py -q
 ```

@@ -16,12 +16,12 @@ Task 配方只选择 RL provider，不会替你安装 provider。如果 Task 需
 
 ```bash
 # 显式选择 Cartpole SKRL PPO Task
-mxtrain task=cartpole/skrl.ppo
+mxlab train task=cartpole/skrl.ppo
 
 # 选择其他框架或算法
-mxtrain task=cartpole/rslrl.ppo
-mxtrain task=g1-walk-flat/motrix.fastsac
-mxtrain task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
+mxlab train task=cartpole/rslrl.ppo
+mxlab train task=g1-walk-flat/motrix.fastsac
+mxlab train task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
 ```
 
 当前内置的 RL method 与训练后端：
@@ -32,28 +32,28 @@ mxtrain task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
 | `rslrl.ppo`      | `torch`         | RSLRL PPO                                       |
 | `motrix.fastsac` | `torch`         | FastSAC；`algo.asynchronous` 选择同步或异步拓扑 |
 
-请在仓库根目录执行这些命令：CLI 会发现当前工作目录下存在的 `./configs`，不会向上查找父目录。运行 `mxtrain --help` 可以查看当前代码中全部可选 Task。Task 文件结构和覆盖规则见 [Task 配置与命令行参数覆盖](task_config.md)。
+请在仓库根目录执行这些命令：CLI 会发现当前工作目录下存在的 `./configs`，不会向上查找父目录。运行 `mxlab train --help` 可以查看当前代码中全部可选 Task。Task 文件结构和覆盖规则见 [Task 配置与命令行参数覆盖](task_config.md)。
 
 ### 选择训练后端与仿真后端
 
 ```bash
 # 覆盖训练后端（task.train_backend 为 null 时自动选择）
-mxtrain task=cartpole/skrl.ppo task.train_backend=jax
-mxtrain task=cartpole/skrl.ppo task.train_backend=torch
+mxlab train task=cartpole/skrl.ppo task.train_backend=jax
+mxlab train task=cartpole/skrl.ppo task.train_backend=torch
 
 # 指定 manager 环境注入的仿真器
-mxtrain task=g1-wbt-dance/motrix.fastsac sim=motrixsim
+mxlab train task=g1-wbt-dance/motrix.fastsac sim=motrixsim
 ```
 
 ### 训练规模与随机种子
 
 ```bash
 # 并行环境数量
-mxtrain task=cartpole/skrl.ppo num_envs=1024
+mxlab train task=cartpole/skrl.ppo num_envs=1024
 
 # 固定随机种子（复现）/ 运行时选择随机种子
-mxtrain task=cartpole/skrl.ppo seed=42
-mxtrain task=cartpole/skrl.ppo seed=null
+mxlab train task=cartpole/skrl.ppo seed=42
+mxlab train task=cartpole/skrl.ppo seed=null
 ```
 
 ```{note}
@@ -64,20 +64,20 @@ Hydra 可以直接覆盖已经声明的算法字段，例如 `algo.agent.learnin
 
 ```bash
 # 训练成功结束后，用本次 run 的最佳策略自动回放
-mxtrain task=g1-walk-flat/motrix.fastsac play=true
+mxlab train task=g1-walk-flat/motrix.fastsac play=true
 
 # 从某个 run 目录或 checkpoint 续训
-mxtrain task=g1-walk-flat/motrix.fastsac \
+mxlab train task=g1-walk-flat/motrix.fastsac \
   resume=/path/to/run
 
 # 启用渲染监控训练过程
-mxtrain task=cartpole/skrl.ppo render=true
+mxlab train task=cartpole/skrl.ppo render=true
 ```
 
-训练和回放是两个独立操作：`play=true` 会在训练成功后回放本次 run 的最佳策略；稍后可使用 `mxplay` 重新打开已保存的 run。使用以下命令导出训练好的策略 artifact：
+训练和回放是两个独立操作：`play=true` 会在训练成功后回放本次 run 的最佳策略；稍后可使用 `mxlab play` 重新打开已保存的 run。使用以下命令导出训练好的策略 artifact：
 
 ```bash
-mxexport onnx run_dir=/path/to/run output=/tmp/policy.onnx
+mxlab export-onnx run_dir=/path/to/run output=/tmp/policy.onnx
 ```
 
 ### 常用 Hydra 覆盖项
@@ -115,14 +115,14 @@ tensorboard --logdir runs/cartpole
 
 ```bash
 # 自动发现最新 run 的最佳策略并回放（推荐）
-mxplay env=cartpole
+mxlab play env=cartpole
 
 # 指定某个 checkpoint（需能向上找到 metadata.json）
-mxplay env=g1-walk-flat \
+mxlab play env=g1-walk-flat \
   policy=/path/to/run/checkpoints/latest.pt
 
 # 指定回放环境数量
-mxplay env=cartpole num_envs=100
+mxlab play env=cartpole num_envs=100
 ```
 
 ```{note}

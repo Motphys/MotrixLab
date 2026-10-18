@@ -114,16 +114,16 @@ sustained rough-terrain locomotion. Under the current training configs and hardw
 Choose an environment ID and one of its training configs from the table, then replace `ENV_ID` and `TRAINING_CONFIG`:
 
 ```bash
-python scripts/view.py env=ENV_ID num_envs=1
-mxtrain task=ENV_ID/TRAINING_CONFIG
-mxplay env=ENV_ID num_envs=16
+mxlab view env=ENV_ID num_envs=1
+mxlab train task=ENV_ID/TRAINING_CONFIG
+mxlab play env=ENV_ID num_envs=16
 ```
 
 For example, train the Go2 rough-terrain task with RSL-RL PPO:
 
 ```bash
-mxtrain task=go2-walk-rough/rslrl.ppo
+mxlab train task=go2-walk-rough/rslrl.ppo
 ```
 
-`view.py` applies random actions and is intended for scene and model inspection. Use `mxplay` with a trained policy to
+`mxlab view` applies random actions and is intended for scene and model inspection. Use `mxlab play` with a trained policy to
 inspect the learned gait.

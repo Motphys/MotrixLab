@@ -68,7 +68,7 @@ rejected. Every actuator must target a joint and expose a valid control range.
 After registering the robot config, preview it independently:
 
 ```bash
-python scripts/view.py robot=<robot-config-id>
+mxlab view robot=<robot-config-id>
 ```
 
 ## 2. Provide task sensors
@@ -197,10 +197,10 @@ inherit the same robot's flat-ground recipe and override only `task.env`.
 Use this progression:
 
 ```bash
-python scripts/view.py robot=<robot-config-id>
-python scripts/view.py env=<robot>-walk-flat
-python scripts/view.py env=<robot>-walk-rough
-mxtrain task=<robot>-walk-flat/rslrl.ppo
+mxlab view robot=<robot-config-id>
+mxlab view env=<robot>-walk-flat
+mxlab view env=<robot>-walk-rough
+mxlab train task=<robot>-walk-flat/rslrl.ppo
 ```
 
 During preview, inspect the default pose, action direction, all four foot contacts, foot-position reference frames, and

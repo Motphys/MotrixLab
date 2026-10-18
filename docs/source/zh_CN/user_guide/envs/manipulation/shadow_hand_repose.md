@@ -297,19 +297,19 @@ actuator_ctrls = targets
 ### 训练
 
 ```bash
-mxtrain task=shadow-hand-repose/skrl.ppo
+mxlab train task=shadow-hand-repose/skrl.ppo
 ```
 
 ### 策略评估
 
 ```bash
-mxplay env=shadow-hand-repose
+mxlab play env=shadow-hand-repose
 ```
 
 ### 环境可视化
 
 ```bash
-python scripts/view.py env=shadow-hand-repose
+mxlab view env=shadow-hand-repose
 ```
 
 ### TensorBoard

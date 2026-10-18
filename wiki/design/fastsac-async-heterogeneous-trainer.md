@@ -92,9 +92,9 @@ motrix_rl/src/motrix_rl/fastsac/
 **任务配置**：每个环境只保留一个 `configs/task/<env>/motrix.fastsac.yaml`。Task 固定记录 `rllib: motrix`、`algo: fastsac`；`algo.asynchronous` 默认为 `true`，需要同步 baseline 时覆盖为 `false`。
 
 ```bash
-uv run scripts/train.py task=g1-walk-flat/motrix.fastsac                         # 异构（默认）
-uv run scripts/train.py task=g1-walk-flat/motrix.fastsac algo.asynchronous=false # 同步 baseline
-# 二者产出的 checkpoint 均为 .pt，同一 scripts/play.py 可回放
+mxlab train task=g1-walk-flat/motrix.fastsac                         # 异构（默认）
+mxlab train task=g1-walk-flat/motrix.fastsac algo.asynchronous=false # 同步 baseline
+# 二者产出的 checkpoint 均为 .pt，同一 mxlab play 可回放
 ```
 
 ---
@@ -230,7 +230,7 @@ TensorBoard scalar 与同步版同名（`rollout/mean_return`、`rollout/mean_ep
 
 ### 6.3 checkpoint 兼容
 
-learner 持有完整 `FastSacAgent`，直接复用其 `state_dict()` 与通用 checkpoint 记录逻辑。产出的 `.pt` 与同步版**结构相同**，因此：同一 `scripts/play.py` 可回放异构版 checkpoint；异构版可 resume 同步版 checkpoint，反之亦然，支持「同步预训练 + 异构继续」这类混合实验。
+learner 持有完整 `FastSacAgent`，直接复用其 `state_dict()` 与通用 checkpoint 记录逻辑。产出的 `.pt` 与同步版**结构相同**，因此：同一 `mxlab play` 可回放异构版 checkpoint；异构版可 resume 同步版 checkpoint，反之亦然，支持「同步预训练 + 异构继续」这类混合实验。
 
 ### 6.4 关闭与容错
 

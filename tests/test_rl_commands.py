@@ -28,7 +28,7 @@ def _task(config_dir: Path, seed: int) -> None:
 
 def _compose(cwd: Path, *args: str) -> dict:
     result = subprocess.run(
-        [sys.executable, "-m", "motrix_rl.commands.train", "task=external/ppo", "--cfg", "job", *args],
+        [sys.executable, "-m", "motrixlab.cli", "train", "task=external/ppo", "--cfg", "job", *args],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -65,7 +65,7 @@ def test_project_algorithm_defaults_override_package_and_explicit_dir_wins(tmp_p
 
 
 def test_train_help_does_not_require_task_but_training_does(tmp_path):
-    command = [sys.executable, "-m", "motrix_rl.commands.train"]
+    command = [sys.executable, "-m", "motrixlab.cli", "train"]
     help_result = subprocess.run([*command, "--help"], cwd=tmp_path, capture_output=True, text=True)
     assert help_result.returncode == 0, help_result.stderr
     assert "num_envs" in help_result.stdout
@@ -78,7 +78,7 @@ def test_train_help_does_not_require_task_but_training_does(tmp_path):
 
 @pytest.mark.parametrize("format_name,validation", [("onnx", "parity"), ("deploy", "validation")])
 def test_export_help_and_project_config_override(tmp_path, format_name, validation):
-    command = [sys.executable, "-m", "motrix_rl.commands.export", format_name]
+    command = [sys.executable, "-m", "motrixlab.cli", f"export-{format_name}"]
     help_result = subprocess.run([*command, "--help"], cwd=tmp_path, capture_output=True, text=True)
     assert help_result.returncode == 0, help_result.stderr
     assert "run_dir" in help_result.stdout
@@ -95,9 +95,44 @@ def test_export_help_and_project_config_override(tmp_path, format_name, validati
     assert config["run_dir"] == "example"
 
 
+def test_view_help_and_configuration_without_project_config_directory(tmp_path):
+    command = [sys.executable, "-m", "motrixlab.cli", "view"]
+    help_result = subprocess.run([*command, "--help"], cwd=tmp_path, capture_output=True, text=True)
+    assert help_result.returncode == 0, help_result.stderr
+    assert "robot" in help_result.stdout
+    assert "num_envs" in help_result.stdout
+
+    result = subprocess.run(
+        [*command, "robot=go2", "sim=mujoco", "--cfg", "job"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    config = yaml.safe_load(result.stdout)
+    assert config["robot"] == "go2"
+    assert config["sim"] == "mujoco"
+
+
+def test_view_project_configuration_and_explicit_directory(tmp_path):
+    command = [sys.executable, "-m", "motrixlab.cli", "view", "--cfg", "job"]
+    for directory, count in ((tmp_path / "configs", 3), (tmp_path / "other", 7)):
+        directory.mkdir()
+        (directory / "view.yaml").write_text(
+            f"defaults:\n  - view_schema\n  - _self_\nrobot: external\nnum_envs: {count}\n",
+            encoding="utf-8",
+        )
+
+    for args, count in (([], 3), (["--config-dir", str(tmp_path / "other")], 7)):
+        result = subprocess.run([*command, *args], cwd=tmp_path, capture_output=True, text=True, check=True)
+        config = yaml.safe_load(result.stdout)
+        assert config["robot"] == "external"
+        assert config["num_envs"] == count
+
+
 def test_play_composes_without_project_config_directory(tmp_path):
     result = subprocess.run(
-        [sys.executable, "-m", "motrix_rl.commands.play", "policy=/tmp/policy.pt", "--cfg", "job"],
+        [sys.executable, "-m", "motrixlab.cli", "play", "policy=/tmp/policy.pt", "--cfg", "job"],
         cwd=tmp_path,
         capture_output=True,
         text=True,

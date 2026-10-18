@@ -228,19 +228,19 @@ In addition, `fetch` uses a `stability` gate on torso uprightness and torso heig
 ### 1. Environment Preview
 
 ```bash
-python scripts/view.py env=dm-quadruped-walk
-python scripts/view.py env=dm-quadruped-run
-python scripts/view.py env=dm-quadruped-escape
-python scripts/view.py env=dm-quadruped-fetch
+mxlab view env=dm-quadruped-walk
+mxlab view env=dm-quadruped-run
+mxlab view env=dm-quadruped-escape
+mxlab view env=dm-quadruped-fetch
 ```
 
 ### 2. Start Training
 
 ```bash
-mxtrain task=dm-quadruped-walk/skrl.ppo
-mxtrain task=dm-quadruped-run/skrl.ppo
-mxtrain task=dm-quadruped-escape/skrl.ppo
-mxtrain task=dm-quadruped-fetch/skrl.ppo
+mxlab train task=dm-quadruped-walk/skrl.ppo
+mxlab train task=dm-quadruped-run/skrl.ppo
+mxlab train task=dm-quadruped-escape/skrl.ppo
+mxlab train task=dm-quadruped-fetch/skrl.ppo
 ```
 
 ### 3. View Training Progress
@@ -255,10 +255,10 @@ tensorboard --logdir runs/dm-quadruped-fetch
 ### 4. Test Training Results
 
 ```bash
-mxplay env=dm-quadruped-walk
-mxplay env=dm-quadruped-run
-mxplay env=dm-quadruped-escape
-mxplay env=dm-quadruped-fetch
+mxlab play env=dm-quadruped-walk
+mxlab play env=dm-quadruped-run
+mxlab play env=dm-quadruped-escape
+mxlab play env=dm-quadruped-fetch
 ```
 
 ---

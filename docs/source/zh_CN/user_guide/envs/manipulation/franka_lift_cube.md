@@ -239,13 +239,13 @@ p = 1 / (1 + exp(-action))
 ### 训练
 
 ```bash
-mxtrain task=franka-lift-cube/skrl.ppo
+mxlab train task=franka-lift-cube/skrl.ppo
 ```
 
 ### 策略评估
 
 ```bash
-mxplay env=franka-lift-cube
+mxlab play env=franka-lift-cube
 ```
 
 ### TensorBoard

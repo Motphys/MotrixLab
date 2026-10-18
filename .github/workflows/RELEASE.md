@@ -9,7 +9,7 @@ wheels. Docker publishing remains a separate manual operation.
 | Workflow | Purpose | Trigger |
 | --- | --- | --- |
 | `release.yml` | Bump workspace versions, open release PRs, tag `stable`, create GitHub Releases, and open stable-patch back-merge PRs | Manual dispatch and pushes to `main`/`stable` |
-| `pypi-publish.yml` | Build and publish wheels for `motrix-env-core`, `motrix-deploy`, and `motrix-rl` | GitHub Release publication or manual dispatch |
+| `pypi-publish.yml` | Build and publish wheels for `motrix-env-core`, `motrix-deploy`, `motrix-rl`, `motrix-rl-builtin`, `motrix-env-motrixsim`, and `motrixlab` | GitHub Release publication or manual dispatch |
 | `docker-build.yml` | Build and push the Docker image | Manual dispatch from `stable` |
 
 **Stable branch patch release** is the preferred name for a patch cut from
@@ -25,15 +25,22 @@ not a separate version class.
    - **Pull requests: read and write**
 3. Store the App client ID as the `RELEASE_APP_CLIENT_ID` repository variable
    and its private key as the `RELEASE_APP_PRIVATE_KEY` secret.
-4. Register PyPI Trusted Publishers for all three publishable projects on both
-   pypi.org and test.pypi.org:
+4. Create the six GitHub environments below and configure their protection
+   rules as appropriate. Register a Trusted Publisher for each project on both
+   **pypi.org and test.pypi.org** (use a pending publisher for a new project):
    - `motrix-env-core` with the environment `pypi-env-core`
    - `motrix-deploy` with the environment `pypi-deploy`
    - `motrix-rl` with the environment `pypi-rl`
+   - `motrix-rl-builtin` with the environment `pypi-rl-builtin`
+   - `motrix-env-motrixsim` with the environment `pypi-env-motrixsim`
+   - `motrixlab` with the environment `pypi-motrixlab`
 
-   Use repository `Motphys/MotrixLab` and workflow `pypi-publish.yml`. The
-   distinct GitHub environments are required because PyPI binds at most one
-   project to a repository/workflow/environment combination.
+   Use owner `Motphys`, repository `MotrixLab`, and workflow filename
+   `pypi-publish.yml`. The distinct GitHub environments are required because
+   PyPI binds at most one project to a repository/workflow/environment
+   combination. These registrations and environment settings are external
+   maintainer actions; committing this workflow does not configure or verify
+   them. No PyPI API token is needed.
 5. For Docker publishing, configure `DOCKER_USERNAME` and `DOCKER_PASSWORD`.
 
 The workflows exchange the App credentials for a short-lived installation
@@ -257,12 +264,27 @@ verifies that:
 - the release tag matches the workspace version;
 - every workspace package has the same version.
 
-Only wheels are built. The three public distributions are published in
-dependency order:
+Only wheels are built. The six public distributions are published in this
+order; builtin and the MotrixSim backend can publish in parallel after RL,
+and the integration package waits for both:
 
 ```text
 motrix-env-core → motrix-deploy → motrix-rl
+                                  ├─ motrix-rl-builtin ──────┐
+                                  └─ motrix-env-motrixsim ───┴─ motrixlab
 ```
+
+`motrixlab` is the integration workspace member, distinct from the development-only
+root project `motrix-lab`. It requires Python `>=3.10,<3.12` and depends on
+`motrix-env-core`, `motrix-deploy`, `motrix-rl`, `motrix-rl-builtin`, and
+`motrix-env-motrixsim`, each pinned to the same version as the integration package.
+Its `motrixlab` import namespace provides a thin, lazy dispatcher for the sole `mxlab`
+CLI, with `train`, `play`, `export-onnx`, `export-deploy`, and `deploy` commands.
+Command implementations remain in `motrix_rl.commands` and `motrix_deploy.cli`.
+Its installation scope does not include built-in tasks/robot assets, SKRL/RSLRL providers, or
+deployment backend plugins; use the source workspace for those components.
+MotrixSim and other third-party dependencies are resolved from public PyPI,
+not built by this workflow.
 
 Publishing uses `skip-existing: true`: if one package job succeeds and a later
 job fails, re-running the failed path skips immutable distributions that are
@@ -288,6 +310,71 @@ same production checks as a Release event: the selected commit must be reachable
 from `stable`, and the matching immutable `v*` tag must point exactly at that
 commit. Normal production publishing should still occur through the reviewed
 GitHub Release event.
+
+### Clean installation verification
+
+After all six TestPyPI jobs succeed, test outside the checkout in a fresh
+Python 3.10 or 3.11 virtual environment. Set `VERSION` to the exact version
+from that run (including any beta suffix):
+
+```bash
+VERSION=0.4.0b1  # Replace with the published version.
+workdir="$(mktemp -d)"
+cd "$workdir"
+python3.10 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip download --no-deps --only-binary=:all: \
+  --index-url https://test.pypi.org/simple/ --dest wheels \
+  "motrix-env-core==$VERSION" "motrix-deploy==$VERSION" \
+  "motrix-rl==$VERSION" "motrix-rl-builtin==$VERSION" \
+  "motrix-env-motrixsim==$VERSION" "motrixlab==$VERSION"
+python -m pip install --index-url https://pypi.org/simple/ wheels/*.whl
+python -m pip check
+python - <<'PY'
+from importlib.metadata import version
+
+names = (
+    "motrix-env-core", "motrix-deploy", "motrix-rl",
+    "motrix-rl-builtin", "motrix-env-motrixsim", "motrixlab",
+)
+versions = {name: version(name) for name in names}
+assert len(set(versions.values())) == 1, versions
+print(versions)
+import motrix_env_core
+import motrix_deploy
+import motrix_rl
+import motrix_rl_builtin
+import motrix_env_motrixsim
+from motrix_rl.frameworks import get_framework
+from motrix_env_core.sim.registry import list_sim_backends, default_sim_backend_name
+
+# The builtin entry point registers the framework under its public name.
+assert get_framework("motrix").name == "motrix"
+assert "motrixsim" in list_sim_backends()
+assert default_sim_backend_name() == "motrixsim"
+PY
+mxlab --help
+mxlab train --help
+mxlab play --help
+mxlab export-onnx --help
+mxlab export-deploy --help
+mxlab deploy --help
+```
+
+Downloading the six exact wheels with `--no-deps` ensures these projects come
+from TestPyPI; the subsequent installation resolves third-party dependencies
+from PyPI. Do not use `--extra-index-url` to mix the two indexes, or an older
+production package may mask a missing test artifact. This is an actual install
+and import check, not a GPU simulation or training test. Record the platform,
+Python version, commands, and results; repeat with Python 3.11 for both supported
+interpreters.
+
+After production publication, use another fresh environment outside the
+checkout and install `"motrixlab==$VERSION"` with
+`python -m pip install --index-url https://pypi.org/simple/`, then repeat
+`pip check` and the metadata/import checks above. Neither editable workspace
+installs nor `--no-deps` installs validate the published dependency closure.
 
 ## Automation and human gates
 
@@ -337,8 +424,8 @@ Before merging anything into `stable`:
 After publication:
 
 - [ ] Verify the GitHub Release and immutable tag.
-- [ ] Verify all three Python publishing jobs succeeded.
-- [ ] Install or inspect the published wheels.
+- [ ] Verify all six Python publishing jobs succeeded.
+- [ ] Run the clean published-wheel installation verification above.
 - [ ] Run Docker publishing manually if this release needs a new image.
 - [ ] For a stable branch patch release, review and merge the automatic
       `stable → main` back-merge PR.

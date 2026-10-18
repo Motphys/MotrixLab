@@ -21,10 +21,10 @@
 
 ## Preview a robot
 
-Use `view.py` to inspect a registered robot in its default pose without creating an RL environment:
+Use `mxlab view` to inspect a registered robot in its default pose without creating an RL environment:
 
 ```bash
-python scripts/view.py robot=go2
+mxlab view robot=go2
 ```
 
 Robot view mode builds a static standard scene. It does not sample actions or run a physics rollout.
@@ -197,7 +197,7 @@ my_robot = "my_robot_package.registration:register"
 Construct the config through the registry and preview it before using it in a task:
 
 ```bash
-python scripts/view.py robot=my-robot
+mxlab view robot=my-robot
 python -m pytest motrix_envs/tests/test_robot_cfg.py -q
 ```
 

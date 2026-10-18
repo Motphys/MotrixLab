@@ -159,20 +159,20 @@ python scripts/motion/replay.py \
 从“内置任务”表格中选择 Env ID 和对应的训练配置，并替换下列命令中的 `ENV_ID` 与 `TRAINING_CONFIG`：
 
 ```bash
-mxtrain task=ENV_ID/TRAINING_CONFIG
+mxlab train task=ENV_ID/TRAINING_CONFIG
 ```
 
 例如，使用 FastSAC 异步训练 G1 舞蹈跟踪任务：
 
 ```bash
-mxtrain task=g1-wbt-dance/motrix.fastsac algo.asynchronous=true
+mxlab train task=g1-wbt-dance/motrix.fastsac algo.asynchronous=true
 ```
 
 内置配置默认使用 2048 个并行环境，并按任务设置学习迭代次数。只验证 registry、shape 和训练入口时，可以使用不会
 生成可用策略的小规模 smoke test：
 
 ```bash
-mxtrain task=g1-wbt-dance/motrix.fastsac \
+mxlab train task=g1-wbt-dance/motrix.fastsac \
   algo.asynchronous=true num_envs=64 algo.trainer.num_learning_iterations=100
 ```
 
@@ -183,9 +183,9 @@ mxtrain task=g1-wbt-dance/motrix.fastsac \
 ### 回放策略
 
 ```bash
-mxplay env=ENV_ID num_envs=16
+mxlab play env=ENV_ID num_envs=16
 ```
 
-`mxplay` 自动选择该环境最新一次 metadata-backed run 的最佳策略。WBT 的 play 配置从 motion 第 0 帧开始，关闭
+`mxlab play` 自动选择该环境最新一次 metadata-backed run 的最佳策略。WBT 的 play 配置从 motion 第 0 帧开始，关闭
 reset noise 和自适应采样，并移除 10 秒训练时限；播放到 clip 末尾后从第 0 帧重新开始。训练产物和 checkpoint 选择规则见
 [训练产物：runs 目录与 checkpoint 结构](../../tutorial/training/runs_and_checkpoints.md)。

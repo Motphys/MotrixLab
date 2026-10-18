@@ -3,7 +3,7 @@
 将导出的 Go2 策略先在 MuJoCo 中检查，再尝试真机部署。安装任务和 MuJoCo 插件后，可用以下命令进行有界无窗口检查：
 
 ```bash
-mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
+mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
 ```
 
 下面介绍如何生成 artifact、交互控制，以及现有 Unitree 真机工作流。
@@ -15,7 +15,7 @@ mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.
 ```bash
 sh install.sh --all
 source .venv/bin/activate
-mxtrain task=go2-walk-flat/rslrl.ppo
+mxlab train task=go2-walk-flat/rslrl.ppo
 ```
 
 训练结果保存在 `runs/go2-walk-flat/`。已有包含 metadata 的 run 时可跳过训练。
@@ -23,23 +23,22 @@ mxtrain task=go2-walk-flat/rslrl.ppo
 ## 2. 导出并检查 artifact
 
 ```bash
-mxexport deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
-mxdeploy inspect artifact=artifacts/go2-walk-flat.deploy
+mxlab export-deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
+mxlab deploy inspect artifact=artifacts/go2-walk-flat.deploy
 ```
 
 `env=go2-walk-flat` 选择最近一次包含 metadata 的 run。用 `run_dir=<run-dir>` 替代 `env` 可选择指定 run：
 `env` 与 `run_dir` 必须且只能设置一个。`output=<new-artifact-dir>` 可更改输出位置，省略时默认为
 `artifacts/<env-name>.deploy`。已有 artifact 目录不会被覆盖。确认检查结果为 `valid: true`。
 
-`mxexport` 必须显式选择 `onnx` 或 `deploy` 子命令。等价模块命令是
-`python -m motrix_rl.commands.export deploy`。导出会使用当前目录下存在的 `./configs`，也可通过
+`mxlab export-deploy` 直接导出部署 artifact；独立的 `mxlab export-onnx` 命令用于导出 ONNX 模型。
+导出会使用当前目录下存在的 `./configs`，也可通过
 `--config-dir <path>` 显式指定；项目文件优先，缺失文件回退到 `motrix_rl.configs`。
 其中打包了 `export_deploy.yaml` 与 `export_onnx.yaml`，因此导出不需要仓库 checkout。
 部署导出的数值检查选项仍使用 `validation.*`（例如 `validation.atol=3e-5`），
-而不是 ONNX 子命令的 `parity.*`。
+而不是 `mxlab export-onnx` 的 `parity.*`。
 
-导出由 `motrix-rl` 执行，需要训练 provider 和该环境已安装的 profile compiler。
-依赖是单向的：`motrix-rl` 使用 `motrix-deploy` 创建 artifact；`motrix-deploy` 不依赖 RL。
+导出前需安装该 run 使用的训练 provider，以及该环境对应的 profile compiler。
 
 artifact 目录自包含：
 
@@ -63,7 +62,7 @@ go2-walk-flat.deploy/
 使用开头的无窗口命令进行有界运行，或打开 viewer：
 
 ```bash
-mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
+mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
 ```
 
 按住 `W/S` 前后移动，`A/D` 横移，`Q/E` 转向。关闭窗口、按 Esc 或 Ctrl-C 退出。
@@ -93,7 +92,7 @@ runtime 负责物理推进、调度与 viewer。[进阶的显式组装](#显式�
 安装 `motrix-deploy-motrixsim` 后，将 backend 切换为 `motrixsim`，即可复用同一 artifact 和场景配方：
 
 ```bash
-mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
   runtime.backend=motrixsim runtime.viewer=true
 ```
 
@@ -109,7 +108,7 @@ python examples/deploy_to_sim.py --backend motrixsim
 让机器人执行站下动作。先检查 artifact，再将 `enp5s0` 换成实际网卡名称：
 
 ```bash
-mxdeploy task=go2-walk-flat/hardware \
+mxlab deploy task=go2-walk-flat/hardware \
   artifact=artifacts/go2-walk-flat.deploy \
   runtime.network_interface=enp5s0
 ```
@@ -149,25 +148,25 @@ motrix-deploy-unitree joint-control enp5s0 FL_thigh_joint 0.9 \
 
 ## 部署 G1 WBT 舞蹈
 
-G1 全身跟踪舞蹈任务使用同样的导出 → artifact → `mxdeploy` 流程。artifact 内嵌伺服增益、action scale、
+G1 全身跟踪舞蹈任务使用同样的导出 → artifact → `mxlab deploy` 流程。artifact 内嵌伺服增益、action scale、
 preparation 增益与时序、安全阈值以及完整的 motion 片段（以 `payloads/motion.npz` payload 形式，校验和记录在
 manifest 中），部署既不需要 Torch 也不需要 RL 环境。导出需要训练 provider 与任务环境包，但**不**执行训练：
 
 ```bash
 source .venv/bin/activate
 RUN=runs/g1-wbt-dance/motrix/torch/fastsac/<run-dir>
-mxexport deploy run_dir="$RUN" \
+mxlab export-deploy run_dir="$RUN" \
   output=artifacts/g1-wbt-dance-software-pd.deploy validation.atol=3e-5
 
-mxdeploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy
+mxlab deploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy
 ```
 
 无窗口验证与 artifact 检查：
 
 ```bash
-mxdeploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy \
+mxlab deploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy \
   runtime.viewer=false
-mxdeploy inspect artifact=artifacts/g1-wbt-dance.deploy
+mxlab deploy inspect artifact=artifacts/g1-wbt-dance.deploy
 ```
 
 默认时长来自内嵌的 motion 片段；更短的运行用 `duration_s` 缩短，超长时长会在打开 backend 前被拒绝，
@@ -211,7 +210,7 @@ def register() -> None:
 安装 package 后，导出对应环境的 run：
 
 ```bash
-mxexport deploy run_dir=/path/to/my-walk-flat/run output=artifacts/my-walk-flat.deploy
+mxlab export-deploy run_dir=/path/to/my-walk-flat/run output=artifacts/my-walk-flat.deploy
 ```
 
 首次 profile 查询、列举或构建会加载所有已安装的 provider 回调，每个进程执行一次。
@@ -253,7 +252,7 @@ spec = Go2WalkTaskSpec.model_validate(OmegaConf.to_container(cfg, resolve=True))
 保留同一 Go2 recipe 和 artifact，仅切换世界：
 
 ```bash
-mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
   runtime.deploy_env_id=rough
 ```
 
@@ -346,7 +345,7 @@ with runtime:
 选择原生 backend：
 
 ```bash
-mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
   runtime.backend=motrixsim runtime.viewer=false runtime.realtime=false duration_s=1.0
 ```
 
@@ -371,7 +370,7 @@ Headless 使用零速度指令；窗口模式在可用时使用 viewer keyboard 
 `/absolute/path/to/my_app/config/deploy.yaml`，不是选择或复制内置 recipe：
 
 ```bash
-mxdeploy \
+mxlab deploy \
   --config-path /absolute/path/to/my_app/config \
   --config-name deploy \
   artifact=artifacts/go2-walk-flat.deploy

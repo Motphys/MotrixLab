@@ -38,6 +38,7 @@ MotrixLab is a UV workspace. The packages are grouped by ownership rather than t
 
 | Package | Loop stage | Responsibility |
 | --- | --- | --- |
+| `motrixlab` | Application integration | Unified `mxlab` CLI and environment/robot visualization |
 | `motrix_env_core` | Policy–environment interaction | Backend-agnostic environment framework: `EnvCfg`, registry, frontends, lifecycle |
 | `motrix_env_motrixsim` | Policy–environment interaction | MotrixSim `SimBackend`, renderer, and Torch frontend |
 | `motrix_env_mujoco` | Scene compilation | Compile-only MuJoCo scene backend |
@@ -47,9 +48,9 @@ MotrixLab is a UV workspace. The packages are grouped by ownership rather than t
 | `motrix_rl_builtin` | Policy training and updates | Built-in Motrix FastSAC provider |
 | `motrix_rl_skrl` | Policy training and updates | SKRL PPO provider for Torch (required) and optional JAX extra |
 | `motrix_rl_rslrl` | Policy training and updates | RSL-RL PPO provider for Torch (optional) |
-| `motrix_rl.configs`, `motrix_rl.commands` | Configuration and orchestration | Packaged train/play configs and algorithm defaults; installed `mxtrain` / `mxplay` entry points |
-| `configs/`, `scripts/` | Workspace recipes and tools | Concrete Task recipes and view config; view / export tools and thin train/play wrappers |
-| `motrix_deploy` | Policy deployment | Framework-independent artifacts, runtime contracts, and deployment CLI |
+| `motrix_rl.configs`, `motrix_rl.commands` | Configuration and orchestration | Packaged train/play/export configs and algorithm defaults; train/play/export-onnx/export-deploy command implementations |
+| `configs/`, `scripts/` | Workspace recipes and tools | Concrete Task recipes and repository helper tools |
+| `motrix_deploy` | Policy deployment | Framework-independent artifacts, runtime contracts, and deployment command implementation in `motrix_deploy.cli` |
 | `motrix_deploy_mujoco` | Policy deployment | MuJoCo deployment backend plugin |
 | `motrix_deploy_motrixsim` | Policy deployment | MotrixSim deployment backend plugin |
 | `motrix_deploy_unitree` | Policy deployment | Unitree hardware configs, sensor/actuation wiring, and SDK2 DDS backend plugin |
@@ -62,22 +63,28 @@ backend, see [SimBackend: Decoupling from the Simulator](building_envs/sim_backe
 The configuration and command sources are laid out as follows:
 
 ```text
+motrixlab/src/motrixlab/
+├── commands/
+│   └── view.py         # environment and robot visualization
+└── configs/
+    └── view.yaml
 motrix_rl/src/motrix_rl/
-├── commands/           # mxtrain / mxplay
+├── commands/           # training, playback, and export implementations
 └── configs/
     ├── train.yaml
     ├── play.yaml
     └── algo_base/
 configs/
-├── task/               # workspace training recipes
-└── view.yaml
-scripts/                # view/export tools; thin train/play wrappers
+└── task/               # workspace training recipes
+scripts/                # repository helper tools
 ```
 
 ## One full training run
 
+These examples use built-in repository tasks. Complete {ref}`repository installation <installation-repository>`, activate the environment, and run the commands from the repository root. The default runtime includes the SKRL provider; before running the RSL-RL example below, install its provider with `sh install.sh --rslrl`.
+
 ```bash
-mxtrain task=cartpole/skrl.ppo num_envs=1024
+mxlab train task=cartpole/skrl.ppo num_envs=1024
 ```
 
 1. Hydra composes `motrix_rl/src/motrix_rl/configs/train.yaml`, `motrix_rl/src/motrix_rl/configs/algo_base/skrl.ppo.yaml`, and
@@ -89,8 +96,8 @@ mxtrain task=cartpole/skrl.ppo num_envs=1024
 The same environment can have several Task recipes without touching the environment implementation:
 
 ```bash
-mxtrain task=cartpole/skrl.ppo
-mxtrain task=cartpole/rslrl.ppo
+mxlab train task=cartpole/skrl.ppo
+mxlab train task=cartpole/rslrl.ppo
 ```
 
 ## Run an exported policy
@@ -98,7 +105,7 @@ mxtrain task=cartpole/rslrl.ppo
 Deployment uses an artifact rather than a training environment:
 
 ```bash
-mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
+mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
 ```
 
 This runs the exported policy headlessly in MuJoCo. See [Go2 deployment](advanced/motrix_deploy.md) for export,

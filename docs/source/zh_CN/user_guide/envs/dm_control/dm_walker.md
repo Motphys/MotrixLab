@@ -94,17 +94,17 @@ walker 的奖励函数由以下几个部分组成：
 ### 1. 环境预览
 
 ```bash
-python scripts/view.py env=dm-stander
-python scripts/view.py env=dm-walker
-python scripts/view.py env=dm-runner
+mxlab view env=dm-stander
+mxlab view env=dm-walker
+mxlab view env=dm-runner
 ```
 
 ### 2. 开始训练
 
 ```bash
-mxtrain task=dm-stander/skrl.ppo
-mxtrain task=dm-walker/skrl.ppo
-mxtrain task=dm-runner/skrl.ppo
+mxlab train task=dm-stander/skrl.ppo
+mxlab train task=dm-walker/skrl.ppo
+mxlab train task=dm-runner/skrl.ppo
 ```
 
 ### 3. 查看训练进度
@@ -116,9 +116,9 @@ tensorboard --logdir runs/dm-walker
 ### 4. 测试训练结果
 
 ```bash
-mxplay env=dm-stander
-mxplay env=dm-walker
-mxplay env=dm-runner
+mxlab play env=dm-stander
+mxlab play env=dm-walker
+mxlab play env=dm-runner
 ```
 
 ---

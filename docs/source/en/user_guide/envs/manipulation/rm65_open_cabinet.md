@@ -241,13 +241,13 @@ In addition, the maximum episode length is `30s`.
 ### Training
 
 ```bash
-mxtrain task=rm65-open-cabinet/skrl.ppo task.train_backend=torch
+mxlab train task=rm65-open-cabinet/skrl.ppo task.train_backend=torch
 ```
 
 ### Policy Evaluation
 
 ```bash
-mxplay env=rm65-open-cabinet
+mxlab play env=rm65-open-cabinet
 ```
 
 ### TensorBoard

@@ -269,13 +269,13 @@ The task currently provides an Async FastSAC configuration with `2048` parallel 
 ### Training
 
 ```bash
-mxtrain task=rm65_insert_peg/motrix.fastsac
+mxlab train task=rm65_insert_peg/motrix.fastsac
 ```
 
 ### Policy Evaluation
 
 ```bash
-mxplay env=rm65_insert_peg num_envs=16
+mxlab play env=rm65_insert_peg num_envs=16
 ```
 
 ### TensorBoard

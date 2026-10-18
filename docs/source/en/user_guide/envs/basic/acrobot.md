@@ -63,20 +63,20 @@ Order: `upper_arm_horizontal, lower_arm_horizontal, upper_arm_vertical, lower_ar
 ### 1. Environment Preview
 
 ```bash
-python scripts/view.py env=acrobot
+mxlab view env=acrobot
 ```
 
 ### 2. Start Training
 
 ```bash
 # Train with default parameters
-mxtrain task=acrobot/skrl.ppo
+mxlab train task=acrobot/skrl.ppo
 
 # Customize parallel environments
-mxtrain task=acrobot/skrl.ppo num_envs=1024
+mxlab train task=acrobot/skrl.ppo num_envs=1024
 
 # Enable rendering during training
-mxtrain task=acrobot/skrl.ppo render=true
+mxlab train task=acrobot/skrl.ppo render=true
 ```
 
 ### 3. View Training Progress
@@ -89,10 +89,10 @@ tensorboard --logdir runs/acrobot
 
 ```bash
 # Auto-discover best policy (recommended)
-mxplay env=acrobot
+mxlab play env=acrobot
 
 # Manually specify a checkpoint from a metadata-backed run
-mxplay env=acrobot policy=/path/to/run/checkpoints/policy-file
+mxlab play env=acrobot policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **Tip**: Policies are auto-selected from `runs/acrobot/`. Use `policy=...` to select a checkpoint whose parent run contains `metadata.json`.

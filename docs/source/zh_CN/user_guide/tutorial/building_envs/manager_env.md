@@ -278,5 +278,5 @@ def make_microduck_ball_balance_cfg() -> MicroduckBallBalanceEnvCfg:
 registry.env("microduck-ball-balance")(ManagerEnv)
 ```
 
-注册完成后，`python scripts/view.py env=<name>` 可以预览，按
+注册完成后，`mxlab view env=<name>` 可以预览，按
 [Task 配置](../training/task_config.md)创建训练 Task 即可开始训练。

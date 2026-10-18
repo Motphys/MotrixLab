@@ -46,11 +46,6 @@ dependencies = [
     "torch>=2.7,<3",
 ]
 
-[project.scripts]
-mxtrain = "motrix_rl.commands.train:main"
-mxplay = "motrix_rl.commands.play:main"
-mxexport = "motrix_rl.commands.export:main"
-
 [project.optional-dependencies]
 cuda = [
     "torch==2.7.0; sys_platform == 'linux' or sys_platform == 'win32'",

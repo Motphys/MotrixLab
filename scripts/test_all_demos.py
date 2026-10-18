@@ -44,7 +44,8 @@ def run_command(env: str, backend: str, extra_args: list[str]) -> int:
     cmd = [
         sys.executable,
         "-m",
-        "motrix_rl.commands.train",
+        "motrixlab.cli",
+        "train",
         "--config-dir",
         str(config_dir),
         f"task={task_option}",
@@ -86,7 +87,7 @@ def main():
         "--extra-args",
         nargs=argparse.REMAINDER,
         default=[],
-        help="Extra arguments to pass to mxtrain",
+        help="Extra arguments to pass to mxlab train",
     )
     parser.add_argument(
         "--stop-on-error",

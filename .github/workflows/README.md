@@ -214,11 +214,18 @@ docker run --gpus all motphys/motrixlab:test scripts/view.py env=cartpole
 
 ### File: `pypi-publish.yml`
 
-Publishes the `motrix-env-core`, `motrix-deploy`, and `motrix-rl` distributions
-(the dependency closure of the public packages) to a Python package index.
+Publishes six distributions to a Python package index: `motrix-env-core`,
+`motrix-deploy`, `motrix-rl`, `motrix-rl-builtin`, `motrix-env-motrixsim`, and
+`motrixlab`. The `motrixlab` workspace member is an integration package with a
+thin, lazy `mxlab` CLI, distinct from the development-only root project `motrix-lab`.
+Its five commands are `train`, `play`, `export-onnx`, `export-deploy`, and `deploy`.
+Command implementations remain in `motrix_rl.commands` and `motrix_deploy.cli`.
+It requires Python `>=3.10,<3.12` and pins all five component distributions to its own version.
+It does not include the full development workspace, built-in tasks/robot assets,
+SKRL/RSLRL providers, or deployment backend plugins.
 
 - **Release trigger**: publishing a GitHub Release whose `v`-prefixed tag matches the
-  workspace package version uploads all three packages to pypi.org.
+  workspace package version uploads all six packages to pypi.org.
 - **Manual trigger**: `workflow_dispatch` uploads to TestPyPI by default, or to
   pypi.org with `index=pypi`. Use a TestPyPI run to verify the full install
   closure before creating the production release. A manual formal-PyPI run has
@@ -229,18 +236,39 @@ For production publication, the selected commit must be an ancestor of `stable`
 and the matching immutable tag must point exactly at that commit. Every workspace
 package must carry the same version before any distribution is built. A dedicated
 build job uploads one wheel per package as a workflow artifact, and one publishing
-job per package then uploads them in dependency order (env-core → deploy → rl).
-Existing immutable distributions are skipped during recovery, so a partial
-failure can be retried without replacing an already-published package.
+job per package then uploads them in dependency order:
 
-Authentication uses PyPI Trusted Publishing (OIDC) — no API tokens are stored
-in repository secrets. Before the first run, a maintainer must register a
-pending publisher for each of the three project names on both pypi.org and
-test.pypi.org, pointing at `Motphys/MotrixLab` with the workflow file
-`pypi-publish.yml` and the matching job environment (`pypi-env-core`,
-`pypi-deploy`, or `pypi-rl`). The distinct environments are required because
-PyPI binds at most one project to a repository/workflow/environment
-combination.
+```text
+env-core → deploy → rl → [rl-builtin, env-motrixsim] → motrixlab
+```
+
+The two bracketed jobs can run in parallel; the integration package waits for both.
+Existing immutable distributions are skipped with `skip-existing: true` during
+recovery, so a partial failure can be retried without replacing an
+already-published package. Publishing is restricted to `Motphys/MotrixLab`,
+and only publishing jobs receive `id-token: write`.
+
+Authentication uses PyPI Trusted Publishing (OIDC), without PyPI API-token
+secrets. Before the first run, a maintainer must create the matching GitHub
+environments and register Trusted Publishers separately on **both pypi.org and
+test.pypi.org**, using owner `Motphys`, repository `MotrixLab`, and workflow
+filename `pypi-publish.yml` (pending publishers for new projects):
+
+| Project | GitHub environment |
+| --- | --- |
+| `motrix-env-core` | `pypi-env-core` |
+| `motrix-deploy` | `pypi-deploy` |
+| `motrix-rl` | `pypi-rl` |
+| `motrix-rl-builtin` | `pypi-rl-builtin` |
+| `motrix-env-motrixsim` | `pypi-env-motrixsim` |
+| `motrixlab` | `pypi-motrixlab` |
+
+The distinct environments are required because PyPI binds at most one project
+to a repository/workflow/environment combination. These external registrations
+and environment protections are not configured or verified by this repository
+change. See the [release guide's clean installation verification](RELEASE.md#clean-installation-verification)
+for testing all six TestPyPI wheels in a fresh Python 3.10/3.11 environment,
+resolving third-party dependencies from public PyPI without mixing indexes.
 
 # Release Pipeline
 

@@ -1,32 +1,45 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+import argparse
 import time
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import gymnasium as gym
 import hydra
 import motrixsim as mtx
 import numpy as np
+from hydra.core.config_store import ConfigStore
 from motrixsim.render import RenderApp, RenderClosedError, RenderSettings
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnv
 from motrix_env_core.base import ABEnv
-from motrix_env_core.config import SimCfg
-from motrix_env_core.config.scene import RobotCfg, SystemCameraCfg
+from motrix_env_core.config import SimCfg, configclass
+from motrix_env_core.config.scene.base import RobotCfg, SceneCfg, SceneObjsCfg, SceneVisualCfg, SystemCameraCfg
+from motrix_env_core.config.scene.geometry import FlatTerrainCfg
+from motrix_env_core.config.scene.light import LightCfg
 from motrix_env_core.renderer import RenderConfig, create_renderer
 from motrix_env_motrixsim.compiler import build_scene_model
-from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
-from motrix_rl.cli import to_typed_config
-from motrix_rl.config import ViewConfig
 
 if TYPE_CHECKING:
     from motrix_env_motrixsim.torch_env import TorchEnv
 
 DEFAULT_ENV_NAME = "cartpole"
 ROBOT_VIEW_FPS = 60
+
+
+@dataclass
+class ViewConfig:
+    """Top-level schema for environment and robot viewing."""
+
+    env: str | None = None
+    robot: str | None = None
+    sim: str | None = None
+    num_envs: int = 1
 
 
 def _sample_random_action_np(env: ABEnv) -> np.ndarray:
@@ -56,15 +69,29 @@ def _run_np(env: ArrayEnv):
             time.sleep(sleep_dt)
 
 
-def _make_robot_scene(robot_cfg: RobotCfg) -> StandardSceneCfg:
+@configclass
+class _RobotViewObjsCfg(SceneObjsCfg):
+    floor: FlatTerrainCfg = FlatTerrainCfg()
+    sun: LightCfg = LightCfg(color=(0.7, 0.7, 0.7), illuminance=10_000.0)
+
+
+def _make_robot_scene(robot_cfg: RobotCfg) -> SceneCfg:
     camera = SystemCameraCfg(lookat=(0.0, 0.0, 0.75), distance=3.0, elevation=-20.0, azimuth=180.0)
-    return StandardSceneCfg(
+    return SceneCfg(
         system_camera=camera,
-        objs=StandardSceneObjsCfg(robot=robot_cfg),
+        visual=SceneVisualCfg(
+            ambient_light_color=(0.3, 0.3, 0.3),
+            ambient_light_brightness=1_000.0,
+            head_light_color=(0.6, 0.6, 0.6),
+            head_light_luminous_power=1_000.0,
+            haze=(0.1, 0.1, 0.1, 1.0),
+            tone_mapping="none",
+        ),
+        objs=_RobotViewObjsCfg(robot=robot_cfg),
     )
 
 
-def _run_robot_motrixsim(scene: StandardSceneCfg) -> None:
+def _run_robot_motrixsim(scene: SceneCfg) -> None:
     camera = scene.system_camera
     model = build_scene_model(scene)
     data = mtx.SceneData(model, batch=[1])
@@ -97,7 +124,7 @@ def _run_robot_motrixsim(scene: StandardSceneCfg) -> None:
         renderer.__exit__(None, None, None)
 
 
-def _run_robot_mujoco(scene: StandardSceneCfg) -> None:
+def _run_robot_mujoco(scene: SceneCfg) -> None:
     try:
         import mujoco as mj
         import mujoco.viewer as mj_viewer
@@ -203,10 +230,15 @@ def run(cfg: ViewConfig) -> None:
         raise TypeError(f"Unsupported environment type '{type(env).__name__}'.")
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="view")
-def main(cfg: DictConfig) -> None:
-    run(to_typed_config(cfg, ViewConfig))
+def _hydra_main(cfg: DictConfig) -> None:
+    run(cast(ViewConfig, OmegaConf.to_object(cfg)))
 
 
-if __name__ == "__main__":
-    main()
+def main() -> None:
+    ConfigStore.instance().store(name="view_schema", node=ViewConfig)
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--config-dir")
+    args, _ = parser.parse_known_args()
+    config_dir = Path(args.config_dir) if args.config_dir is not None else Path.cwd() / "configs"
+    config_path = str(config_dir.resolve()) if (config_dir / "view.yaml").is_file() else "../configs"
+    hydra.main(version_base=None, config_path=config_path, config_name="view")(_hydra_main)()

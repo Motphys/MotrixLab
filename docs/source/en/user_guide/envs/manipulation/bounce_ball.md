@@ -411,13 +411,13 @@ Target height for each environment is randomly sampled in [0.4, 0.6] m range to 
 ### 1. Environment Preview
 
 ```bash
-python scripts/view.py env=bounce_ball
+mxlab view env=bounce_ball
 ```
 
 ### 2. Start Training
 
 ```bash
-mxtrain task=bounce_ball/skrl.ppo
+mxlab train task=bounce_ball/skrl.ppo
 ```
 
 ### 3. View Training Progress
@@ -429,7 +429,7 @@ tensorboard --logdir runs/bounce_ball
 ### 4. Test Training Results
 
 ```bash
-mxplay env=bounce_ball
+mxlab play env=bounce_ball
 ```
 
 ---

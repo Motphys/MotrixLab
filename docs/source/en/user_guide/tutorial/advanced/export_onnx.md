@@ -24,9 +24,9 @@ of the default runtime environment installed by `sh install.sh` (see
 
 ## Export the Model
 
-Activate the installed environment and run `mxexport onnx` (or `python -m motrix_rl.commands.export onnx`).
-`mxexport` requires an explicit `onnx` or `deploy` subcommand; there is no default.
-No `task` selection or registration import is needed: export restores the policy from the saved run without creating an environment. Install the RL provider used by the run; environment-provider discovery is a separate registry concern.
+Activate the installed environment and run `mxlab export-onnx` to export a standalone ONNX policy.
+Use `mxlab export-deploy` instead to create a deployment artifact.
+No `task` selection or registration import is needed: export restores the policy from the saved run without creating an environment. Install the RL provider used by the run before exporting.
 The command uses the current directory's `./configs` when present, or an explicit `--config-dir <path>`;
 project files take precedence, with missing files falling back to `motrix_rl.configs`, which includes `export_onnx.yaml`.
 No repository checkout is required. Relative run and output paths are resolved from the current working directory.
@@ -40,7 +40,7 @@ runs/cartpole/skrl/torch/ppo/<timestamp>/
 Export it to an explicit output path:
 
 ```bash
-mxexport onnx \
+mxlab export-onnx \
   run_dir=runs/cartpole/skrl/torch/ppo/<timestamp> \
   output=artifacts/cartpole.onnx
 ```
@@ -50,7 +50,7 @@ If a path contains spaces, quote the complete Hydra argument, for example `"run_
 When `output` is omitted, the model is written next to the best checkpoint as `policy.onnx`:
 
 ```bash
-mxexport onnx \
+mxlab export-onnx \
   run_dir=runs/cartpole/skrl/torch/ppo/<timestamp>
 ```
 
@@ -112,7 +112,7 @@ In most cases, only `run_dir` and `output` are needed. Override these Hydra para
 For example, export with opset 17 and more validation samples:
 
 ```bash
-mxexport onnx \
+mxlab export-onnx \
   run_dir=<run-dir> \
   output=policy.onnx \
   opset=17 \

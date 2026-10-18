@@ -26,19 +26,19 @@ Walker2D is a 2D planar bipedal robot with multiple joints and actuators:
 1. **dm-stander**: Static standing task (move_speed = 0.0)
 
 ```bash
-mxtrain task=dm-stander/skrl.ppo
+mxlab train task=dm-stander/skrl.ppo
 ```
 
 2. **dm-walker**: Walking task (move_speed = 1.0)
 
 ```bash
-mxtrain task=dm-walker/skrl.ppo
+mxlab train task=dm-walker/skrl.ppo
 ```
 
 3. **dm-runner**: Running task (move_speed = 5.0)
 
 ```bash
-mxtrain task=dm-runner/skrl.ppo
+mxlab train task=dm-runner/skrl.ppo
 ```
 
 ## Quick Start
@@ -46,17 +46,17 @@ mxtrain task=dm-runner/skrl.ppo
 ### 1. Environment Preview
 
 ```bash
-python scripts/view.py env=dm-stander
-python scripts/view.py env=dm-walker
-python scripts/view.py env=dm-runner
+mxlab view env=dm-stander
+mxlab view env=dm-walker
+mxlab view env=dm-runner
 ```
 
 ### 2. Start Training
 
 ```bash
-mxtrain task=dm-stander/skrl.ppo
-mxtrain task=dm-walker/skrl.ppo
-mxtrain task=dm-runner/skrl.ppo
+mxlab train task=dm-stander/skrl.ppo
+mxlab train task=dm-walker/skrl.ppo
+mxlab train task=dm-runner/skrl.ppo
 ```
 
 ### 3. View Training Progress
@@ -68,9 +68,9 @@ tensorboard --logdir runs/dm-walker
 ### 4. Test Training Results
 
 ```bash
-mxplay env=dm-stander
-mxplay env=dm-walker
-mxplay env=dm-runner
+mxlab play env=dm-stander
+mxlab play env=dm-walker
+mxlab play env=dm-runner
 ```
 
 ## Reward Function Design

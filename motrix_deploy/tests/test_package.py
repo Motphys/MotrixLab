@@ -12,7 +12,7 @@ import pytest
 @pytest.mark.integration
 def test_cli_help() -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "motrix_deploy.cli", "--help"],
+        [sys.executable, "-m", "motrixlab.cli", "deploy", "--help"],
         check=False,
         capture_output=True,
         text=True,

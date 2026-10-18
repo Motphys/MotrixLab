@@ -169,7 +169,7 @@ DeepMind Control Suite 的 Humanoid 和 Quadruped 仍归入 `dm_control`。它�
 `envs/index.md` 不是 24 个链接的简单列表，应承担环境发现入口的职责，包含以下内容：
 
 1. Environment、Robot 和 Training Task 的简短区别；
-2. 使用 `uv run scripts/view.py env=<env-id>` 预览环境的统一方式；
+2. 使用 `uv run --no-sync mxlab view env=<env-id>` 预览环境的统一方式；
 3. 六个环境主题的卡片入口；
 4. 自动生成的 Env overview 表格；
 5. 指向环境开发教程、Robot 列表和训练教程的交叉链接。

@@ -52,6 +52,13 @@ _使用 MotrixLab 训练的 microduck 行走策略，由 MotrixRender 实时渲�
 
 ## 🚀 快速开始
 
+根据你的使用场景选择：
+
+- **运行内置任务或参与框架开发**：按照下方步骤在仓库中开始使用。完整安装与开发选项见[仓库安装说明](https://motrixlab.readthedocs.io/zh-cn/latest/user_guide/getting_started/installation.html#installation-repository)。
+- **在自己的项目中使用 MotrixLab**：通过 pip 或 uv 添加 `motrixlab` 依赖。命令、前置条件和 GPU 配置见[项目依赖安装说明](https://motrixlab.readthedocs.io/zh-cn/latest/user_guide/getting_started/installation.html#installation-own-project)。此方式不包含仓库内置任务和机器人资产。
+
+以下步骤在仓库根目录中运行内置任务。
+
 ### 前置条件
 
 | 要求 | 说明 |
@@ -92,13 +99,15 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 脚本会自动探测 GPU 厂商（NVIDIA → CUDA，AMD → ROCm），安装运行环境所需的 workspace package、对应的 PyTorch wheel、必需的 SKRL Torch 和内置 FastSAC。可用 `--gpu cuda|rocm` 显式指定 GPU；`--rslrl` 追加 RSL-RL，`--skrl-jax` 追加可选的 Linux-only SKRL JAX 后端。由于 SKRL Torch 已是必需依赖，`--skrl-torch` 仍作为兼容参数接受。参数可以组合；详见 `sh install.sh --help`。
 
+根开发环境默认安装 `motrixlab`，提供 `mxlab` CLI。
+
 ### 3. 训练第一个策略
 
 先激活安装好的环境（Windows PowerShell：`.venv\Scripts\Activate.ps1`）：
 
 ```bash
 source .venv/bin/activate
-mxtrain task=microduck-walk-flat/motrix.fastsac play=true
+mxlab train task=microduck-walk-flat/motrix.fastsac play=true
 ```
 
 训练过程中，内置面板会实时显示运行进度、回合统计、吞吐、奖励与系统健康状态：
@@ -124,7 +133,7 @@ microduck 的训练数分钟内即可完成：平均回报与回合长度通常�
 无需重新训练即可回放最近一次训练得到的策略（例如提前 Ctrl+C 中断训练之后）：
 
 ```bash
-mxplay env=microduck-walk-flat
+mxlab play env=microduck-walk-flat
 ```
 
 训练好的 microduck 策略在查看器中的回放效果：
@@ -142,7 +151,7 @@ MotrixLab 内置 50+ 个仿真环境，覆盖基础控制、四足、人形、�
 | <img src="docs/source/_static/images/poster/g1-wbt-dance.jpg" alt="g1-wbt-dance" width="240"> | 全身动作跟踪（WBT） | `g1-wbt-dance` · `k1-wbt-freekick` · `g1-29dof-wbt-largebox` |
 
 ```bash
-python scripts/view.py env=go2-walk-rough
+mxlab view env=go2-walk-rough
 ```
 
 完整环境列表与各环境支持的训练算法见[环境总览](https://motrixlab.readthedocs.io/zh-cn/latest/user_guide/envs/index.html)。
@@ -162,7 +171,7 @@ python scripts/view.py env=go2-walk-rough
 | <img src="docs/source/_static/images/robots/microduck.png" alt="microduck" width="180"> | `microduck` | 人形机器人 | 14 |
 
 ```bash
-python scripts/view.py robot=go2
+mxlab view robot=go2
 ```
 
 通过公共配置 API 直接构造模型，用于场景组合：
@@ -182,6 +191,7 @@ MotrixLab 是一个 [uv](https://docs.astral.sh/uv/) workspace，包含以下 pa
 
 | Package | PyPI 名称 | 说明 |
 | --- | --- | --- |
+| **motrixlab** | `motrixlab` | 提供统一 `mxlab` CLI 与环境/机器人可视化的应用集成包 |
 | **motrix_deploy** | `motrix-deploy` | artifact、控制会话、运行时契约与部署 CLI |
 | **motrix_deploy_mujoco** | `motrix-deploy-mujoco` | MuJoCo 部署 backend plugin |
 | **motrix_deploy_motrixsim** | `motrix-deploy-motrixsim` | 原生 MotrixSim 部署 backend plugin |

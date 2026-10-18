@@ -65,7 +65,7 @@ def test_missing_policy_prints_train_command(monkeypatch, tmp_path, capsys):
 
     error = capsys.readouterr().err
     assert "No playable policy" in error
-    assert "python -m motrix_rl.commands.train task=cartpole/skrl.ppo" in error
+    assert "mxlab train task=cartpole/skrl.ppo" in error
 
 
 def test_video_config_records_by_default_and_places_bare_output_in_docs_video_dir():

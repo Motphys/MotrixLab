@@ -5,7 +5,7 @@ A MotrixLab Environment is a simulation task created through the Env Registry. I
 Preview an environment without starting training:
 
 ```bash
-python scripts/view.py env=<env-id>
+mxlab view env=<env-id>
 ```
 
 ## Environment topics

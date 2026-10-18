@@ -269,13 +269,13 @@ RM65 机器人在该环境中包含以下主要部分：
 ### 训练
 
 ```bash
-mxtrain task=rm65_insert_peg/motrix.fastsac
+mxlab train task=rm65_insert_peg/motrix.fastsac
 ```
 
 ### 策略评估
 
 ```bash
-mxplay env=rm65_insert_peg num_envs=16
+mxlab play env=rm65_insert_peg num_envs=16
 ```
 
 ### TensorBoard

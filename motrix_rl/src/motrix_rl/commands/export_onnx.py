@@ -55,7 +55,3 @@ def _hydra_main(cfg: DictConfig) -> None:
 
 def main() -> None:
     run_cli(_hydra_main)
-
-
-if __name__ == "__main__":
-    main()

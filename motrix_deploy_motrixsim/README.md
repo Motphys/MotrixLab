@@ -22,7 +22,7 @@ Artifact deployment reuses the installed simulation recipes rather than introduc
 backend-specific task copies:
 
 ```bash
-mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
   runtime.backend=motrixsim runtime.viewer=false runtime.realtime=false duration_s=1
 ```
 

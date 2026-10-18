@@ -33,6 +33,7 @@ MotrixLab 是一个 UV workspace。下面按所有权而不是按单一整体运
 
 | Package | 流程环节 | 职责 |
 | --- | --- | --- |
+| `motrixlab` | 应用集成 | 提供统一 `mxlab` CLI 与环境/机器人可视化 |
 | `motrix_env_core` | 策略与环境的交互 | backend 无关的环境框架：`EnvCfg`、registry、环境前端与生命周期 |
 | `motrix_env_motrixsim` | 策略与环境的交互 | MotrixSim `SimBackend`、renderer 与 Torch frontend |
 | `motrix_env_mujoco` | 场景编译 | 仅负责编译场景的 MuJoCo backend |
@@ -42,9 +43,9 @@ MotrixLab 是一个 UV workspace。下面按所有权而不是按单一整体运
 | `motrix_rl_builtin` | 策略的训练与更新 | 内置 Motrix FastSAC provider |
 | `motrix_rl_skrl` | 策略的训练与更新 | SKRL PPO Torch provider（必需）及可选 JAX extra |
 | `motrix_rl_rslrl` | 策略的训练与更新 | RSL-RL PPO Torch provider（可选） |
-| `motrix_rl.configs`、`motrix_rl.commands` | 配置与编排 | 打包的 train/play 配置与算法默认值；安装后的 `mxtrain` / `mxplay` 入口 |
-| `configs/`、`scripts/` | Workspace 配方与工具 | 具体 Task 配方与 view 配置；view / export 工具及 train/play 薄包装 |
-| `motrix_deploy` | 策略的部署 | 框架无关 artifact、运行时契约与部署 CLI |
+| `motrix_rl.configs`、`motrix_rl.commands` | 配置与编排 | 打包的 train/play/export 配置与算法默认值；`mxlab train` / `mxlab play` / `mxlab export-onnx` / `mxlab export-deploy` 的命令实现 |
+| `configs/`、`scripts/` | Workspace 配方与工具 | 具体 Task 配方与仓库辅助工具 |
+| `motrix_deploy` | 策略的部署 | 框架无关 artifact、运行时契约与 `mxlab deploy` 的命令实现 |
 | `motrix_deploy_mujoco` | 策略的部署 | MuJoCo 部署 backend plugin |
 | `motrix_deploy_motrixsim` | 策略的部署 | MotrixSim 部署 backend plugin |
 | `motrix_deploy_unitree` | 策略的部署 | Unitree 硬件配置、sensor/actuation 接线与 SDK2 DDS backend plugin |
@@ -56,22 +57,28 @@ MotrixLab 是一个 UV workspace。下面按所有权而不是按单一整体运
 配置与命令源码的目录如下：
 
 ```text
+motrixlab/src/motrixlab/
+├── commands/
+│   └── view.py         # 环境与机器人可视化
+└── configs/
+    └── view.yaml
 motrix_rl/src/motrix_rl/
-├── commands/           # mxtrain / mxplay
+├── commands/           # 训练、评估与导出命令实现
 └── configs/
     ├── train.yaml
     ├── play.yaml
     └── algo_base/
 configs/
-├── task/               # workspace 训练配方
-└── view.yaml
-scripts/                # view/export 工具；train/play 薄包装
+└── task/               # workspace 训练配方
+scripts/                # 仓库辅助工具
 ```
 
 ## 一次训练的完整流程
 
+以下示例使用仓库内置任务，请先完成{ref}`仓库安装 <installation-repository>`，激活环境，并在仓库根目录执行命令。默认运行环境已包含 SKRL provider；运行下面的 RSL-RL 示例前，还需通过 `sh install.sh --rslrl` 安装对应 provider。
+
 ```bash
-mxtrain task=cartpole/skrl.ppo num_envs=1024
+mxlab train task=cartpole/skrl.ppo num_envs=1024
 ```
 
 1. Hydra 组合 `motrix_rl/src/motrix_rl/configs/train.yaml`、`motrix_rl/src/motrix_rl/configs/algo_base/skrl.ppo.yaml` 和
@@ -83,8 +90,8 @@ mxtrain task=cartpole/skrl.ppo num_envs=1024
 同一环境可以拥有多份 Task 配方，不需要修改环境实现：
 
 ```bash
-mxtrain task=cartpole/skrl.ppo
-mxtrain task=cartpole/rslrl.ppo
+mxlab train task=cartpole/skrl.ppo
+mxlab train task=cartpole/rslrl.ppo
 ```
 
 ## 运行导出的策略
@@ -92,7 +99,7 @@ mxtrain task=cartpole/rslrl.ppo
 部署使用 artifact，而不是训练环境：
 
 ```bash
-mxdeploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
+mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
 ```
 
 上例在 MuJoCo 中无窗口运行导出的策略。导出、交互控制及真机操作见 [Go2 部署](advanced/motrix_deploy.md)。

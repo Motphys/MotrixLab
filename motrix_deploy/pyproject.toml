@@ -40,9 +40,6 @@ dependencies = [
     "pydantic===2.12.5",
 ]
 
-[project.scripts]
-mxdeploy = "motrix_deploy.cli:main"
-
 [project.urls]
 Homepage = "https://github.com/Motphys/MotrixLab"
 Repository = "https://github.com/Motphys/MotrixLab"

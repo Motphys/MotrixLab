@@ -157,15 +157,15 @@ An episode terminates and resets when any of the following conditions is met:
 ### 1. Environment Preview
 
 ```bash
-python scripts/view.py env=dm-lqr-2-1
-python scripts/view.py env=dm-lqr-6-2
+mxlab view env=dm-lqr-2-1
+mxlab view env=dm-lqr-6-2
 ```
 
 ### 2. Start Training
 
 ```bash
-mxtrain task=dm-lqr-2-1/skrl.ppo
-mxtrain task=dm-lqr-6-2/skrl.ppo
+mxlab train task=dm-lqr-2-1/skrl.ppo
+mxlab train task=dm-lqr-6-2/skrl.ppo
 ```
 
 ### 3. View Training Progress
@@ -178,8 +178,8 @@ tensorboard --logdir runs/dm-lqr-6-2
 ### 4. Test Training Results
 
 ```bash
-mxplay env=dm-lqr-2-1
-mxplay env=dm-lqr-6-2
+mxlab play env=dm-lqr-2-1
+mxlab play env=dm-lqr-6-2
 ```
 
 ---

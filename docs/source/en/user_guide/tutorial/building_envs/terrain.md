@@ -49,7 +49,7 @@ and `anymalc-walk-rough` all generate terrain through the same
 `NoiseTerrainGeneratorCfg(seed=0, height_scale=0.1, flip_y=True)`; preview it directly:
 
 ```bash
-python scripts/view.py env=go1-walk-rough
+mxlab view env=go1-walk-rough
 ```
 
 ## The generator contract

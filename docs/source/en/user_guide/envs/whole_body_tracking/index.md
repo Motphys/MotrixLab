@@ -165,20 +165,20 @@ Choose an environment ID and one of its training configs from the built-in task 
 `TRAINING_CONFIG`:
 
 ```bash
-mxtrain task=ENV_ID/TRAINING_CONFIG
+mxlab train task=ENV_ID/TRAINING_CONFIG
 ```
 
 For example, train the G1 dance-tracking task with asynchronous FastSAC:
 
 ```bash
-mxtrain task=g1-wbt-dance/motrix.fastsac algo.asynchronous=true
+mxlab train task=g1-wbt-dance/motrix.fastsac algo.asynchronous=true
 ```
 
 The built-in configs use 2048 parallel environments and task-specific learning-iteration budgets. Use a small smoke test
 only to validate registry creation, tensor shapes, and the training entry point; it is not expected to produce a useful policy:
 
 ```bash
-mxtrain task=g1-wbt-dance/motrix.fastsac \
+mxlab train task=g1-wbt-dance/motrix.fastsac \
   algo.asynchronous=true num_envs=64 algo.trainer.num_learning_iterations=100
 ```
 
@@ -189,10 +189,10 @@ adaptive-sampling statistics are written to `state.metrics`. See [Task Environme
 ### Play the policy
 
 ```bash
-mxplay env=ENV_ID num_envs=16
+mxlab play env=ENV_ID num_envs=16
 ```
 
-`mxplay` selects the best policy from the latest metadata-backed run for the environment. The WBT play config starts at
+`mxlab play` selects the best policy from the latest metadata-backed run for the environment. The WBT play config starts at
 motion frame 0, disables reset noise and adaptive sampling, and removes the 10-second training time limit. At the clip end it
 restarts from frame 0. See [Training Artifacts: the runs Directory and Checkpoint Structure](../../tutorial/training/runs_and_checkpoints.md)
 for run and checkpoint selection.

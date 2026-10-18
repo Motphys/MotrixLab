@@ -102,13 +102,13 @@ cheetah 的奖励函数由以下几个部分组成：
 ### 1. 环境预览
 
 ```bash
-python scripts/view.py env=dm-cheetah
+mxlab view env=dm-cheetah
 ```
 
 ### 2. 开始训练
 
 ```bash
-mxtrain task=dm-cheetah/skrl.ppo
+mxlab train task=dm-cheetah/skrl.ppo
 ```
 
 ### 3. 查看训练进度
@@ -120,7 +120,7 @@ tensorboard --logdir runs/dm-cheetah
 ### 4. 测试训练结果
 
 ```bash
-mxplay env=dm-cheetah
+mxlab play env=dm-cheetah
 ```
 
 ---

@@ -21,10 +21,10 @@
 
 ## 独立预览
 
-使用 `view.py` 可以在默认姿态下查看已注册 robot，无需创建 RL environment：
+使用 `mxlab view` 可以在默认姿态下查看已注册 robot，无需创建 RL environment：
 
 ```bash
-python scripts/view.py robot=go2
+mxlab view robot=go2
 ```
 
 robot 模式会构建一个静态标准场景，不采样 action，也不执行 physics rollout。
@@ -194,7 +194,7 @@ my_robot = "my_robot_package.registration:register"
 先通过 registry 构造配置并预览机器人：
 
 ```bash
-python scripts/view.py robot=my-robot
+mxlab view robot=my-robot
 python -m pytest motrix_envs/tests/test_robot_cfg.py -q
 ```
 

@@ -156,15 +156,15 @@ reward = fall_penalty if fallen else reward
 ### 1. 环境预览
 
 ```bash
-python scripts/view.py env=stewart-static
-python scripts/view.py env=stewart-disturb-xy
+mxlab view env=stewart-static
+mxlab view env=stewart-disturb-xy
 ```
 
 ### 2. 开始训练
 
 ```bash
-mxtrain task=stewart-static/skrl.ppo
-mxtrain task=stewart-disturb-xy/skrl.ppo
+mxlab train task=stewart-static/skrl.ppo
+mxlab train task=stewart-disturb-xy/skrl.ppo
 ```
 
 ### 训练说明
@@ -183,8 +183,8 @@ tensorboard --logdir runs/stewart-disturb-xy
 ### 4. 测试训练结果
 
 ```bash
-mxplay env=stewart-static
-mxplay env=stewart-disturb-xy
+mxlab play env=stewart-static
+mxlab play env=stewart-disturb-xy
 ```
 
 ---

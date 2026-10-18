@@ -131,29 +131,29 @@ If `NaN` appears in the observations
 ### 1. Environment Preview (random actions)
 
 ```bash
-python scripts/view.py env=dm-finger-spin
+mxlab view env=dm-finger-spin
 ```
 
 ```bash
-python scripts/view.py env=dm-finger-turn-easy
+mxlab view env=dm-finger-turn-easy
 ```
 
 ```bash
-python scripts/view.py env=dm-finger-turn-hard
+mxlab view env=dm-finger-turn-hard
 ```
 
 ### 2. Start Training
 
 ```bash
-mxtrain task=dm-finger-spin/skrl.ppo task.train_backend=torch
+mxlab train task=dm-finger-spin/skrl.ppo task.train_backend=torch
 ```
 
 ```bash
-mxtrain task=dm-finger-turn-easy/skrl.ppo task.train_backend=torch
+mxlab train task=dm-finger-turn-easy/skrl.ppo task.train_backend=torch
 ```
 
 ```bash
-mxtrain task=dm-finger-turn-hard/skrl.ppo task.train_backend=torch
+mxlab train task=dm-finger-turn-hard/skrl.ppo task.train_backend=torch
 ```
 
 ### 3. View Training Progress
@@ -164,10 +164,10 @@ tensorboard --logdir runs/dm-finger-spin
 
 ### 4. Test Training Results
 
-`mxplay` auto-discovers the latest metadata-backed run under `runs/{env-name}/` and loads its `best_policy` artifact. Use `policy=...` to select a checkpoint explicitly:
+`mxlab play` auto-discovers the latest metadata-backed run under `runs/{env-name}/` and loads its `best_policy` artifact. Use `policy=...` to select a checkpoint explicitly:
 
 ```bash
-mxplay env=dm-finger-turn-hard
+mxlab play env=dm-finger-turn-hard
 ```
 
 ---

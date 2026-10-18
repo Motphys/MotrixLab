@@ -27,7 +27,7 @@ MotrixLab 需要同时应对以下挑战：
 ```
 ┌─────────────────────────────────────────────────┐
 │ 应用入口                                         │
-│ scripts/train.py · play.py · view.py            │
+│ mxlab train · mxlab play · mxlab view            │
 ├─────────────────────────────────────────────────┤
 │ RL 框架集成层（motrix_rl）                        │
 │ Wrapper · Trainer · AgentProvider · Hydra schema │
@@ -284,13 +284,13 @@ cartpole/
 
 ## 7. 数据流总览
 
-以 `uv run scripts/train.py --env cartpole --rllib skrl` 为例，数据在系统中的完整流动路径：
+以 `mxlab train task=cartpole/skrl.ppo` 为例，数据在系统中的完整流动路径：
 
 ```
 命令行参数
   │
   ▼
-train.py: 解析 env_name, rllib
+mxlab train → motrix_rl.commands.train: 组合训练配置
   │
   ▼
 Hydra: 组合 task=cartpole/skrl.ppo → TrainConfig

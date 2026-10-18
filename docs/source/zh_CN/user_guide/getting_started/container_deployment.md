@@ -98,7 +98,7 @@ docker build -t motphys/motrixlab:latest .
 docker run --gpus all \
     -v $(pwd)/runs:/root/motrixlab/runs \
     motphys/motrixlab:latest \
-    mxtrain task=cartpole/skrl.ppo task.train_backend=jax num_envs=2048
+    mxlab train task=cartpole/skrl.ppo task.train_backend=jax num_envs=2048
 ```
 
 ### 持久化训练结果

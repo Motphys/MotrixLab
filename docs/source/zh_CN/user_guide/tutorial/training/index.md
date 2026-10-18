@@ -5,7 +5,7 @@
 ```text
 创建 Task 配置        指定环境、RL 框架、算法与超参数
       ↓
-mxtrain task=...   Hydra 组合配置并启动训练
+mxlab train task=...   Hydra 组合配置并启动训练
       ↓
 runs/{env}/...       保存 metadata、日志与 checkpoint
 ```

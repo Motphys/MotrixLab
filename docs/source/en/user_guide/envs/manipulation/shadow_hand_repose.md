@@ -308,19 +308,19 @@ The environment uses a consecutive success counter:
 ### Training
 
 ```bash
-mxtrain task=shadow-hand-repose/skrl.ppo
+mxlab train task=shadow-hand-repose/skrl.ppo
 ```
 
 ### Policy Evaluation
 
 ```bash
-mxplay env=shadow-hand-repose
+mxlab play env=shadow-hand-repose
 ```
 
 ### Environment Visualization
 
 ```bash
-python scripts/view.py env=shadow-hand-repose
+mxlab view env=shadow-hand-repose
 ```
 
 ### TensorBoard

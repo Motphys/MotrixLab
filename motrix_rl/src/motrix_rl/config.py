@@ -90,7 +90,7 @@ class TaskConfig:
 
 @dataclass
 class TrainConfig(TaskConfig):
-    """Top-level schema for ``mxtrain``."""
+    """Top-level schema for ``mxlab train``."""
 
     render: bool = False
     play: bool = False
@@ -100,7 +100,7 @@ class TrainConfig(TaskConfig):
 
 @dataclass
 class PlayConfig:
-    """Top-level schema for ``mxplay``."""
+    """Top-level schema for ``mxlab play``."""
 
     env: str | None = None
     sim: str | None = None
@@ -117,22 +117,11 @@ class PlayConfig:
     rl: Any = field(default_factory=dict)
 
 
-@dataclass
-class ViewConfig:
-    """Top-level schema for ``scripts/view.py``."""
-
-    env: str | None = None
-    robot: str | None = None
-    sim: str | None = None
-    num_envs: int = 1
-
-
 def register_configs() -> None:
     """Register CLI schemas in Hydra's ConfigStore. Idempotent."""
     cs = ConfigStore.instance()
     cs.store(name="train_schema", node=TrainConfig)
     cs.store(name="play_schema", node=PlayConfig)
-    cs.store(name="view_schema", node=ViewConfig)
     cs.store(name="export_onnx_schema", node=OnnxExportConfig)
     cs.store(name="export_deploy_schema", node=DeploymentExportConfig)
 

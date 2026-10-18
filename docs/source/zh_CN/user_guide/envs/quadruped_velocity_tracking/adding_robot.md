@@ -66,7 +66,7 @@ class MyQuadruped(QuadrupedRobotCfg):
 完成 robot registry 注册后，先独立预览模型：
 
 ```bash
-python scripts/view.py robot=<robot-config-id>
+mxlab view robot=<robot-config-id>
 ```
 
 ## 2. 提供任务传感器
@@ -191,10 +191,10 @@ SKRL 配置选择 `/algo_base@algo: skrl.ppo`，并将 `task.rllib` 设为 `skrl
 建议按以下顺序验证：
 
 ```bash
-python scripts/view.py robot=<robot-config-id>
-python scripts/view.py env=<robot>-walk-flat
-python scripts/view.py env=<robot>-walk-rough
-mxtrain task=<robot>-walk-flat/rslrl.ppo
+mxlab view robot=<robot-config-id>
+mxlab view env=<robot>-walk-flat
+mxlab view env=<robot>-walk-rough
+mxlab train task=<robot>-walk-flat/rslrl.ppo
 ```
 
 预览时重点检查默认姿态、动作方向、四脚接触、足端位置参考系和粗糙地形出生高度。

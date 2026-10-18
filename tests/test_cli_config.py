@@ -4,7 +4,8 @@
 from pathlib import Path
 
 import pytest
-from hydra import compose, initialize_config_dir, initialize_config_module
+from hydra import compose, initialize_config_module
+from hydra.core.config_store import ConfigStore
 from hydra.core.global_hydra import GlobalHydra
 
 from motrix_rl import frameworks
@@ -24,11 +25,12 @@ def _clear_hydra():
 
 def _compose(config_name: str, overrides: list[str]):
     load_plugins()
-    initializer = (
-        initialize_config_module(version_base=None, config_module="motrix_rl.configs")
-        if config_name in ("train", "play", "export_onnx")
-        else initialize_config_dir(version_base=None, config_dir=CONFIG_DIR)
-    )
+    if config_name == "view":
+        from motrixlab.commands.view import ViewConfig
+
+        ConfigStore.instance().store(name="view_schema", node=ViewConfig)
+    config_module = "motrixlab.configs" if config_name == "view" else "motrix_rl.configs"
+    initializer = initialize_config_module(version_base=None, config_module=config_module)
     if config_name == "train":
         overrides = [f"hydra.searchpath=[file://{CONFIG_DIR}]", *overrides]
     with initializer:

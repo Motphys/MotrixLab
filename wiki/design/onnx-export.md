@@ -265,7 +265,7 @@ source .venv/bin/activate
 CLI 使用 run directory，不接受脱离 metadata 的裸 checkpoint：
 
 ```bash
-python scripts/export_onnx.py \
+mxlab export-onnx \
   run_dir=runs/cartpole/skrl/torch/ppo/<run-id> \
   output=/tmp/cartpole.onnx
 ```
@@ -273,7 +273,7 @@ python scripts/export_onnx.py \
 可显式覆盖验证参数：
 
 ```bash
-python scripts/export_onnx.py \
+mxlab export-onnx \
   run_dir=<run-dir> \
   parity.seed=7 \
   parity.samples=64 \

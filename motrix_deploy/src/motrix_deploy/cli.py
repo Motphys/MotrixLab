@@ -6,7 +6,6 @@
 import json
 import math
 import sys
-from collections.abc import Sequence
 from pathlib import Path
 
 import hydra
@@ -14,7 +13,6 @@ import numpy as np
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import OmegaConfBaseException
 
-from motrix_deploy import __version__
 from motrix_deploy.artifact.io import inspect_artifact, read_artifact
 from motrix_deploy.config import DeployRunConfig, SimRuntimeCfg
 from motrix_deploy.errors import ArtifactError, ValidationError
@@ -115,29 +113,12 @@ def _hydra_inspect_main(cfg: DictConfig) -> None:
         raise SystemExit(2) from error
 
 
-def main(argv: Sequence[str] | None = None) -> int | None:
-    """Inspect an artifact or run a Hydra-configured deployment rollout."""
-    if argv is not None:
-        original_argv = sys.argv
-        sys.argv = ["mxdeploy", *argv]
-        try:
-            return main()
-        finally:
-            sys.argv = original_argv
-
-    args = sys.argv[1:]
-    if args[:1] == ["inspect"]:
-        del sys.argv[1]
+def main() -> None:
+    """Adapt ``mxlab deploy`` arguments to the deployment Hydra commands."""
+    if sys.argv[1:2] == ["inspect"]:
+        sys.argv = [f"{sys.argv[0]} inspect", *sys.argv[2:]]
         _hydra_inspect_main()
-        return None
-    if args == ["--version"]:
-        print(f"mxdeploy {__version__}")
-        return 0
-    if not args:
+        return
+    if not sys.argv[1:]:
         sys.argv.append("--help")
     _hydra_main()
-    return None
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

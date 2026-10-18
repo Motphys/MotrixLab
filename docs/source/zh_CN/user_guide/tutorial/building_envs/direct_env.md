@@ -106,7 +106,7 @@ class CartPoleEnv(DirectEnv):
         return state.replace(obs=obs)
 ```
 
-注册完成后，`python scripts/view.py env=cartpole` 可以预览，按
+注册完成后，`mxlab view env=cartpole` 可以预览，按
 [Task 配置](../training/task_config.md)创建训练 Task 即可开始训练。
 
 从示例可以读出 DirectEnv 的三个核心要素：

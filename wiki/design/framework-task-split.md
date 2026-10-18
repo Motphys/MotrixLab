@@ -37,7 +37,8 @@ _CONFIG_DIR = Path(__file__).resolve().parents[3] / "configs"
 ```
 motrix_rl/src/motrix_rl/
 ├── configs/
-│   └── algo_base/                  ← 从仓库根 configs/algo_base/ 移入
+│   ├── train.yaml, play.yaml        ← 随包发布的 RL CLI 顶层配置
+│   └── algo_base/                  ← 算法基础配置
 │       ├── skrl.ppo.yaml
 │       ├── rslrl.ppo.yaml
 │       └── motrix.fastsac.yaml
@@ -52,10 +53,12 @@ motrix_rl/src/motrix_rl/
 
 ```
 configs/
-├── train.yaml, play.yaml, view.yaml   ← CLI 顶层 Hydra 配置（留）
-└── task/                              ← 每 task 的 RL 调参（留）
-scripts/
-└── train.py, play.py, view.py          ← 薄示例脚本（留）
+└── task/                              ← 每 task 的 RL 调参
+scripts/                              ← 其他仓库辅助工具
+motrixlab/src/motrixlab/               ← 应用集成：统一 mxlab CLI 与跨组件 view
+├── commands/view.py                   ← 环境/机器人可视化与 ViewConfig
+└── configs/view.yaml                  ← 随包发布的 view 配置
+motrix_rl/src/motrix_rl/commands/       ← train/play/export 内部可调用 adapter
 ```
 
 ### 配置根机制
@@ -85,8 +88,8 @@ hydra:
 外部用户复制这条 `searchpath` 即可让自己的 task 配置组合内置 algo 默认值。CLI 选择 task 时使用固定 group：
 
 ```bash
-uv run scripts/train.py task=acrobot/skrl.ppo
-uv run scripts/train.py task=acrobot/rslrl.ppo
+mxlab train task=acrobot/skrl.ppo
+mxlab train task=acrobot/rslrl.ppo
 ```
 
 这里 `task` 是 Hydra group，`acrobot/skrl.ppo` 是 option。不要把 env 放到 group key 里写成 `task/acrobot=skrl.ppo`；固定 group 可以让切换环境和算法时 CLI key 保持稳定。
@@ -182,9 +185,9 @@ Trainer 在分发边界仍获得精确的配置类型。
 用户覆盖真实配置树：
 
 ```bash
-uv run scripts/train.py task=acrobot/skrl.ppo num_envs=4096
-uv run scripts/train.py task=acrobot/skrl.ppo seed=7
-uv run scripts/train.py task=acrobot/skrl.ppo logging.interval=20 checkpoint.interval=100
+mxlab train task=acrobot/skrl.ppo num_envs=4096
+mxlab train task=acrobot/skrl.ppo seed=7
+mxlab train task=acrobot/skrl.ppo logging.interval=20 checkpoint.interval=100
 ```
 
 因此训练入口不再需要旧式的独立 method selector 和 `+rl...` 到 `algo` 的转译层。
@@ -205,8 +208,9 @@ uv run scripts/train.py task=acrobot/skrl.ppo logging.interval=20 checkpoint.int
 
 - **`configs/train.yaml`**：defaults 增加 `task: cartpole/skrl.ppo`，训练 CLI 通过 `task=<env>/<rllib>.<algo>` 选择配方。
 - **`configs/task/`**：每个 task YAML 改为 `# @package _global_`，写入 `task` 元信息，并通过 `/algo_base@algo` 组合算法默认值。
-- **`scripts/train.py`**：直接消费 `cfg.task` 和 `cfg.algo`；不再从独立的 env/method 字段二次组合 RL 配置。
-- **`scripts/play.py` / `view.py`**：继续使用各自的 Hydra config root；是否同步切到 task group 另行按各自 CLI 语义处理。
+- **`mxlab train`**：调用 `motrix_rl.commands.train`，直接消费 `cfg.task` 和 `cfg.algo`，不从独立的 env/method 字段二次组合 RL 配置。
+- **`mxlab play` / `mxlab view`**：分别承担训练策略回放与环境可视化，按各自 Hydra 配置语义运行。
+- **CLI 所有权**：`motrixlab` 提供唯一的 `mxlab` 入口；命令实现与内部可调用 adapter 保持在组件 package 中，版本查询只使用 `mxlab --version`。
 - **测试**：Hydra ConfigLoader 枚举 task group option，再通过 Hydra `compose()` 逐项组合和校验。
 
 ## 取舍

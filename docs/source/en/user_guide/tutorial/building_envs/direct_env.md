@@ -110,7 +110,7 @@ class CartPoleEnv(DirectEnv):
         return state.replace(obs=obs)
 ```
 
-Once registered, preview it with `python scripts/view.py env=cartpole` and start
+Once registered, preview it with `mxlab view env=cartpole` and start
 training by creating a Task as described in
 [Task Configuration](../training/task_config.md).
 

@@ -63,20 +63,20 @@ Acrobot 是一个双连杆摆动和平衡任务。目标是使用一个电机扭
 ### 1. 环境预览
 
 ```bash
-python scripts/view.py env=acrobot
+mxlab view env=acrobot
 ```
 
 ### 2. 开始训练
 
 ```bash
 # 使用默认参数训练
-mxtrain task=acrobot/skrl.ppo
+mxlab train task=acrobot/skrl.ppo
 
 # 自定义并行环境数
-mxtrain task=acrobot/skrl.ppo num_envs=1024
+mxlab train task=acrobot/skrl.ppo num_envs=1024
 
 # 开启训练时渲染
-mxtrain task=acrobot/skrl.ppo render=true
+mxlab train task=acrobot/skrl.ppo render=true
 ```
 
 ### 3. 查看训练进度
@@ -89,10 +89,10 @@ tensorboard --logdir runs/acrobot
 
 ```bash
 # 自动发现最佳策略（推荐）
-mxplay env=acrobot
+mxlab play env=acrobot
 
 # 手动指定带 metadata 的 run 中的 checkpoint
-mxplay env=acrobot policy=/path/to/run/checkpoints/policy-file
+mxlab play env=acrobot policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **提示**：策略会从 `runs/acrobot/` 中自动选择。使用 `policy=...` 时，checkpoint 所属 run 必须包含 `metadata.json`。

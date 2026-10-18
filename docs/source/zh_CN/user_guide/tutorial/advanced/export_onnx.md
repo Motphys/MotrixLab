@@ -23,9 +23,9 @@ SKRL/JAX checkpoint 暂不支持导出。导出命令接收完整的 run 目录�
 
 ## 导出模型
 
-激活已安装的环境后，运行 `mxexport onnx`（或 `python -m motrix_rl.commands.export onnx`）。
-`mxexport` 必须显式选择 `onnx` 或 `deploy` 子命令，没有默认子命令。
-不需要选择 `task` 或导入模块来触发注册：导出直接从已保存的 run 恢复策略，不创建环境。需要安装该 run 使用的 RL provider；环境 provider 发现属于独立的 registry 职责。
+激活已安装的环境后，运行 `mxlab export-onnx`。
+`mxlab export-onnx` 直接导出 ONNX 模型；部署 artifact 使用独立的 `mxlab export-deploy` 命令。
+不需要选择 `task` 或导入模块来触发注册：导出直接从已保存的 run 恢复策略，不创建环境。导出前需安装该 run 使用的 RL provider。
 命令会使用当前目录下存在的 `./configs`，也可以通过 `--config-dir <path>` 显式指定配置目录；
 项目文件优先，缺失的文件回退到 `motrix_rl.configs`，其中包含 `export_onnx.yaml`。
 无需仓库 checkout，相对 run 路径和输出路径均相对于当前工作目录解析。
@@ -39,7 +39,7 @@ runs/cartpole/skrl/torch/ppo/<timestamp>/
 指定输出文件进行导出：
 
 ```bash
-mxexport onnx \
+mxlab export-onnx \
   run_dir=runs/cartpole/skrl/torch/ppo/<timestamp> \
   output=artifacts/cartpole.onnx
 ```
@@ -49,7 +49,7 @@ mxexport onnx \
 如果省略 `output`，模型会写入最佳 checkpoint 所在目录，文件名为 `policy.onnx`：
 
 ```bash
-mxexport onnx \
+mxlab export-onnx \
   run_dir=runs/cartpole/skrl/torch/ppo/<timestamp>
 ```
 
@@ -111,7 +111,7 @@ print(actions)
 例如，导出为 opset 17，并增加检查样本数：
 
 ```bash
-mxexport onnx \
+mxlab export-onnx \
   run_dir=<run-dir> \
   output=policy.onnx \
   opset=17 \

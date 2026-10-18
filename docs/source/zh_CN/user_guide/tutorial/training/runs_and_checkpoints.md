@@ -93,7 +93,7 @@ runs/g1-walk-flat/motrix/torch/fastsac/26-07-06_11-37-50-376526/
 ```
 
 -   `manifest.json` 里的 `path` 相对于 `checkpoints/` 目录。
--   **`best_policy`**（`kind: policy`）：用于回放 / 导出 / 评测，是 `mxplay` 默认加载的产物。
+-   **`best_policy`**（`kind: policy`）：用于回放 / 导出 / 评测，是 `mxlab play` 默认加载的产物。
 -   **`latest_training_state`**（`kind: training_state`）：用于续训，应包含 optimizer、观测归一化器、replay buffer、`global_step` 等继续训练所需的完整状态。
 -   同一个物理文件可以**同时登记为两个 artifact**。例如 FastSAC 的 `latest.pt`（完整 state dict）既能回放又能续训，因此 `best_policy` 与 `latest_training_state` 都指向它。
 
@@ -106,16 +106,16 @@ runs/g1-walk-flat/motrix/torch/fastsac/26-07-06_11-37-50-376526/
 
     ```bash
     # 自动发现最新 run 的最佳策略
-    mxplay env=g1-walk-flat
+    mxlab play env=g1-walk-flat
 
     # 指定某个 checkpoint（需能向上找到 metadata.json）
-    mxplay env=g1-walk-flat policy=/path/to/run/checkpoints/latest.pt
+    mxlab play env=g1-walk-flat policy=/path/to/run/checkpoints/latest.pt
     ```
 
 -   **续训（resume）**：将 `resume=` 设置为 run 目录或 checkpoint 路径，框架据此解析出 `latest_training_state` 继续训练。
 
     ```bash
-    mxtrain task=g1-walk-flat/motrix.fastsac \
+    mxlab train task=g1-walk-flat/motrix.fastsac \
       resume=/path/to/run
     ```
 

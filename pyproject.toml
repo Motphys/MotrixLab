@@ -5,6 +5,7 @@ description = "A general-purpose machine learning architecture designed for robo
 authors = [{ name = "Motphys", email = "developers@motphys.com" }]
 requires-python = ">=3.10,<3.14"
 dependencies = [
+    "motrixlab==0.4.0b1",
     "motrix-deploy==0.4.0b1",
     "motrix-deploy-mujoco==0.4.0b1",
     "motrix-deploy-motrixsim==0.4.0b1",
@@ -63,6 +64,7 @@ test = [
 
 [tool.uv.workspace]
 members = [
+    "motrixlab",
     "motrix_robots",
     "motrix_deploy",
     "motrix_deploy_mujoco",
@@ -93,6 +95,7 @@ name = "pypi"
 url = "https://pypi.org/simple"
 
 [tool.uv.sources]
+motrixlab = { workspace = true }
 motrix-robots = { workspace = true }
 motrix-env-core = { workspace = true }
 motrix-deploy = { workspace = true }
@@ -114,8 +117,8 @@ version_provider = "uv"
 version_scheme = "pep440"
 tag_format = "v$version"
 version_files = [
-    'pyproject.toml:"motrix-[a-z0-9-]+(?:\[[^"\]]+\])?==',
-    '*/pyproject.toml:^version = |"motrix-[a-z0-9-]+(?:\[[^"\]]+\])?==',
+    'pyproject.toml:"(?:motrix-[a-z0-9-]+|motrixlab)(?:\[[^"\]]+\])?==',
+    '*/pyproject.toml:^version = |"(?:motrix-[a-z0-9-]+|motrixlab)(?:\[[^"\]]+\])?==',
 ]
 
 [tool.pytest.ini_options]

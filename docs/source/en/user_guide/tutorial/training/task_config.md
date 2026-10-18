@@ -62,7 +62,7 @@ A Task only needs to contain values that differ from the algorithm base. It does
 
 ### Inspect and run the Task
 
-`mxtrain` uses `./configs` in the current working directory when it exists; it does not search parent directories. Use `--config-dir /path/to/configs` to select another configuration directory. A Task must be selected explicitly; there is no default Cartpole Task.
+`mxlab train` uses `./configs` in the current working directory when it exists; it does not search parent directories. Use `--config-dir /path/to/configs` to select another configuration directory. A Task must be selected explicitly; there is no default Cartpole Task.
 
 Install the environment package before running the Task; registry queries discover installed providers automatically.
 See [Environment registration](../building_envs/direct_env.md#environment-registration) to package a custom environment;
@@ -71,19 +71,19 @@ Task YAML discovery remains separate.
 Print the fully composed Hydra configuration before starting training:
 
 ```bash
-mxtrain --cfg job --resolve task=my-robot/skrl.ppo
+mxlab train --cfg job --resolve task=my-robot/skrl.ppo
 ```
 
 This command does not start training. After verifying `task.env`, `num_envs`, and `algo.trainer.timesteps`, start the run:
 
 ```bash
-mxtrain task=my-robot/skrl.ppo
+mxlab train task=my-robot/skrl.ppo
 ```
 
 List all Tasks available in the repository with:
 
 ```bash
-mxtrain --help
+mxlab train --help
 ```
 
 ## Adjust Task runtime settings
@@ -197,7 +197,7 @@ The MotrixLab CLI uses Hydra's `key=value` syntax. CLI values apply only to the 
 ### Override runtime settings
 
 ```bash
-mxtrain \
+mxlab train \
   task=my-robot/skrl.ppo \
   num_envs=64 \
   seed=7 \
@@ -208,7 +208,7 @@ mxtrain \
 Enable training rendering and play the policy afterward:
 
 ```bash
-mxtrain task=my-robot/skrl.ppo render=true play=true
+mxlab train task=my-robot/skrl.ppo render=true play=true
 ```
 
 ### Override algorithm settings
@@ -216,7 +216,7 @@ mxtrain task=my-robot/skrl.ppo render=true play=true
 SKRL PPO:
 
 ```bash
-mxtrain \
+mxlab train \
   task=my-robot/skrl.ppo \
   algo.agent.learning_rate=5e-4 \
   algo.agent.learning_epochs=8 \
@@ -226,7 +226,7 @@ mxtrain \
 RSLRL PPO:
 
 ```bash
-mxtrain \
+mxlab train \
   task=cartpole/rslrl.ppo \
   algo.algorithm.learning_rate=5e-4 \
   algo.algorithm.entropy_coef=0.005 \
@@ -236,7 +236,7 @@ mxtrain \
 FastSAC:
 
 ```bash
-mxtrain \
+mxlab train \
   task=g1-walk-flat/motrix.fastsac \
   algo.asynchronous=true \
   algo.agent.actor_learning_rate=1e-4 \
@@ -250,20 +250,20 @@ mxtrain \
 Use lowercase `true` and `false` for booleans:
 
 ```bash
-mxtrain task=my-robot/skrl.ppo render=true
+mxlab train task=my-robot/skrl.ppo render=true
 ```
 
 Use `null` to clear nullable fields:
 
 ```bash
-mxtrain task=my-robot/skrl.ppo seed=null
-mxtrain task=my-robot/skrl.ppo algo.agent.learning_rate_scheduler=null
+mxlab train task=my-robot/skrl.ppo seed=null
+mxlab train task=my-robot/skrl.ppo algo.agent.learning_rate_scheduler=null
 ```
 
 Quote lists so the shell does not interpret brackets:
 
 ```bash
-mxtrain \
+mxlab train \
   task=my-robot/skrl.ppo \
   'algo.models.policy.hiddens=[128,64]' \
   'algo.models.value.hiddens=[128,64]'
@@ -280,7 +280,7 @@ Training uses structured schemas. Existing fields do not need a `+` prefix. Add 
 Combine CLI overrides with `--cfg job --resolve` to inspect the exact values that would be used:
 
 ```bash
-mxtrain \
+mxlab train \
   --cfg job \
   --resolve \
   task=my-robot/skrl.ppo \
@@ -322,13 +322,13 @@ algo:
 Train with the JAX delta:
 
 ```bash
-mxtrain task=go2-walk-flat/skrl.ppo.jax
+mxlab train task=go2-walk-flat/skrl.ppo.jax
 ```
 
 Overriding the backend directly also selects the JAX trainer:
 
 ```bash
-mxtrain task=go2-walk-flat/skrl.ppo task.train_backend=jax
+mxlab train task=go2-walk-flat/skrl.ppo task.train_backend=jax
 ```
 
 This form does not load backend-specific values from `skrl.ppo.jax.yaml`. Select the `.jax` or `.torch` Task directly when a backend delta exists.
@@ -349,7 +349,6 @@ motrix_rl/src/motrix_rl/configs/
     └── motrix.fastsac.yaml
 
 configs/
-├── view.yaml
 └── task/
     └── <env>/
         ├── <rllib>.<algo>.yaml
@@ -420,18 +419,18 @@ Hydra validates field names and types against the structured schema registered b
 
 ## Play and View overrides
 
-`mxplay` restores the saved run configuration without requiring the training Task directory. It and `scripts/view.py` use the same `key=value` syntax:
+`mxlab play` restores the saved run configuration without requiring the training Task directory. It and `mxlab view` use the same `key=value` syntax:
 
 ```bash
-python scripts/view.py env=cartpole num_envs=4
-mxplay env=cartpole num_envs=1
-mxplay policy=/path/to/checkpoint.pt num_envs=1
+mxlab view env=cartpole num_envs=4
+mxlab play env=cartpole num_envs=1
+mxlab play policy=/path/to/checkpoint.pt num_envs=1
 ```
 
 Play loads the `task_config.yaml` stored with a training run. To temporarily override algorithm settings, use `rl` as the algorithm root. Since `rl` starts as an empty mapping, add the path with `+`:
 
 ```bash
-mxplay \
+mxlab play \
   env=cartpole \
   '+rl.agent.learning_rate=1e-4'
 ```

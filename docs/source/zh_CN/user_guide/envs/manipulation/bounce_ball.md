@@ -411,13 +411,13 @@ $$
 ### 1. 环境预览
 
 ```bash
-python scripts/view.py env=bounce_ball
+mxlab view env=bounce_ball
 ```
 
 ### 2. 开始训练
 
 ```bash
-mxtrain task=bounce_ball/skrl.ppo
+mxlab train task=bounce_ball/skrl.ppo
 ```
 
 ### 3. 查看训练进度
@@ -429,7 +429,7 @@ tensorboard --logdir runs/bounce_ball
 ### 4. 测试训练结果
 
 ```bash
-mxplay env=bounce_ball
+mxlab play env=bounce_ball
 ```
 
 ---

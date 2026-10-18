@@ -310,5 +310,5 @@ def make_microduck_ball_balance_cfg() -> MicroduckBallBalanceEnvCfg:
 registry.env("microduck-ball-balance")(ManagerEnv)
 ```
 
-Once registered, preview it with `python scripts/view.py env=<name>` and start training
+Once registered, preview it with `mxlab view env=<name>` and start training
 by creating a Task as described in [Task Configuration](../training/task_config.md).

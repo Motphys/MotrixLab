@@ -11,6 +11,7 @@ MotrixLab 是构建在 MotrixSim 仿真后端之上的强化学习框架，提�
 
 项目使用 UV workspace，包含以下 package：
 
+- `motrixlab`：提供统一 CLI `mxlab` 与跨组件可视化的应用集成包，默认安装 core、deploy、RL、builtin provider 与 MotrixSim 环境后端
 - `motrix_env_core`：backend 无关的环境框架、配置与机器人 registry
 - `motrix_env_motrixsim`：MotrixSim 仿真后端（SimBackend、scene compiler、renderer、torch frontend）
 - `motrix_env_mujoco`：仅用于编译的 MuJoCo scene 后端
@@ -26,7 +27,10 @@ MotrixLab 是构建在 MotrixSim 仿真后端之上的强化学习框架，提�
 - `motrix_deploy_unitree`：Unitree 硬件配置、sensor/actuation 接线与 SDK2 DDS 硬件后端插件
 - `motrix_deploy_tasks`：具体部署任务实现
 
-`motrix_rl.commands.train` / `play` 提供安装后的 `mxtrain` / `mxplay` 入口，`scripts/` 保留可视化等工具。
+`motrixlab` 提供唯一的 `mxlab` 入口，在 `motrixlab.commands.view` 实现环境与机器人可视化，并在 `motrixlab.configs` 打包 `view.yaml`。
+`train`、`play`、`export-onnx`、`export-deploy` 分发到 `motrix_rl.commands`，`deploy` 分发到 `motrix_deploy.cli`；
+组件命令实现与内部可调用 adapter 保持在各自 package 中，不提供独立模块 CLI。
+版本查询只使用 `mxlab --version`。环境与机器人可视化使用 `mxlab view`；`scripts/` 保留其他仓库辅助工具。
 内置环境由环境 package 注册并通过项目 registry 暴露；simulator backend 通过项目 backend registry 选择，
 core package 不依赖任何具体 simulator 实现。
 
@@ -133,7 +137,7 @@ Python 方法，由 manager 运行时契约定义（`wiki/design/manager/runtime
 
 项目使用 UV 管理依赖，默认 Python 3.10；不含 Unitree 硬件部署插件的仿真与训练也支持 Python 3.11。
 Unitree 硬件部署插件与包含该插件的 `--all` 安装仍仅支持 Python 3.10；Unitree 机器人模型的仿真与训练不受此限制。
-可用的依赖组与 extras 见 `pyproject.toml`。
+根开发环境默认安装 `motrixlab`，提供 `mxlab` CLI。可用的依赖组与 extras 见 `pyproject.toml`。
 
 完整开发环境（Python 3.10，全部 package、依赖组与 extras；`--gpu rocm` 切换 AMD wheel）：
 
@@ -163,20 +167,20 @@ CLI 用法与项目配置接入见 [motrix_rl/README.md](motrix_rl/README.md)。
 SKRL（默认）：
 
 ```bash
-mxtrain task=cartpole/skrl.ppo
+mxlab train task=cartpole/skrl.ppo
 ```
 
 RSLRL：
 
 ```bash
-mxtrain task=cartpole/rslrl.ppo
+mxlab train task=cartpole/rslrl.ppo
 ```
 
 直接覆写框架运行时设置和类型化 RL 参数：
 
 ```bash
-mxtrain task=cartpole/skrl.ppo num_envs=64 algo.agent.learning_rate=1e-3
-mxtrain task=cartpole/skrl.ppo logging.interval=20 checkpoint.interval=100
+mxlab train task=cartpole/skrl.ppo num_envs=64 algo.agent.learning_rate=1e-3
+mxlab train task=cartpole/skrl.ppo logging.interval=20 checkpoint.interval=100
 ```
 
 ### 环境可视化
@@ -184,37 +188,37 @@ mxtrain task=cartpole/skrl.ppo logging.interval=20 checkpoint.interval=100
 不训练只查看环境：
 
 ```bash
-python scripts/view.py env=cartpole
+mxlab view env=cartpole
 ```
 
 查看内置机器人（不创建 RL 环境）：
 
 ```bash
-python scripts/view.py robot=g1-29dof
+mxlab view robot=g1-29dof
 ```
 
 ### 评估
 
 ```bash
-mxplay env=cartpole
+mxlab play env=cartpole
 ```
 
 指定 policy 文件：
 
 ```bash
-mxplay env=cartpole policy=<path/to/best.[pickle/pt]>
+mxlab play env=cartpole policy=<path/to/best.[pickle/pt]>
 ```
 
 ### ONNX 导出
 
 ```bash
-mxexport onnx run_dir=<run-dir> output=/tmp/policy.onnx
+mxlab export-onnx run_dir=<run-dir> output=/tmp/policy.onnx
 ```
 
 ### 部署 artifact 导出
 
 ```bash
-mxexport deploy run_dir=<run-dir> output=artifacts/policy.deploy
+mxlab export-deploy run_dir=<run-dir> output=artifacts/policy.deploy
 ```
 
 ### 渲染
@@ -222,7 +226,7 @@ mxexport deploy run_dir=<run-dir> output=artifacts/policy.deploy
 训练时开启可视化：
 
 ```bash
-mxtrain task=cartpole/skrl.ppo render=true
+mxlab train task=cartpole/skrl.ppo render=true
 ```
 
 ### TensorBoard
@@ -274,4 +278,4 @@ prek run --all-files
 ## 备注
 
 - JAX 与 PyTorch backend 均支持 CUDA。
-- MotrixSim package 使用内部 PyPI server。
+- MotrixSim（`motrixsim` / `motrixsim-core`）通过公开 PyPI 分发。

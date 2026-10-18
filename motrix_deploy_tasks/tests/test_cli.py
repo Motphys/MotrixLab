@@ -45,7 +45,7 @@ def _rollout_result(stdout: str) -> dict[str, object]:
 @pytest.mark.parametrize("args", [[], ["--help"]])
 def test_cli_general_help(args: list[str]) -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "motrix_deploy.cli", *args],
+        [sys.executable, "-m", "motrixlab.cli", "deploy", *args],
         check=False,
         capture_output=True,
         text=True,
@@ -59,8 +59,9 @@ def test_cli_help() -> None:
     result = subprocess.run(
         [
             sys.executable,
-            "-c",
-            "from motrix_deploy.cli import main; raise SystemExit(main())",
+            "-m",
+            "motrixlab.cli",
+            "deploy",
             "task=go2-walk-rough/sim",
             "--help",
         ],
@@ -79,8 +80,9 @@ def test_hardware_cli_help_selects_hardware_recipe() -> None:
     result = subprocess.run(
         [
             sys.executable,
-            "-c",
-            "from motrix_deploy.cli import main; raise SystemExit(main())",
+            "-m",
+            "motrixlab.cli",
+            "deploy",
             "task=go2-walk-flat/hardware",
             "--help",
         ],
@@ -105,7 +107,7 @@ def test_installed_recipes_compose_outside_workspace(tmp_path, task, runtime_kin
     if runtime_kind == "hardware":
         pytest.importorskip("motrix_deploy_unitree.config")
     result = subprocess.run(
-        [sys.executable, "-m", "motrix_deploy.cli", f"task={task}", "--cfg", "job"],
+        [sys.executable, "-m", "motrixlab.cli", "deploy", f"task={task}", "--cfg", "job"],
         cwd=tmp_path,
         check=False,
         capture_output=True,
@@ -295,8 +297,9 @@ def test_headless_simulation_cli_runs_deterministic_onnx_fixture(tmp_path: Path,
     write_artifact(artifact_path, manifest, {"policy/model.onnx": policy_bytes})
     command = [
         sys.executable,
-        "-c",
-        "from motrix_deploy.cli import main; raise SystemExit(main())",
+        "-m",
+        "motrixlab.cli",
+        "deploy",
         f"task={task}/sim",
         f"runtime.backend={backend}",
         f"artifact={artifact_path}",
@@ -357,8 +360,9 @@ def test_standard_cli_completes_four_phase_flow(tmp_path, backend, solver_iterat
     write_artifact(artifact, manifest, {"policy/model.onnx": payload, **profile.payloads})
     command = [
         sys.executable,
-        "-c",
-        "from motrix_deploy.cli import main; main()",
+        "-m",
+        "motrixlab.cli",
+        "deploy",
         "task=g1-wbt-dance/sim",
         f"artifact={artifact}",
         "runtime.viewer=false",

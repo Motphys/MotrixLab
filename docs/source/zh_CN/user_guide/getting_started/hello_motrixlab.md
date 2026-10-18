@@ -2,14 +2,16 @@
 
 本教程通过演示一个简单例子 - 加载倒立摆并进行训练，以此来展示 MotrixLab 工作流程：
 
-请先完成[环境安装](installation.md)，然后激活环境：`source .venv/bin/activate`（Windows PowerShell：`.venv\Scripts\Activate.ps1`）。
+本教程使用仓库内置的倒立摆任务。请先完成{ref}`在 MotrixLab 仓库中安装 <installation-repository>`，然后激活环境：`source .venv/bin/activate`（Windows PowerShell：`.venv\Scripts\Activate.ps1`）。以下命令均在仓库根目录执行。
+
+安装后通过统一的 `mxlab` 命令训练和评估策略；使用 `mxlab --help` 查看命令，`mxlab --version` 查看版本。
 
 ## 环境预览
 
-我们提供了一个简单的脚本，用于可视化一个环境，而不执行任何训练，这可以帮助您检测系统的环境依赖是否配置正确：
+使用 `mxlab view` 可视化环境，而不执行任何训练，这可以帮助您检测系统的环境依赖是否配置正确：
 
 ```bash
-python scripts/view.py env=cartpole
+mxlab view env=cartpole
 ```
 
 这将打开一个可视化窗口，显示倒立摆的物理仿真环境，使用随机动作进行演示。
@@ -19,7 +21,7 @@ python scripts/view.py env=cartpole
 开始训练倒立摆平衡任务：
 
 ```bash
-mxtrain task=cartpole/skrl.ppo
+mxlab train task=cartpole/skrl.ppo
 ```
 
 训练过程会自动：
@@ -38,7 +40,7 @@ mxtrain task=cartpole/skrl.ppo
 如果您想要在训练过程中观察模型的学习过程，可以启用可视化渲染：
 
 ```bash
-mxtrain task=cartpole/skrl.ppo render=true
+mxlab train task=cartpole/skrl.ppo render=true
 ```
 
 ### 🎮 交互式渲染控制
@@ -67,10 +69,10 @@ tensorboard --logdir runs/cartpole
 
 ```bash
 # 自动寻找最佳策略测试（推荐）
-mxplay env=cartpole
+mxlab play env=cartpole
 
 # 手动指定带 metadata 的 run 中的 checkpoint
-mxplay env=cartpole policy=/path/to/run/checkpoints/policy-file
+mxlab play env=cartpole policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **提示**：系统会自动在 `runs/cartpole/` 下寻找最新 run 的最佳策略。手动指定的 checkpoint 必须属于包含 `metadata.json` 和 `task_config.yaml` 的 run。

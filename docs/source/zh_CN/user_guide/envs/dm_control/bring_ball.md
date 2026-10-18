@@ -137,7 +137,7 @@ penalty_side + penalty_hover
 ### 1. 环境预览（随机动作）
 
 ```bash
-python scripts/view.py env=dm-manipulator-bring-ball
+mxlab view env=dm-manipulator-bring-ball
 ```
 
 ### 2. 开始训练
@@ -145,7 +145,7 @@ python scripts/view.py env=dm-manipulator-bring-ball
 建议显式指定训练后端（JAX / PyTorch 二选一）：
 
 ```bash
-mxtrain task=dm-manipulator-bring-ball/skrl.ppo.torch
+mxlab train task=dm-manipulator-bring-ball/skrl.ppo.torch
 ```
 
 ### 3. 查看训练进度
@@ -157,7 +157,7 @@ tensorboard --logdir runs/dm-manipulator-bring-ball
 ### 4. 测试训练结果
 
 ```bash
-mxplay env=dm-manipulator-bring-ball
+mxlab play env=dm-manipulator-bring-ball
 ```
 
 ---

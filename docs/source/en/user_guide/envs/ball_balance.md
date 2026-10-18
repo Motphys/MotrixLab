@@ -19,19 +19,19 @@ The ball-balance task keeps the 14-DoF biped robot Microduck standing on a free 
 Preview the environment without training:
 
 ```bash
-python scripts/view.py env=microduck-ball-balance
+mxlab view env=microduck-ball-balance
 ```
 
 Train with the built-in Motrix FastSAC config (the only training config provided for this task; `num_envs=2048`, 20000 iterations):
 
 ```bash
-mxtrain task=microduck-ball-balance/motrix.fastsac
+mxlab train task=microduck-ball-balance/motrix.fastsac
 ```
 
 Evaluate a trained policy:
 
 ```bash
-mxplay env=microduck-ball-balance
+mxlab play env=microduck-ball-balance
 ```
 
 ## Action space

@@ -1,25 +1,16 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-import importlib.util
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from motrix_robots.unitree import UnitreeGo2Robot
+from motrixlab.commands import view
+from motrixlab.commands.view import ViewConfig
 
 from motrix_env_core import registry
-from motrix_rl.config import ViewConfig
-
-VIEW_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "view.py"
-VIEW_MODULE_SPEC = importlib.util.spec_from_file_location("motrix_test_view_script", VIEW_SCRIPT)
-if VIEW_MODULE_SPEC is None or VIEW_MODULE_SPEC.loader is None:
-    raise ImportError(f"Unable to load {VIEW_SCRIPT}")
-view = importlib.util.module_from_spec(VIEW_MODULE_SPEC)
-sys.modules[VIEW_MODULE_SPEC.name] = view
-VIEW_MODULE_SPEC.loader.exec_module(view)
 
 
 def test_default_view_target_is_cartpole(monkeypatch):

@@ -11,7 +11,7 @@ An environment consists of two parts, each registered under the environment name
 - **Environment class**: implements the task logic, registered via
   `@registry.env("name")`.
 
-Once registered, `scripts/view.py`, the trainers, and the replay flow all create the
+Once registered, `mxlab view`, the trainers, and the replay flow all create the
 environment by name through the same registry. Installed environment packages are discovered automatically;
 see [Environment registration](direct_env.md#environment-registration) to publish a package for either workflow.
 

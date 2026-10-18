@@ -48,7 +48,7 @@ class MyTaskEnvCfg(EnvCfg):
 可以直接预览效果：
 
 ```bash
-python scripts/view.py env=go1-walk-rough
+mxlab view env=go1-walk-rough
 ```
 
 ## 生成器契约

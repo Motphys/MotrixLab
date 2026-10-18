@@ -15,13 +15,13 @@ CartPole is a classic control task in reinforcement learning. The goal is to kee
 ### 1. Environment Preview
 
 ```bash
-python scripts/view.py env=cartpole
+mxlab view env=cartpole
 ```
 
 ### 2. Start Training
 
 ```bash
-mxtrain task=cartpole/skrl.ppo
+mxlab train task=cartpole/skrl.ppo
 ```
 
 ### 3. View Training Progress
@@ -33,7 +33,7 @@ tensorboard --logdir runs/cartpole
 ### 4. Test Training Results
 
 ```bash
-mxplay env=cartpole
+mxlab play env=cartpole
 ```
 
 > **Tip**: The system finds the latest metadata-backed run under `runs/cartpole/` and loads its `best_policy` artifact. Use `policy=...` to select another checkpoint from a metadata-backed run.

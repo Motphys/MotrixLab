@@ -1,0 +1,5 @@
+# Local setuptools build artifacts.
+/build/
+/dist/
+/*.egg-info/
+/src/*.egg-info/

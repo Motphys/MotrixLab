@@ -102,13 +102,13 @@ terminated = True
 ### 1. Environment Preview
 
 ```bash
-python scripts/view.py env=dm-reacher
+mxlab view env=dm-reacher
 ```
 
 ### 2. Start Training
 
 ```bash
-mxtrain task=dm-reacher/skrl.ppo
+mxlab train task=dm-reacher/skrl.ppo
 ```
 
 ### 3. View Training Progress
@@ -120,7 +120,7 @@ tensorboard --logdir runs/dm-reacher
 ### 4. Test Training Results
 
 ```bash
-mxplay env=dm-reacher
+mxlab play env=dm-reacher
 ```
 
 ## Expected Training Results

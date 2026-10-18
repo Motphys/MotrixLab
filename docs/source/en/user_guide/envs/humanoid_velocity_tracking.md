@@ -93,16 +93,16 @@ weight and mean return may decrease; this is a change in reward scale rather tha
 Choose an environment ID and one of its training configs from the table, then replace `ENV_ID` and `TRAINING_CONFIG`:
 
 ```bash
-python scripts/view.py env=ENV_ID num_envs=1
-mxtrain task=ENV_ID/TRAINING_CONFIG
-mxplay env=ENV_ID num_envs=16
+mxlab view env=ENV_ID num_envs=1
+mxlab train task=ENV_ID/TRAINING_CONFIG
+mxlab play env=ENV_ID num_envs=16
 ```
 
 For example, train the K1 uneven-terrain task with asynchronous FastSAC:
 
 ```bash
-mxtrain task=k1-walk-rough/motrix.fastsac algo.asynchronous=true
+mxlab train task=k1-walk-rough/motrix.fastsac algo.asynchronous=true
 ```
 
-`view.py` applies random actions and is intended for scene and model inspection. Use `mxplay` with a trained policy to
+`mxlab view` applies random actions and is intended for scene and model inspection. Use `mxlab play` with a trained policy to
 inspect the learned gait.

@@ -19,13 +19,13 @@ RL 集成层需要在同一套入口下承载多个 RL 框架和多种算法：
 
 ## 2. 设计目标
 
-1. **RL method 是一等 CLI 维度**：用户通过 `--algo skrl.ppo` 直接选择一套 RL 方法，而非组合多个开关。
+1. **RL method 是一等配置维度**：用户通过 `mxlab train task=cartpole/skrl.ppo` 选择环境与 RL 方法的完整训练配方。
 2. **内部维度正交**：配置查找、trainer 查找、run metadata、checkpoint 发现都显式包含 `rllib / train_backend / algo`。
-3. **默认行为兼容**：不传 `--algo` 时默认 `skrl.ppo`。
+3. **训练配方显式选择**：训练必须提供 `task=...`，不隐式选择环境或算法。
 4. **算法可独立演进**：每个算法可自定义模型角色、memory、agent 配置和 runtime 配置。
 5. **共享通用编排**：环境创建、seed、run 目录、metadata、train/play 主流程不在每个算法里重复。
 6. **配置按算法收敛**：每个算法拥有独立配置类型，字段不跨算法泄漏。
-7. **外部接入面稳定**：外部算法实现 `TrainerBase`、注册 `RlFramework`/`AgentProvider`、注册配置类后，不需要修改 `scripts/train.py`、`scripts/play.py`、checkpoint 发现或 backend 选择逻辑。
+7. **外部接入面稳定**：外部算法实现 `TrainerBase`、注册 `RlFramework`/`AgentProvider`、注册配置类后，不需要修改 `mxlab train`、`mxlab play`、checkpoint 发现或 backend 选择逻辑。
 
 ## 3. 非目标
 
@@ -38,7 +38,7 @@ RL 集成层需要在同一套入口下承载多个 RL 框架和多种算法：
 
 ```
 ┌─────────────────────────────────────────────┐
-│ scripts/train.py · scripts/play.py          │
+│ mxlab train · mxlab play                     │
 │ CLI 解析、自动发现、错误展示                 │
 ├─────────────────────────────────────────────┤
 │ motrix_rl.runner                            │
@@ -99,16 +99,17 @@ rslrl.ppo
 motrix.fastsac
 ```
 
-`train.py` 用 `--algo` 承载该 method，默认 `skrl.ppo`；`--train-backend` 单独指定 train backend，未指定时自动选择。示例：
+`mxlab train` 通过 Hydra 的 `task=<env>/<rllib>.<algo>` 选择完整训练配方；`task.train_backend` 可单独覆写训练后端，未指定时自动选择。激活安装环境后运行：
 
 ```bash
-uv run scripts/train.py task=cartpole/skrl.ppo
-uv run scripts/train.py task=cartpole/rslrl.ppo
-uv run scripts/train.py task=g1-walk-flat/motrix.fastsac
-uv run scripts/train.py task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
+mxlab train task=cartpole/skrl.ppo
+mxlab train task=cartpole/rslrl.ppo
+mxlab train task=g1-walk-flat/motrix.fastsac
+mxlab train task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
 ```
 
-`--rllib` 作为兼容开关保留：传 `--rllib skrl --algo ppo` 解析为 `skrl.ppo`；传 `--algo skrl.ppo` 时不需要 `--rllib`；两者冲突时报错。
+`mxlab` 是唯一 CLI 入口；train/play/export 的实现与内部可调用 adapter 保留在 `motrix_rl.commands`，不提供独立模块 CLI。
+版本查询只使用 `mxlab --version`。
 
 ### 5.2 method 解析
 
@@ -322,7 +323,7 @@ def create_training_handle(request: TrainRequest) -> TrainerHandle:
     )
 ```
 
-play 编排不引入独立 request 类型：入口（`scripts/play.py`）或 `TrainResult.play(...)` 先解析出 `RunContext`（从 metadata），再调用同一个 `create_trainer(create_trainer_context(run, ...))`，最后 `trainer.play(policy_path)`。best policy 与 resume checkpoint 的定位统一走 `motrix_rl.checkpoints`。
+play 编排不引入独立 request 类型：入口（`mxlab play`）或 `TrainResult.play(...)` 先解析出 `RunContext`（从 metadata），再调用同一个 `create_trainer(create_trainer_context(run, ...))`，最后 `trainer.play(policy_path)`。best policy 与 resume checkpoint 的定位统一走 `motrix_rl.checkpoints`。
 
 `TrainResult` 是 run 的查询视图：
 
@@ -551,9 +552,9 @@ MAPPO 还需 centralized critic state（`global_state | dict[agent_id, critic_st
 
 ## 17. 兼容性与不变量
 
-- `train.py --algo` 接受 `rllib.algo` method，默认 `skrl.ppo`；`--env cartpole` 等价于 SKRL + auto backend + PPO。
-- `--algo rslrl.ppo` 等价于 RSLRL Torch PPO；`--rllib rslrl` 作为兼容写法等价，但提示 deprecated。
-- `play.py` 不要求 `--algo`，从最新 run metadata 反推 `rllib/train_backend/algo` 选择正确 inference path，可区分 PPO/SAC 等算法。
+- `mxlab train task=cartpole/skrl.ppo` 选择 SKRL PPO，未指定训练后端时自动选择。
+- `mxlab train task=cartpole/rslrl.ppo` 选择 RSLRL Torch PPO。
+- `mxlab play` 不要求 task 配方，从 run metadata 反推 `rllib/train_backend/algo` 选择正确 inference path，可区分 PPO/SAC 等算法。
 - `(env, rllib, train_backend, algo)` 可查到独立配置；`(rllib, train_backend, algo)` 可查到 `AgentProvider`。
 - run metadata 记录 `env/rllib/train_backend/algo`；没有 metadata/manifest 的旧 run 不参与 play 自动发现。
 - 新算法不影响现有 PPO 的默认超参数与训练路径。

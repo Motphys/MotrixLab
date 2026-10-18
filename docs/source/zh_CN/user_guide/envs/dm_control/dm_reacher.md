@@ -93,13 +93,13 @@ reward = tolerance(|| fingertip - target ||)
 ### 1. 环境预览
 
 ```bash
-python scripts/view.py env=dm-reacher
+mxlab view env=dm-reacher
 ```
 
 ### 2. 开始训练
 
 ```bash
-mxtrain task=dm-reacher/skrl.ppo
+mxlab train task=dm-reacher/skrl.ppo
 ```
 
 ### 3. 查看训练进度
@@ -111,7 +111,7 @@ tensorboard --logdir runs/dm-reacher
 ### 4. 测试训练结果
 
 ```bash
-mxplay env=dm-reacher
+mxlab play env=dm-reacher
 ```
 
 ---

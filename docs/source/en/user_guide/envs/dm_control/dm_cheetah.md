@@ -102,13 +102,13 @@ The cheetah's reward function consists of the following parts:
 ### 1. Environment Preview
 
 ```bash
-python scripts/view.py env=dm-cheetah
+mxlab view env=dm-cheetah
 ```
 
 ### 2. Start Training
 
 ```bash
-mxtrain task=dm-cheetah/skrl.ppo
+mxlab train task=dm-cheetah/skrl.ppo
 ```
 
 ### 3. View Training Progress
@@ -120,7 +120,7 @@ tensorboard --logdir runs/dm-cheetah
 ### 4. Test Training Results
 
 ```bash
-mxplay env=dm-cheetah
+mxlab play env=dm-cheetah
 ```
 
 ---

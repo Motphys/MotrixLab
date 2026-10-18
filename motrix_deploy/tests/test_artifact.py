@@ -85,7 +85,7 @@ def test_cli_inspect_outputs_json(tmp_path: Path, manifest_factory: Callable[[],
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join([str(tmp_path), str(Path(__file__).parent), env.get("PYTHONPATH", "")])
     result = subprocess.run(
-        [sys.executable, "-m", "motrix_deploy.cli", "inspect", f"artifact={output}"],
+        [sys.executable, "-m", "motrixlab.cli", "deploy", "inspect", f"artifact={output}"],
         env=env,
         check=False,
         capture_output=True,

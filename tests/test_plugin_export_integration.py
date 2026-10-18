@@ -118,8 +118,8 @@ def test_export_command_writes_onnx_and_reports_parity_outside_workspace(tmp_pat
         [
             sys.executable,
             "-m",
-            "motrix_rl.commands.export",
-            "onnx",
+            "motrixlab.cli",
+            "export-onnx",
             f"run_dir={run.run_dir}",
             f"output={output}",
             "parity.samples=4",

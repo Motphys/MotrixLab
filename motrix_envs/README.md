@@ -15,10 +15,10 @@ env = registry.make("cartpole", num_envs=1)
 The package includes the `basic`, `locomotion`, and `manipulation` environment families. Environment names used by
 training and playback commands remain unchanged.
 
-Install the `deploy` extra to use the built-in deployment profile compilers with `mxexport deploy`:
+Install the `deploy` extra to use the built-in deployment profile compilers with `mxlab export-deploy`:
 
 ```bash
-mxexport deploy env=go2-walk-rough output=artifacts/go2-walk-rough.deploy
+mxlab export-deploy env=go2-walk-rough output=artifacts/go2-walk-rough.deploy
 ```
 
 The installed package publishes one provider for its built-in profile compilers:

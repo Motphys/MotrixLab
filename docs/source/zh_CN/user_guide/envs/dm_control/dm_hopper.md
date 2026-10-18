@@ -109,15 +109,15 @@ hopper 的奖励函数由以下几个部分组成：
 ### 1. 环境预览
 
 ```bash
-python scripts/view.py env=dm-hopper-stand
-python scripts/view.py env=dm-hopper-hop
+mxlab view env=dm-hopper-stand
+mxlab view env=dm-hopper-hop
 ```
 
 ### 2. 开始训练
 
 ```bash
-mxtrain task=dm-hopper-stand/skrl.ppo
-mxtrain task=dm-hopper-hop/skrl.ppo
+mxlab train task=dm-hopper-stand/skrl.ppo
+mxlab train task=dm-hopper-hop/skrl.ppo
 ```
 
 ### 3. 查看训练进度
@@ -129,8 +129,8 @@ tensorboard --logdir runs/dm-hopper-hop
 ### 4. 测试训练结果
 
 ```bash
-mxplay env=dm-hopper-stand
-mxplay env=dm-hopper-hop
+mxlab play env=dm-hopper-stand
+mxlab play env=dm-hopper-hop
 ```
 
 ---

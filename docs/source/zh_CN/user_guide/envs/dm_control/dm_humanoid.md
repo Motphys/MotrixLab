@@ -185,17 +185,17 @@ total_reward = posture_reward * speed_reward * energy_reward * gait_reward
 ### 1. 环境预览
 
 ```bash
-python scripts/view.py env=dm-humanoid-stand
-python scripts/view.py env=dm-humanoid-walk
-python scripts/view.py env=dm-humanoid-run
+mxlab view env=dm-humanoid-stand
+mxlab view env=dm-humanoid-walk
+mxlab view env=dm-humanoid-run
 ```
 
 ### 2. 开始训练
 
 ```bash
-mxtrain task=dm-humanoid-stand/skrl.ppo
-mxtrain task=dm-humanoid-walk/skrl.ppo
-mxtrain task=dm-humanoid-run/skrl.ppo
+mxlab train task=dm-humanoid-stand/skrl.ppo
+mxlab train task=dm-humanoid-walk/skrl.ppo
+mxlab train task=dm-humanoid-run/skrl.ppo
 ```
 
 ### 3. 查看训练进度
@@ -207,9 +207,9 @@ tensorboard --logdir runs/dm-humanoid-walk
 ### 4. 测试训练结果
 
 ```bash
-mxplay env=dm-humanoid-stand
-mxplay env=dm-humanoid-walk
-mxplay env=dm-humanoid-run
+mxlab play env=dm-humanoid-stand
+mxlab play env=dm-humanoid-walk
+mxlab play env=dm-humanoid-run
 ```
 
 ---

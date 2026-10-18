@@ -74,6 +74,7 @@ members = [
     "motrix-rl-rslrl",
     "motrix-rl-skrl",
     "motrix-robots",
+    "motrixlab",
 ]
 
 [[package]]
@@ -523,7 +524,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.11' or sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -1329,6 +1330,7 @@ dependencies = [
     { name = "motrix-rl" },
     { name = "motrix-rl-builtin" },
     { name = "motrix-rl-skrl" },
+    { name = "motrixlab" },
 ]
 
 [package.optional-dependencies]
@@ -1400,6 +1402,7 @@ requires-dist = [
     { name = "motrix-rl-rslrl", marker = "extra == 'rslrl'", editable = "motrix_rl_rslrl" },
     { name = "motrix-rl-skrl", editable = "motrix_rl_skrl" },
     { name = "motrix-rl-skrl", extras = ["jax"], marker = "extra == 'skrl-jax'", editable = "motrix_rl_skrl" },
+    { name = "motrixlab", editable = "motrixlab" },
     { name = "myst-parser", marker = "extra == 'docs'" },
     { name = "pydata-sphinx-theme", marker = "extra == 'docs'" },
     { name = "sphinx", marker = "extra == 'docs'" },
@@ -1564,6 +1567,37 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "motrix-env-core", editable = "motrix_env_core" }]
+
+[[package]]
+name = "motrixlab"
+version = "0.4.0b1"
+source = { editable = "motrixlab" }
+dependencies = [
+    { name = "gymnasium" },
+    { name = "hydra-core" },
+    { name = "motrix-deploy" },
+    { name = "motrix-env-core" },
+    { name = "motrix-env-motrixsim" },
+    { name = "motrix-rl" },
+    { name = "motrix-rl-builtin" },
+    { name = "motrixsim" },
+    { name = "numpy" },
+    { name = "omegaconf" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "gymnasium", specifier = "==1.1.1" },
+    { name = "hydra-core", specifier = ">=1.3,<1.4" },
+    { name = "motrix-deploy", editable = "motrix_deploy" },
+    { name = "motrix-env-core", editable = "motrix_env_core" },
+    { name = "motrix-env-motrixsim", editable = "motrix_env_motrixsim" },
+    { name = "motrix-rl", editable = "motrix_rl" },
+    { name = "motrix-rl-builtin", editable = "motrix_rl_builtin" },
+    { name = "motrixsim", specifier = "==0.10.1" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "omegaconf", specifier = ">=2.3,<2.4" },
+]
 
 [[package]]
 name = "motrixsim"

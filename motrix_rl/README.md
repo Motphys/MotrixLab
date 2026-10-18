@@ -69,28 +69,28 @@ a `rocm` extra's Torch version alone does not guarantee a ROCm build. GPU select
 
 ## Usage
 
-Installing `motrix-rl` provides `mxtrain`, `mxplay`, and `mxexport`, backed by `motrix_rl.commands.train`,
-`motrix_rl.commands.play`, and the `motrix_rl.commands.export` dispatcher. `mxexport` requires an explicit
-`onnx` or `deploy` subcommand; there is no default subcommand. Their primary Hydra configurations ship in
+Install `motrixlab` for the `mxlab train`, `mxlab play`, `mxlab export-onnx`, and `mxlab export-deploy`
+commands, backed by `motrix_rl.commands.train`, `motrix_rl.commands.play`,
+`motrix_rl.commands.export_onnx`, and `motrix_rl.commands.export_deploy`. Their primary Hydra configurations ship in
 `motrix_rl.configs`; the commands do not require a repository checkout or a particular working directory.
-For training and playback, install an environment package and the selected provider too.
+For training and playback, install an environment package and the selected provider too. The application package also provides `mxlab view` for environment and robot visualization; see the [integration package README](../motrixlab/README.md).
 For the built-in environments, activate the installed workspace environment (`source .venv/bin/activate`) and run from
 the workspace root:
 
 ```bash
-mxtrain task=cartpole/skrl.ppo
-mxtrain task=cartpole/rslrl.ppo
-mxtrain task=g1-walk-rough/motrix.fastsac
-mxplay env=cartpole
-mxplay env=cartpole policy=/path/to/run
-mxexport onnx run_dir=/path/to/run output=artifacts/policy.onnx
-mxexport deploy run_dir=/path/to/run output=artifacts/policy.deploy
-mxexport deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
+mxlab train task=cartpole/skrl.ppo
+mxlab train task=cartpole/rslrl.ppo
+mxlab train task=g1-walk-rough/motrix.fastsac
+mxlab play env=cartpole
+mxlab play env=cartpole policy=/path/to/run
+mxlab export-onnx run_dir=/path/to/run output=artifacts/policy.onnx
+mxlab export-deploy run_dir=/path/to/run output=artifacts/policy.deploy
+mxlab export-deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
 ```
 
-`mxexport onnx` exports a saved run's best policy without selecting a `task` or creating an environment. Install the provider used by
+`mxlab export-onnx` exports a saved run's best policy without selecting a `task` or creating an environment. Install the provider used by
 that run; see the [ONNX export tutorial](../docs/source/en/user_guide/tutorial/advanced/export_onnx.md) for supported
-configurations. `mxexport deploy` creates a self-contained deployment artifact; specify exactly one of `run_dir` or
+configurations. `mxlab export-deploy` creates a self-contained deployment artifact; specify exactly one of `run_dir` or
 `env` (the latter selects the latest metadata-backed run). Its numerical checks use `validation.*`, while ONNX export
 uses `parity.*`. The `export_onnx.yaml` and `export_deploy.yaml` configurations ship in `motrix_rl.configs` and follow
 the same project-first discovery described below, falling back to packaged files when the project does not provide them.
@@ -99,11 +99,9 @@ Deployment profile compilers come from installed environment plugins, without ha
 See the [deployment tutorial](../docs/source/en/user_guide/tutorial/advanced/motrix_deploy.md#add-a-deployment-profile-compiler)
 for the plugin contract. `motrix-rl` depends on `motrix-deploy` for artifact creation; `motrix-deploy` does not depend on RL.
 
-The equivalent module commands are `python -m motrix_rl.commands.train`, `python -m motrix_rl.commands.play`, and
-`python -m motrix_rl.commands.export onnx` / `python -m motrix_rl.commands.export deploy`. The subcommands are implemented
-in `motrix_rl.commands.export_onnx` and `motrix_rl.commands.export_deploy`; the repository's export scripts are thin
-wrappers around those commands. In an already installed uv environment, use
-`uv run --no-sync mxtrain ...` (or `mxplay` / `mxexport`) to avoid re-resolving GPU profiles.
+`mxlab` is the sole CLI entry point; the component modules retain internal callable command adapters and Python APIs.
+Use `mxlab --version` to query the version. In an already installed uv environment, use
+`uv run --no-sync mxlab train ...` (or `mxlab play` / `mxlab export-onnx` / `mxlab export-deploy`) to avoid re-resolving GPU profiles.
 Run artifacts are written under `runs/` relative to the working directory by default.
 
 Primary train/play configurations and shared provider defaults ship in `motrix_rl.configs`, with sources under
@@ -136,12 +134,12 @@ files not provided by the project fall back to the package. Hydra selects the fi
 same-name files from multiple directories:
 
 ```bash
-mxtrain task=my-task/skrl.ppo
-mxtrain --config-dir /path/to/project/configs task=my-task/skrl.ppo
+mxlab train task=my-task/skrl.ppo
+mxlab train --config-dir /path/to/project/configs task=my-task/skrl.ppo
 ```
 
 Install the external environment package; train and play discover its registered environments automatically.
-Playback uses the same discovery: `mxplay env=my-task`. See
+Playback uses the same discovery: `mxlab play env=my-task`. See
 [Environment registration](../docs/source/en/user_guide/tutorial/building_envs/direct_env.md#environment-registration)
 for packaging an environment.
 
@@ -168,5 +166,5 @@ Make `my_project.configs` an importable package (include `__init__.py`) and incl
 Package both `my_project` and `hydra_plugins/my_project_searchpath.py` in the installed distribution. Keep `hydra_plugins`
 a shared namespace package: **do not add `hydra_plugins/__init__.py`**. Hydra discovers installed plugin modules in that
 namespace; no custom entry point or working-directory import convention is needed. Once installed, run
-`mxtrain task=my-task/skrl.ppo` from any directory. Environment callbacks only register environments; they do not
+`mxlab train task=my-task/skrl.ppo` from any directory. Environment callbacks only register environments; they do not
 install Hydra search paths. RL provider plugins still register separately through `motrix_rl.frameworks`.

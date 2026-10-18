@@ -2,14 +2,16 @@
 
 This tutorial demonstrates the MotrixLab workflow through a simple example - loading and training a cartpole environment:
 
-Complete [installation](installation.md) first, then activate the environment with `source .venv/bin/activate` (Windows PowerShell: `.venv\Scripts\Activate.ps1`).
+This tutorial uses the repository's built-in cartpole task. First complete {ref}`Install in the MotrixLab repository <installation-repository>`, then activate the environment with `source .venv/bin/activate` (Windows PowerShell: `.venv\Scripts\Activate.ps1`). Run all commands below from the repository root.
+
+After installation, use the unified `mxlab` command to train and evaluate policies. Use `mxlab --help` to list commands and `mxlab --version` to check the version.
 
 ## Environment Preview
 
-We provide a simple script to visualize an environment without executing any training. This helps you verify that system dependencies are correctly configured:
+Use `mxlab view` to visualize an environment without executing any training. This helps you verify that system dependencies are correctly configured:
 
 ```bash
-python scripts/view.py env=cartpole
+mxlab view env=cartpole
 ```
 
 This will open a visualization window showing the cartpole physics simulation environment with random actions for demonstration.
@@ -19,7 +21,7 @@ This will open a visualization window showing the cartpole physics simulation en
 Start training the cartpole balancing task:
 
 ```bash
-mxtrain task=cartpole/skrl.ppo
+mxlab train task=cartpole/skrl.ppo
 ```
 
 The training process will automatically:
@@ -38,7 +40,7 @@ Training results will be saved in the `runs/cartpole/` directory, including:
 If you want to observe the model's learning process during training, you can enable visualization rendering:
 
 ```bash
-mxtrain task=cartpole/skrl.ppo render=true
+mxlab train task=cartpole/skrl.ppo render=true
 ```
 
 ### 🎮 Interactive Rendering Control
@@ -67,10 +69,10 @@ After training is complete, test the trained policy:
 
 ```bash
 # Automatically find best policy for testing (recommended)
-mxplay env=cartpole
+mxlab play env=cartpole
 
 # Manually specify a checkpoint from a metadata-backed run
-mxplay env=cartpole policy=/path/to/run/checkpoints/policy-file
+mxlab play env=cartpole policy=/path/to/run/checkpoints/policy-file
 ```
 
 > **Tip**: The system automatically finds the latest run and its best policy under `runs/cartpole/`. A manually selected checkpoint must belong to a run containing `metadata.json` and `task_config.yaml`.

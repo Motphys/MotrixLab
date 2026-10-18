@@ -233,13 +233,13 @@ Target position is randomly sampled in the following range:
 ### Training
 
 ```bash
-mxtrain task=franka-lift-cube/skrl.ppo
+mxlab train task=franka-lift-cube/skrl.ppo
 ```
 
 ### Policy Evaluation
 
 ```bash
-mxplay env=franka-lift-cube
+mxlab play env=franka-lift-cube
 ```
 
 ### TensorBoard
