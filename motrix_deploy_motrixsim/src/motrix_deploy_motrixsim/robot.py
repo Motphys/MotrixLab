@@ -157,10 +157,8 @@ class Robot(RobotInterface):
         """Check activation without opening the runtime-owned simulation."""
         self._require_open()
 
-    def read_state(self, timeout_s: float) -> RobotState:
+    def read_state(self) -> RobotState:
         self._require_open()
-        if not np.isfinite(timeout_s) or timeout_s <= 0:
-            raise TimeoutError(f"MotrixSim state timeout must be positive and finite, got {timeout_s}")
         assert self._read is not None
         self._read.execute(self._runtime.data)
         self._last_communication_ns = time.monotonic_ns()

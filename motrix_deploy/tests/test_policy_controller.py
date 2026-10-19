@@ -27,7 +27,7 @@ def test_policy_controller_uses_supplied_state_and_returns_command(manifest_fact
     assert controller.policy_io is task
     assert controller.policy is model
     robot.open()
-    state = robot.read_state(0.1)
+    state = robot.read_state()
     events = list(robot.events)
     seen = []
     observe = task.build_observation
@@ -57,7 +57,7 @@ def test_model_failure_propagates_without_backend_side_effects(manifest_factory)
     model = ConstantPolicy(4, np.zeros(2, np.float32))
     controller = PolicyController(_TestPolicyProcessor(manifest), model)
     robot.open()
-    state = robot.read_state(0.1)
+    state = robot.read_state()
     controller.reset(state)
     events = list(robot.events)
 
@@ -76,7 +76,7 @@ def test_policy_controller_owns_local_count_clock_and_history_reset(manifest_fac
     manifest = manifest_factory()
     robot = FakeRobotInterface(manifest.robot)
     robot.open()
-    state = robot.read_state(0.1)
+    state = robot.read_state()
     task = _StatefulPolicyProcessor(manifest)
     model = _StatefulPolicy()
     controller = PolicyController(task, model, steps=2)
@@ -94,7 +94,7 @@ def test_requested_stop_completes_without_another_inference(manifest_factory):
     manifest = manifest_factory()
     robot = FakeRobotInterface(manifest.robot)
     robot.open()
-    state = robot.read_state(0.1)
+    state = robot.read_state()
     model = ConstantPolicy(4, np.zeros(2, np.float32))
     controller = PolicyController(_TestPolicyProcessor(manifest), model)
     controller.reset(state)

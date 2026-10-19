@@ -84,10 +84,8 @@ class FakeRobotInterface(RobotInterface):
         self._opened = True
         self._closed = False
 
-    def read_state(self, timeout_s: float) -> RobotState:
+    def read_state(self) -> RobotState:
         self._require_open()
-        if timeout_s <= 0:
-            raise TimeoutError("state timeout must be positive")
         if self._fail_read_at == self._read_count:
             raise TimeoutError(f"injected state timeout at read {self._read_count}")
         self.events.append("read")

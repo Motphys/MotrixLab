@@ -75,14 +75,14 @@ PYBIND11_MODULE(_native, module) {
         py::gil_scoped_release release;
         backend.open(connect_timeout_s);
       }, py::arg("connect_timeout_s") = 5.0)
-      .def("read_state", [](G1Backend& backend, double timeout_s, std::int64_t after_sequence) {
+      .def("read_state", [](G1Backend& backend) {
         StateSnapshot snapshot;
         {
           py::gil_scoped_release release;
-          snapshot = backend.read_state(timeout_s, after_sequence);
+          snapshot = backend.read_state();
         }
         return snapshot_to_dict(snapshot);
-      }, py::arg("timeout_s") = 0.1, py::arg("after_sequence") = -1)
+      })
       .def("write_command", [](
           G1Backend& backend,
           const py::array_t<float, py::array::c_style | py::array::forcecast>& position,

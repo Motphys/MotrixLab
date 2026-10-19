@@ -1,0 +1,6 @@
+command_publish_period_s: 0.001
+command_timeout_s: 0.1
+damping_duration_s: 1.0
+damping_kd: 3.0
+emergency_stop_button: select
+startup_mode: one_shot

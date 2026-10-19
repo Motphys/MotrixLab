@@ -7,6 +7,7 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
+from motrix_robots.unitree import UnitreeGo2Robot
 from pydantic import ValidationError as PydanticValidationError
 
 from motrix_deploy.artifact.schema import TaskSpec
@@ -45,19 +46,28 @@ class FakeKeyboardDevice(KeyboardDevice):
 
 
 class FakeGamePadDevice(GamePadDevice):
-    def poll(self) -> None: ...
+    def __init__(self) -> None:
+        self.pressing: set[str] = set()
+        self._previous: set[str] = set()
+        self._polled: set[str] = set()
+        self.poll_count = 0
+
+    def poll(self) -> None:
+        self.poll_count += 1
+        self._previous = self._polled
+        self._polled = self.pressing.copy()
 
     def axis_value(self, axis: str) -> float:
         return 0.0
 
     def is_button_down(self, button: str) -> bool:
-        return False
+        return button in self._polled and button not in self._previous
 
     def is_button_up(self, button: str) -> bool:
         return False
 
     def is_button_pressing(self, button: str) -> bool:
-        return False
+        return button in self.pressing
 
 
 def _replace_spec(spec: Go2WalkTaskSpec, **overrides: object) -> Go2WalkTaskSpec:
@@ -76,9 +86,9 @@ def _context(step: int, elapsed_time_s: float, velocity: list[float] | np.ndarra
 def _robot() -> RobotSpec:
     return RobotSpec(
         base_link_name="base",
-        joint_names=tuple(f"joint_{index}" for index in range(12)),
+        joint_names=tuple(UnitreeGo2Robot().key_pose.joint_names),
         default_joint_position=np.zeros(12, dtype=np.float32),
-        position_lower=np.full(12, -2.0, dtype=np.float32),
+        position_lower=np.full(12, -3.0, dtype=np.float32),
         position_upper=np.full(12, 2.0, dtype=np.float32),
         torque_limit=np.full(12, 24.0, dtype=np.float32),
     )
@@ -113,19 +123,20 @@ def _task_spec() -> Go2WalkTaskSpec:
     )
 
 
-def test_go2_preparation_is_derived_from_simulation_spawn_pose() -> None:
+def test_go2_preparation_is_always_part_of_the_task_lifecycle() -> None:
     robot = _robot()
     task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), steps=1)
 
     task.prepare(simulation=True)
     task.reset(_state(robot))
-    assert task.phase == "policy"
+    assert task.phase == "wait_stand"
 
-    task.prepare(simulation=False, spawn_pose="lie_down")
-    assert task.phase == "policy"
+    with pytest.raises(ValidationError, match="operator.gamepad"):
+        task.prepare(simulation=False, spawn_pose="lie_down")
+    assert task.phase == "wait_stand"
 
     task.prepare(simulation=True, spawn_pose="default")
-    assert task.phase == "policy"
+    assert task.phase == "wait_stand"
 
     task.prepare(simulation=True, spawn_pose="lie_down")
     task.reset(_state(robot))
@@ -182,6 +193,35 @@ def test_simulated_preparation_rejects_tilt_and_timeout() -> None:
     assert task.policy_controller.completed_steps == 0
 
 
+@pytest.mark.parametrize("failure", ["position", "velocity", "settle"])
+def test_preparation_timeout_describes_unmet_conditions_and_joint_values(failure) -> None:
+    robot = _robot()
+    state = _state(robot)
+    settings = Go2WalkPreparationSettings(ramp_duration_s=0.02, settle_duration_s=0.02, timeout_s=0.04)
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), steps=1)
+    task.enable_simulation_preparation(settings)
+    task.reset(state)
+    if failure == "position":
+        state.joint_position[2] = robot.default_joint_position[2] + 0.3
+    elif failure == "velocity":
+        state.joint_velocity[2] = -1.5
+    task.step(state, _context(0, 0.0, [0.0] * 3))
+    error = task.step(state, _context(2, 0.04, [0.0] * 3)).error
+    assert "Go2 standing preparation timed out" in error
+    assert "elapsed=0.040s" in error
+    assert "stable=0.000/0.020s" in error
+    assert "settle_duration" in error
+    if failure == "settle":
+        assert "unmet=[settle_duration]" in error
+        assert "violating_joints=[]" in error
+    else:
+        assert robot.joint_names[2] in error
+        assert "measured=" in error and "target=" in error
+        assert ("joint_position_error" if failure == "position" else "joint_velocity") in error
+        assert ("abs_error=0.300000" if failure == "position" else "velocity=-1.500000") in error
+    assert task.policy_controller.completed_steps == 0
+
+
 class _FakeKeyboard:
     def __init__(self) -> None:
         self.down: set[str] = set()
@@ -227,6 +267,34 @@ def test_viewer_requires_separate_stand_and_policy_button_edges() -> None:
     takeover = task.step(state, _context(6, 0.12, [0.0, 0.0, 0.0]))
     assert takeover.policy_tick and task.phase == "policy"
     assert task.policy_controller.completed_steps == 1
+
+
+def test_o_in_crouch_simulation_returns_to_spawn_before_damping_and_completion() -> None:
+    robot = _robot()
+    state = _state(robot)
+    state.joint_position[:] = np.clip(robot.default_joint_position + 0.1, robot.position_lower, robot.position_upper)
+    crouch = state.joint_position.copy()
+    keyboard = FakeKeyboardDevice()
+    keyboard.down = set()
+    keyboard.is_key_down = lambda key: key in keyboard.down
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count))
+    task.prepare(simulation=True, device=keyboard, spawn_pose="lie_down")
+    task.reset(state)
+    state.joint_position[:] = robot.default_joint_position
+    start = state.joint_position.copy()
+    task._stage = "policy"
+    keyboard.down = {"o"}
+    first = task.step(state, _context(0, 0.0, [0.0] * 3))
+    assert task.phase == "shutdown" and not first.policy_tick
+    np.testing.assert_allclose(first.command.joint_position, start + 0.01 * (crouch - start))
+    keyboard.down.clear()
+    last = task.step(state, _context(99, 1.98, [0.0] * 3))
+    np.testing.assert_allclose(last.command.joint_position, crouch)
+    damp = task.step(state, _context(100, 2.0, [0.0] * 3))
+    assert task.phase == "damping" and not damp.complete
+    finished = task.step(state, _context(150, 3.0, [0.0] * 3))
+    assert finished.complete and finished.success
+    assert task.policy_controller.completed_steps == 0
 
 
 def test_o_keeps_damping_for_ten_seconds_before_closing() -> None:
@@ -637,21 +705,279 @@ def test_go2_prepare_attaches_shared_keyboard_and_exposes_operator_hint() -> Non
     assert task.phase == "wait_stand"
 
 
-def test_go2_root_task_executes_policy_budget_and_normal_stop():
+@pytest.mark.parametrize("measured_position", [0.0, 1.2])
+def test_preparation_accepts_out_of_range_start_and_b_before_start_damps(measured_position) -> None:
     robot = _robot()
-    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), steps=2)
     state = _state(robot)
+    state.joint_position[:] = measured_position
+    state.joint_position[0] = robot.position_upper[0] + 0.2
+    gamepad = FakeGamePadDevice()
+    task = Go2WalkDeployTask(
+        _task_spec(), robot, NoOpPolicy(robot.joint_count), settings={"preparation": {"damping_duration_s": 0.02}}
+    )
+    binding = task.prepare(simulation=False, device=gamepad)
     task.reset(state)
-    for step in range(2):
+    gamepad.pressing = {"B"}
+    binding.read_command()
+    decision = task.step(state, _context(0, 0.0, [0.0] * 3))
+    assert task.phase == "damping" and not decision.policy_tick
+    np.testing.assert_array_equal(decision.command.kp, 0.0)
+    assert task.step(state, _context(1, 0.02, [0.0] * 3)).success
+    assert task.step(state, _context(2, 0.04, [0.0] * 3)).complete
+
+    task.reset(state)
+    gamepad.pressing = {"start"}
+    binding.read_command()
+    decision = task.step(state, _context(0, 0.0, [0.0] * 3))
+    assert task.phase == "prepare" and decision.error is None
+    assert np.all(decision.command.joint_position <= robot.position_upper)
+    assert task.policy_controller.completed_steps == 0
+
+
+@pytest.mark.parametrize("lost_readiness", ["position", "velocity", "tilt", "out_of_range"])
+def test_hardware_policy_takeover_rechecks_measured_readiness(lost_readiness: str) -> None:
+    robot = _robot()
+    state = _state(robot)
+    gamepad = FakeGamePadDevice()
+    task = Go2WalkDeployTask(
+        _task_spec(),
+        robot,
+        NoOpPolicy(robot.joint_count),
+        settings={"preparation": {"ramp_duration_s": 0.02, "settle_duration_s": 0.02}},
+    )
+    binding = task.prepare(simulation=False, device=gamepad)
+    task.reset(state)
+    gamepad.pressing = {"start"}
+    binding.read_command()
+    task.step(state, _context(0, 0.0, [0.0] * 3))
+    gamepad.pressing.clear()
+    binding.read_command()
+    task.step(state, _context(1, 0.02, [0.0] * 3))
+    task.step(state, _context(2, 0.04, [0.0] * 3))
+    assert task.phase == "wait_policy"
+    if lost_readiness == "position":
+        state.joint_position[0] = 0.5
+    elif lost_readiness == "velocity":
+        state.joint_velocity[0] = 2.0
+    elif lost_readiness == "tilt":
+        state.base_orientation_xyzw[:] = [1.0, 0.0, 0.0, 0.0]
+    else:
+        state.joint_position[0] = 3.0
+    gamepad.pressing = {"A"}
+    binding.read_command()
+    with pytest.raises(ControlFailure) as failure:
+        task.step(state, _context(3, 0.06, [0.0] * 3))
+    assert failure.value.reason == (
+        "preparation_initial_state_out_of_range" if lost_readiness == "out_of_range" else "preparation_not_ready"
+    )
+    assert task.phase == "wait_policy"
+    assert task.policy_controller.completed_steps == 0
+
+
+def test_hardware_gamepad_gates_policy_without_polling_and_preserves_policy_gains() -> None:
+    robot = _robot()
+    state = _state(robot)
+    gamepad = FakeGamePadDevice()
+    task = Go2WalkDeployTask(
+        _task_spec(),
+        robot,
+        NoOpPolicy(robot.joint_count),
+        settings={"preparation": {"ramp_duration_s": 0.02, "settle_duration_s": 0.02, "kp": 12.0}},
+    )
+    binding = task.prepare(simulation=False, device=gamepad)
+    task.reset(state)
+    assert all(button in task.operator_hint for button in ("Start", "A", "B", "Select"))
+
+    def tick(step: int):
+        binding.read_command()
+        assert gamepad.poll_count == step + 1
+        result = task.step(state, _context(step, step * 0.02, [0.0] * 3))
+        assert gamepad.poll_count == step + 1
+        return result
+
+    gamepad.pressing = {"A"}
+    hold = tick(0)
+    assert task.phase == "wait_stand" and not hold.policy_tick
+    gamepad.pressing = {"start", "A"}
+    startup = tick(1)
+    np.testing.assert_array_equal(startup.command.kp, 12.0)
+    gamepad.pressing = {"A"}
+    tick(2)
+    tick(3)
+    ready = tick(4)
+    assert task.phase == "wait_policy" and not ready.policy_tick
+    assert not tick(5).policy_tick  # Holding A across readiness is not a new confirmation.
+    assert task.phase == "wait_policy"
+    gamepad.pressing.clear()
+    assert not tick(6).policy_tick
+    gamepad.pressing = {"A"}
+    takeover = tick(7)
+    assert takeover.policy_tick
+    np.testing.assert_array_equal(takeover.command.kp, task.spec.kp)
+    np.testing.assert_array_equal(takeover.command.kd, task.spec.kd)
+    gamepad.pressing = {"B"}
+    stopped = tick(8)
+    assert task.phase == "shutdown" and not stopped.policy_tick and stopped.success
+    np.testing.assert_array_equal(stopped.command.kp, 12.0)
+
+
+@pytest.mark.parametrize("phase", ["prepare", "wait_policy", "policy"])
+@pytest.mark.parametrize("reordered", [False, True])
+def test_hardware_b_returns_measured_pose_to_fixed_lie_down_then_finishes(phase, reordered) -> None:
+    robot = _robot()
+    if reordered:
+        robot = replace(robot, joint_names=tuple(reversed(robot.joint_names)))
+    state = _state(robot)
+    gamepad = FakeGamePadDevice()
+    task = Go2WalkDeployTask(
+        _task_spec(),
+        robot,
+        NoOpPolicy(robot.joint_count),
+        settings={"preparation": {"ramp_duration_s": 0.02, "settle_duration_s": 0.02, "damping_duration_s": 0.02}},
+    )
+    binding = task.prepare(simulation=False, device=gamepad)
+    task.reset(state)
+    gamepad.pressing = {"start"}
+    binding.read_command()
+    task.step(state, _context(0, 0.0, [0.0] * 3))
+    if phase != "prepare":
+        gamepad.pressing.clear()
+        binding.read_command()
+        task.step(state, _context(1, 0.02, [0.0] * 3))
+        task.step(state, _context(2, 0.04, [0.0] * 3))
+    if phase == "policy":
+        gamepad.pressing = {"A"}
+        binding.read_command()
+        assert task.step(state, _context(3, 0.06, [0.0] * 3)).policy_tick
+    assert task.phase == phase
+    state.joint_position[:] = np.linspace(-0.1, 0.1, robot.joint_count)
+    start = state.joint_position.copy()
+    pose = UnitreeGo2Robot().key_pose
+    expected = np.array([dict(zip(pose.joint_names, pose.poses["lie_down"]))[name] for name in robot.joint_names])
+    gamepad.pressing = {"B"}
+    binding.read_command()
+    shutdown = task.step(state, _context(4, 0.08, [0.0] * 3))
+    assert task.phase == "shutdown" and not shutdown.policy_tick
+    np.testing.assert_allclose(shutdown.command.joint_position, start + 0.01 * (expected - start), atol=1e-7)
+    gamepad.pressing.clear()
+    last = task.step(state, _context(103, 2.06, [0.0] * 3))
+    np.testing.assert_allclose(last.command.joint_position, expected, atol=1e-6)
+    damp = task.step(state, _context(104, 2.08, [0.0] * 3))
+    assert task.phase == "damping"
+    np.testing.assert_array_equal(damp.command.kp, 0.0)
+    finish = task.step(state, _context(105, 2.10, [0.0] * 3))
+    assert finish.complete and finish.success
+
+
+def test_hardware_shutdown_crouch_honors_artifact_limits_and_reports_restriction(caplog) -> None:
+    robot = replace(_robot(), position_lower=np.full(12, -2.0, dtype=np.float32))
+    state = _state(robot)
+    gamepad = FakeGamePadDevice()
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count))
+    binding = task.prepare(simulation=False, device=gamepad)
+    task.reset(state)
+    gamepad.pressing = {"start"}
+    binding.read_command()
+    task.step(state, _context(0, 0.0, [0.0] * 3))
+    gamepad.pressing = {"B"}
+    binding.read_command()
+    task.step(state, _context(1, 0.02, [0.0] * 3))
+    last = task.step(state, _context(100, 2.0, [0.0] * 3))
+    assert np.all(last.command.joint_position >= robot.position_lower)
+    assert np.all(last.command.joint_position <= robot.position_upper)
+    assert "limited by artifact joint bounds" in caplog.text
+    assert "does not guarantee body support" in caplog.text
+
+
+def test_requested_stop_interrupts_b_shutdown_with_damping_not_lie_down() -> None:
+    robot = _robot()
+    state = _state(robot)
+    gamepad = FakeGamePadDevice()
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count))
+    binding = task.prepare(simulation=False, device=gamepad)
+    task.reset(state)
+    gamepad.pressing = {"start"}
+    binding.read_command()
+    task.step(state, _context(0, 0.0, [0.0] * 3))
+    gamepad.pressing = {"B"}
+    binding.read_command()
+    assert task.step(state, _context(1, 0.02, [0.0] * 3)).command.kp[0] > 0
+    task.request_stop()
+    damping = task.step(state, _context(2, 0.04, [0.0] * 3))
+    assert task.phase == "damping" and not damping.success
+    np.testing.assert_array_equal(damping.command.kp, 0.0)
+
+
+@pytest.mark.parametrize("device", [None, FakeKeyboardDevice()])
+def test_hardware_requires_gamepad(device) -> None:
+    robot = _robot()
+    task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count))
+    with pytest.raises(ValidationError, match="operator.gamepad"):
+        task.prepare(simulation=False, device=device)
+
+
+@pytest.mark.parametrize(
+    "field", [name for name in Go2WalkPreparationSettings.__dataclass_fields__ if not name.endswith("_button")]
+)
+@pytest.mark.parametrize("value", [0.0, -1.0, float("nan"), float("inf"), True, "1"])
+def test_preparation_numeric_settings_require_finite_positive_numbers(field: str, value) -> None:
+    with pytest.raises(ValueError, match=field):
+        Go2WalkPreparationSettings(**{field: value})
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"unknown": 1},
+        {"preparation": []},
+        {"preparation": {"unknown": 1}},
+        {"preparation": {"start_button": ""}},
+        {"preparation": {"start_button": "A"}},
+        {"preparation": {"stop_button": "A"}},
+        {"preparation": {"start_button": "select"}},
+        {"preparation": {"policy_button": "Select"}},
+    ],
+)
+def test_execution_settings_reject_invalid_input(settings: dict) -> None:
+    robot = _robot()
+    with pytest.raises((ValueError, TypeError, ValidationError)):
+        Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), settings=settings)
+
+
+def test_go2_root_task_executes_preparation_policy_budget_and_normal_stop():
+    robot = _robot()
+    task = Go2WalkDeployTask(
+        _task_spec(),
+        robot,
+        NoOpPolicy(robot.joint_count),
+        steps=2,
+        settings={
+            "preparation": {
+                "ramp_duration_s": 0.02,
+                "settle_duration_s": 0.02,
+                "damping_duration_s": 0.02,
+                "stop_damping_duration_s": 0.02,
+            }
+        },
+    )
+    state = _state(robot)
+    state.joint_position[:] = robot.default_joint_position
+    state.joint_velocity[:] = 0
+    task.reset(state)
+    decisions = []
+    for step in range(20):
         decision = task.step(state, _context(step, step * 0.02, np.zeros(3, dtype=np.float32)))
-        assert decision.command is not None and decision.policy_tick
-    completed = task.step(state, _context(2, 0.04, np.zeros(3, dtype=np.float32)))
-    assert completed.complete and completed.success
+        decisions.append(decision)
+        if decision.complete:
+            break
+    assert not decisions[0].policy_tick
+    assert decision.complete and decision.success
+    assert sum(item.policy_tick for item in decisions) == 2
     assert task.policy_controller.completed_steps == 2
 
     task.reset(state)
-    assert task.step(state, _context(0, 0.0, np.zeros(3, dtype=np.float32))).policy_tick
     task.request_stop()
+    first = task.step(state, _context(0, 0.0, np.zeros(3, dtype=np.float32)))
+    assert not first.policy_tick
     stopped = task.step(state, _context(1, 0.02, np.zeros(3, dtype=np.float32)))
     assert stopped.complete and not stopped.success
-    assert task.policy_controller.completed_steps == 1

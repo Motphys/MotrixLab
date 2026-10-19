@@ -5,33 +5,36 @@
 
 from motrix_deploy.runtime.factory import RuntimeCreateContext
 from motrix_deploy.runtime.hardware import HardwareRuntime
-from motrix_deploy_unitree.config import UnitreeBackendConfig, UnitreeG1_29DOFRobotCfg, UnitreeGo2RobotCfg
-from motrix_deploy_unitree.interface import UnitreeG1_29DOFRobot, UnitreeGo2Robot
-from motrix_deploy_unitree.native_interface import UnitreeG1NativeRobot
+from motrix_deploy_unitree.config.runtime import UnitreeRuntimeConfig
+from motrix_deploy_unitree.g1.native_robot import UnitreeG1NativeRobot
+from motrix_deploy_unitree.g1.python_robot import UnitreeG1_29DOFRobot
+from motrix_deploy_unitree.go2.robot import UnitreeGo2Robot
 
 
-def create_runtime(
-    config: UnitreeBackendConfig,
-    context: RuntimeCreateContext,
-) -> HardwareRuntime:
-    """Construct the shared hardware runtime around the selected Unitree robot."""
-
-    if not isinstance(config, UnitreeBackendConfig):
-        raise TypeError(f"Unitree runtime requires UnitreeBackendConfig, got {type(config).__name__}")
-    if isinstance(config.robot, UnitreeG1_29DOFRobotCfg):
-        robot_type = UnitreeG1NativeRobot if config.transport == "native_cpp" else UnitreeG1_29DOFRobot
-    elif isinstance(config.robot, UnitreeGo2RobotCfg):
-        if config.transport == "native_cpp":
-            raise ValueError("transport=native_cpp currently supports only the G1 29-DOF backend")
-        robot_type = UnitreeGo2Robot
+def create_runtime(config: UnitreeRuntimeConfig, context: RuntimeCreateContext) -> HardwareRuntime:
+    """Select a concrete adapter from the robot model and transport implementation."""
+    if config.robot == "g1-29dof":
+        robot_type = UnitreeG1NativeRobot if config.transport.implementation == "native_cpp" else UnitreeG1_29DOFRobot
+        robot = robot_type(
+            transport=config.transport,
+            control=config.control,
+            operator=config.operator,
+            control_period_s=context.control.period_s,
+            state_timeout_s=context.control.state_timeout_s,
+            spec=context.robot,
+        )
+    elif config.robot == "go2":
+        if config.transport.implementation != "python_sdk":
+            raise ValueError("Go2 only supports transport.implementation=python_sdk")
+        robot = UnitreeGo2Robot(
+            transport=config.transport,
+            control=config.control,
+            control_period_s=context.control.period_s,
+            state_timeout_s=context.control.state_timeout_s,
+            spec=context.robot,
+        )
     else:
-        raise TypeError(f"Unsupported Unitree robot config: {type(config.robot).__name__}")
-    robot = robot_type(
-        config,
-        control_period_s=context.control.period_s,
-        state_timeout_s=context.control.state_timeout_s,
-        spec=context.robot,
-    )
+        raise ValueError(f"Unsupported Unitree robot: {config.robot!r}")
     return HardwareRuntime(robot, realtime=True)
 
 

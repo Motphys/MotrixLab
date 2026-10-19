@@ -26,18 +26,28 @@ class RobotInterface(ABC):
         """Return an optional operator device supplied by the robot transport."""
         return None
 
+    def acquire_control(self) -> None:
+        """Acquire command authority before open; backends without a handoff do nothing.
+
+        This explicit operation may change device mode. Backends requiring operator
+        consent must receive it explicitly and reject acquisition without it.
+        """
+
     @abstractmethod
     def open(self) -> None:
         """Open resources for the robot specification supplied at construction."""
 
     def enable(self) -> None:
-        """Enable command output using backend-owned startup safety behavior."""
+        """Enable output after transport safety checks, without task trajectories or operator gates."""
         if self.capabilities.requires_enable:
             raise NotImplementedError("robot declares requires_enable=True but does not implement enable()")
 
     @abstractmethod
-    def read_state(self, timeout_s: float) -> RobotState:
-        """Read one state sample or raise on timeout."""
+    def read_state(self) -> RobotState:
+        """Return the current/latest state snapshot without waiting for a new sample.
+
+        Repeated reads of a cached sample retain its original receive timestamp.
+        """
 
     @abstractmethod
     def write_command(self, command: RobotCommand) -> None:

@@ -57,7 +57,7 @@ def test_robot_state_maps_root_coordinates_gyro_world_velocity_and_canonical_joi
     with MujocoRuntime(control_scene_config, 0.02) as runtime:
         motion = _motion_fixture(runtime.robot.spec)
         _set_motion_fixture(runtime, motion)
-        state = runtime.robot.read_state(0.1)
+        state = runtime.robot.read_state()
         np.testing.assert_allclose(runtime.data.xpos[runtime.robot._base_body_id], motion.root_position, atol=1e-6)
         np.testing.assert_allclose(state.base_orientation_xyzw, motion.root_orientation_xyzw, atol=1e-6)
         np.testing.assert_allclose(state.base_angular_velocity, [0.3, -0.1, -0.2], atol=1e-6)
@@ -84,7 +84,7 @@ def test_linear_velocity_capability_is_independent_of_sensor_binding(control_sce
             motion = _motion_fixture(runtime.robot.spec)
             motion.root_angular_velocity.fill(0)
             _set_motion_fixture(runtime, motion)
-            state = runtime.robot.read_state(0.1)
+            state = runtime.robot.read_state()
             if binding is None:
                 assert state.base_linear_velocity is None
             else:

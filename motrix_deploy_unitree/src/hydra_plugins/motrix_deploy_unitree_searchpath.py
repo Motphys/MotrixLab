@@ -6,7 +6,7 @@
 from hydra.core.config_search_path import ConfigSearchPath
 from hydra.plugins.search_path_plugin import SearchPathPlugin
 
-from motrix_deploy_unitree.config import install_hardware_runtime_schema
+from motrix_deploy_unitree.config.schema import install_hardware_runtime_schema
 
 
 class MotrixDeployUnitreeSchemaPlugin(SearchPathPlugin):

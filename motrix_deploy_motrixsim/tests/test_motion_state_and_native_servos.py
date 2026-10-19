@@ -71,7 +71,7 @@ def test_world_motion_sensor_frames_and_joint_mapping_with_instance_names():
         set_simulation_state(runtime, **vars(initial))
 
         def check_motion():
-            state = runtime.robot.read_state(0.1)
+            state = runtime.robot.read_state()
             base = (runtime.scene.objs.robot.resolved_base_link_name,)
             position = runtime.model.compile_query({"position": mtx.query.LinkPosition(base)}).allocate(runtime.data)
             position.execute(runtime.data)
@@ -130,7 +130,7 @@ def test_linear_velocity_capability_is_independent_of_sensor_binding():
             initial = motion(runtime.robot.spec)
             initial.root_angular_velocity.fill(0)
             set_simulation_state(runtime, **vars(initial))
-            state = runtime.robot.read_state(0.1)
+            state = runtime.robot.read_state()
             if binding is None:
                 assert state.base_linear_velocity is None
             else:

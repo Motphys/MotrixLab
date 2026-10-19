@@ -10,7 +10,6 @@ at policy-loop frequency.
 
 from __future__ import annotations
 
-import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -30,19 +29,22 @@ from motrix_deploy.contracts import (
 )
 from motrix_deploy.errors import (
     EmergencyStopError,
-    LieDownRequestedError,
     PassiveRequestedError,
     ValidationError,
 )
-from motrix_deploy.operator import OperatorIntentEvaluator
+from motrix_deploy.operator import OperatorIntentEvaluator, OperatorProfileCfg
 from motrix_deploy.robot.interface import RobotInterface
-from motrix_deploy_unitree.config import UnitreeBackendConfig, UnitreeG1_29DOFRobotCfg
-from motrix_deploy_unitree.native import load_native_module
+from motrix_deploy_unitree.config.control import UnitreeControlConfig
+from motrix_deploy_unitree.config.g1 import UnitreeG129DOFHardwareCfg
+from motrix_deploy_unitree.config.runtime import (
+    UNITREE_LOWCMD_TOPIC,
+    UNITREE_LOWSTATE_TOPIC,
+    UNITREE_SUBSCRIBER_QUEUE_DEPTH,
+    UnitreeTransportConfig,
+)
+from motrix_deploy_unitree.g1.native import load_native_module
 from motrix_deploy_unitree.remote import UnitreeRemoteGamePadDevice, UnitreeRemoteState, decode_wireless_remote
 from motrix_env_core.input import GamePadDevice
-
-# Latched operator intents are only meaningful for the next few frames.
-_LATCHED_INTENT_TTL_NS = 5_000_000_000
 
 
 @dataclass(frozen=True)
@@ -61,28 +63,28 @@ def _snapshot_field(snapshot: object, name: str) -> object:
 class UnitreeG1NativeRobot(RobotInterface):
     """Map the native C++ G1 transport to the Motrix RobotInterface contract."""
 
-    robot_config_type = UnitreeG1_29DOFRobotCfg
-
     def __init__(
         self,
-        config: UnitreeBackendConfig,
-        control_period_s: float,
-        state_timeout_s: float,
+        transport: UnitreeTransportConfig,
+        control: UnitreeControlConfig,
         *,
         spec: RobotSpec,
+        control_period_s: float,
+        state_timeout_s: float,
+        operator: OperatorProfileCfg | None = None,
         native_backend: Any | None = None,
         native_factory: Callable[..., Any] | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        if not isinstance(config.robot, self.robot_config_type):
-            raise TypeError(f"{type(self).__name__} requires {self.robot_config_type.__name__}")
         if spec.joint_count != 29:
             raise ValidationError("robot.joint_count", 29, spec.joint_count)
         for path, value in (("control.period_s", control_period_s), ("control.state_timeout_s", state_timeout_s)):
             if not isinstance(value, (int, float)) or isinstance(value, bool) or not np.isfinite(value) or value <= 0:
                 raise ValidationError(path, "a positive finite number", value)
 
-        self.config = config
+        self.transport = transport
+        self.control = control
+        self.hardware = UnitreeG129DOFHardwareCfg()
         self._spec = spec
         self._control_period_s = float(control_period_s)
         self._state_timeout_s = float(state_timeout_s)
@@ -90,20 +92,14 @@ class UnitreeG1NativeRobot(RobotInterface):
         self._native_factory = native_factory
         self._sleep = sleep
         self._motor_indices = np.empty(0, dtype=np.int64)
-        self._kp_override: np.ndarray | None = None
-        self._kd_override: np.ndarray | None = None
         self._native: Any | None = None
         self._latest_state: RobotState | None = None
-        self._last_read_sequence = -1
+        self._remote_sequence = -1
         self._remote = UnitreeRemoteState()
         self._gamepad = UnitreeRemoteGamePadDevice(lambda: self.remote)
-        self._intent_evaluator = None if config.operator is None else OperatorIntentEvaluator(config.operator.intents)
-        # intent -> receive_time_ns; consumed by _wait_for_intent in one_shot mode
-        # and pruned by age, so state_machine mode cannot accumulate forever.
-        self._latched_intents: dict[str, int] = {}
+        self._intent_evaluator = None if operator is None else OperatorIntentEvaluator(operator.intents)
         self._emergency_stop = False
         self._passive_requested = False
-        self._lie_down_requested = False
         self._opened = False
         self._enabled = False
         self._stopped = False
@@ -134,45 +130,38 @@ class UnitreeG1NativeRobot(RobotInterface):
         factory = self._native_factory
         if factory is None:
             factory = load_native_module().G1Backend
-        robot = self.config.robot
-        period = robot.command_publish_period_s or 0.001
+        robot = self.hardware
+        period = self.control.command_publish_period_s or 0.001
         return factory(
-            network_interface=self.config.network_interface,
-            domain_id=self.config.domain_id,
-            lowcmd_topic=self.config.lowcmd_topic,
-            lowstate_topic=self.config.lowstate_topic,
+            network_interface=self.transport.network_interface,
+            domain_id=self.transport.domain_id,
+            lowcmd_topic=UNITREE_LOWCMD_TOPIC,
+            lowstate_topic=UNITREE_LOWSTATE_TOPIC,
             motor_indices=self._motor_indices.tolist(),
             mode_pr=-1 if robot.mode_pr is None else robot.mode_pr,
             expected_mode_machine=-1 if robot.expected_mode_machine is None else robot.expected_mode_machine,
             motor_mode=1 if robot.motor_mode is None else robot.motor_mode,
-            damping_kd=robot.damping_kd,
+            damping_kd=self.control.damping_kd,
             command_period_s=period,
-            command_timeout_s=robot.command_timeout_s,
+            command_timeout_s=self.control.command_timeout_s,
             state_timeout_s=self._state_timeout_s,
-            validate_crc=self.config.validate_crc,
-            subscriber_queue_depth=self.config.subscriber_queue_depth,
+            validate_crc=True,
+            subscriber_queue_depth=UNITREE_SUBSCRIBER_QUEUE_DEPTH,
         )
 
     def open(self) -> None:
         if self._opened and not self._closed:
             raise RuntimeError("native Unitree backend is already open")
-        robot = self.config.robot
-        self._motor_indices = self.config.robot.motor_indices(self._spec.joint_names)
-        self._kp_override = robot.gain_override("kp", self._spec.joint_names)
-        self._kd_override = robot.gain_override("kd", self._spec.joint_names)
-        # A native backend starts its sequence at zero after a close/reopen.
-        # Reset the adapter-side cursor as well so the first sample cannot be
-        # rejected as older than the previous session.
-        self._last_read_sequence = -1
+        self._motor_indices = self.hardware.motor_indices(self._spec.joint_names)
+        # Remote gesture evaluation runs once per sample, including after reopen.
+        self._remote_sequence = -1
         self._latest_state = None
         self._remote = UnitreeRemoteState()
-        self._latched_intents.clear()
         self._emergency_stop = False
         self._passive_requested = False
-        self._lie_down_requested = False
         self._native = self._make_native_backend()
         try:
-            self._native.open(self.config.connect_timeout_s)
+            self._native.open(self.transport.connect_timeout_s)
         except Exception:
             try:
                 self._native.close()
@@ -201,26 +190,17 @@ class UnitreeG1NativeRobot(RobotInterface):
             stop_semantics="damping",
         )
 
-    def read_state(self, timeout_s: float) -> RobotState:
+    def read_state(self) -> RobotState:
+        """Return the native cache with its original local arrival timestamp."""
         self._require_open()
-        if timeout_s <= 0:
-            raise TimeoutError(f"Unitree state timeout must be positive, got {timeout_s}")
         assert self._native is not None
-        try:
-            snapshot = self._native.read_state(timeout_s, self._last_read_sequence)
-        except TimeoutError:
-            raise
-        except Exception as error:
-            message = str(error)
-            if "timeout" in message.lower() or "no fresh" in message.lower():
-                raise TimeoutError(message) from error
-            raise RuntimeError(message) from error
-
+        snapshot = self._native.read_state()
         sequence = int(_snapshot_field(snapshot, "sequence"))
-        self._last_read_sequence = sequence
         state = self._state_from_snapshot(snapshot)
         self._latest_state = state
-        self._update_remote(snapshot, state.receive_time_ns)
+        if sequence != self._remote_sequence:
+            self._update_remote(snapshot, state.receive_time_ns)
+            self._remote_sequence = sequence
         self._raise_if_remote_stop_requested()
         return state
 
@@ -252,68 +232,25 @@ class UnitreeG1NativeRobot(RobotInterface):
         self._remote = decode_wireless_remote(payload)
         if self._intent_evaluator is not None:
             intents = self._intent_evaluator.update(self._remote.pressed_buttons(), receive_time_ns)
-            for intent in intents:
-                self._latched_intents[intent] = receive_time_ns
-            cutoff_ns = receive_time_ns - _LATCHED_INTENT_TTL_NS
-            for intent, stamp in tuple(self._latched_intents.items()):
-                if stamp < cutoff_ns:
-                    del self._latched_intents[intent]
             if "emergency_stop" in intents or "request_emergency" in intents:
                 self._emergency_stop = True
-            if "enter_passive" in intents and self.config.robot.startup_mode == "one_shot":
+            if "enter_passive" in intents and self.control.startup_mode == "one_shot":
                 self._passive_requested = True
         if self._remote.pressed("select") or (
-            self._intent_evaluator is None and self._remote.pressed(self.config.robot.emergency_stop_button)
+            self._intent_evaluator is None and self._remote.pressed(self.control.emergency_stop_button)
         ):
             self._emergency_stop = True
-        if self.config.robot.allow_lie_down and self._remote.pressed(self.config.robot.lie_down_button):
-            self._lie_down_requested = True
 
     def enable(self) -> None:
+        """Allow command output without moving the robot or waiting for input."""
         self._require_open()
-        if self._enabled:
-            return
+        self.read_state()
+        health = self.health()
+        if not health.healthy:
+            raise RuntimeError(f"native Unitree backend is unhealthy: {health.reason}")
         assert self._native is not None
-        if self.config.robot.startup_mode == "state_machine":
-            self._native.set_enabled(True)
-            self._enabled = True
-            return
-        if self._kp_override is None or self._kd_override is None:
-            raise ValidationError("backend.enable", "explicit backend kp and kd safety gains", "missing")
-        if self.config.robot.wait_for_remote_buttons:
-            if self._intent_evaluator is None:
-                self._wait_for_button(self.config.robot.start_button, self._publish_zero_torque)
-            else:
-                self._wait_for_intent("request_stand", self._publish_zero_torque)
-        state = self._latest_state if self._latest_state is not None else self.read_state(self._state_timeout_s)
-        zeros = np.zeros(29, dtype=np.float32)
         self._native.set_enabled(True)
         self._enabled = True
-        steps = max(1, math.ceil(self.config.robot.default_transition_duration_s / self._control_period_s))
-        for step in range(1, steps + 1):
-            self._raise_if_remote_stop_requested()
-            alpha = np.float32(step / steps)
-            position = (
-                (np.float32(1.0) - alpha) * state.joint_position + alpha * self._spec.default_joint_position
-            ).astype(np.float32)
-            self._write_servo(position, zeros, zeros, self._kp_override, self._kd_override)
-            self._wait_control_period()
-        if self.config.robot.wait_for_remote_buttons:
-            if self._intent_evaluator is None:
-                self._wait_for_button(
-                    self.config.robot.enable_button,
-                    lambda: self._write_servo(
-                        self._spec.default_joint_position, zeros, zeros, self._kp_override, self._kd_override
-                    ),
-                )
-            else:
-                self._wait_for_intent(
-                    "enable_policy",
-                    lambda: self._write_servo(
-                        self._spec.default_joint_position, zeros, zeros, self._kp_override, self._kd_override
-                    ),
-                )
-        self._raise_if_remote_stop_requested()
 
     def write_command(self, command: RobotCommand) -> None:
         self._require_open()
@@ -378,10 +315,6 @@ class UnitreeG1NativeRobot(RobotInterface):
                 command.feedforward_torque.tolist(),
             )
 
-    def _publish_zero_torque(self) -> None:
-        assert self._native is not None
-        self._native.write_torque(np.zeros(29, dtype=np.float32))
-
     def health(self) -> HealthStatus:
         if self._native is None:
             return HealthStatus(False, self._health_reason, 0)
@@ -412,34 +345,11 @@ class UnitreeG1NativeRobot(RobotInterface):
                 self._native.close()
             self._closed = True
 
-    def _wait_for_button(self, button: str, publish: Callable[[], None]) -> None:
-        while True:
-            self.read_state(self._state_timeout_s)
-            if self.remote.pressed(button):
-                return
-            self._raise_if_remote_stop_requested()
-            publish()
-
-    def _wait_for_intent(self, intent: str, publish: Callable[[], None]) -> None:
-        while True:
-            self.read_state(self._state_timeout_s)
-            if intent in self._latched_intents:
-                del self._latched_intents[intent]
-                return
-            self._raise_if_remote_stop_requested()
-            publish()
-
-    def _wait_control_period(self) -> None:
-        self._sleep(self._control_period_s)
-        self.read_state(self._state_timeout_s)
-
     def _raise_if_remote_stop_requested(self) -> None:
         if self._emergency_stop:
-            raise EmergencyStopError(f"remote {self.config.robot.emergency_stop_button!r} requested damping stop")
+            raise EmergencyStopError(f"remote {self.control.emergency_stop_button!r} requested damping stop")
         if self._passive_requested:
             raise PassiveRequestedError("operator requested passive damping")
-        if self._lie_down_requested:
-            raise LieDownRequestedError(f"remote {self.config.robot.lie_down_button!r} requested lie-down shutdown")
 
     def _require_open(self) -> None:
         if not self._opened or self._closed:

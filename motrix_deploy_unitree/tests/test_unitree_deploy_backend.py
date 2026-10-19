@@ -5,30 +5,27 @@
 
 import copy
 import struct
-from dataclasses import asdict, replace
+import threading
+import time
+from dataclasses import replace
 from types import SimpleNamespace
-from typing import ClassVar
 
 import numpy as np
 import pytest
-from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
-from motrix_deploy.artifact import ControlSpec, TaskSpec
-from motrix_deploy.contracts import JointControlMode, JointServoCommand, JointTorqueCommand, RobotSpec
-from motrix_deploy.errors import EmergencyStopError, LieDownRequestedError, ValidationError
-from motrix_deploy.profile import DeploymentProfile
+from motrix_deploy.artifact import ControlSpec
+from motrix_deploy.contracts import JointServoCommand, JointTorqueCommand, RobotSpec
+from motrix_deploy.errors import EmergencyStopError, ValidationError
 from motrix_deploy.runtime.factory import RuntimeCreateContext, create_hardware_runtime
 from motrix_deploy.runtime.hardware import HardwareRuntime
-from motrix_deploy_unitree.actuation import Actuation, UnitreeMotorBinding
-from motrix_deploy_unitree.cli import _parser, main
-from motrix_deploy_unitree.config import UnitreeBackendConfig, UnitreeGo2RobotCfg
-from motrix_deploy_unitree.direct import UnitreeGo2DirectInterface
-from motrix_deploy_unitree.hardware import UnitreeGo2HardwareCfg
-from motrix_deploy_unitree.interface import UnitreeGo2Robot, UnitreeSdkBindings
+from motrix_deploy_unitree.cli.app import _parser, main
+from motrix_deploy_unitree.config.control import UnitreeControlConfig
+from motrix_deploy_unitree.config.go2 import UnitreeGo2HardwareCfg
+from motrix_deploy_unitree.config.runtime import UnitreeRuntimeConfig, UnitreeTransportConfig
+from motrix_deploy_unitree.go2.robot import UnitreeGo2Robot
 from motrix_deploy_unitree.plugin import create_runtime
 from motrix_deploy_unitree.remote import UnitreeRemoteGamePadDevice, decode_wireless_remote
-from motrix_deploy_unitree.sensor import HardwareSensorBinding, HardwareSensorBindings
 
 JOINT_NAMES = (
     "FL_hip_joint",
@@ -61,6 +58,9 @@ MOTOR_MAPPING = {
 
 
 class _Motor:
+    # Match SDK fields strictly: misspellings must not become ignored attributes.
+    __slots__ = ("mode", "q", "dq", "kp", "kd", "tau")
+
     def __init__(self, index: int = 0) -> None:
         self.mode = 0
         self.q = float(index)
@@ -158,9 +158,11 @@ class _Publisher:
     def Init(self) -> None:
         self.initialized = True
 
-    def Write(self, message: _LowCmd) -> None:
+    def Write(self, message: _LowCmd) -> bool:
         snapshot = copy.deepcopy(message)
-        self.bus.commands.append(snapshot)
+        with self.bus.command_ready:
+            self.bus.commands.append(snapshot)
+            self.bus.command_ready.notify_all()
         write_count = len(self.bus.commands)
         if write_count in self.bus.remote_keys_after_writes:
             self.bus.state.wireless_remote = _remote_payload(self.bus.remote_keys_after_writes[write_count])
@@ -168,7 +170,9 @@ class _Publisher:
             if motor.kp > 0:
                 self.bus.state.motor_state[motor_index].q = motor.q
                 self.bus.state.motor_state[motor_index].dq = motor.dq
-        self.bus.emit()
+        if self.bus.emit_on_write:
+            self.bus.emit()
+        return True
 
     def Close(self) -> None:
         self.closed = True
@@ -184,7 +188,9 @@ class _Subscriber:
     def Init(self, callback, queue_depth: int) -> None:
         self.bus.callback = callback
         self.bus.queue_depth = queue_depth
-        self.bus.emit()
+        if self.bus.emit_on_write:
+            self.bus.emit()
+        return True
 
     def Close(self) -> None:
         self.closed = True
@@ -194,32 +200,87 @@ class _Bus:
     def __init__(self) -> None:
         self.state = _LowState()
         self.commands: list[_LowCmd] = []
+        self.command_ready = threading.Condition()
+        self.emit_on_write = True
         self.callback = None
         self.queue_depth = 0
         self.factory_calls: list[tuple[int, str]] = []
         self.remote_keys_after_writes: dict[int, int] = {}
-        self.motion_mode = "sport"
+        self.motion_mode = ""
         self.stand_down_status = 0
         self.service_switch_status = 0
         self.service_calls: list[tuple[str, object]] = []
+
+    def wait_for(self, predicate, *, after=0):
+        with self.command_ready:
+            assert self.command_ready.wait_for(
+                lambda: any(predicate(command) for command in self.commands[after:]), timeout=2
+            ), "writer did not publish the expected command"
+            return next(command for command in reversed(self.commands[after:]) if predicate(command))
 
     def emit(self) -> None:
         if self.callback is not None:
             self.callback(copy.deepcopy(self.state))
 
-    def sdk(self) -> UnitreeSdkBindings:
-        return UnitreeSdkBindings(
-            channel_factory_initialize=lambda domain, interface: self.factory_calls.append((domain, interface)),
-            channel_publisher=lambda topic, message_type: _Publisher(self, topic, message_type),
-            channel_subscriber=lambda topic, message_type: _Subscriber(self, topic, message_type),
-            low_cmd_message_type=_LowCmd,
-            low_state_message_type=_LowState,
-            make_low_cmd=_LowCmd,
-            crc_type=_CRC,
-            motion_switcher_client=lambda: _MotionSwitcherClient(self),
-            sport_client=lambda: _SportClient(self),
-            robot_state_client=lambda: _RobotStateClient(self),
+    def install(self, monkeypatch):
+        """Replace native SDK symbols without constructing DDS channels."""
+        for module in ("go2.robot", "cli.release_official_control"):
+            monkeypatch.setattr(
+                f"motrix_deploy_unitree.{module}.ChannelFactoryInitialize",
+                lambda domain, interface: self.factory_calls.append((domain, interface)),
+            )
+        monkeypatch.setattr(
+            "motrix_deploy_unitree.go2.robot.time",
+            SimpleNamespace(monotonic_ns=time.monotonic_ns, sleep=lambda _: None),
         )
+        symbols = {
+            "ChannelPublisher": lambda topic, message_type: _Publisher(self, topic, message_type),
+            "ChannelSubscriber": lambda topic, message_type: _Subscriber(self, topic, message_type),
+            "LowCmdGo": _LowCmd,
+            "LowStateGo": _LowState,
+            "unitree_go_msg_dds__LowCmd_": _LowCmd,
+            "CRC": _CRC,
+        }
+        for name, value in symbols.items():
+            monkeypatch.setattr(f"motrix_deploy_unitree.go2.robot.{name}", value)
+        monkeypatch.setattr("motrix_deploy_unitree.go2.robot.MotionSwitcherClient", lambda: _MotionSwitcherClient(self))
+        for name, client in (
+            ("MotionSwitcherClient", _MotionSwitcherClient),
+            ("SportClient", _SportClient),
+            ("RobotStateClient", _RobotStateClient),
+        ):
+            monkeypatch.setattr(f"motrix_deploy_unitree.go2.control_mode.{name}", lambda client=client: client(self))
+        return self
+
+
+@pytest.fixture(autouse=True)
+def _close_opened_robots(monkeypatch):
+    opened = []
+    original = UnitreeGo2Robot.open
+
+    def open_robot(robot):
+        result = original(robot)
+        opened.append(robot)
+        return result
+
+    monkeypatch.setattr(UnitreeGo2Robot, "open", open_robot)
+    yield
+    for robot in reversed(opened):
+        robot.close()
+
+
+def _is_damping(message):
+    return all(motor.kp == 0 and motor.kd == 8 for motor in message.motor_cmd)
+
+
+def _servo_published(bus, command, joint_names=JOINT_NAMES):
+    return bus.wait_for(
+        lambda message: all(
+            message.motor_cmd[MOTOR_MAPPING[name]].q == float(command.joint_position[index])
+            and message.motor_cmd[MOTOR_MAPPING[name]].kp == float(command.kp[index])
+            for index, name in enumerate(joint_names)
+        )
+    )
 
 
 def _remote_payload(keys: int = 0, *, lx: float = 0.0, ly: float = 0.0, rx: float = 0.0, ry: float = 0.0) -> bytes:
@@ -238,59 +299,28 @@ def _button(name: str) -> int:
 
 
 def _spec() -> RobotSpec:
-    return RobotSpec(
-        base_link_name="base",
-        joint_names=JOINT_NAMES,
-        default_joint_position=np.array(
-            [0.0, 0.9, -1.8, 0.0, 0.9, -1.8, 0.0, 0.9, -1.8, 0.0, 0.9, -1.8],
-            dtype=np.float32,
-        ),
-        position_lower=np.tile(np.array([-0.9472, -1.4, -2.6227], dtype=np.float32), 4),
-        position_upper=np.tile(np.array([0.9472, 2.5, -0.84776], dtype=np.float32), 4),
-        torque_limit=np.full(12, 24.0, dtype=np.float32),
+    return UnitreeGo2HardwareCfg().to_robot_spec()
+
+
+def _config(**overrides) -> UnitreeRuntimeConfig:
+    control = UnitreeControlConfig(damping_duration_s=overrides.pop("damping_duration_s", 0.0))
+    return UnitreeRuntimeConfig(
+        transport=UnitreeTransportConfig(network_interface=overrides.pop("network_interface", "enp3s0"), **overrides),
+        robot="go2",
+        control=control,
     )
 
 
-def _config(**overrides) -> UnitreeBackendConfig:
-    transport_fields = {
-        "network_interface",
-        "domain_id",
-        "lowcmd_topic",
-        "lowstate_topic",
-        "connect_timeout_s",
-        "subscriber_queue_depth",
-        "validate_crc",
-    }
-    transport = {"network_interface": "enp3s0"}
-    robot_values = {
-        "default_transition_duration_s": 0.02,
-        "damping_duration_s": 0.04,
-        "wait_for_remote_buttons": False,
-        "kp": 35.0,
-        "kd": 0.5,
-    }
-    for name, value in overrides.items():
-        if name in transport_fields:
-            transport[name] = value
-        else:
-            robot_values[name] = value
-    hardware = robot_values.pop("hardware", None)
-    if hardware is not None:
-        robot_values.update(key_pose=hardware.key_pose, sensors=hardware.sensors, actuation=hardware.actuation)
-    return UnitreeBackendConfig(**transport, robot=UnitreeGo2RobotCfg(**robot_values))
-
-
 def _backend(
-    config: UnitreeBackendConfig,
+    config: UnitreeRuntimeConfig,
     bus: _Bus,
 ) -> UnitreeGo2Robot:
     return UnitreeGo2Robot(
-        config,
+        config.transport,
+        control=config.control,
         spec=_spec(),
         control_period_s=0.02,
         state_timeout_s=0.1,
-        sdk=bus.sdk(),
-        sleep=lambda _: None,
     )
 
 
@@ -305,8 +335,8 @@ def _command(position: np.ndarray) -> JointServoCommand:
     )
 
 
-def test_unitree_interface_provides_remote_gamepad_device() -> None:
-    backend = _backend(_config(), _Bus())
+def test_unitree_interface_provides_remote_gamepad_device(monkeypatch) -> None:
+    backend = _backend(_config(), _Bus().install(monkeypatch))
     assert backend.get_gamepad_device() is backend.get_gamepad_device()
 
 
@@ -337,38 +367,105 @@ def test_remote_gamepad_adapter_exposes_axes_and_button_edges() -> None:
     assert not device.is_button_up("L1")
 
 
-def test_open_releases_mcf_mode_and_disables_sport_service_before_lowcmd() -> None:
-    bus = _Bus()
+def test_open_only_checks_released_ownership(monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
     backend = _backend(_config(), bus)
-
     backend.open()
-
-    call_names = [name for name, _ in bus.service_calls]
-    assert call_names.index("stand_down") < call_names.index("release_mode")
-    assert call_names.index("release_mode") < call_names.index("service_switch")
-    assert ("service_switch", ("sport_mode", False)) in bus.service_calls
-    assert bus.motion_mode == ""
+    assert [name for name, _ in bus.service_calls] == ["motion_timeout", "motion_init", "check_mode"]
+    bus.wait_for(_is_damping)
+    backend.close()
 
 
-def test_sport_service_shutdown_failure_aborts_before_lowcmd_channels() -> None:
-    bus = _Bus()
-    bus.service_switch_status = 42
+def test_active_official_control_aborts_before_lowcmd_channels(monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
+    bus.motion_mode = "sport"
     backend = _backend(_config(), bus)
-
-    with pytest.raises(RuntimeError, match="ServiceSwitch.*code 42"):
+    with pytest.raises(RuntimeError, match="release-control"):
         backend.open()
+    assert bus.motion_mode == "sport"
+    assert bus.callback is None
+    assert bus.commands == []
+    assert not any(name in {"stand_down", "release_mode", "service_switch"} for name, _ in bus.service_calls)
 
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_release_waits_for_observed_stand_down_before_releasing(confirmed, monkeypatch) -> None:
+    from motrix_deploy_unitree.go2.control_mode import release_official_control
+
+    bus = _Bus().install(monkeypatch)
+    bus.motion_mode = "sport"
+
+    def observe():
+        assert ("stand_down", None) in bus.service_calls
+        assert bus.motion_mode == "sport"
+        assert not any(name == "service_switch" for name, _ in bus.service_calls)
+        return confirmed
+
+    assert release_official_control(5.0, confirm_stand_down=observe) == confirmed
+    assert bus.motion_mode == ("" if confirmed else "sport")
+    assert (("service_switch", ("sport_mode", False)) in bus.service_calls) == confirmed
+    assert bus.commands == []
+
+
+@pytest.mark.parametrize("failure", ["stand_down", "service_switch"])
+def test_release_propagates_rpc_failure(failure, monkeypatch) -> None:
+    from motrix_deploy_unitree.go2.control_mode import release_official_control
+
+    bus = _Bus().install(monkeypatch)
+    bus.motion_mode = "sport"
+    if failure == "stand_down":
+        bus.stand_down_status = 42
+    else:
+        bus.service_switch_status = 42
+    with pytest.raises(RuntimeError, match="42"):
+        release_official_control(5.0, confirm_stand_down=lambda: True)
+    if failure == "stand_down":
+        assert bus.motion_mode == "sport"
+        assert not any(name == "service_switch" for name, _ in bus.service_calls)
+    assert bus.commands == []
+
+
+@pytest.mark.parametrize("status,mode", [(42, {"name": ""}), (0, None), (0, {}), (0, {"name": 0})])
+def test_ownership_query_failure_never_opens_command_channel(status, mode, monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
+    backend = _backend(_config(), bus)
+    client = _MotionSwitcherClient(bus)
+    client.CheckMode = lambda: (status, mode)
+    monkeypatch.setattr("motrix_deploy_unitree.go2.control_mode.MotionSwitcherClient", lambda: client)
+    with pytest.raises(RuntimeError, match="CheckMode|invalid mode"):
+        backend.open()
     assert bus.callback is None
     assert bus.commands == []
 
 
-def test_lowstate_and_lowcmd_are_mapped_by_canonical_joint_name() -> None:
-    bus = _Bus()
+@pytest.mark.parametrize("answer,expected", [("down", 0), ("no", 1)])
+def test_release_cli_requires_second_confirmation_after_stand_down(monkeypatch, answer, expected) -> None:
+    bus = _Bus().install(monkeypatch)
+    bus.motion_mode = "sport"
+    answers = iter(["yes", answer])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    assert main(["release-control", "eth0", "--timeout-s", "2"]) == expected
+    assert bus.factory_calls == [(0, "eth0")]
+    assert bus.motion_mode == ("" if answer == "down" else "sport")
+    assert bus.commands == []
+
+
+def test_release_cli_cancel_does_not_initialize_sdk(monkeypatch) -> None:
+    monkeypatch.setattr("builtins.input", lambda _: "no")
+    monkeypatch.setattr(
+        "motrix_deploy_unitree.cli.release_official_control.ChannelFactoryInitialize",
+        lambda *args: pytest.fail("must not initialize DDS"),
+    )
+    assert main(["release-control", "eth0"]) == 0
+
+
+def test_lowstate_and_lowcmd_are_mapped_by_canonical_joint_name(monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
     spec = _spec()
     backend = _backend(_config(), bus)
     backend.open()
 
-    state = backend.read_state(0.1)
+    state = backend.read_state()
     expected_position = np.asarray([MOTOR_MAPPING[name] for name in JOINT_NAMES], dtype=np.float32)
     np.testing.assert_array_equal(state.joint_position, expected_position)
     np.testing.assert_array_equal(state.base_orientation_xyzw, [0.0, 0.0, 0.0, 1.0])
@@ -377,7 +474,7 @@ def test_lowstate_and_lowcmd_are_mapped_by_canonical_joint_name() -> None:
     target = spec.default_joint_position + np.linspace(-0.01, 0.01, 12, dtype=np.float32)
     command = _command(target)
     backend.write_command(command)
-    published = copy.deepcopy(bus.commands[-1])
+    published = _servo_published(bus, command)
 
     for canonical_index, name in enumerate(JOINT_NAMES):
         motor = published.motor_cmd[MOTOR_MAPPING[name]]
@@ -388,227 +485,290 @@ def test_lowstate_and_lowcmd_are_mapped_by_canonical_joint_name() -> None:
     assert published.crc == 123
 
     backend.stop()
-    assert len(bus.commands) >= 4
+    bus.wait_for(_is_damping, after=1)
     for motor_index in MOTOR_MAPPING.values():
         motor = bus.commands[-1].motor_cmd[motor_index]
         assert motor.kp == 0.0
         assert motor.kd == 8.0
+        assert motor.dq == 0.0
         assert motor.tau == 0.0
     backend.close()
     assert not backend.health().healthy
     assert backend.health().reason == "backend is closed"
 
 
-@pytest.mark.parametrize("gains", [{"kp": None}, {"kd": None}, {"kp": None, "kd": None}])
-def test_enable_requires_explicit_servo_safety_gains_before_output(gains: dict) -> None:
-    bus = _Bus()
-    backend = _backend(_config(**gains), bus)
-    backend.open()
-    torque = JointTorqueCommand(torque=np.zeros(12, dtype=np.float32))
-    with pytest.raises(RuntimeError, match="not enabled"):
-        backend.write_command(torque)
-    with pytest.raises(ValidationError, match="safety gains"):
-        backend.enable()
-    assert bus.commands == []
-    backend.close()
-
-
-def test_torque_enable_uses_servo_transition_then_maps_pure_torque_and_preserves_shutdown_gains() -> None:
-    bus = _Bus()
-    backend = _backend(_config(kp=30.0, kd=0.7, lie_down_duration_s=0.02, damping_duration_s=0.02), bus)
-    backend.open()
-    assert backend.capabilities.control_modes == (JointControlMode.SERVO, JointControlMode.TORQUE)
-    torque = JointTorqueCommand(torque=np.linspace(-12.0, 12.0, 12, dtype=np.float32))
-    backend.enable()
-    transition = copy.deepcopy(bus.commands[-1])
-    for index, name in enumerate(JOINT_NAMES):
-        motor = transition.motor_cmd[MOTOR_MAPPING[name]]
-        assert motor.q == pytest.approx(_spec().default_joint_position[index])
-        assert motor.kp == pytest.approx(30.0)
-        assert motor.kd == pytest.approx(0.7)
-        assert motor.tau == 0.0
-    backend.write_command(torque)
-    for index, name in enumerate(JOINT_NAMES):
-        motor = bus.commands[-1].motor_cmd[MOTOR_MAPPING[name]]
-        assert (motor.q, motor.dq, motor.kp, motor.kd) == (0.0, 0.0, 0.0, 0.0)
-        assert motor.tau == pytest.approx(torque.torque[index])
-        assert motor.mode == transition.motor_cmd[MOTOR_MAPPING[name]].mode
-    count = len(bus.commands)
-    with pytest.raises(ValidationError, match="command.torque"):
-        backend.write_command(JointTorqueCommand(torque=_spec().torque_limit + 1.0))
-    assert len(bus.commands) == count
-    bus.state.wireless_remote = _remote_payload(_button("B"))
-    bus.emit()
-    backend.stop()
-    for index in MOTOR_MAPPING.values():
-        assert bus.commands[-2].motor_cmd[index].kp == pytest.approx(30.0)
-        assert bus.commands[-2].motor_cmd[index].kd == pytest.approx(0.7)
-        assert bus.commands[-2].motor_cmd[index].tau == 0.0
-    backend.close()
-
-
-def test_custom_robot_config_drives_sensor_wiring_motor_addresses_modes_and_shutdown_pose() -> None:
-    robot = UnitreeGo2HardwareCfg()
-    robot.actuation = Actuation(
-        motors={
-            name: UnitreeMotorBinding(index=11 - index, enabled_mode=20 + index)
-            for index, name in enumerate(JOINT_NAMES)
-        }
-    )
-    robot.sensors = HardwareSensorBindings(
-        base_orientation_xyzw=HardwareSensorBinding(field="custom.orientation", quaternion_order="xyzw"),
-        base_angular_velocity=HardwareSensorBinding(field="custom.angular_velocity"),
-        base_linear_acceleration=HardwareSensorBinding(field="custom.acceleration"),
-    )
-    target = np.linspace(-0.2, 0.2, 12, dtype=np.float32)
-    robot.key_pose.joint_names = list(reversed(JOINT_NAMES))
-    robot.key_pose.poses["lie_down"] = target[::-1].tolist()
-    bus = _Bus()
-    bus.state.custom = SimpleNamespace(
-        orientation=[0.0, 0.0, 2.0, 0.0], angular_velocity=[4.0, 5.0, 6.0], acceleration=[7.0, 8.0, 9.0]
-    )
-    backend = _backend(_config(hardware=robot, lie_down_duration_s=0.02, damping_duration_s=0.02), bus)
-    backend.open()
-    # Bindings and pose are resolved at open, not re-read from mutable robot configs.
-    robot.actuation = Actuation()
-    robot.sensors = HardwareSensorBindings()
-    robot.key_pose.poses["lie_down"] = [0.0] * 12
-    state = backend.read_state(0.1)
-    np.testing.assert_array_equal(state.joint_position, np.arange(11, -1, -1))
-    np.testing.assert_array_equal(state.base_orientation_xyzw, [0.0, 0.0, 1.0, 0.0])
-    np.testing.assert_array_equal(state.base_angular_velocity, [4.0, 5.0, 6.0])
-    np.testing.assert_array_equal(state.base_linear_acceleration, [7.0, 8.0, 9.0])
-    backend.enable()
-    backend.write_command(_command(_spec().default_joint_position))
-    for index in range(12):
-        assert bus.commands[-1].motor_cmd[11 - index].mode == 20 + index
-    bus.state.wireless_remote = _remote_payload(_button("B"))
-    bus.emit()
-    backend.stop()
-    for index in range(12):
-        assert bus.commands[-2].motor_cmd[11 - index].q == pytest.approx(target[index])
-        assert bus.commands[-1].motor_cmd[11 - index].mode == 20 + index
-    backend.close()
-
-
-def test_direct_api_explicit_mapping_and_mode_overrides_remain_supported() -> None:
-    bus = _Bus()
-    mapping = dict(zip(JOINT_NAMES, range(12)))
-    direct = UnitreeGo2DirectInterface.from_profile(
-        _profile(),
-        config=_config(
-            joint_name_to_motor_index=mapping,
-            motor_mode=42,
-            damping_duration_s=0.0,
-        ),
-        sdk=bus.sdk(),
-        sleep=lambda _: None,
-    )
-    direct.open()
-    np.testing.assert_array_equal(direct.read_data().joint_position, np.arange(12))
-    direct.enable_command_output()
-    direct.send_joint_command(direct.robot.default_joint_position)
-    for index, motor in enumerate(bus.commands[-1].motor_cmd):
-        assert motor.mode == 42
-        assert motor.q == pytest.approx(direct.robot.default_joint_position[index])
-    direct.close()
-
-
-def test_runtime_gain_overrides_apply_to_transition_and_policy_commands() -> None:
-    bus = _Bus()
-    spec = _spec()
-    kd = np.linspace(0.2, 1.3, 12, dtype=np.float32)
-    backend = _backend(_config(kp=25.0, kd=kd.tolist()), bus)
-    backend.open()
-
-    backend.enable()
-    transition = copy.deepcopy(bus.commands[-1])
-    backend.write_command(_command(spec.default_joint_position))
-    policy = copy.deepcopy(bus.commands[-1])
-
-    for published in (transition, policy):
-        for canonical_index, name in enumerate(JOINT_NAMES):
-            motor = published.motor_cmd[MOTOR_MAPPING[name]]
-            assert motor.kp == pytest.approx(25.0)
-            assert motor.kd == pytest.approx(kd[canonical_index])
-
-    backend.stop()
-    for motor_index in MOTOR_MAPPING.values():
-        assert bus.commands[-1].motor_cmd[motor_index].kp == 0.0
-        assert bus.commands[-1].motor_cmd[motor_index].kd == pytest.approx(8.0)
-
-
-def test_direct_interface_reads_and_sends_through_production_backend() -> None:
-    bus = _Bus()
-    spec = _spec()
+@pytest.mark.parametrize("mode", ["servo", "torque"])
+def test_enable_requires_explicit_command_and_commands_preserve_requested_fields(mode: str, monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
     backend = _backend(_config(), bus)
-    direct = UnitreeGo2DirectInterface(
-        kp=[35.0] * 12,
-        kd=[0.5] * 12,
-        control_period_s=0.02,
-        state_timeout_s=0.1,
-        backend=backend,
-    )
-    direct.open()
-
-    state = direct.read_data()
-    expected_position = np.asarray([MOTOR_MAPPING[name] for name in JOINT_NAMES], dtype=np.float32)
-    np.testing.assert_array_equal(state.joint_position, expected_position)
-
-    with pytest.raises(RuntimeError, match="not enabled"):
-        direct.send_joint_command(spec.default_joint_position)
-
-    direct.enable_command_output()
-    target = spec.default_joint_position + np.linspace(-0.01, 0.01, 12, dtype=np.float32)
-    command = direct.send_joint_command(target)
-    published = bus.commands[-1]
-
-    np.testing.assert_array_equal(command.joint_position, target)
-    np.testing.assert_array_equal(command.kp, np.full(12, 35.0, dtype=np.float32))
-    np.testing.assert_array_equal(command.kd, np.full(12, 0.5, dtype=np.float32))
-    command.kp[:] = 0.0
-    np.testing.assert_array_equal(direct.default_pose_command().kp, np.full(12, 35.0, dtype=np.float32))
-    assert published.motor_cmd[MOTOR_MAPPING["FL_hip_joint"]].q == pytest.approx(target[0])
-    assert published.motor_cmd[MOTOR_MAPPING["RR_calf_joint"]].q == pytest.approx(target[-1])
-
-    direct.close()
-    assert direct.health().reason == "backend is closed"
-
-
-def test_torque_enable_obeys_start_and_a_gates_without_sending_rollout_torque() -> None:
-    bus = _Bus()
-    bus.remote_keys_after_writes = {
-        1: _button("start"),
-        2: _button("start"),
-        3: _button("start") | _button("A"),
-    }
-    backend = _backend(_config(wait_for_remote_buttons=True, kp=35.0, kd=0.5, damping_duration_s=0.0), bus)
     backend.open()
-    backend.read_state(0.1)
-    torque = JointTorqueCommand(torque=np.full(12, 1.0, dtype=np.float32))
+    with pytest.raises(RuntimeError, match="not enabled"):
+        backend.write_command(JointTorqueCommand(np.zeros(12, dtype=np.float32)))
     backend.enable()
-    assert len(bus.commands) == 3
-    assert all(motor.tau == 0.0 for command in bus.commands for motor in command.motor_cmd)
-    assert all(motor.kp == 0.0 and motor.kd == 0.0 for motor in bus.commands[0].motor_cmd)
-    assert any(motor.kp == 35.0 for motor in bus.commands[1].motor_cmd)
-    assert any(motor.kp == 35.0 for motor in bus.commands[2].motor_cmd)
-    backend.write_command(torque)
-    assert all(bus.commands[-1].motor_cmd[index].tau == 1.0 for index in MOTOR_MAPPING.values())
-    bus.state.wireless_remote = _remote_payload(_button("select"))
-    bus.emit()
-    with pytest.raises(EmergencyStopError):
-        backend.write_command(torque)
+    if mode == "servo":
+        command = _command(_spec().default_joint_position)
+        command.kp = np.arange(12, dtype=np.float32) + 1
+        command.kd = np.arange(12, dtype=np.float32) / 10
+        command.joint_velocity = np.linspace(-0.1, 0.1, 12, dtype=np.float32)
+        command.feedforward_torque = np.linspace(-1, 1, 12, dtype=np.float32)
+        expected = (command.joint_position, command.joint_velocity, command.kp, command.kd, command.feedforward_torque)
+    else:
+        command = JointTorqueCommand(np.linspace(-1, 1, 12, dtype=np.float32))
+        zeros = np.zeros(12, dtype=np.float32)
+        expected = (zeros, zeros, zeros, zeros, command.torque)
+    backend.write_command(command)
+    if mode == "servo":
+        published = _servo_published(bus, command)
+    else:
+        published = bus.wait_for(
+            lambda msg: all(
+                msg.motor_cmd[MOTOR_MAPPING[name]].tau == float(command.torque[index])
+                for index, name in enumerate(JOINT_NAMES)
+            )
+        )
+    actual = [published.motor_cmd[MOTOR_MAPPING[name]] for name in JOINT_NAMES]
+    for field, values in zip(("q", "dq", "kp", "kd", "tau"), expected):
+        np.testing.assert_array_equal([getattr(motor, field) for motor in actual], values)
     backend.close()
 
 
-def test_select_remote_button_raises_emergency_stop_and_stop_publishes_damping() -> None:
-    bus = _Bus()
+def test_failed_publish_latches_fault_without_updating_communication_time(monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
+    failed = threading.Event()
+
+    def fail_write(self, message):
+        failed.set()
+        return False
+
+    monkeypatch.setattr(_Publisher, "Write", fail_write)
+    backend = _backend(_config(), bus)
+    backend.open()
+    assert failed.wait(1)
+    with backend._condition:
+        assert backend._condition.wait_for(lambda: backend._writer_error is not None, timeout=1)
+    assert not backend.health().healthy
+    assert backend.health().last_successful_communication_ns == 0
+    with pytest.raises(RuntimeError, match="failed to publish Unitree LowCmd"):
+        backend.enable()
+    backend.close()
+
+
+@pytest.mark.integration
+def test_velocity_survives_sdk_lowcmd_serialization_without_dds(monkeypatch) -> None:
+    from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_
+
+    bus = _Bus().install(monkeypatch)
+    backend = _backend(_config(damping_duration_s=0.02), bus)
+    monkeypatch.setattr("motrix_deploy_unitree.go2.robot.unitree_go_msg_dds__LowCmd_", unitree_go_msg_dds__LowCmd_)
+    backend.open()
+    message_type = type(backend._low_cmd)
+
+    def wire_message():
+        return message_type.deserialize(backend._low_cmd.serialize())
+
+    backend.enable()
+    command = _command(_spec().default_joint_position)
+    command.joint_velocity = np.linspace(-0.6, 0.6, 12, dtype=np.float32)
+    backend.write_command(command)
+    _servo_published(bus, command)
+    decoded = wire_message()
+    for index, name in enumerate(JOINT_NAMES):
+        assert decoded.motor_cmd[MOTOR_MAPPING[name]].dq == float(command.joint_velocity[index])
+
+    backend.write_command(JointTorqueCommand(np.ones(12, dtype=np.float32)))
+    bus.wait_for(
+        lambda msg: all(
+            msg.motor_cmd[index].tau == 1.0 and msg.motor_cmd[index].dq == 0 for index in MOTOR_MAPPING.values()
+        )
+    )
+    backend.write_command(command)
+    backend.stop()
+    decoded = wire_message()
+    for index in MOTOR_MAPPING.values():
+        assert decoded.motor_cmd[index].dq == 0.0
+        assert decoded.motor_cmd[index].kp == 0.0
+        assert decoded.motor_cmd[index].kd == backend.control.damping_kd
+    backend.close()
+
+
+@pytest.mark.parametrize("button", ["start", "A", "B"])
+def test_task_buttons_are_available_without_stopping_backend(button: str, monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
+    backend = _backend(_config(), bus)
+    backend.open()
+    backend.enable()
+    bus.state.wireless_remote = _remote_payload(_button(button))
+    bus.emit()
+    backend.read_state()
+    device = backend.get_gamepad_device()
+    device.poll()
+    assert device.is_button_pressing(button)
+    backend.write_command(_command(_spec().default_joint_position))
+    assert backend.health().healthy
+    backend.close()
+
+
+@pytest.mark.parametrize("field", ["joint_position", "feedforward_torque", "torque"])
+@pytest.mark.parametrize("widen_artifact", [False, True])
+def test_command_limits_intersect_hardware_by_name_before_open(field: str, widen_artifact: bool, monkeypatch) -> None:
+    hardware = UnitreeGo2HardwareCfg()
+    native = hardware.to_robot_spec()
+    order = np.arange(12)[::-1]
+    factor = 2 if widen_artifact else 0.5
+    # Reverse artifact names and use a valid center pose, independently scaling
+    # each interval about that center to test both sides of the intersection.
+    center = native.default_joint_position[order]
+    lower = center + factor * (native.position_lower[order] - center)
+    upper = center + factor * (native.position_upper[order] - center)
+    spec = replace(
+        native,
+        joint_names=tuple(native.joint_names[i] for i in order),
+        default_joint_position=center.copy(),
+        position_lower=lower,
+        position_upper=upper,
+        torque_limit=native.torque_limit[order] * factor,
+    )
+    bus = _Bus().install(monkeypatch)
+    backend = UnitreeGo2Robot(
+        _config().transport, UnitreeControlConfig(), control_period_s=0.02, state_timeout_s=0.1, spec=spec
+    )
+    assert backend.spec is spec
+    bounds = dict(
+        position_lower=backend._position_lower,
+        position_upper=backend._position_upper,
+        torque_limit=backend._torque_limit,
+    )
+    _command(center.copy()).validate_for(spec, **bounds)
+    for index in range(12):
+        if field == "torque":
+            command = JointTorqueCommand(np.zeros(12, dtype=np.float32))
+        else:
+            command = _command(center.copy())
+        values = getattr(command, field)
+        if field == "joint_position":
+            values[index] = min(upper[index], native.position_upper[order[index]]) + np.float32(0.01)
+        else:
+            values[index] = min(spec.torque_limit[index], native.torque_limit[order[index]]) + np.float32(0.01)
+        with pytest.raises(ValidationError, match=f"command.{field}"):
+            if isinstance(command, JointTorqueCommand):
+                command.validate_for(spec, torque_limit=backend._torque_limit)
+            else:
+                command.validate_for(spec, **bounds)
+    assert bus.factory_calls == []
+
+
+@pytest.mark.parametrize("side", ["lower", "upper"])
+def test_measured_pose_outside_hardware_bounds_cannot_be_commanded_even_with_zero_gains(side, monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
+    robot = _backend(_config(), bus)
+    for name, position in zip(robot.spec.joint_names, robot.spec.default_joint_position):
+        bus.state.motor_state[MOTOR_MAPPING[name]].q = float(position)
+    joint = robot.spec.joint_names[2]
+    boundary = getattr(robot.spec, f"position_{side}")[2]
+    bus.state.motor_state[MOTOR_MAPPING[joint]].q = float(boundary + (-0.01 if side == "lower" else 0.01))
+    robot.open()
+    try:
+        robot.enable()
+        measured = robot.read_state()
+        command = _command(measured.joint_position)
+        command.kp.fill(0)
+        command.kd.fill(0)
+        with pytest.raises(ValidationError, match=joint):
+            robot.write_command(command)
+        assert not any(any(motor.kp > 0 for motor in msg.motor_cmd) for msg in bus.commands)
+    finally:
+        robot.close()
+
+
+def test_default_pose_outside_hardware_limits_is_rejected_before_connection(monkeypatch) -> None:
+    hardware = UnitreeGo2HardwareCfg()
+    native = hardware.to_robot_spec()
+    position = native.default_joint_position.copy()
+    upper = native.position_upper.copy()
+    upper[0] += np.float32(0.2)
+    position[0] = native.position_upper[0] + np.float32(0.1)
+    # Valid for the artifact alone, but not for the selected physical hardware.
+    spec = replace(native, default_joint_position=position, position_upper=upper)
+    bus = _Bus().install(monkeypatch)
+    with pytest.raises(ValidationError, match="robot.default_joint_position"):
+        UnitreeGo2Robot(
+            _config().transport, UnitreeControlConfig(), control_period_s=0.02, state_timeout_s=0.1, spec=spec
+        )
+    np.testing.assert_array_equal(spec.default_joint_position, position)
+    np.testing.assert_array_equal(spec.position_upper, upper)
+    assert bus.factory_calls == []
+    assert bus.commands == []
+
+
+def test_cached_state_reads_do_not_wait_or_refresh_timestamp(monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
+    backend = _backend(_config(), bus)
+    monkeypatch.setattr(backend, "_start_command_writer", lambda: None)
+    backend.open()
+    first = backend.read_state()
+    # Advancing the host clock must not make an old sample appear newly received.
+    monkeypatch.setattr(
+        "motrix_deploy_unitree.go2.robot.time.monotonic_ns", lambda: first.receive_time_ns + 1_000_000_000
+    )
+    cached = backend.read_state()
+    assert cached.receive_time_ns == first.receive_time_ns
+    assert cached.sample_time_ns == first.sample_time_ns
+    np.testing.assert_array_equal(cached.joint_position, first.joint_position)
+    bus.state.motor_state[3].q += 0.1
+    bus.emit()
+    updated = backend.read_state()
+    assert updated.receive_time_ns > cached.receive_time_ns
+    assert updated.joint_position[0] != cached.joint_position[0]
+    np.testing.assert_array_equal(first.joint_position, cached.joint_position)
+    backend.close()
+
+
+def test_lowstate_crc_rejects_corruption_without_refreshing_state_and_accepts_recovery(monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
+    monkeypatch.setattr(UnitreeGo2Robot, "_start_command_writer", lambda self: None)
+    backend = _backend(_config(), bus)
+    backend.open()
+    first = backend.read_state()
+    bus.state.crc = 0
+    bus.state.motor_state[3].q += 0.1
+    bus.emit()
+    cached = backend.read_state()
+    np.testing.assert_array_equal(cached.joint_position, first.joint_position)
+    assert cached.receive_time_ns == first.receive_time_ns
+    bus.state.crc = 123
+    bus.emit()
+    recovered = backend.read_state()
+    assert recovered.joint_position[0] != first.joint_position[0]
+    assert recovered.receive_time_ns > first.receive_time_ns
+    backend.close()
+
+
+def test_invalid_state_cleanup_publishes_only_damping_and_closes_channels(monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
+    backend = _backend(_config(damping_duration_s=0.02), bus)
+    backend.open()
+    backend.enable()
+    backend.read_state()
+    bus.state.imu_state.gyroscope = [float("nan")] * 3
+    bus.emit()
+    with pytest.raises(RuntimeError, match="invalid Unitree LowState"):
+        backend.read_state()
+    backend.close()
+    backend.close()
+    assert bus.commands
+    for motor in bus.commands[-1].motor_cmd:
+        assert (motor.kp, motor.kd, motor.tau) == (0.0, backend.control.damping_kd, 0.0)
+    assert backend._subscriber.closed and backend._publisher.closed
+
+
+def test_select_remote_button_raises_emergency_stop_and_stop_publishes_damping(monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
     backend = _backend(
         _config(damping_duration_s=0.02),
         bus,
     )
     backend.open()
-    backend.read_state(0.1)
+    backend.read_state()
     backend.enable()
     commands_before_stop = len(bus.commands)
 
@@ -616,171 +776,27 @@ def test_select_remote_button_raises_emergency_stop_and_stop_publishes_damping()
     bus.emit()
 
     with pytest.raises(EmergencyStopError, match="requested damping stop"):
-        backend.read_state(0.1)
+        backend.read_state()
     assert not backend.health().healthy
+    bus.state.wireless_remote = _remote_payload()
+    bus.emit()
+    with pytest.raises(EmergencyStopError):
+        backend.enable()
+    with pytest.raises(EmergencyStopError):
+        backend.write_command(_command(_spec().default_joint_position))
 
     backend.stop()
-    assert len(bus.commands) == commands_before_stop + 1
+    assert len(bus.commands) > commands_before_stop
     assert all(bus.commands[-1].motor_cmd[index].kd == 8.0 for index in MOTOR_MAPPING.values())
     backend.close()
 
 
-def test_b_button_lies_down_then_enters_damping() -> None:
-    bus = _Bus()
-    config = _config(lie_down_duration_s=0.04, damping_duration_s=0.02)
-    backend = _backend(config, bus)
-    backend.open()
-    backend.read_state(0.1)
-    backend.enable()
-    commands_before_stop = len(bus.commands)
-
-    bus.state.wireless_remote = _remote_payload(_button("B"))
-    bus.emit()
-
-    with pytest.raises(LieDownRequestedError, match="lie-down shutdown"):
-        backend.read_state(0.1)
-    backend.stop()
-
-    shutdown_commands = bus.commands[commands_before_stop:]
-    assert len(shutdown_commands) == 3
-    target = config.robot.lie_down_position()
-    for canonical_index, name in enumerate(JOINT_NAMES):
-        motor_index = MOTOR_MAPPING[name]
-        final_position = shutdown_commands[-2].motor_cmd[motor_index]
-        assert final_position.q == pytest.approx(target[canonical_index])
-        assert final_position.kp == pytest.approx(35.0)
-        assert final_position.kd == pytest.approx(0.5)
-        damping = shutdown_commands[-1].motor_cmd[motor_index]
-        assert damping.kp == 0.0
-        assert damping.kd == pytest.approx(8.0)
-    backend.close()
-
-
-def test_select_has_priority_over_simultaneous_lie_down_request() -> None:
-    bus = _Bus()
-    backend = _backend(_config(damping_duration_s=0.02), bus)
-    backend.open()
-    backend.read_state(0.1)
-    backend.enable()
-    commands_before_stop = len(bus.commands)
-
-    bus.state.wireless_remote = _remote_payload(_button("select") | _button("B"))
-    bus.emit()
-
-    with pytest.raises(EmergencyStopError, match="damping stop"):
-        backend.read_state(0.1)
-    backend.stop()
-
-    shutdown_commands = bus.commands[commands_before_stop:]
-    assert len(shutdown_commands) == 1
-    assert all(shutdown_commands[0].motor_cmd[index].kd == 8.0 for index in MOTOR_MAPPING.values())
-    backend.close()
-
-
 def test_trusted_recipe_instantiates_robot_config() -> None:
-    config = OmegaConf.to_object(
-        OmegaConf.structured(UnitreeBackendConfig(network_interface="enp3s0", robot=UnitreeGo2RobotCfg()))
-    )
+    config = OmegaConf.to_object(OmegaConf.structured(_config()))
     runtime = create_runtime(config, _context())
     assert isinstance(runtime, HardwareRuntime)
     assert isinstance(runtime.robot, UnitreeGo2Robot)
-    assert isinstance(runtime.robot.config.robot, UnitreeGo2RobotCfg)
-    assert isinstance(runtime.robot.config.robot, UnitreeGo2RobotCfg)
-
-
-@pytest.mark.parametrize("structured", [False, True])
-def test_recipe_parser_preserves_typed_custom_sensor_bindings(structured: bool) -> None:
-    sensors = HardwareSensorBindings(
-        base_orientation_xyzw=HardwareSensorBinding("custom.orientation", "xyzw"),
-        base_angular_velocity=HardwareSensorBinding("custom.angular_velocity"),
-        base_linear_acceleration=HardwareSensorBinding("custom.acceleration"),
-    )
-    if structured:
-        sensor_recipe = OmegaConf.structured(sensors)
-    else:
-        # Plain YAML declares the canonical nested Hydra targets explicitly.
-        sensor_recipe = {
-            "_target_": "motrix_deploy_unitree.sensor.HardwareSensorBindings",
-            **{
-                role: {"_target_": "motrix_deploy_unitree.sensor.HardwareSensorBinding", **binding}
-                for role, binding in asdict(sensors).items()
-            },
-        }
-    recipe = OmegaConf.create(
-        {
-            "network_interface": "enp3s0",
-            "robot": {
-                "_target_": "motrix_deploy_unitree.config.UnitreeGo2RobotCfg",
-                "sensors": sensor_recipe,
-            },
-        }
-    )
-    if not structured:
-        recipe = OmegaConf.to_container(recipe, resolve=True)
-    robot = (
-        instantiate(recipe.robot, _convert_="object")
-        if structured
-        else instantiate(recipe["robot"], _convert_="object")
-    )
-    config = UnitreeBackendConfig(network_interface="enp3s0", robot=robot)
-    assert isinstance(config.robot, UnitreeGo2RobotCfg)
-    assert isinstance(config.robot, UnitreeGo2RobotCfg)
-    assert isinstance(config.robot.sensors, HardwareSensorBindings)
-    assert config.robot.sensors == sensors
-    assert isinstance(config.robot.sensors.base_orientation_xyzw, HardwareSensorBinding)
-    bus = _Bus()
-    bus.state.custom = SimpleNamespace(
-        orientation=[0.0, 2.0, 0.0, 0.0], angular_velocity=[4.0, 5.0, 6.0], acceleration=[7.0, 8.0, 9.0]
-    )
-    backend = _backend(config, bus)
-    backend.open()
-    state = backend.read_state(0.1)
-    np.testing.assert_array_equal(state.base_orientation_xyzw, [0.0, 1.0, 0.0, 0.0])
-    np.testing.assert_array_equal(state.base_angular_velocity, [4.0, 5.0, 6.0])
-    np.testing.assert_array_equal(state.base_linear_acceleration, [7.0, 8.0, 9.0])
-    backend.close()
-
-
-@pytest.mark.parametrize("role", ["base_orientation_xyzw", "base_angular_velocity", "base_linear_acceleration"])
-def test_missing_sensor_binding_aborts_before_dds_or_command_output(role: str) -> None:
-    robot = UnitreeGo2HardwareCfg()
-    robot.sensors = replace(robot.sensors, **{role: None})
-    bus = _Bus()
-    backend = _backend(_config(hardware=robot), bus)
-    with pytest.raises(ValidationError, match=f"runtime.robot.sensors.{role}"):
-        backend.open()
-    assert bus.factory_calls == []
-    assert bus.service_calls == []
-    assert bus.callback is None
-    assert bus.commands == []
-
-
-def test_missing_quaternion_order_aborts_before_dds() -> None:
-    robot = UnitreeGo2HardwareCfg()
-    robot.sensors = replace(
-        robot.sensors,
-        base_orientation_xyzw=HardwareSensorBinding("imu_state.quaternion"),
-    )
-    bus = _Bus()
-    with pytest.raises(ValidationError, match="declared quaternion order"):
-        _backend(_config(hardware=robot), bus).open()
-    assert bus.factory_calls == []
-    assert bus.commands == []
-
-
-def test_unsupported_quaternion_order_is_rejected_by_binding() -> None:
-    with pytest.raises(ValueError, match="unsupported quaternion order"):
-        HardwareSensorBinding("imu_state.quaternion", "zwxy")
-
-
-@pytest.mark.parametrize("field", ["imu_state.quaternion[0]", "imu_state._quaternion", "imu_state.quaternion()"])
-def test_sensor_sdk_field_rejects_indexing_private_attributes_and_expressions(field: str) -> None:
-    robot = UnitreeGo2HardwareCfg()
-    robot.sensors = replace(robot.sensors, base_orientation_xyzw=HardwareSensorBinding(field, "wxyz"))
-    bus = _Bus()
-    with pytest.raises(ValidationError, match="public dotted SDK attributes"):
-        _backend(_config(hardware=robot), bus).open()
-    assert bus.factory_calls == []
+    assert isinstance(runtime.robot.hardware, UnitreeGo2HardwareCfg)
 
 
 @pytest.mark.parametrize(
@@ -792,248 +808,282 @@ def test_sensor_sdk_field_rejects_indexing_private_attributes_and_expressions(fi
         ("accelerometer", [0.0, 0.0, float("inf")]),
     ],
 )
-def test_invalid_sdk_sensor_shape_or_finiteness_aborts_open(field: str, value: list[float]) -> None:
-    bus = _Bus()
+def test_invalid_sdk_sensor_shape_or_finiteness_aborts_open(field: str, value: list[float], monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
     setattr(bus.state.imu_state, field, value)
     with pytest.raises(RuntimeError, match="invalid Unitree LowState"):
         _backend(_config(), bus).open()
     assert bus.commands == []
 
 
-def test_zero_quaternion_is_rejected_before_enable_output() -> None:
-    bus = _Bus()
+def test_zero_quaternion_cannot_establish_initial_valid_state(monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
     bus.state.imu_state.quaternion = [0.0] * 4
     backend = _backend(_config(), bus)
+    try:
+        with pytest.raises(RuntimeError, match="non-zero quaternion"):
+            backend.open()
+        assert not bus.commands
+    finally:
+        backend.close()
+
+
+def test_cached_state_is_isolated_from_message_and_returned_array_mutations(monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
+    monkeypatch.setattr(UnitreeGo2Robot, "_start_command_writer", lambda self: None)
+    backend = _backend(_config(), bus)
     backend.open()
-    with pytest.raises(ValidationError, match="non-zero quaternion"):
-        backend.enable()
-    assert bus.commands == []
-
-
-def test_explicit_lie_down_override_remains_canonical_and_validated() -> None:
-    pose = np.linspace(-0.2, 0.2, 12, dtype=np.float32)
-    np.testing.assert_array_equal(_config(lie_down_joint_position=pose).robot.lie_down_position(), pose)
-    with pytest.raises(ValidationError, match="runtime.robot.lie_down_joint_position"):
-        _config(lie_down_joint_position=[0.0] * 11)
-
-
-def test_go2_hardware_defaults_are_resolved_from_robot_config() -> None:
-    config = UnitreeBackendConfig(network_interface="enp3s0", robot=UnitreeGo2RobotCfg())
-    assert config.robot is not None
-
-    np.testing.assert_array_equal(
-        config.robot.motor_indices(JOINT_NAMES),
-        [config.robot.actuation.motors[name].index for name in JOINT_NAMES],
-    )
-    np.testing.assert_array_equal(
-        config.robot.lie_down_position(), np.asarray(config.robot.key_pose.poses["lie_down"], dtype=np.float32)
-    )
-
-
-def test_motor_mapping_must_exactly_cover_artifact_joint_names() -> None:
-    mapping = dict(MOTOR_MAPPING)
-    mapping.pop("FL_hip_joint")
-    config = _config(joint_name_to_motor_index=mapping)
-
-    with pytest.raises(ValidationError, match="missing"):
-        config.robot.motor_indices(JOINT_NAMES)
+    first = backend.read_state()
+    expected = first.joint_position.copy()
+    first.joint_position.fill(100)
+    bus.state.motor_state[3].q = 200
+    second = backend.read_state()
+    np.testing.assert_array_equal(second.joint_position, expected)
+    assert second.receive_time_ns == first.receive_time_ns
 
 
 def _context() -> RuntimeCreateContext:
     return RuntimeCreateContext(robot=_spec(), control=ControlSpec(period_s=0.02, state_timeout_s=0.1))
 
 
-def test_open_reports_available_interfaces_when_dds_interface_is_invalid() -> None:
-    bus = _Bus()
+def test_open_reports_available_interfaces_when_dds_interface_is_invalid(monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
     backend = _backend(_config(network_interface="missing0"), bus)
 
     def fail_factory(domain_id, network_interface):
         raise RuntimeError(f"{network_interface}: does not match an available interface")
 
-    backend._sdk = replace(bus.sdk(), channel_factory_initialize=fail_factory)
-    with pytest.raises(RuntimeError, match="Available interfaces:.*runtime.network_interface"):
+    monkeypatch.setattr("motrix_deploy_unitree.go2.robot.ChannelFactoryInitialize", fail_factory)
+    with pytest.raises(RuntimeError, match="Available interfaces:.*runtime.transport.network_interface"):
         backend.open()
 
 
-def test_plugin_factory_creates_robot_for_shared_hardware_runtime() -> None:
-    config = UnitreeBackendConfig(network_interface="enp3s0", robot=UnitreeGo2RobotCfg())
+def test_plugin_factory_creates_robot_without_sdk_or_operator_actions(monkeypatch) -> None:
+
+    bus = _Bus().install(monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("factory must not prompt"))
+    config = _config()
     context = _context()
 
     runtime = create_runtime(config, context)
     assert isinstance(runtime, HardwareRuntime)
     robot = runtime.robot
     assert isinstance(robot, UnitreeGo2Robot)
-    assert robot.config is config
-    assert isinstance(robot.config.robot, UnitreeGo2RobotCfg)
+    assert robot.transport is config.transport
+    assert isinstance(robot.hardware, UnitreeGo2HardwareCfg)
     assert robot.spec is context.robot
     assert runtime.robot is robot
     assert runtime.realtime is True
     assert runtime.gamepad is robot.get_gamepad_device()
     assert not runtime.opened
-
-    with pytest.raises(TypeError):
-        create_runtime({"network_interface": "enp3s0"}, context)
-
-
-@pytest.mark.parametrize(
-    ("name", "value"),
-    [
-        ("kp", -1.0),
-        ("kd", True),
-        ("kp", [1.0] * 11),
-        ("kd", [0.5] * 11 + [float("nan")]),
-    ],
-)
-def test_backend_config_rejects_invalid_gain_overrides(name: str, value: object) -> None:
-    with pytest.raises(ValidationError, match=f"runtime.robot.{name}"):
-        _config(**{name: value})
-
-
-class _JointGainTaskSpec(TaskSpec):
-    task_name: ClassVar[str] = "go2_walk/v1"
-    kp: list[float]
-    kd: list[float]
-
-
-class _NoGainTaskSpec(TaskSpec):
-    task_name: ClassVar[str] = "test/v1"
-
-
-def _profile() -> DeploymentProfile:
-    return DeploymentProfile(
-        robot=_spec(),
-        task=_JointGainTaskSpec(kp=[35.0] * 12, kd=[0.5] * 12),
-        control=ControlSpec(period_s=0.02, state_timeout_s=0.1),
-        observation_size=1,
-        action_size=12,
-    )
-
-
-def test_direct_interface_builds_from_profile_without_artifact() -> None:
-    bus = _Bus()
-    direct = UnitreeGo2DirectInterface.from_profile(
-        _profile(),
-        config=_config(network_interface="enp5s0", damping_duration_s=0.0),
-        sdk=bus.sdk(),
-        sleep=lambda _: None,
-    )
-
-    assert direct.control_period_s == pytest.approx(0.02)
-    assert direct.state_timeout_s == pytest.approx(0.1)
-    assert direct.backend.config.network_interface == "enp5s0"
-
-    direct.open()
-    direct.read_data()
-    direct.enable_command_output()
-    direct.send_joint_command(direct.robot.default_joint_position)
-    direct.close()
-
-    assert bus.factory_calls == [(0, "enp5s0")]
-    assert bus.commands
-
-
-def test_direct_artifact_factory_reads_typed_joint_gains(monkeypatch: pytest.MonkeyPatch) -> None:
-    profile = _profile()
-    monkeypatch.setattr("motrix_deploy_unitree.direct.read_artifact", lambda path: SimpleNamespace(manifest=profile))
-    direct = UnitreeGo2DirectInterface.from_artifact(
-        "example.deploy",
-        config=UnitreeBackendConfig(network_interface="enp5s0", robot=UnitreeGo2RobotCfg()),
-        sdk=_Bus().sdk(),
-    )
-    np.testing.assert_array_equal(direct.default_pose_command().kp, profile.task.kp)
-    np.testing.assert_array_equal(direct.default_pose_command().kd, profile.task.kd)
-    np.testing.assert_array_equal(direct.backend.config.robot.kp, profile.task.kp)
-    np.testing.assert_array_equal(direct.backend.config.robot.kd, profile.task.kd)
-
-
-def test_direct_api_supplied_gains_enable_without_backend_overrides() -> None:
-    bus = _Bus()
-    direct = UnitreeGo2DirectInterface.from_profile(
-        _profile(),
-        config=_config(network_interface="enp5s0", kp=None, kd=None, damping_duration_s=0.0),
-        sdk=bus.sdk(),
-        sleep=lambda _: None,
-    )
-    with direct:
-        direct.enable_command_output()
-        direct.send_command(JointTorqueCommand(torque=np.ones(12, dtype=np.float32)))
-        assert all(bus.commands[-1].motor_cmd[index].tau == 1.0 for index in MOTOR_MAPPING.values())
-
-
-def test_direct_profile_rejects_task_without_typed_joint_gains_before_dds() -> None:
-    bus = _Bus()
-    profile = replace(_profile(), task=_NoGainTaskSpec())
-    with pytest.raises(ValidationError, match="typed task spec with kp and kd"):
-        UnitreeGo2DirectInterface.from_profile(
-            profile,
-            config=UnitreeBackendConfig(network_interface="enp5s0", robot=UnitreeGo2RobotCfg()),
-            sdk=bus.sdk(),
-        )
     assert bus.factory_calls == []
+    assert bus.service_calls == []
+    assert bus.commands == []
 
 
-def test_joint_control_requires_artifact() -> None:
-    with pytest.raises(SystemExit):
-        _parser().parse_args(["joint-control", "enp5s0", "FL_thigh_joint", "0.9"])
+def _handoff_runtime(config):
+    runtime = create_runtime(config, _context())
+    runtime.realtime = False
+    return runtime
 
 
-def test_joint_control_accepts_explicit_backend_safety_gains(monkeypatch) -> None:
-    from motrix_deploy_unitree import cli as unitree_cli
+def test_go2_runtime_handoff_precedes_lowlevel_session_start(monkeypatch, capsys) -> None:
+    from motrix_deploy.runtime.control import ControlSession
+    from motrix_deploy.runtime.lifecycle import ControllerStep
 
+    bus = _Bus().install(monkeypatch)
+    bus.motion_mode = "sport"
+    answers = iter(["yes", "down"])
+
+    def answer(prompt):
+        response = next(answers)
+        bus.service_calls.append(("confirm", response))
+        return response
+
+    class CompleteController:
+        def reset(self, state):
+            pass
+
+        def step(self, state, context):
+            return ControllerStep(complete=True)
+
+        def request_stop(self):
+            pass
+
+    original_open = UnitreeGo2Robot.open
+
+    def open_robot(robot):
+        assert bus.motion_mode == ""
+        bus.service_calls.append(("lowlevel_start", None))
+        original_open(robot)
+
+    monkeypatch.setattr("builtins.input", answer)
+    monkeypatch.setattr(UnitreeGo2Robot, "open", open_robot)
+    config = _config(domain_id=23, network_interface="robot-test0")
+    runtime = _handoff_runtime(config)
+    runtime.bind_session(
+        ControlSession(
+            robot=runtime.robot,
+            controller=CompleteController(),
+            period_s=0.02,
+            state_timeout_s=0.1,
+        )
+    )
+    assert runtime.run().success
+    actions = [
+        event
+        for event in bus.service_calls
+        if event[0] in {"confirm", "stand_down", "release_mode", "service_switch", "lowlevel_start"}
+    ]
+    assert actions == [
+        ("confirm", "yes"),
+        ("stand_down", None),
+        ("confirm", "down"),
+        ("release_mode", "sport"),
+        ("service_switch", ("sport_mode", False)),
+        ("lowlevel_start", None),
+    ]
+    assert bus.factory_calls == [(23, "robot-test0"), (23, "robot-test0")]
+    assert bus.commands and all(_is_damping(message) for message in bus.commands)
+    output = capsys.readouterr().out
+    assert "support" in output
+    assert "Down confirmation received; releasing official control..." in output
+    assert "Official control released and sport_mode disabled; handoff complete." in output
+    assert not runtime.opened
+
+
+@pytest.mark.parametrize("cancel_at", [0, 1])
+@pytest.mark.parametrize("answer", ["no", EOFError, KeyboardInterrupt])
+def test_go2_deploy_cancel_never_releases_or_starts_lowlevel(cancel_at, answer, monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
+    bus.motion_mode = "sport"
+    calls = 0
+
+    def confirm(prompt):
+        nonlocal calls
+        index = calls
+        calls += 1
+        if index < cancel_at:
+            return "yes"
+        if isinstance(answer, str):
+            return answer
+        raise answer()
+
+    monkeypatch.setattr("builtins.input", confirm)
+    monkeypatch.setattr(UnitreeGo2Robot, "open", lambda *args: pytest.fail("must not open lowlevel robot"))
+    runtime = _handoff_runtime(_config())
+    runtime.session = SimpleNamespace(period_s=0.02)
+    with pytest.raises(RuntimeError, match="cancelled"):
+        runtime.run()
+    assert sum(name == "stand_down" for name, _ in bus.service_calls) == cancel_at
+    assert not any(name in {"release_mode", "service_switch"} for name, _ in bus.service_calls)
+    assert bus.motion_mode == "sport"
+    assert bus.callback is None
+    assert not bus.commands
+    assert not runtime.opened
+
+
+def test_go2_deploy_already_released_skips_prompts_and_service_changes(monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
+    robot = _backend(_config(), bus)
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("released control needs no prompt"))
+    robot.acquire_control()
+    assert bus.factory_calls == [(0, "enp3s0")]
+    assert not any(name in {"stand_down", "release_mode", "service_switch"} for name, _ in bus.service_calls)
+    assert bus.commands == []
+
+
+def test_active_go2_acquisition_without_interactive_input_fails_before_motion(monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
+    bus.motion_mode = "sport"
+    robot = _backend(_config(), bus)
+
+    def no_input(prompt):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", no_input)
+    with pytest.raises(RuntimeError, match="cancelled before StandDown"):
+        robot.acquire_control()
+    assert not any(name in {"stand_down", "release_mode", "service_switch"} for name, _ in bus.service_calls)
+    assert bus.commands == []
+
+
+@pytest.mark.parametrize("failure", ["stand_down", "release", "verify", "service_switch"])
+def test_go2_deploy_handoff_failure_never_starts_lowlevel(failure, monkeypatch) -> None:
+    bus = _Bus().install(monkeypatch)
+    bus.motion_mode = "sport"
+    if failure == "stand_down":
+        bus.stand_down_status = 42
+    elif failure == "release":
+        monkeypatch.setattr(_MotionSwitcherClient, "ReleaseMode", lambda self: (42, None))
+    elif failure == "verify":
+        monkeypatch.setattr(_MotionSwitcherClient, "ReleaseMode", lambda self: (0, None))
+    else:
+        bus.service_switch_status = 42
+    answers = iter(["yes", "down"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    monkeypatch.setattr(UnitreeGo2Robot, "open", lambda *args: pytest.fail("must not open lowlevel robot"))
+    runtime = _handoff_runtime(_config())
+    runtime.session = SimpleNamespace(period_s=0.02)
+    with pytest.raises(RuntimeError, match="42|remains active"):
+        runtime.run()
+    if failure == "stand_down":
+        assert not any(name == "release_mode" for name, _ in bus.service_calls)
+    if failure != "service_switch":
+        assert not any(name == "service_switch" for name, _ in bus.service_calls)
+    assert bus.callback is None
+    assert bus.commands == []
+
+
+@pytest.mark.parametrize("target_flag", ["--target", "--offset"])
+def test_joint_control_dispatches_hardware_options(monkeypatch, target_flag: str) -> None:
     calls = []
-    monkeypatch.setattr(unitree_cli, "run_joint_control", lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr("motrix_deploy_unitree.cli.app.run_joint_control", lambda **kwargs: calls.append(kwargs))
     assert (
-        unitree_cli.main(
+        main(
             [
                 "joint-control",
                 "enp5s0",
                 "FL_thigh_joint",
-                "0.9",
-                "--artifact",
-                "example.deploy",
+                target_flag,
+                "0.1",
                 "--kp",
                 "42",
                 "--kd",
                 "0.8",
+                "--hold-pose",
+                "lie_down",
+                "--control-period-s",
+                "0.01",
+                "--state-timeout-s",
+                "0.2",
             ]
         )
         == 0
     )
+    assert calls[0]["target_position"] == (0.1 if target_flag == "--target" else None)
+    assert calls[0]["offset"] == (0.1 if target_flag == "--offset" else None)
     assert calls[0]["kp"] == 42.0
     assert calls[0]["kd"] == 0.8
+    assert calls[0]["hold_pose"] == "lie_down"
+    assert calls[0]["control_period_s"] == 0.01
+    assert calls[0]["state_timeout_s"] == 0.2
+
+
+@pytest.mark.parametrize("flags", [[], ["--target", "0.9", "--offset", "0.1"]])
+def test_joint_control_requires_exactly_one_target(
+    flags,
+) -> None:
+    with pytest.raises(SystemExit):
+        _parser().parse_args(["joint-control", "eth0", "FL_thigh_joint", "--kp", "1", "--kd", "1", *flags])
 
 
 @pytest.mark.parametrize("flag", ["--kp", "--kd"])
-def test_joint_control_requires_each_backend_safety_gain(flag: str) -> None:
+def test_joint_control_requires_each_task_gain(
+    flag: str,
+) -> None:
     with pytest.raises(SystemExit):
-        _parser().parse_args(
-            [
-                "joint-control",
-                "enp5s0",
-                "FL_thigh_joint",
-                "0.9",
-                "--artifact",
-                "example.deploy",
-                flag,
-                "1",
-            ]
-        )
-
-
-def test_joint_control_builds_backend_with_explicit_safety_gains(monkeypatch) -> None:
-    from motrix_deploy_unitree.go2_joint_control import _build_robot
-
-    calls = []
-    robot = object()
-    monkeypatch.setattr(
-        UnitreeGo2DirectInterface, "from_artifact", lambda *args, **kwargs: calls.append((args, kwargs)) or robot
-    )
-    assert _build_robot("example.deploy", "enp5s0", kp=42.0, kd=0.8) is robot
-    config = calls[0][1]["config"]
-    assert isinstance(config, UnitreeBackendConfig)
-    assert config.network_interface == "enp5s0"
-    assert isinstance(config.robot, UnitreeGo2RobotCfg)
-    assert config.robot.kp == 42.0 and config.robot.kd == 0.8
+        _parser().parse_args(["joint-control", "eth0", "FL_thigh_joint", "--target", "0.9", flag, "1"])
 
 
 def test_read_lowstate_uses_unified_cli_defaults() -> None:
@@ -1045,44 +1095,101 @@ def test_read_lowstate_uses_unified_cli_defaults() -> None:
     assert args.duration_s == pytest.approx(10.0)
 
 
-def test_joint_control_cli_dispatches_artifact_and_motion_defaults(monkeypatch) -> None:
-    calls = []
-    monkeypatch.setattr("motrix_deploy_unitree.cli.run_joint_control", lambda **kwargs: calls.append(kwargs))
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"joint_name": "unknown"},
+        {"hold_pose": "unknown"},
+        {"target_position": 100.0},
+        {"target_position": float("nan")},
+        {"control_period_s": 0.0},
+        {"kp": -1.0},
+        {"move_duration": 0.0},
+    ],
+)
+def test_joint_control_rejects_invalid_requests_before_connection(monkeypatch, kwargs) -> None:
+    from motrix_deploy_unitree.cli.joint_control.runner import run_joint_control
 
-    assert (
-        main(
-            [
-                "joint-control",
-                "enp5s0",
-                "FL_thigh_joint",
-                "0.9",
-                "--artifact",
-                "example.deploy",
-                "--kp",
-                "35",
-                "--kd",
-                "0.5",
-            ]
-        )
-        == 0
+    bus = _Bus().install(monkeypatch)
+    options = dict(network_interface="eth0", joint_name="FL_thigh_joint", target_position=0.9, kp=12.0, kd=0.5)
+    options.update(kwargs)
+    with pytest.raises(ValueError):
+        run_joint_control(**options)
+    assert bus.factory_calls == []
+
+
+def test_joint_control_declining_confirmation_does_not_connect(monkeypatch) -> None:
+    from motrix_deploy_unitree.cli.joint_control.runner import run_joint_control
+
+    bus = _Bus().install(monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda _: "no")
+    run_joint_control(network_interface="eth0", joint_name="FL_thigh_joint", offset=0.1, kp=12.0, kd=0.5)
+    assert bus.factory_calls == []
+
+
+def test_joint_controller_runs_through_shared_session_and_fault_stop(monkeypatch) -> None:
+    from motrix_deploy.runtime.control import ControlSession
+    from motrix_deploy_unitree.cli.joint_control.controller import Go2JointController
+    from motrix_deploy_unitree.config.go2 import Go2JointSettings
+
+    bus = _Bus().install(monkeypatch)
+    spec = _spec()
+    for index, name in enumerate(spec.joint_names):
+        bus.state.motor_state[MOTOR_MAPPING[name]].q = float(spec.default_joint_position[index])
+    from motrix_deploy_unitree.config.go2 import Go2StartupLimits
+
+    startup = Go2StartupLimits(max_speed_rad_s=1, timeout_s=2, gain_ramp_s=0.02, kp=12, kd=0.5)
+
+    robot = UnitreeGo2Robot(
+        _config().transport,
+        UnitreeControlConfig(),
+        control_period_s=0.02,
+        state_timeout_s=0.1,
+        spec=spec,
     )
+    original_read = robot.read_state
+    reads = 0
 
-    assert len(calls) == 1
-    assert str(calls[0]["artifact"]) == "example.deploy"
-    assert calls[0]["network_interface"] == "enp5s0"
-    assert calls[0]["joint_name"] == "FL_thigh_joint"
-    assert calls[0]["target_position"] == pytest.approx(0.9)
-    assert calls[0]["move_duration"] == pytest.approx(2.0)
-    assert calls[0]["hold_duration"] == pytest.approx(1.0)
-    assert calls[0]["return_duration"] == pytest.approx(2.0)
+    def fresh_read():
+        nonlocal reads
+        reads += 1
+        # Session startup consumes two samples before the first task tick.
+        keys = _button("start") if reads == 4 else _button("A") if reads == 8 else 0
+        bus.state.wireless_remote = _remote_payload(keys)
+        bus.emit()
+        return original_read()
+
+    robot.read_state = fresh_read
+    settings = Go2JointSettings(
+        kp=12,
+        kd=0.5,
+        transition_duration_s=0.04,
+        move_duration_s=0.04,
+        hold_duration_s=0.02,
+        return_duration_s=0.04,
+    )
+    task = Go2JointController(
+        robot.spec,
+        "FL_thigh_joint",
+        0.9,
+        settings,
+        gamepad=robot.get_gamepad_device(),
+        startup_limits=startup,
+    )
+    runtime = HardwareRuntime(robot, realtime=True)
+    runtime.bind_session(ControlSession(robot=robot, controller=task, period_s=0.02, state_timeout_s=0.1))
+    result = runtime.run()
+    assert result.success, result.error
+    assert task.phase == "complete"
+    assert robot.health().reason == "backend is closed"
+    assert all(motor.kp == 0 for motor in bus.commands[-1].motor_cmd)
+    assert any(cmd.motor_cmd[4].q == pytest.approx(0.9) for cmd in bus.commands)
 
 
 @pytest.mark.integration
 def test_plugin_runtime_uses_production_interface_with_injected_sdk(monkeypatch) -> None:
-    bus = _Bus()
-    monkeypatch.setattr("motrix_deploy_unitree.interface._load_sdk_bindings", bus.sdk)
+    bus = _Bus().install(monkeypatch)
     runtime = create_hardware_runtime(
-        "unitree",
         _config(damping_duration_s=0.0),
         _context(),
     )
@@ -1090,13 +1197,167 @@ def test_plugin_runtime_uses_production_interface_with_injected_sdk(monkeypatch)
     assert runtime.gamepad is robot.get_gamepad_device()
     try:
         robot.open()
-        robot.read_state(0.1)
+        robot.read_state()
         robot.enable()
         robot.write_command(_command(robot.spec.default_joint_position))
         assert robot.health().healthy
         assert bus.factory_calls == [(0, "enp3s0")]
-        assert bus.commands[-1].crc == 123
+        assert _servo_published(bus, _command(robot.spec.default_joint_position)).crc == 123
     finally:
         robot.close()
         runtime.close()
     assert robot.health().reason == "backend is closed"
+
+
+def test_slow_dds_does_not_block_latest_command_submission_or_queue_old_commands(monkeypatch):
+    bus = _Bus().install(monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+    original_write = _Publisher.Write
+    blocked = [False]
+
+    def slow_write(publisher, message):
+        if any(motor.kp > 0 for motor in message.motor_cmd) and not blocked[0]:
+            blocked[0] = True
+            entered.set()
+            assert release.wait(2)
+        return original_write(publisher, message)
+
+    monkeypatch.setattr(_Publisher, "Write", slow_write)
+    config = _config()
+    config.control.command_timeout_s = 2
+    robot = UnitreeGo2Robot(config.transport, config.control, spec=_spec(), control_period_s=0.02, state_timeout_s=2)
+    robot.open()
+    robot.enable()
+    first = _command(robot.spec.default_joint_position.copy())
+    robot.write_command(first)
+    assert entered.wait(1)
+    communication_before = robot.health().last_successful_communication_ns
+    latest = _command(robot.spec.default_joint_position.copy())
+    latest.joint_position[0] += np.float32(0.02)
+    expected_latest = latest.joint_position.copy()
+    submitted = threading.Event()
+
+    def submit():
+        intermediate = _command(robot.spec.default_joint_position.copy())
+        intermediate.joint_position[0] += np.float32(0.01)
+        robot.write_command(intermediate)
+        robot.write_command(latest)
+        latest.joint_position.fill(100)
+        latest.kp.fill(999)
+        submitted.set()
+
+    submitter = threading.Thread(target=submit)
+    submitter.start()
+    try:
+        assert submitted.wait(0.5), "command submission waited for the blocked DDS write"
+        assert robot.health().last_successful_communication_ns == communication_before
+    finally:
+        release.set()
+        submitter.join(1)
+    expected = _command(expected_latest)
+    _servo_published(bus, expected)
+    servo = [message for message in bus.commands if any(motor.kp > 0 for motor in message.motor_cmd)]
+    assert servo[0].motor_cmd[3].q == float(first.joint_position[0])
+    assert all(message.motor_cmd[3].q == float(expected_latest[0]) for message in servo[1:])
+    assert all(message.motor_cmd[3].kp == 35 for message in servo)
+    robot.close()
+
+
+@pytest.mark.parametrize("expired", ["command", "state"])
+def test_writer_watchdog_damps_and_latches_without_policy_reads(expired, monkeypatch):
+    bus = _Bus().install(monkeypatch)
+    config = _config()
+    config.control.command_timeout_s = 0.04 if expired == "command" else 1
+    robot = UnitreeGo2Robot(
+        config.transport,
+        config.control,
+        spec=_spec(),
+        control_period_s=0.02,
+        state_timeout_s=0.04 if expired == "state" else 1,
+    )
+    robot.open()
+    robot.enable()
+    command = _command(robot.spec.default_joint_position.copy())
+    robot.write_command(command)
+    _servo_published(bus, command)
+    if expired == "state":
+        bus.emit_on_write = False
+    start = len(bus.commands)
+    bus.wait_for(_is_damping, after=start)
+    assert not robot.health().healthy
+    assert ("command expired" if expired == "command" else "LowState expired") in robot.health().reason
+    bus.emit()
+    with pytest.raises(TimeoutError, match="expired"):
+        robot.write_command(command)
+    robot.close()
+
+
+def test_remote_emergency_damps_without_another_policy_read(monkeypatch):
+    bus = _Bus().install(monkeypatch)
+    robot = _backend(_config(), bus)
+    robot.open()
+    robot.enable()
+    command = _command(robot.spec.default_joint_position.copy())
+    robot.write_command(command)
+    _servo_published(bus, command)
+    before = len(bus.commands)
+    bus.state.wireless_remote = _remote_payload(_button("select"))
+    bus.emit()
+    bus.wait_for(_is_damping, after=before)
+    assert not robot.health().healthy
+    bus.state.wireless_remote = _remote_payload()
+    bus.emit()
+    with pytest.raises(EmergencyStopError):
+        robot.write_command(command)
+    robot.close()
+
+
+def test_blocked_writer_close_preserves_channels_until_join_succeeds(monkeypatch):
+    bus = _Bus().install(monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+    original_write = _Publisher.Write
+
+    def blocked_write(publisher, message):
+        if any(motor.kp > 0 for motor in message.motor_cmd):
+            entered.set()
+            assert release.wait(2)
+        return original_write(publisher, message)
+
+    monkeypatch.setattr(_Publisher, "Write", blocked_write)
+    robot = _backend(_config(connect_timeout_s=0.01), bus)
+    robot.open()
+    robot.enable()
+    robot.write_command(_command(robot.spec.default_joint_position.copy()))
+    assert entered.wait(1)
+    writer = robot._writer_thread
+    try:
+        with pytest.raises(TimeoutError, match="still blocked"):
+            robot.close()
+        assert not robot._publisher.closed and not robot._subscriber.closed
+    finally:
+        release.set()
+        robot.close()
+    assert robot._publisher.closed and robot._subscriber.closed
+    assert robot._writer_thread is None
+    assert not writer.is_alive()
+
+
+def test_stop_clears_command_slot_and_cannot_resume_outputs(monkeypatch):
+    bus = _Bus().install(monkeypatch)
+    robot = _backend(_config(), bus)
+    robot.open()
+    robot.enable()
+    command = _command(robot.spec.default_joint_position.copy())
+    robot.write_command(command)
+    _servo_published(bus, command)
+    robot.stop()
+    with pytest.raises(RuntimeError, match="stopped"):
+        robot.enable()
+    with pytest.raises(RuntimeError, match="not enabled|stopped"):
+        robot.write_command(command)
+    after = len(bus.commands)
+    bus.wait_for(_is_damping, after=after)
+    assert all(_is_damping(message) for message in bus.commands[after:])
+    robot.close()
