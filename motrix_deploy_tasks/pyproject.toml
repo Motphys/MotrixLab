@@ -21,10 +21,14 @@ dependencies = [
 [project.entry-points."motrix_deploy.tasks"]
 "go2_walk/v1" = "motrix_deploy_tasks.tasks.go2_walk:Go2WalkDeployTask"
 "g1_wbt/v1" = "motrix_deploy_tasks.tasks.g1_wbt:G1WbtDeployTask"
+"g1_walk/v1" = "motrix_deploy_tasks.tasks.g1_walk:G1WalkDeployTask"
 
 [project.entry-points."motrix_deploy.envs"]
 flat = "motrix_deploy_tasks.envs.flat:build_scene"
 rough = "motrix_deploy_tasks.envs.rough:build_scene"
+
+[project.entry-points."motrix_deploy.programs"]
+g1-hot-swapping = "motrix_deploy_tasks.programs.g1_hot_swapping:create_program"
 
 [tool.uv.build-backend]
 module-name = ["motrix_deploy_tasks", "hydra_plugins"]

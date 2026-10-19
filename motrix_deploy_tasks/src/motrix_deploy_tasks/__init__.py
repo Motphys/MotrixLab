@@ -3,4 +3,6 @@
 
 """Concrete deployment tasks discovered through installed package entry points."""
 
-__version__ = "0.3.0"
+from importlib import metadata
+
+__version__ = metadata.version("motrix-deploy-tasks")

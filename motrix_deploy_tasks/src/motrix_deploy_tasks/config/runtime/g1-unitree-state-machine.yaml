@@ -1,0 +1,54 @@
+defaults:
+  - _unitree_schema
+  - /unitree_robot@robot: g1-29dof
+  - _self_
+
+backend: unitree
+transport: native_cpp
+network_interface: ???
+domain_id: 0
+lowcmd_topic: rt/lowcmd
+lowstate_topic: rt/lowstate
+connect_timeout_s: 5.0
+subscriber_queue_depth: 10
+validate_crc: true
+
+operator:
+  intents:
+    request_fixstand:
+      held: [LT]
+      pressed: up
+    request_walk:
+      held: [RB]
+      pressed: X
+    request_wbt:
+      held: [RB]
+      pressed: Y
+    request_passive:
+      held: [LT]
+      pressed: B
+    request_emergency:
+      pressed: select
+  planar_velocity:
+    linear_x_axis: ly
+    linear_y_axis: lx
+    yaw_axis: rx
+    invert_linear_x: false
+    invert_linear_y: true
+    invert_yaw: true
+    deadzone: 0.12
+    range_scale: [0.25, 0.25, 0.25]
+    deadman_button: null
+
+robot:
+  startup_mode: state_machine
+  mode_pr: 0
+  expected_mode_machine: 5
+  motor_mode: 1
+  command_publish_period_s: 0.001
+  command_timeout_s: 0.1
+  damping_duration_s: 1.0
+  damping_kd: 3.0
+  wait_for_remote_buttons: false
+  allow_lie_down: false
+  override_policy_gains: false

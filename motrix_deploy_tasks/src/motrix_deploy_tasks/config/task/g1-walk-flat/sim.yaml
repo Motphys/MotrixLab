@@ -1,0 +1,19 @@
+# @package _global_
+# Skeleton recipe for G1 flat-ground locomotion MuJoCo sim2sim.
+defaults:
+  - /runtime: sim
+  - _self_
+
+artifact: artifacts/g1-flat.deploy
+
+runtime:
+  backend: mujoco
+  deploy_env_id: flat
+  robot_id: g1-29dof
+  sensor_bindings:
+    base_angular_velocity: base_gyro
+    base_linear_acceleration: base_accel
+    base_linear_velocity: null
+  physics:
+    dt: 0.002
+    solver_iterations: 100
