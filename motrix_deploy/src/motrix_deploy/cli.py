@@ -14,8 +14,9 @@ from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import OmegaConfBaseException
 
 from motrix_deploy.artifact.io import inspect_artifact, read_artifact
-from motrix_deploy.config import DeployRunConfig, SimRuntimeCfg
+from motrix_deploy.config import DeployRunConfig, ProgramRunConfig, SimRuntimeCfg
 from motrix_deploy.errors import ArtifactError, ValidationError
+from motrix_deploy.operator import OperatorCommandBinding
 from motrix_deploy.runtime.control import ControlSession
 from motrix_deploy.runtime.factory import RuntimeCreateContext, create_hardware_runtime, create_simulation_runtime
 from motrix_deploy.task import create_task, load_task_type
@@ -52,6 +53,7 @@ def run(cfg: DeployRunConfig) -> int:
     device = runtime.keyboard or runtime.gamepad
     try:
         manifest.robot.validate_compatible(robot.spec)
+        task.configure_operator(getattr(cfg.runtime, "operator", None))
         command_binding = task.prepare(simulation=simulation, device=device, spawn_pose=spawn_pose)
         session = ControlSession(
             controller=task,
@@ -99,6 +101,80 @@ def _run_config(cfg: DictConfig) -> None:
 _hydra_main = hydra.main(version_base=None, config_path="pkg://motrix_deploy.config", config_name="deploy")(_run_config)
 
 
+def run_program(cfg: ProgramRunConfig) -> int:
+    """Run one persistent multi-policy program on the selected backend."""
+    from motrix_deploy.program import create_program
+
+    program = create_program(cfg.program)
+    simulation = isinstance(cfg.runtime, SimRuntimeCfg)
+    if simulation:
+        runtime = create_simulation_runtime(cfg.runtime.backend, cfg.runtime.build_runtime_config())
+    else:
+        runtime = create_hardware_runtime(
+            cfg.runtime.backend,
+            cfg.runtime,
+            RuntimeCreateContext(robot=program.robot, control=program.control),
+        )
+    try:
+        program.robot.validate_compatible(runtime.robot.spec)
+        profile = getattr(cfg.runtime, "operator", None) or program.operator
+        command_binding = (
+            OperatorCommandBinding(
+                runtime.keyboard or runtime.gamepad,
+                profile,
+                command_lower=program.command_lower,
+                command_upper=program.command_upper,
+            )
+            if (runtime.keyboard or runtime.gamepad) is not None
+            else program.prepare(None)
+        )
+        session = ControlSession(
+            controller=program.controller,
+            robot=runtime.robot,
+            command_binding=command_binding,
+            period_s=program.control.period_s,
+            state_timeout_s=program.control.state_timeout_s,
+        )
+        runtime.bind_session(session)
+    except (ValidationError, ValueError):
+        runtime.close()
+        raise
+    with runtime:
+        result = runtime.run()
+    print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    return 0 if result.success else 1
+
+
+def _run_program_config(cfg: DictConfig) -> None:
+    try:
+        typed_cfg = OmegaConf.to_object(OmegaConf.merge(OmegaConf.structured(ProgramRunConfig), cfg))
+        if not isinstance(typed_cfg, ProgramRunConfig):
+            raise TypeError(f"Expected ProgramRunConfig, got {type(typed_cfg).__name__}")
+        exit_code = run_program(typed_cfg)
+    except (ArtifactError, OmegaConfBaseException, RuntimeError, TypeError, ValidationError, ValueError) as error:
+        print(json.dumps({"valid": False, "error": str(error)}, sort_keys=True), file=sys.stderr)
+        raise SystemExit(2) from error
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
+_hydra_program_main = hydra.main(version_base=None, config_path="pkg://motrix_deploy.config", config_name="program")(
+    _run_program_config
+)
+
+_hydra_program_real_main = hydra.main(
+    version_base=None, config_path="pkg://motrix_deploy.config", config_name="program-real"
+)(_run_program_config)
+
+# deploy=<preset> aliases: one flag selects a whole application configuration.
+# The simulation application keeps the generic program entry point, so its preset
+# also selects the program group option.
+_DEPLOY_PRESETS = {
+    "g1-sim": (_hydra_program_main, ("program=g1-hot-swapping",)),
+    "g1-real": (_hydra_program_real_main, ()),
+}
+
+
 def inspect(cfg: DictConfig) -> None:
     """Validate one deployment artifact without opening a backend."""
     print(json.dumps(inspect_artifact(Path(cfg.artifact)), indent=2, sort_keys=True))
@@ -115,10 +191,28 @@ def _hydra_inspect_main(cfg: DictConfig) -> None:
 
 def main() -> None:
     """Adapt ``mxlab deploy`` arguments to the deployment Hydra commands."""
-    if sys.argv[1:2] == ["inspect"]:
-        sys.argv = [f"{sys.argv[0]} inspect", *sys.argv[2:]]
+    args = sys.argv[1:]
+    if args[:1] == ["inspect"]:
+        sys.argv = [f"{sys.argv[0]} inspect", *args[1:]]
         _hydra_inspect_main()
         return
-    if not sys.argv[1:]:
+
+    preset = next((argument.split("=", 1)[1] for argument in args if argument.startswith("deploy=")), None)
+    if preset is not None:
+        if preset not in _DEPLOY_PRESETS:
+            raise SystemExit(f"unknown deploy preset {preset!r}; choose from {sorted(_DEPLOY_PRESETS)}")
+        del sys.argv[1 + args.index(f"deploy={preset}")]
+        entry_point, implicit_arguments = _DEPLOY_PRESETS[preset]
+        sys.argv.extend(implicit_arguments)
+        entry_point()
+        return
+
+    if any(argument == "program" or argument.startswith("program=") for argument in args):
+        if args[:1] == ["program"]:
+            del sys.argv[1]
+        _hydra_program_main()
+        return
+
+    if not args:
         sys.argv.append("--help")
     _hydra_main()
