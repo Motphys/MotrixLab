@@ -26,6 +26,10 @@ class LieDownRequestedError(RuntimeError):
     """A physical input requested the backend's configured lie-down shutdown."""
 
 
+class PassiveRequestedError(RuntimeError):
+    """A physical input requested an immediate transition to passive damping."""
+
+
 class ControlFailure(RuntimeError):
     def __init__(self, reason: str, message: str) -> None:
         self.reason = reason

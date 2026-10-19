@@ -3,10 +3,23 @@
 
 """Package boundary and command-line smoke tests."""
 
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
+
+import motrix_deploy
+
+_PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
+
+
+def test_package_version() -> None:
+    """The boundary version mirrors the release version declared in pyproject.toml."""
+    declared = re.search(r'^version = "(.+)"$', _PYPROJECT.read_text(), re.MULTILINE)
+    assert declared is not None, f"Missing version in {_PYPROJECT}"
+    assert motrix_deploy.__version__ == declared.group(1)
 
 
 @pytest.mark.integration

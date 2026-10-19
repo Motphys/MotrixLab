@@ -95,6 +95,23 @@ class DeployRunConfig:
             )
 
 
+@dataclass
+class ProgramRunConfig:
+    """Resolved persistent multi-policy execution settings."""
+
+    program: Any = MISSING
+    runtime: Any = MISSING
+
+    def __post_init__(self) -> None:
+        if self.program is MISSING or not getattr(self.program, "name", None):
+            raise ValueError("program must be a composed program recipe")
+        if not isinstance(self.runtime, (SimRuntimeCfg, HardwareRuntimeCfg)):
+            raise ValueError(
+                "runtime must be a composed SimRuntimeCfg or HardwareRuntimeCfg recipe, "
+                f"got {type(self.runtime).__name__}"
+            )
+
+
 def _install_sim_runtime_schema() -> None:
     ConfigStore.instance().store(group=SIM_SCHEMA_GROUP, name="_sim_schema", node=SimRuntimeCfg)
 
@@ -104,6 +121,7 @@ _install_sim_runtime_schema()
 __all__ = [
     "DeployRunConfig",
     "HardwareRuntimeCfg",
+    "ProgramRunConfig",
     "SIM_SCHEMA_GROUP",
     "SimRuntimeCfg",
 ]
