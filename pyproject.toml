@@ -22,7 +22,7 @@ dependencies = [
 rslrl = ["motrix-rl-rslrl==0.4.0"]
 skrl-jax = ["motrix-rl-skrl[jax]==0.4.0"]
 unitree = [
-    "motrix-deploy-unitree==0.4.0",
+    "motrix-deploy-unitree[native]==0.4.0",
 ]
 docs = [
     "sphinx",
@@ -70,6 +70,7 @@ members = [
     "motrix_deploy_mujoco",
     "motrix_deploy_motrixsim",
     "motrix_deploy_unitree",
+    "motrix_unitree_native",
     "motrix_deploy_tasks",
     "motrix_env_core",
     "motrix_env_motrixsim",
@@ -102,6 +103,7 @@ motrix-deploy = { workspace = true }
 motrix-deploy-mujoco = { workspace = true }
 motrix-deploy-motrixsim = { workspace = true }
 motrix-deploy-unitree = { workspace = true }
+motrix-unitree-native = { workspace = true }
 motrix-deploy-tasks = { workspace = true }
 motrix-env-motrixsim = { workspace = true }
 motrix-env-mujoco = { workspace = true }

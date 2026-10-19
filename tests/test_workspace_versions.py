@@ -3,7 +3,9 @@
 
 """Workspace release version contracts."""
 
+import ast
 import re
+from importlib import metadata
 from pathlib import Path
 
 from packaging.requirements import Requirement
@@ -18,7 +20,7 @@ def _project_field(path: Path, field: str) -> str:
     return match.group(1)
 
 
-def _workspace_pyprojects() -> list[tuple[Path, str, str]]:
+def _workspace_member_dirs() -> list[Path]:
     root_pyproject = ROOT / "pyproject.toml"
     members_match = re.search(
         r"\[tool\.uv\.workspace\]\s*members\s*=\s*\[(.*?)\]",
@@ -26,7 +28,11 @@ def _workspace_pyprojects() -> list[tuple[Path, str, str]]:
         re.DOTALL,
     )
     assert members_match is not None, "Missing [tool.uv.workspace] members in root pyproject.toml"
-    members = re.findall(r'"([^"]+)"', members_match.group(1))
+    return [ROOT / member for member in re.findall(r'"([^"]+)"', members_match.group(1))]
+
+
+def _workspace_pyprojects() -> list[tuple[Path, str, str]]:
+    root_pyproject = ROOT / "pyproject.toml"
     projects = [
         (
             root_pyproject,
@@ -34,8 +40,8 @@ def _workspace_pyprojects() -> list[tuple[Path, str, str]]:
             _project_field(root_pyproject, "version"),
         )
     ]
-    for member in members:
-        pyproject = ROOT / member / "pyproject.toml"
+    for member in _workspace_member_dirs():
+        pyproject = member / "pyproject.toml"
         projects.append((pyproject, _project_field(pyproject, "name"), _project_field(pyproject, "version")))
     return projects
 
@@ -99,3 +105,60 @@ def test_workspace_member_dependencies_are_pinned_to_workspace_version():
                 f"{pyproject} must pin {requirement.name} to the workspace version "
                 f"{version}; got {requirement.specifier}"
             )
+
+
+def _declared_source_versions() -> list[tuple[Path, str, ast.expr]]:
+    """(initializer, distribution name, assigned value) for every package declaring ``__version__``."""
+    declared = []
+    for member in _workspace_member_dirs():
+        distribution = _project_field(member / "pyproject.toml", "name")
+        for initializer in sorted(member.glob("src/*/__init__.py")):
+            for node in ast.parse(initializer.read_text()).body:
+                if not isinstance(node, ast.Assign):
+                    continue
+                if any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets):
+                    declared.append((initializer, distribution, node.value))
+    return declared
+
+
+def _installed_version(distribution: str) -> str | None:
+    try:
+        return metadata.version(distribution)
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def test_source_versions_track_the_installed_distribution():
+    """``__version__`` must come from installed metadata, never a copied literal.
+
+    ``cz bump`` only rewrites files matched by the root ``version_files``
+    patterns, which do not cover package initializers, so a hardcoded literal
+    drifts silently from the release version.
+    """
+    projects = _workspace_projects()
+    declared = _declared_source_versions()
+    assert declared, "Expected at least one workspace package to declare __version__"
+
+    for initializer, distribution, value in declared:
+        assert isinstance(value, ast.Call), (
+            f"{initializer} must derive __version__ from installed metadata, got {ast.unparse(value)}"
+        )
+        # Accept both `version(...)` after `from importlib.metadata import version`
+        # and the module-qualified `metadata.version(...)`; upstream uses the former.
+        reader = value.func.id if isinstance(value.func, ast.Name) else getattr(value.func, "attr", None)
+        assert reader == "version", f"{initializer} must read the metadata version function, got {ast.unparse(value)}"
+        assert len(value.args) == 1, (
+            f"{initializer} must read metadata.version(<distribution-name>), got {ast.unparse(value)}"
+        )
+        assert isinstance(value.args[0], ast.Constant), (
+            f"{initializer} must pass a literal distribution name, got {ast.unparse(value)}"
+        )
+        assert value.args[0].value == distribution, (
+            f"{initializer} reads the metadata version of {value.args[0].value!r}, "
+            f"but its distribution is {distribution!r}"
+        )
+        installed = _installed_version(distribution)
+        assert installed == projects[distribution], (
+            f"{distribution} is installed as {installed!r}, expected the workspace version "
+            f"{projects[distribution]!r}; reinstall it with the matching install command"
+        )
