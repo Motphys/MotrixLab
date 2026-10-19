@@ -167,7 +167,7 @@ class _Publisher:
         for motor_index, motor in enumerate(snapshot.motor_cmd):
             if motor.kp > 0:
                 self.bus.state.motor_state[motor_index].q = motor.q
-                self.bus.state.motor_state[motor_index].dq = motor.qd
+                self.bus.state.motor_state[motor_index].dq = motor.dq
         self.bus.emit()
 
     def Close(self) -> None:
@@ -382,7 +382,7 @@ def test_lowstate_and_lowcmd_are_mapped_by_canonical_joint_name() -> None:
     for canonical_index, name in enumerate(JOINT_NAMES):
         motor = published.motor_cmd[MOTOR_MAPPING[name]]
         assert motor.q == pytest.approx(command.joint_position[canonical_index])
-        assert motor.qd == pytest.approx(0.0)
+        assert motor.dq == pytest.approx(0.0)
         assert motor.kp == pytest.approx(35.0)
         assert motor.kd == pytest.approx(0.5)
     assert published.crc == 123
@@ -430,7 +430,7 @@ def test_torque_enable_uses_servo_transition_then_maps_pure_torque_and_preserves
     backend.write_command(torque)
     for index, name in enumerate(JOINT_NAMES):
         motor = bus.commands[-1].motor_cmd[MOTOR_MAPPING[name]]
-        assert (motor.q, motor.qd, motor.kp, motor.kd) == (0.0, 0.0, 0.0, 0.0)
+        assert (motor.q, motor.dq, motor.kp, motor.kd) == (0.0, 0.0, 0.0, 0.0)
         assert motor.tau == pytest.approx(torque.torque[index])
         assert motor.mode == transition.motor_cmd[MOTOR_MAPPING[name]].mode
     count = len(bus.commands)

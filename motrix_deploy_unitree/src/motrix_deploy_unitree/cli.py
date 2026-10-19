@@ -1,7 +1,7 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Command-line diagnostics for the Unitree Go2 deployment backend."""
+"""Command-line diagnostics for Unitree deployment backends."""
 
 import argparse
 import math
@@ -48,14 +48,15 @@ def _positive_int(value: str) -> int:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Unitree Go2 hardware diagnostics")
+    parser = argparse.ArgumentParser(description="Unitree hardware diagnostics")
     commands = parser.add_subparsers(dest="command", required=True)
 
     lowstate = commands.add_parser(
         "read-lowstate",
         help="Read rt/lowstate without creating a LowCmd publisher",
     )
-    lowstate.add_argument("network_interface", help="Ethernet interface connected to Go2, for example enp5s0")
+    lowstate.add_argument("network_interface", help="Ethernet interface connected to the robot, for example enp5s0")
+    lowstate.add_argument("--robot", choices=("go2", "g1-29dof"), default="go2")
     lowstate.add_argument("--domain-id", type=_non_negative_int, default=0, help="DDS domain id (default: 0)")
     lowstate.add_argument("--topic", default="rt/lowstate", help="LowState DDS topic (default: rt/lowstate)")
     lowstate.add_argument("--queue-depth", type=_positive_int, default=10, help="Subscriber queue depth (default: 10)")
@@ -98,6 +99,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             duration_s=args.duration_s,
             print_interval_s=args.print_interval_s,
             validate_crc=not args.no_validate_crc,
+            robot=args.robot,
         )
 
     run_joint_control(

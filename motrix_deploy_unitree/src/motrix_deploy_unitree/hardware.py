@@ -86,3 +86,107 @@ class UnitreeGo2HardwareCfg(HardwareRobotCfg):
             "RR_calf_joint": UnitreeMotorBinding(index=8),
         }
     )
+
+
+G1_29DOF_JOINT_NAMES = (
+    "left_hip_pitch_joint",
+    "left_hip_roll_joint",
+    "left_hip_yaw_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_hip_pitch_joint",
+    "right_hip_roll_joint",
+    "right_hip_yaw_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+    "waist_yaw_joint",
+    "waist_roll_joint",
+    "waist_pitch_joint",
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_joint",
+    "left_wrist_roll_joint",
+    "left_wrist_pitch_joint",
+    "left_wrist_yaw_joint",
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_joint",
+    "right_wrist_roll_joint",
+    "right_wrist_pitch_joint",
+    "right_wrist_yaw_joint",
+)
+
+_G1_29DOF_DEFAULT_POSITION = (
+    -0.312,
+    0.0,
+    0.0,
+    0.669,
+    -0.363,
+    0.0,
+    -0.312,
+    0.0,
+    0.0,
+    0.669,
+    -0.363,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.2,
+    0.2,
+    0.0,
+    0.6,
+    0.0,
+    0.0,
+    0.0,
+    0.2,
+    -0.2,
+    0.0,
+    0.6,
+    0.0,
+    0.0,
+    0.0,
+)
+
+
+@configclass(kw_only=True)
+class UnitreeG1_29DOFHardwareCfg(HardwareRobotCfg):
+    """G1 29-DOF wiring for the HG DDS protocol.
+
+    Joint names are the stable semantic contract. Motor ids deliberately live
+    here rather than in a policy-order permutation so exported artifacts may
+    use any joint ordering without changing the physical wiring.
+    """
+
+    key_pose: KeyPoseCfg = KeyPoseCfg(
+        joint_names=list(G1_29DOF_JOINT_NAMES),
+        poses={
+            "default": list(_G1_29DOF_DEFAULT_POSITION),
+            # G1 shutdown is damping-only. This pose only satisfies the shared
+            # pose schema and is never selected by the G1 adapter.
+            "lie_down": list(_G1_29DOF_DEFAULT_POSITION),
+        },
+    )
+    sensors: HardwareSensorBindings = HardwareSensorBindings(
+        base_orientation_xyzw=HardwareSensorBinding(field="imu_state.quaternion", quaternion_order="wxyz"),
+        base_angular_velocity=HardwareSensorBinding(field="imu_state.gyroscope"),
+        base_linear_acceleration=HardwareSensorBinding(field="imu_state.accelerometer"),
+    )
+    actuation: Actuation = Actuation(
+        motors={
+            name: UnitreeMotorBinding(index=motor_id, enabled_mode=1)
+            for motor_id, name in enumerate(G1_29DOF_JOINT_NAMES)
+        }
+    )
+
+
+__all__ = [
+    "G1_29DOF_JOINT_NAMES",
+    "HardwareRobotCfg",
+    "UnitreeG1_29DOFHardwareCfg",
+    "UnitreeGo2HardwareCfg",
+]
