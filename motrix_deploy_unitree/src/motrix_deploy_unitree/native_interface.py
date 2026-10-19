@@ -1,3 +1,6 @@
+# Copyright Motphys Technology Co., Ltd. 2025, 2026
+# SPDX-License-Identifier: Apache-2.0
+
 """G1 hardware adapter backed by the native Unitree SDK2 extension.
 
 The extension owns DDS callbacks and the 1 kHz LowCmd writer.  This module

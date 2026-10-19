@@ -1,3 +1,6 @@
+# Copyright Motphys Technology Co., Ltd. 2025, 2026
+# SPDX-License-Identifier: Apache-2.0
+
 """Optional C++ Unitree backend bridge.
 
 This module is intentionally small: the native extension owns DDS and the

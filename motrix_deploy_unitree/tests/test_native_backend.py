@@ -1,3 +1,6 @@
+# Copyright Motphys Technology Co., Ltd. 2025, 2026
+# SPDX-License-Identifier: Apache-2.0
+
 """Contract tests for the Python adapter around the native G1 transport."""
 
 from __future__ import annotations
