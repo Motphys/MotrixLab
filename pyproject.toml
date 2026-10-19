@@ -1,28 +1,28 @@
 [project]
 name = "motrix-lab"
-version = "0.4.0b1"
+version = "0.4.0"
 description = "A general-purpose machine learning architecture designed for robot training"
 authors = [{ name = "Motphys", email = "developers@motphys.com" }]
 requires-python = ">=3.10,<3.14"
 dependencies = [
-    "motrixlab==0.4.0b1",
-    "motrix-deploy==0.4.0b1",
-    "motrix-deploy-mujoco==0.4.0b1",
-    "motrix-deploy-motrixsim==0.4.0b1",
-    "motrix-deploy-tasks==0.4.0b1",
-    "motrix-env-motrixsim==0.4.0b1",
-    "motrix-env-mujoco==0.4.0b1",
-    "motrix-envs==0.4.0b1",
-    "motrix-rl==0.4.0b1",
-    "motrix-rl-builtin==0.4.0b1",
-    "motrix-rl-skrl==0.4.0b1",
+    "motrixlab==0.4.0",
+    "motrix-deploy==0.4.0",
+    "motrix-deploy-mujoco==0.4.0",
+    "motrix-deploy-motrixsim==0.4.0",
+    "motrix-deploy-tasks==0.4.0",
+    "motrix-env-motrixsim==0.4.0",
+    "motrix-env-mujoco==0.4.0",
+    "motrix-envs==0.4.0",
+    "motrix-rl==0.4.0",
+    "motrix-rl-builtin==0.4.0",
+    "motrix-rl-skrl==0.4.0",
 ]
 
 [project.optional-dependencies]
-rslrl = ["motrix-rl-rslrl==0.4.0b1"]
-skrl-jax = ["motrix-rl-skrl[jax]==0.4.0b1"]
+rslrl = ["motrix-rl-rslrl==0.4.0"]
+skrl-jax = ["motrix-rl-skrl[jax]==0.4.0"]
 unitree = [
-    "motrix-deploy-unitree==0.4.0b1",
+    "motrix-deploy-unitree==0.4.0",
 ]
 docs = [
     "sphinx",
@@ -38,14 +38,14 @@ docs = [
 ]
 # GPU profiles are owned by the installable RL package. Keep the workspace
 # installation entry points without duplicating versions or index routing.
-cuda = ["motrix-rl[cuda]==0.4.0b1"]
+cuda = ["motrix-rl[cuda]==0.4.0"]
 # TBB threading layer for numba parallel manager kernels on many-core
 # machines (see motrix-env-core's tbb extra); optional, combines with any
 # GPU profile.
 tbb = [
-    "motrix-env-core[tbb]==0.4.0b1",
+    "motrix-env-core[tbb]==0.4.0",
 ]
-rocm = ["motrix-rl[rocm]==0.4.0b1"]
+rocm = ["motrix-rl[rocm]==0.4.0"]
 
 [dependency-groups]
 dev = [
@@ -59,7 +59,7 @@ test = [
     { include-group = "dev" },
     "hydra-core>=1.3,<1.4",
     # Keep the existing 3.10 hardware test environment; 3.11 tests omit Unitree.
-    "motrix-deploy-unitree==0.4.0b1; python_version < '3.11'",
+    "motrix-deploy-unitree==0.4.0; python_version < '3.11'",
 ]
 
 [tool.uv.workspace]
