@@ -15,3 +15,7 @@ docs/source/index.md
 .worktrees
 .obsidian
 /unitree_sdk2_python/
+build/
+dist/
+*.so
+*.egg-info/

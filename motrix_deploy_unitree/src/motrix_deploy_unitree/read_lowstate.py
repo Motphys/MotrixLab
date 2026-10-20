@@ -1,18 +1,18 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Read Unitree Go2 LowState without creating a LowCmd publisher."""
+"""Read Unitree LowState without creating a LowCmd publisher."""
 
 import sys
 import time
 from dataclasses import dataclass
 from typing import Any
 
-from motrix_deploy_unitree.config import GO2_JOINT_NAME_TO_MOTOR_INDEX
+from motrix_deploy_unitree.config import G1_29DOF_JOINT_NAME_TO_MOTOR_ID, GO2_JOINT_NAME_TO_MOTOR_INDEX
 from motrix_deploy_unitree.remote import BUTTON_NAMES, decode_wireless_remote
 
-JOINT_NAMES = tuple(GO2_JOINT_NAME_TO_MOTOR_INDEX)
-MOTOR_INDICES = tuple(GO2_JOINT_NAME_TO_MOTOR_INDEX.values())
+GO2_JOINT_NAMES = tuple(GO2_JOINT_NAME_TO_MOTOR_INDEX)
+GO2_MOTOR_INDICES = tuple(GO2_JOINT_NAME_TO_MOTOR_INDEX.values())
 
 
 @dataclass
@@ -26,10 +26,28 @@ class ReadStatistics:
 
 
 class LowStatePrinter:
-    """Validate, throttle, and print canonical Go2 state samples."""
+    """Validate, throttle, and print canonical Unitree state samples."""
 
-    def __init__(self, crc: Any, *, print_interval_s: float, validate_crc: bool) -> None:
+    def __init__(
+        self,
+        crc: Any,
+        *,
+        robot: str,
+        joint_names: tuple[str, ...],
+        motor_indices: tuple[int, ...],
+        motor_slot_count: int,
+        expected_mode_pr: int | None,
+        expected_mode_machine: int | None,
+        print_interval_s: float,
+        validate_crc: bool,
+    ) -> None:
         self.crc = crc
+        self.robot = robot
+        self.joint_names = joint_names
+        self.motor_indices = motor_indices
+        self.motor_slot_count = motor_slot_count
+        self.expected_mode_pr = expected_mode_pr
+        self.expected_mode_machine = expected_mode_machine
         self.print_interval_ns = round(print_interval_s * 1e9)
         self.validate_crc = validate_crc
         self.statistics = ReadStatistics()
@@ -41,10 +59,16 @@ class LowStatePrinter:
             if self.validate_crc and self.crc.Crc(message) != message.crc:
                 self.statistics.crc_errors += 1
                 return
-            if len(message.motor_state) < 12:
-                raise ValueError(f"expected at least 12 motor states, got {len(message.motor_state)}")
-            position = [float(message.motor_state[index].q) for index in MOTOR_INDICES]
-            velocity = [float(message.motor_state[index].dq) for index in MOTOR_INDICES]
+            if len(message.motor_state) < self.motor_slot_count:
+                raise ValueError(
+                    f"expected at least {self.motor_slot_count} motor states, got {len(message.motor_state)}"
+                )
+            if self.expected_mode_pr is not None and message.mode_pr != self.expected_mode_pr:
+                raise ValueError(f"mode_pr={message.mode_pr}, expected {self.expected_mode_pr}")
+            if self.expected_mode_machine is not None and message.mode_machine != self.expected_mode_machine:
+                raise ValueError(f"mode_machine={message.mode_machine}, expected {self.expected_mode_machine}")
+            position = [float(message.motor_state[index].q) for index in self.motor_indices]
+            velocity = [float(message.motor_state[index].dq) for index in self.motor_indices]
             quaternion_wxyz = [float(value) for value in message.imu_state.quaternion]
             gyroscope = [float(value) for value in message.imu_state.gyroscope]
             accelerometer = [float(value) for value in message.imu_state.accelerometer]
@@ -72,12 +96,14 @@ class LowStatePrinter:
         except Exception as error:
             remote_text = f"unavailable ({error})"
 
-        print("\n--- Unitree Go2 LowState ---")
+        print(f"\n--- Unitree {self.robot} LowState ---")
         print(
             f"frames received={self.statistics.received} valid={self.statistics.valid} "
             f"crc_errors={self.statistics.crc_errors} decode_errors={self.statistics.decode_errors}"
         )
-        for name, joint_position, joint_velocity in zip(JOINT_NAMES, position, velocity, strict=True):
+        if self.expected_mode_pr is not None:
+            print(f"mode_pr={message.mode_pr} mode_machine={message.mode_machine}")
+        for name, joint_position, joint_velocity in zip(self.joint_names, position, velocity, strict=True):
             print(f"{name:16s} q={joint_position: 9.5f} rad  dq={joint_velocity: 9.5f} rad/s")
         print("imu quaternion wxyz:", quaternion_wxyz)
         print("imu quaternion xyzw:", quaternion_wxyz[1:] + quaternion_wxyz[:1])
@@ -86,11 +112,15 @@ class LowStatePrinter:
         print("remote:", remote_text, flush=True)
 
 
-def _load_sdk() -> tuple[Any, Any, Any, Any]:
+def _load_sdk(robot: str) -> tuple[Any, Any, Any, Any]:
     try:
         from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
-        from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_
         from unitree_sdk2py.utils.crc import CRC
+
+        if robot == "g1-29dof":
+            from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_
+        else:
+            from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_
     except ImportError as error:
         raise RuntimeError(
             "LowState reading requires the official unitree_sdk2py package; install "
@@ -108,16 +138,39 @@ def run_read_lowstate(
     duration_s: float,
     print_interval_s: float,
     validate_crc: bool,
+    robot: str = "go2",
 ) -> int:
     """Run a bounded read-only LowState DDS diagnostic."""
     try:
-        channel_factory_initialize, channel_subscriber, low_state_type, crc_type = _load_sdk()
+        channel_factory_initialize, channel_subscriber, low_state_type, crc_type = _load_sdk(robot)
     except RuntimeError as error:
         print(error, file=sys.stderr)
         return 2
 
     channel_factory_initialize(domain_id, network_interface)
-    printer = LowStatePrinter(crc_type(), print_interval_s=print_interval_s, validate_crc=validate_crc)
+    if robot == "g1-29dof":
+        joint_names = tuple(G1_29DOF_JOINT_NAME_TO_MOTOR_ID)
+        motor_indices = tuple(G1_29DOF_JOINT_NAME_TO_MOTOR_ID.values())
+        motor_slot_count = 35
+        expected_mode_pr = 0
+        expected_mode_machine = 5
+    else:
+        joint_names = GO2_JOINT_NAMES
+        motor_indices = GO2_MOTOR_INDICES
+        motor_slot_count = 12
+        expected_mode_pr = None
+        expected_mode_machine = None
+    printer = LowStatePrinter(
+        crc_type(),
+        robot=robot,
+        joint_names=joint_names,
+        motor_indices=motor_indices,
+        motor_slot_count=motor_slot_count,
+        expected_mode_pr=expected_mode_pr,
+        expected_mode_machine=expected_mode_machine,
+        print_interval_s=print_interval_s,
+        validate_crc=validate_crc,
+    )
     subscriber = channel_subscriber(topic, low_state_type)
     subscriber.Init(printer, queue_depth)
     duration = "unlimited time" if duration_s == 0 else f"{duration_s:g} seconds"

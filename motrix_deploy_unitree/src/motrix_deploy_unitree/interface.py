@@ -24,9 +24,19 @@ from motrix_deploy.contracts import (
     RobotSpec,
     RobotState,
 )
-from motrix_deploy.errors import EmergencyStopError, LieDownRequestedError, ValidationError
+from motrix_deploy.errors import (
+    EmergencyStopError,
+    LieDownRequestedError,
+    PassiveRequestedError,
+    ValidationError,
+)
+from motrix_deploy.operator import OperatorIntentEvaluator
 from motrix_deploy.robot.interface import RobotInterface
-from motrix_deploy_unitree.config import GO2_MOTOR_COUNT, UnitreeBackendConfig, UnitreeGo2RobotCfg
+from motrix_deploy_unitree.config import (
+    UnitreeBackendConfig,
+    UnitreeG1_29DOFRobotCfg,
+    UnitreeGo2RobotCfg,
+)
 from motrix_deploy_unitree.remote import UnitreeRemoteGamePadDevice, UnitreeRemoteState, decode_wireless_remote
 from motrix_env_core.input import GamePadDevice
 
@@ -86,8 +96,36 @@ def _load_sdk_bindings() -> UnitreeSdkBindings:
     )
 
 
+def _load_g1_29dof_sdk_bindings() -> UnitreeSdkBindings:
+    """Load the HG messages used by a physical G1 29-DOF robot."""
+    try:
+        from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelPublisher, ChannelSubscriber
+        from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
+        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_ as LowCmdHg
+        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_ as LowStateHg
+        from unitree_sdk2py.utils.crc import CRC
+    except ImportError as error:
+        raise RuntimeError(
+            "Unitree G1 29-DOF support requires the Motphys unitree_sdk2py package; "
+            "install https://github.com/motphys-developers/unitree_sdk2_python"
+        ) from error
+    return UnitreeSdkBindings(
+        channel_factory_initialize=ChannelFactoryInitialize,
+        channel_publisher=ChannelPublisher,
+        channel_subscriber=ChannelSubscriber,
+        low_cmd_message_type=LowCmdHg,
+        low_state_message_type=LowStateHg,
+        make_low_cmd=unitree_hg_msg_dds__LowCmd_,
+        crc_type=CRC,
+    )
+
+
 class UnitreeGo2Robot(RobotInterface):
     """Map canonical Go2 state/commands to SDK2 LowState/LowCmd DDS messages."""
+
+    robot_config_type = UnitreeGo2RobotCfg
+    disabled_position = _POSITION_STOP
+    disabled_velocity = _VELOCITY_STOP
 
     def __init__(
         self,
@@ -100,8 +138,8 @@ class UnitreeGo2Robot(RobotInterface):
         clock_ns: Callable[[], int] = time.monotonic_ns,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        if not isinstance(config.robot, UnitreeGo2RobotCfg):
-            raise TypeError("UnitreeGo2Robot requires UnitreeGo2RobotCfg")
+        if not isinstance(config.robot, self.robot_config_type):
+            raise TypeError(f"{type(self).__name__} requires {self.robot_config_type.__name__}")
         self.config = config
         for path, value in (
             ("control.period_s", control_period_s),
@@ -117,6 +155,9 @@ class UnitreeGo2Robot(RobotInterface):
         self._sleep = sleep
         self._condition = threading.Condition()
         self._write_lock = threading.Lock()
+        self._writer_stop = threading.Event()
+        self._writer_thread: threading.Thread | None = None
+        self._latest_command_update_ns = 0
         self._publisher: Any = None
         self._subscriber: Any = None
         self._low_cmd: Any = None
@@ -136,8 +177,11 @@ class UnitreeGo2Robot(RobotInterface):
         self._last_read_sequence = 0
         self._remote = UnitreeRemoteState()
         self._gamepad = UnitreeRemoteGamePadDevice(lambda: self.remote)
+        self._intent_evaluator = None if config.operator is None else OperatorIntentEvaluator(config.operator.intents)
+        self._latched_intents: set[str] = set()
         self._callback_error: Exception | None = None
         self._emergency_stop = False
+        self._passive_requested = False
         self._lie_down_requested = False
         self._last_position_kp = np.empty(0, dtype=np.float32)
         self._last_position_kd = np.empty(0, dtype=np.float32)
@@ -147,6 +191,9 @@ class UnitreeGo2Robot(RobotInterface):
         self._enabled = False
         self._stopped = False
         self._closed = False
+
+    def _load_sdk_bindings(self) -> UnitreeSdkBindings:
+        return _load_sdk_bindings()
 
     @property
     def spec(self) -> RobotSpec:
@@ -204,9 +251,9 @@ class UnitreeGo2Robot(RobotInterface):
         if self._opened and not self._closed:
             raise RuntimeError("Unitree backend is already open")
         self._resolve_hardware_bindings(self._spec)
-        self._kp_override = self.config.robot.gain_override("kp", self._spec.joint_count)
-        self._kd_override = self.config.robot.gain_override("kd", self._spec.joint_count)
-        sdk = self._sdk or _load_sdk_bindings()
+        self._kp_override = self.config.robot.gain_override("kp", self._spec.joint_names)
+        self._kd_override = self.config.robot.gain_override("kd", self._spec.joint_names)
+        sdk = self._sdk or self._load_sdk_bindings()
         self._sdk = sdk
         try:
             sdk.channel_factory_initialize(self.config.domain_id, self.config.network_interface)
@@ -226,24 +273,27 @@ class UnitreeGo2Robot(RobotInterface):
         self._low_cmd = sdk.make_low_cmd()
         self._initialize_low_cmd()
 
-        self._publisher = sdk.channel_publisher(self.config.lowcmd_topic, sdk.low_cmd_message_type)
-        self._publisher.Init()
         self._subscriber = sdk.channel_subscriber(self.config.lowstate_topic, sdk.low_state_message_type)
         self._subscriber.Init(self._low_state_handler, self.config.subscriber_queue_depth)
         self._wait_for_first_state()
         assert self._latest_low_state is not None
-        if len(self._latest_low_state.motor_state) < GO2_MOTOR_COUNT:
+        motor_slot_count = self.config.robot.motor_slot_count
+        if len(self._latest_low_state.motor_state) < motor_slot_count:
             raise ValidationError(
                 "backend.lowstate.motor_state",
-                f"at least {GO2_MOTOR_COUNT} motors",
+                f"at least {motor_slot_count} motors",
                 len(self._latest_low_state.motor_state),
             )
-        if len(self._low_cmd.motor_cmd) < GO2_MOTOR_COUNT:
+        if len(self._low_cmd.motor_cmd) < motor_slot_count:
             raise ValidationError(
                 "backend.lowcmd.motor_cmd",
-                f"at least {GO2_MOTOR_COUNT} motors",
+                f"at least {motor_slot_count} motors",
                 len(self._low_cmd.motor_cmd),
             )
+        # A LowCmd publisher is created only after a CRC-valid LowState has
+        # passed the robot-specific mode and motor-slot contract.
+        self._publisher = sdk.channel_publisher(self.config.lowcmd_topic, sdk.low_cmd_message_type)
+        self._publisher.Init()
         self._capabilities = RobotCapabilities(
             control_modes=(JointControlMode.SERVO, JointControlMode.TORQUE),
             state_fields=frozenset(
@@ -266,6 +316,10 @@ class UnitreeGo2Robot(RobotInterface):
         self._closed = False
         self._health_reason = ""
         self._last_communication_ns = self._latest_receive_time_ns
+        if self.config.robot.command_publish_period_s is not None:
+            # Queue the robot-specific passive frame before the periodic writer starts.
+            self._publish_pre_enable_command()
+            self._start_command_writer()
 
     def _resolve_hardware_bindings(self, spec: RobotSpec) -> None:
         robot = self.config.robot
@@ -299,6 +353,11 @@ class UnitreeGo2Robot(RobotInterface):
         self._require_open()
         if self._enabled:
             return
+        if self.config.robot.startup_mode == "state_machine":
+            # The periodic writer already owns a robot-specific passive frame.
+            # The persistent controller performs every posture/policy transition.
+            self._enabled = True
+            return
         if self._kp_override is None or self._kd_override is None:
             raise ValidationError(
                 "backend.enable",
@@ -318,7 +377,10 @@ class UnitreeGo2Robot(RobotInterface):
         self._last_position_kp = np.array(kp, dtype=np.float32, copy=True)
         self._last_position_kd = np.array(kd, dtype=np.float32, copy=True)
         if self.config.robot.wait_for_remote_buttons:
-            self._wait_for_button(self.config.robot.start_button, self._publish_zero_torque)
+            if self._intent_evaluator is None:
+                self._wait_for_button(self.config.robot.start_button, self._publish_pre_enable_command)
+            else:
+                self._wait_for_intent("request_stand", self._publish_pre_enable_command)
         start = self._latest_robot_state().joint_position
         steps = max(1, math.ceil(self.config.robot.default_transition_duration_s / self._control_period_s))
         for step in range(1, steps + 1):
@@ -335,10 +397,14 @@ class UnitreeGo2Robot(RobotInterface):
             self._wait_control_period()
 
         if self.config.robot.wait_for_remote_buttons:
-            self._wait_for_button(
-                self.config.robot.enable_button,
-                lambda: self._publish_robot_command(initial_command),
-            )
+
+            def publish_stand() -> None:
+                self._publish_robot_command(initial_command)
+
+            if self._intent_evaluator is None:
+                self._wait_for_button(self.config.robot.enable_button, publish_stand)
+            else:
+                self._wait_for_intent("enable_policy", publish_stand)
         self._raise_if_remote_stop_requested()
         self._enabled = True
 
@@ -372,10 +438,13 @@ class UnitreeGo2Robot(RobotInterface):
     def health(self) -> HealthStatus:
         with self._condition:
             emergency = self._emergency_stop
+            passive = self._passive_requested
             lie_down = self._lie_down_requested
         reason = self._health_reason
         if emergency:
             reason = f"remote {self.config.robot.emergency_stop_button!r} emergency stop is active"
+        elif passive:
+            reason = "operator requested passive damping"
         elif lie_down and not reason:
             reason = f"remote {self.config.robot.lie_down_button!r} lie-down shutdown is active"
         elif self._closed:
@@ -395,7 +464,7 @@ class UnitreeGo2Robot(RobotInterface):
             return
         self._enabled = False
         with self._condition:
-            run_lie_down = self._lie_down_requested and not self._emergency_stop
+            run_lie_down = self.config.robot.allow_lie_down and self._lie_down_requested and not self._emergency_stop
         if run_lie_down:
             try:
                 self._publish_lie_down_trajectory()
@@ -419,6 +488,10 @@ class UnitreeGo2Robot(RobotInterface):
         errors: list[Exception] = []
         try:
             self.stop()
+        except Exception as error:
+            errors.append(error)
+        try:
+            self._stop_command_writer()
         except Exception as error:
             errors.append(error)
         for channel in (self._subscriber, self._publisher):
@@ -452,9 +525,20 @@ class UnitreeGo2Robot(RobotInterface):
             self._latest_receive_time_ns = receive_time_ns
             self._state_sequence += 1
             self._remote = remote
-            if remote.pressed(self.config.robot.emergency_stop_button):
+            if self._intent_evaluator is not None:
+                intents = self._intent_evaluator.update(remote.pressed_buttons(), receive_time_ns)
+                self._latched_intents.update(intents)
+                if "emergency_stop" in intents or "request_emergency" in intents:
+                    self._emergency_stop = True
+                if "enter_passive" in intents and self.config.robot.startup_mode == "one_shot":
+                    self._passive_requested = True
+            # Keep select/back as an unconditional, non-configurable fallback
+            # emergency stop in addition to the configured semantic gesture.
+            if remote.pressed("select") or (
+                self._intent_evaluator is None and remote.pressed(self.config.robot.emergency_stop_button)
+            ):
                 self._emergency_stop = True
-            if remote.pressed(self.config.robot.lie_down_button):
+            if self.config.robot.allow_lie_down and remote.pressed(self.config.robot.lie_down_button):
                 self._lie_down_requested = True
             self._condition.notify_all()
 
@@ -474,6 +558,16 @@ class UnitreeGo2Robot(RobotInterface):
 
     def _wait_for_button(self, button: str, publish: Callable[[], None]) -> None:
         while not self.remote.pressed(button):
+            self._raise_if_remote_stop_requested()
+            publish()
+            self._wait_control_period()
+
+    def _wait_for_intent(self, intent: str, publish: Callable[[], None]) -> None:
+        while True:
+            with self._condition:
+                if intent in self._latched_intents:
+                    self._latched_intents.remove(intent)
+                    return
             self._raise_if_remote_stop_requested()
             publish()
             self._wait_control_period()
@@ -517,12 +611,23 @@ class UnitreeGo2Robot(RobotInterface):
         )
 
     def _validate_message_fields(self, message: Any) -> None:
-        if len(message.motor_state) < GO2_MOTOR_COUNT:
+        motor_slot_count = self.config.robot.motor_slot_count
+        if len(message.motor_state) < motor_slot_count:
             raise ValidationError(
                 "state.motor_state",
-                f"at least {GO2_MOTOR_COUNT} motor states",
+                f"at least {motor_slot_count} motor states",
                 len(message.motor_state),
             )
+        expected_mode_pr = self.config.robot.mode_pr
+        if expected_mode_pr is not None:
+            actual_mode_pr = getattr(message, "mode_pr", None)
+            if actual_mode_pr != expected_mode_pr:
+                raise ValidationError("state.mode_pr", expected_mode_pr, actual_mode_pr)
+        expected_mode_machine = self.config.robot.expected_mode_machine
+        if expected_mode_machine is not None:
+            actual_mode_machine = getattr(message, "mode_machine", None)
+            if actual_mode_machine != expected_mode_machine:
+                raise ValidationError("state.mode_machine", expected_mode_machine, actual_mode_machine)
         for role, expected in (
             ("base_orientation_xyzw", 4),
             ("base_angular_velocity", 3),
@@ -565,14 +670,19 @@ class UnitreeGo2Robot(RobotInterface):
             )
 
     def _initialize_low_cmd(self) -> None:
-        self._low_cmd.head[0] = 0xFE
-        self._low_cmd.head[1] = 0xEF
-        self._low_cmd.level_flag = 0xFF
-        self._low_cmd.gpio = 0
+        if hasattr(self._low_cmd, "head"):
+            self._low_cmd.head[0] = 0xFE
+            self._low_cmd.head[1] = 0xEF
+            self._low_cmd.level_flag = 0xFF
+            self._low_cmd.gpio = 0
+        if self.config.robot.mode_pr is not None:
+            self._low_cmd.mode_pr = self.config.robot.mode_pr
+        if self.config.robot.expected_mode_machine is not None:
+            self._low_cmd.mode_machine = self.config.robot.expected_mode_machine
         for motor in self._low_cmd.motor_cmd:
             motor.mode = 0
-            motor.q = _POSITION_STOP
-            motor.qd = _VELOCITY_STOP
+            motor.q = self.disabled_position
+            motor.dq = self.disabled_velocity
             motor.kp = 0.0
             motor.kd = 0.0
             motor.tau = 0.0
@@ -587,7 +697,7 @@ class UnitreeGo2Robot(RobotInterface):
                     motor = self._low_cmd.motor_cmd[int(motor_index)]
                     motor.mode = self._motor_modes[canonical_index]
                     motor.q = 0.0
-                    motor.qd = 0.0
+                    motor.dq = 0.0
                     motor.kp = 0.0
                     motor.kd = 0.0
                     motor.tau = float(command.torque[canonical_index])
@@ -603,6 +713,8 @@ class UnitreeGo2Robot(RobotInterface):
         )
 
     def _effective_gains(self, command: JointServoCommand) -> tuple[np.ndarray, np.ndarray]:
+        if self._enabled and not self.config.robot.override_policy_gains:
+            return command.kp, command.kd
         kp = command.kp if self._kp_override is None else self._kp_override
         kd = command.kd if self._kd_override is None else self._kd_override
         return kp, kd
@@ -622,7 +734,7 @@ class UnitreeGo2Robot(RobotInterface):
                 motor = self._low_cmd.motor_cmd[int(motor_index)]
                 motor.mode = self._motor_modes[canonical_index]
                 motor.q = float(position[canonical_index])
-                motor.qd = float(velocity[canonical_index])
+                motor.dq = float(velocity[canonical_index])
                 motor.kp = float(kp[canonical_index])
                 motor.kd = float(kd[canonical_index])
                 motor.tau = float(torque[canonical_index])
@@ -634,18 +746,22 @@ class UnitreeGo2Robot(RobotInterface):
                 motor = self._low_cmd.motor_cmd[int(motor_index)]
                 motor.mode = self._motor_modes[canonical_index]
                 motor.q = 0.0
-                motor.qd = 0.0
+                motor.dq = 0.0
                 motor.kp = 0.0
                 motor.kd = 0.0
                 motor.tau = 0.0
             self._write_low_cmd_locked()
 
+    def _publish_pre_enable_command(self) -> None:
+        self._publish_zero_torque()
+
     def _publish_lie_down_trajectory(self) -> None:
-        if self._last_position_kp.shape != (GO2_MOTOR_COUNT,) or self._last_position_kd.shape != (GO2_MOTOR_COUNT,):
+        joint_count = self._spec.joint_count
+        if self._last_position_kp.shape != (joint_count,) or self._last_position_kd.shape != (joint_count,):
             raise RuntimeError("position gains are unavailable for lie-down shutdown")
         start = self._latest_robot_state().joint_position
         target = self._lie_down_position
-        zeros = np.zeros(GO2_MOTOR_COUNT, dtype=np.float32)
+        zeros = np.zeros(joint_count, dtype=np.float32)
         steps = max(1, math.ceil(self.config.robot.lie_down_duration_s / self._control_period_s))
         for step in range(1, steps + 1):
             with self._condition:
@@ -668,20 +784,86 @@ class UnitreeGo2Robot(RobotInterface):
 
     def _publish_damping(self) -> None:
         with self._write_lock:
-            for canonical_index, motor_index in enumerate(self._motor_indices):
-                motor = self._low_cmd.motor_cmd[int(motor_index)]
-                motor.mode = self._motor_modes[canonical_index]
-                motor.q = 0.0
-                motor.qd = 0.0
-                motor.kp = 0.0
-                motor.kd = self.config.robot.damping_kd
-                motor.tau = 0.0
+            self._set_damping_fields_locked()
             self._write_low_cmd_locked()
 
+    def _set_damping_fields_locked(self) -> None:
+        state = self._latest_low_state
+        for canonical_index, motor_index in enumerate(self._motor_indices):
+            motor = self._low_cmd.motor_cmd[int(motor_index)]
+            motor.mode = self._motor_modes[canonical_index]
+            motor.q = 0.0 if state is None else float(state.motor_state[int(motor_index)].q)
+            motor.dq = 0.0
+            motor.kp = 0.0
+            motor.kd = self.config.robot.damping_kd
+            motor.tau = 0.0
+
     def _write_low_cmd_locked(self) -> None:
+        self._latest_command_update_ns = self._clock_ns()
+        if self.config.robot.command_publish_period_s is not None:
+            return
+        self._publish_low_cmd_locked()
+
+    def _publish_low_cmd_locked(self) -> None:
         self._low_cmd.crc = self._command_crc.Crc(self._low_cmd)
         self._publisher.Write(self._low_cmd)
         self._last_communication_ns = self._clock_ns()
+
+    def _start_command_writer(self) -> None:
+        if self._writer_thread is not None:
+            raise RuntimeError("Unitree command writer is already running")
+        self._writer_stop.clear()
+        self._writer_thread = threading.Thread(
+            target=self._command_writer_loop,
+            name=f"{type(self).__name__}-lowcmd",
+            daemon=True,
+        )
+        self._writer_thread.start()
+
+    def _stop_command_writer(self) -> None:
+        thread = self._writer_thread
+        if thread is None:
+            return
+        if self._publisher is not None and self._low_cmd is not None and self._command_crc is not None:
+            # stop() has already replaced the buffer with damping. Publish it
+            # synchronously once so shutdown does not depend on thread timing.
+            with self._write_lock:
+                self._publish_low_cmd_locked()
+        self._writer_stop.set()
+        thread.join(timeout=1.0)
+        if thread.is_alive():
+            raise RuntimeError("Unitree command writer did not stop")
+        self._writer_thread = None
+
+    def _command_writer_loop(self) -> None:
+        period_s = self.config.robot.command_publish_period_s
+        assert period_s is not None
+        period_ns = max(1, round(period_s * 1e9))
+        command_timeout_ns = round(self.config.robot.command_timeout_s * 1e9)
+        state_timeout_ns = round(self._state_timeout_s * 1e9)
+        next_deadline_ns = self._clock_ns()
+        try:
+            while not self._writer_stop.is_set():
+                now_ns = self._clock_ns()
+                with self._write_lock:
+                    state_stale = now_ns - self._latest_receive_time_ns > state_timeout_ns
+                    command_stale = now_ns - self._latest_command_update_ns > command_timeout_ns
+                    if state_stale or command_stale:
+                        self._set_damping_fields_locked()
+                        stale = "LowState" if state_stale else "policy command"
+                        self._health_reason = f"{stale} is stale; publishing damping"
+                    self._publish_low_cmd_locked()
+                next_deadline_ns += period_ns
+                remaining_s = (next_deadline_ns - self._clock_ns()) / 1e9
+                if remaining_s <= 0:
+                    next_deadline_ns = self._clock_ns()
+                    continue
+                self._writer_stop.wait(remaining_s)
+        except Exception as error:
+            with self._condition:
+                self._callback_error = error
+                self._health_reason = f"LowCmd writer failed: {error}"
+                self._condition.notify_all()
 
     def _raise_if_remote_stop_requested(self) -> None:
         with self._condition:
@@ -690,6 +872,8 @@ class UnitreeGo2Robot(RobotInterface):
     def _raise_if_remote_stop_requested_locked(self) -> None:
         if self._emergency_stop:
             raise EmergencyStopError(f"remote {self.config.robot.emergency_stop_button!r} requested damping stop")
+        if self._passive_requested:
+            raise PassiveRequestedError("operator requested passive damping")
         if self._lie_down_requested:
             raise LieDownRequestedError(f"remote {self.config.robot.lie_down_button!r} requested lie-down shutdown")
 
@@ -698,4 +882,25 @@ class UnitreeGo2Robot(RobotInterface):
             raise RuntimeError("Unitree backend is not open")
 
 
-__all__ = ["UnitreeGo2Robot", "UnitreeSdkBindings"]
+class UnitreeG1_29DOFRobot(UnitreeGo2Robot):
+    """Map canonical G1 29-DOF state and commands to HG DDS messages."""
+
+    robot_config_type = UnitreeG1_29DOFRobotCfg
+    disabled_position = 0.0
+    disabled_velocity = 0.0
+
+    def _load_sdk_bindings(self) -> UnitreeSdkBindings:
+        return _load_g1_29dof_sdk_bindings()
+
+    def _disable_high_level_motion_services(self, sdk: UnitreeSdkBindings) -> None:
+        # The validated G1 deployment enters low-level mode outside this process.
+        # HG mode_pr/mode_machine are then verified from LowState before output.
+        del sdk
+
+    def _publish_pre_enable_command(self) -> None:
+        # Match the validated G1 Passive state: mode 1, measured q, kp 0,
+        # kd 3, zero desired velocity and feed-forward torque.
+        self._publish_damping()
+
+
+__all__ = ["UnitreeG1_29DOFRobot", "UnitreeGo2Robot", "UnitreeSdkBindings"]

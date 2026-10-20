@@ -1,0 +1,17 @@
+defaults:
+  - runtime: g1-sim-state-machine
+  - program: null
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+  sweep:
+    dir: .
+    subdir: ${hydra.job.num}
+  job:
+    chdir: false
+
+program: ???

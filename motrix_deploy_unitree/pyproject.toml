@@ -20,6 +20,9 @@ dependencies = [
     "unitree-sdk2py",
 ]
 
+[project.optional-dependencies]
+native = ["motrix-unitree-native==0.4.0"]
+
 [project.scripts]
 motrix-deploy-unitree = "motrix_deploy_unitree.cli:main"
 

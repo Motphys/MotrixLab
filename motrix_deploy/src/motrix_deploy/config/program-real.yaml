@@ -1,0 +1,24 @@
+# Hardware deployment application: same program and artifacts as the
+# simulation application, but the Unitree SDK2 DDS runtime, starting in damping.
+defaults:
+  - runtime: g1-unitree-state-machine
+  - program: g1-hot-swapping
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+  sweep:
+    dir: .
+    subdir: ${hydra.job.num}
+  job:
+    chdir: false
+
+program:
+  # Hardware always starts in damping and waits for the operator.
+  initial_state: passive
+
+runtime:
+  network_interface: eth0

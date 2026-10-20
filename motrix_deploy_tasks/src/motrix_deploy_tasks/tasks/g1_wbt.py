@@ -28,6 +28,7 @@ from motrix_deploy.policy.processing import PolicyProcessor
 from motrix_deploy.runtime.context import ControlContext
 from motrix_deploy.runtime.control import PolicyController
 from motrix_deploy.runtime.lifecycle import ControllerStep
+from motrix_deploy.runtime.preparation import JointServoPreparationState, SkillPreparationSpec
 from motrix_deploy.task import DeployTask
 
 FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
@@ -84,7 +85,7 @@ class G1WbtMotion:
         return int(np.asarray(self.joint_pos).shape[0])
 
 
-def _load_motion(spec: G1WbtTaskSpec, artifact: Artifact | None) -> G1WbtMotion:
+def load_g1_wbt_motion(spec: G1WbtTaskSpec, artifact: Artifact | None) -> G1WbtMotion:
     """Load and validate the motion clip from the artifact's single NPZ payload."""
     if artifact is None:
         raise ValidationError("task.payloads", "the deployment artifact", None)
@@ -140,6 +141,9 @@ class G1WbtPolicyProcessor(PolicyProcessor[None]):
         self._motion_joint_position = np.asarray(motion.joint_pos, dtype=np.float32)
         self._motion_joint_velocity = np.asarray(motion.joint_vel, dtype=np.float32)
         self._reference_quaternion = np.asarray(motion.reference_quaternion_xyzw, dtype=np.float32)
+        # Yaw offset between the clip's world frame and the robot's IMU world frame.
+        # Identity keeps the raw reference (simulation and parity harnesses).
+        self._reference_alignment = np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
         self._default_joint_position = robot.default_joint_position.astype(np.float32, copy=True)
         self._action_scale = np.asarray(spec.action_scale, dtype=np.float32)
         self._previous_action = np.zeros(self.action_size, dtype=np.float32)
@@ -152,6 +156,21 @@ class G1WbtPolicyProcessor(PolicyProcessor[None]):
         """Restore the initial reference when starting a new task execution."""
         self._reference_frame = 0
         self._latest_frame = 0
+
+    def align_reference_to(self, state: RobotState) -> None:
+        """Rotate the clip's world frame onto the robot's measured heading.
+
+        The IMU has no absolute heading, so feeding ``R(torso)^T @ R(reference)``
+        without this leaves a constant yaw offset in the 6D block equal to the
+        difference between the robot's heading and the clip's frame 0. The policy
+        then twists to "correct" it (works at one heading, diverges at another).
+        Mirrors unitree_rl_lab ``State_WBT.cpp``: ``init_quat = yaw(robot) * yaw(ref0)^T``.
+        """
+        torso = self.torso_orientation(state)
+        self._reference_alignment = _quat_from_yaw(_yaw_of(torso) - _yaw_of(self._reference_quaternion[0]))
+
+    def _aligned_reference(self, frame: int) -> np.ndarray:
+        return _quat_multiply(self._reference_alignment, self._reference_quaternion[frame])
 
     def set_reference_frame(self, frame: int) -> None:
         """Select a reference independently of the continuously running policy."""
@@ -192,9 +211,7 @@ class G1WbtPolicyProcessor(PolicyProcessor[None]):
         ``process_action`` input is echoed, as training observes the current raw
         action after stepping and thus the previous action at the next inference.
         """
-        relative_rotation = _rotation_matrix(torso_quaternion_xyzw).T @ _rotation_matrix(
-            self._reference_quaternion[frame]
-        )
+        relative_rotation = _rotation_matrix(torso_quaternion_xyzw).T @ _rotation_matrix(self._aligned_reference(frame))
         raw_history = self._previous_action if previous_action is None else previous_action
         return np.concatenate(
             (
@@ -253,7 +270,7 @@ class G1WbtPolicyProcessor(PolicyProcessor[None]):
     def check_termination(self, state: RobotState) -> str | None:
         frame = self._latest_frame
         torso = self.torso_orientation(state)
-        reference = self._reference_quaternion[frame]
+        reference = self._aligned_reference(frame)
         gravity_error = abs(2 * (reference[0] ** 2 + reference[1] ** 2 - torso[0] ** 2 - torso[1] ** 2))
         if gravity_error > self.spec.termination_ref_orientation_threshold:
             return "bad_ref_ori"
@@ -265,6 +282,31 @@ class G1WbtPolicyProcessor(PolicyProcessor[None]):
         if np.any(np.abs(state.joint_velocity) > self.spec.termination_joint_velocity_threshold):
             return "bad_dof_vel"
         return None
+
+
+def _quat_multiply(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Hamilton product of two xyzw quaternions."""
+    ax, ay, az, aw = (float(value) for value in a)
+    bx, by, bz, bw = (float(value) for value in b)
+    return np.asarray(
+        (
+            aw * bx + bw * ax + ay * bz - az * by,
+            aw * by + bw * ay + az * bx - ax * bz,
+            aw * bz + bw * az + ax * by - ay * bx,
+            aw * bw - ax * bx - ay * by - az * bz,
+        ),
+        dtype=np.float32,
+    )
+
+
+def _yaw_of(quaternion_xyzw: np.ndarray) -> float:
+    """ZYX yaw of a body-to-world quaternion."""
+    x, y, z, w = (float(value) for value in quaternion_xyzw)
+    return float(np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))
+
+
+def _quat_from_yaw(yaw: float) -> np.ndarray:
+    return np.asarray((0.0, 0.0, np.sin(0.5 * yaw), np.cos(0.5 * yaw)), dtype=np.float32)
 
 
 def _rotation_matrix(quaternion_xyzw: np.ndarray) -> np.ndarray:
@@ -290,101 +332,6 @@ class StageResult:
     complete: bool = False
     metrics: dict[str, float] = field(default_factory=dict)
     error: str | None = None
-
-
-@dataclass(frozen=True)
-class G1PreparationSettings:
-    """Measured readiness limits; preparation never injects a reference root state."""
-
-    ramp_duration_s: float = 2.0
-    settle_duration_s: float = 1.0
-    timeout_s: float = 5.0
-    max_joint_error_rad: float = 0.2
-    max_joint_velocity_rad_s: float = 1.0
-    max_base_tilt_rad: float = 0.5
-
-
-class G1ReadyController:
-    """Ramp from measured joints, then require an uninterrupted ready interval."""
-
-    name = "prepare"
-
-    def __init__(
-        self,
-        target: FloatArray,
-        kp: FloatArray,
-        kd: FloatArray,
-        robot: RobotSpec,
-        settings: G1PreparationSettings,
-    ) -> None:
-        self._initial_position: FloatArray | None = None
-        self._target = np.clip(target, robot.position_lower, robot.position_upper).astype(np.float32)
-        self._kp = kp
-        self._kd = kd
-        self._robot = robot
-        self._settings = settings
-        self._stop_requested = False
-        self._ready_since: float | None = None
-        self._reached_ready = False
-        self._zeros = np.zeros(robot.joint_count, dtype=np.float32)
-
-    def reset(self, state: RobotState) -> None:
-        self._initial_position = state.joint_position.copy()
-        self._ready_since = None
-        self._reached_ready = False
-        self._stop_requested = False
-
-    def hold_command(self) -> JointServoCommand:
-        """Keep the independent standing posture while waiting for a start request."""
-        return JointServoCommand(self._target, self._zeros, self._zeros, self._kp, self._kd)
-
-    def request_stop(self) -> None:
-        self._stop_requested = True
-
-    def step(self, state: RobotState, context: ControlContext[None]) -> ControllerStep:
-        if self._stop_requested:
-            return ControllerStep(complete=True)
-        elapsed_time_s = context.elapsed_time_s
-        assert self._initial_position is not None
-        settings = self._settings
-        x, y, _, _ = state.base_orientation_xyzw
-        tilt = float(np.arccos(np.clip(1 - 2 * (float(x) ** 2 + float(y) ** 2), -1, 1)))
-        metrics = {
-            "max_joint_error_rad": float(np.max(np.abs(state.joint_position - self._target))),
-            "max_joint_velocity_rad_s": float(np.max(np.abs(state.joint_velocity))),
-            "base_tilt_rad": tilt,
-        }
-        if tilt > settings.max_base_tilt_rad:
-            return ControllerStep(metrics=metrics, error=f"unsafe base tilt during preparation: {metrics}")
-        ready = (
-            elapsed_time_s + 1e-9 >= settings.ramp_duration_s
-            and metrics["max_joint_error_rad"] <= settings.max_joint_error_rad
-            and metrics["max_joint_velocity_rad_s"] <= settings.max_joint_velocity_rad_s
-        )
-        if ready:
-            if self._ready_since is None:
-                self._ready_since = elapsed_time_s
-        else:
-            self._ready_since = None
-        if (
-            self._ready_since is not None
-            and elapsed_time_s - self._ready_since + 1e-9 >= settings.settle_duration_s
-            and (self._reached_ready or elapsed_time_s <= settings.timeout_s + 1e-9)
-        ):
-            self._reached_ready = True
-            return ControllerStep(complete=True, metrics=metrics)
-        if not self._reached_ready and elapsed_time_s + 1e-9 >= settings.timeout_s:
-            return ControllerStep(metrics=metrics, error=f"preparation timed out: {metrics}")
-        fraction = (
-            np.clip((elapsed_time_s + context.dt_s) / settings.ramp_duration_s, 0, 1)
-            if settings.ramp_duration_s > 0
-            else 1
-        )
-        target = self._initial_position + np.float32(fraction) * (self._target - self._initial_position)
-        target = np.clip(target, self._robot.position_lower, self._robot.position_upper).astype(np.float32)
-        return ControllerStep(
-            command=JointServoCommand(target, self._zeros, self._zeros, self._kp, self._kd), metrics=metrics
-        )
 
 
 class G1DampingController:
@@ -433,7 +380,7 @@ class G1WbtDeployTask(DeployTask[None]):
         artifact: Artifact | None = None,
     ):
         if motion is None:
-            motion = _load_motion(spec, artifact)
+            motion = load_g1_wbt_motion(spec, artifact)
         budget = len(motion) if steps is None else steps
         if not 0 < budget <= len(motion):
             raise ValidationError("steps", "a positive budget inside the single motion clip", budget)
@@ -449,20 +396,24 @@ class G1WbtDeployTask(DeployTask[None]):
             else spec.preparation_joint_position,
             dtype=np.float32,
         ).copy()
+        # Per-artifact stand-up recipe: the policy gains are tracking gains and
+        # cannot hold a static stance.
         self._preparation_kp = np.asarray(
             spec.kp if spec.preparation_kp is None else spec.preparation_kp, dtype=np.float32
         )
         self._preparation_kd = np.asarray(
             spec.kd if spec.preparation_kd is None else spec.preparation_kd, dtype=np.float32
         )
-        self._preparation_settings = G1PreparationSettings(
+        self._preparation_spec = SkillPreparationSpec(
+            joint_position=self._standing_position,
+            kp=self._preparation_kp,
+            kd=self._preparation_kd,
             ramp_duration_s=spec.preparation_ramp_duration_s,
             settle_duration_s=spec.preparation_settle_duration_s,
             timeout_s=spec.preparation_timeout_s,
         )
-        self.ready = G1ReadyController(
-            self._standing_position, self._preparation_kp, self._preparation_kd, robot, self._preparation_settings
-        )
+        self.ready = JointServoPreparationState(robot)
+        self.ready.select(self._preparation_spec)
         self.damping = G1DampingController(self.policy_io._kd, robot)
         self.transitions: list[StageResult] = []
         self._phase = "prepare"

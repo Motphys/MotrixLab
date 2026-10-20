@@ -8,7 +8,13 @@ import time
 from typing import Generic, TypeVar
 
 from motrix_deploy.contracts import JointServoCommand, RobotState
-from motrix_deploy.errors import ControlFailure, EmergencyStopError, LieDownRequestedError, ValidationError
+from motrix_deploy.errors import (
+    ControlFailure,
+    EmergencyStopError,
+    LieDownRequestedError,
+    PassiveRequestedError,
+    ValidationError,
+)
 from motrix_deploy.policy import Policy
 from motrix_deploy.policy.processing import PolicyProcessor
 from motrix_deploy.robot.interface import RobotInterface
@@ -164,7 +170,7 @@ class ControlSession(Generic[CommandT]):
             if self.robot.capabilities.requires_enable:
                 try:
                     self.robot.enable()
-                except (EmergencyStopError, LieDownRequestedError, ValidationError):
+                except (EmergencyStopError, LieDownRequestedError, PassiveRequestedError, ValidationError):
                     raise
                 except Exception as error:
                     raise ControlFailure("backend_enable_error", str(error)) from error
@@ -181,7 +187,7 @@ class ControlSession(Generic[CommandT]):
             state = self.robot.read_state(self.state_timeout_s)
         except TimeoutError as error:
             raise ControlFailure("state_timeout", str(error)) from error
-        except (EmergencyStopError, LieDownRequestedError):
+        except (EmergencyStopError, LieDownRequestedError, PassiveRequestedError):
             raise
         except Exception as error:
             raise ControlFailure("backend_read_error", str(error)) from error
@@ -236,7 +242,7 @@ class ControlSession(Generic[CommandT]):
                 phase = time.monotonic_ns()
                 try:
                     self.robot.write_command(decision.command)
-                except (EmergencyStopError, LieDownRequestedError):
+                except (EmergencyStopError, LieDownRequestedError, PassiveRequestedError):
                     raise
                 except Exception as error:
                     raise ControlFailure("backend_write_error", str(error)) from error
@@ -267,6 +273,8 @@ class ControlSession(Generic[CommandT]):
             self._reason, self._message = "emergency_stop", str(error)
         elif isinstance(error, LieDownRequestedError):
             self._reason, self._message = "lie_down", str(error)
+        elif isinstance(error, PassiveRequestedError):
+            self._reason, self._message = "passive", str(error)
         elif isinstance(error, ControlFailure):
             self._reason, self._message = error.reason, str(error)
         elif isinstance(error, ValidationError):

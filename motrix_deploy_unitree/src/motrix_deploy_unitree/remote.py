@@ -30,6 +30,13 @@ BUTTON_NAMES = (
     "down",
     "left",
 )
+BUTTON_ALIASES = {"RB": "R1", "LB": "L1", "RT": "R2", "LT": "L2", "back": "select"}
+ACCEPTED_BUTTON_NAMES = BUTTON_NAMES + tuple(BUTTON_ALIASES)
+
+
+def canonical_button_name(name: str) -> str:
+    """Resolve SDK-wrapper aliases without changing the stable wire bit names."""
+    return BUTTON_ALIASES.get(name, name)
 
 
 @dataclass(frozen=True)
@@ -43,11 +50,18 @@ class UnitreeRemoteState:
     ry: float = 0.0
 
     def pressed(self, name: str) -> bool:
+        name = canonical_button_name(name)
         try:
             index = BUTTON_NAMES.index(name)
         except ValueError as error:
             raise ValidationError("remote.button", f"one of {list(BUTTON_NAMES)}", name) from error
         return bool(self.keys & (1 << index))
+
+    def pressed_buttons(self) -> frozenset[str]:
+        """Return active canonical names plus their accepted SDK aliases."""
+        active = {name for name in BUTTON_NAMES if self.pressed(name)}
+        active.update(alias for alias, canonical in BUTTON_ALIASES.items() if canonical in active)
+        return frozenset(active)
 
 
 class UnitreeRemoteGamePadDevice(GamePadDevice):
@@ -98,4 +112,12 @@ def decode_wireless_remote(data: object) -> UnitreeRemoteState:
     return UnitreeRemoteState(keys=keys, lx=float(lx), ly=float(ly), rx=float(rx), ry=float(ry))
 
 
-__all__ = ["BUTTON_NAMES", "UnitreeRemoteGamePadDevice", "UnitreeRemoteState", "decode_wireless_remote"]
+__all__ = [
+    "ACCEPTED_BUTTON_NAMES",
+    "BUTTON_ALIASES",
+    "BUTTON_NAMES",
+    "UnitreeRemoteGamePadDevice",
+    "UnitreeRemoteState",
+    "canonical_button_name",
+    "decode_wireless_remote",
+]

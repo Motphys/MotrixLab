@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Generic, TypeVar
 
 from motrix_deploy.artifact.schema import TaskSpec
 from motrix_deploy.contracts import FloatArray, RobotSpec, RobotState
+from motrix_deploy.operator import OperatorProfileCfg
 from motrix_deploy.policy import Policy
 from motrix_deploy.runtime.context import ControlContext
 from motrix_deploy.runtime.lifecycle import ControllerStep
@@ -61,6 +62,11 @@ class DeployTask(ABC, Generic[CommandT]):
         """
         self.validate_command(None)
         return None
+
+    def configure_operator(self, profile: OperatorProfileCfg | None) -> None:
+        """Accept task-owned command wiring before ``prepare`` assembles its binding."""
+        if profile is not None and profile.planar_velocity is not None:
+            raise ValueError(f"{type(self).__name__} does not support planar velocity operator input")
 
     @property
     def operator_hint(self) -> str | None:

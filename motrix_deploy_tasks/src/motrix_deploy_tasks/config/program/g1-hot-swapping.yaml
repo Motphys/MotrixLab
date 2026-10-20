@@ -1,0 +1,13 @@
+defaults:
+  - _g1_hot_swapping_schema
+  - _self_
+
+walk_artifact: artifacts/g1-flat.deploy
+wbt_artifact: artifacts/g1-wbt-dance.deploy
+policy_transition_duration_s: 0.5
+passive_transition_min_s: 0.5
+passive_transition_max_s: 3.0
+passive_max_joint_speed_rad_s: 0.5
+passive_gain_ramp_s: 0.5
+passive_kd: 3.0
+initial_state: fixstand
