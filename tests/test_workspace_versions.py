@@ -158,6 +158,11 @@ def test_source_versions_track_the_installed_distribution():
             f"but its distribution is {distribution!r}"
         )
         installed = _installed_version(distribution)
+        if installed is None:
+            # Not every workspace package is installed in every environment
+            # (e.g. the Unitree plugin is Python 3.10 only), so the installed
+            # version can only be checked where the distribution is present.
+            continue
         assert installed == projects[distribution], (
             f"{distribution} is installed as {installed!r}, expected the workspace version "
             f"{projects[distribution]!r}; reinstall it with the matching install command"
