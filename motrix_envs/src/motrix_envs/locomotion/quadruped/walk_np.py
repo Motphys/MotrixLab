@@ -764,4 +764,5 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             reward += weighted_speed
         return reward
 
+
 __all__ = ["QuadrupedWalkTask"]
