@@ -14,6 +14,7 @@ from motrix_env_core.config.scene import FlatTerrainCfg, HFieldTerrainCfg
 from motrix_envs.config.scene import StandardSceneObjsCfg
 from motrix_envs.locomotion.quadruped.cfg import (
     Commands,
+    FootLateralRewardCfg,
     QuadrupedSceneCfg,
     QuadrupedWalkEnvCfg,
     QuadrupedWalkRandomizationCfg,
@@ -68,11 +69,25 @@ class Go2WalkDirectEnvCfg(QuadrupedWalkEnvCfg):
 
     reward_config: RewardConfig = RewardConfig(
         scales=RewardScales(
-            similar_to_default=-1,
+            tracking_lin_vel=2.0,
+            flat_orientation=-2.5,
+            stand_still=-1,
+            feet_slide=-0.5,
+            action_smoothness=-0.01,
         ),
         tracking_ang_vel_sigma=0.05,
         target_foot_height=0.05,
         base_height_target=0.35,
+        foot_lateral_terms=(
+            FootLateralRewardCfg(
+                name="rear_swing_width",
+                feet=("rear_left", "rear_right"),
+                phase="swing",
+                target_abs_y=0.145,
+                width_tolerance=0.02,
+                width_scale=-0.05,
+            ),
+        ),
     )
 
     def for_play(self) -> "Go2WalkDirectEnvCfg":
@@ -109,8 +124,31 @@ class Go2WalkRoughDirectEnvCfg(Go2WalkDirectEnvCfg):
         ),
     )
     reward_config: RewardConfig = RewardConfig(
+        scales=RewardScales(
+            tracking_lin_vel=2.0,
+            stand_still=-1.0,
+        ),
         target_foot_height=0.1,
+        # A weak rear-foot guardrail: preserve terrain-dependent foothold
+        # selection while discouraging pathological inward/outward swings.
+        foot_lateral_terms=(
+            FootLateralRewardCfg(
+                name="rear_swing_width_rough",
+                feet=("rear_left", "rear_right"),
+                phase="swing",
+                min_abs_y=0.10,
+                max_abs_y=0.20,
+                width_tolerance=0.04,
+                width_scale=-0.005,
+            ),
+        ),
     )
+
+    def for_play(self) -> "Go2WalkRoughDirectEnvCfg":
+        """Return a deterministic rough-terrain evaluation config."""
+
+        cfg = QuadrupedWalkEnvCfg.for_play(self)
+        return replace(cfg, noise_config=replace(cfg.noise_config, level=0.0))
 
 
 registry.env("go2-walk-flat")(QuadrupedWalkTask)
