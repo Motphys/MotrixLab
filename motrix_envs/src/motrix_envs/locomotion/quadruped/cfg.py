@@ -186,10 +186,7 @@ class VelocityCommandCfg:
 
     def validate(self) -> None:
         if not np.isfinite(self.standing_probability) or not 0.0 <= self.standing_probability <= 1.0:
-            raise ValueError(
-                "standing_probability must be finite and inside [0, 1], "
-                f"got {self.standing_probability}"
-            )
+            raise ValueError(f"standing_probability must be finite and inside [0, 1], got {self.standing_probability}")
         if self.resampling_seconds_range is not None:
             low, high = self.resampling_seconds_range
             if not np.isfinite(low) or not np.isfinite(high) or low <= 0.0 or low > high:
