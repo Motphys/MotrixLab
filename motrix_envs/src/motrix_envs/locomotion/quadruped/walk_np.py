@@ -27,6 +27,7 @@ from motrix_env_core.sim import (
     LinkCenterOfMassQuery,
     LinkMassQuery,
     LinkPositionQuery,
+    LinkQuaternionQuery,
     SensorValuesQuery,
 )
 from motrix_env_core.sim.model import ActuatorType
@@ -60,6 +61,7 @@ def _sim_data_queries(cfg: QuadrupedWalkEnvCfg):
         "gyro": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.gyro),)),
         "upvector": SensorValuesQuery(sensors=(resolve_sensor_name(cfg.sensor.upvector),)),
         "base_pos": LinkPositionQuery(link=base_link_name),
+        "root_quat": LinkQuaternionQuery(link=base_link_name),
         "front_left_contact": SensorValuesQuery(sensors=("front_left_contact",)),
         "front_right_contact": SensorValuesQuery(sensors=("front_right_contact",)),
         "rear_left_contact": SensorValuesQuery(sensors=("rear_left_contact",)),
@@ -201,8 +203,6 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             velocity_cfg.upper,
             rng=self._command_rng,
             standing_probability=velocity_cfg.standing_probability,
-            single_axis_probability=velocity_cfg.single_axis_probability,
-            boundary_probability=velocity_cfg.boundary_probability,
         )
         if not np.isfinite(velocity_cfg.standing_threshold) or velocity_cfg.standing_threshold < 0.0:
             raise ValueError(
@@ -265,7 +265,6 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._current_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
         self._last_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
         self._last_last_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
-        self._previous_dof_vel = np.zeros((num_envs, self._num_action), dtype=np.float32)
         self._previous_feet_pos = np.zeros((num_envs, self._num_feet, 3), dtype=np.float32)
         self._previous_feet_world_pos = np.zeros((num_envs, self._num_feet, 3), dtype=np.float32)
         self._action_delay_steps = np.zeros(num_envs, dtype=np.int32)
@@ -452,7 +451,6 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             "flat_orientation": self._reward_flat_orientation,
             "stand_still": self._reward_stand_still,
             "feet_slide": self._reward_feet_slide,
-            "dof_acc": self._reward_dof_acc,
             "action_smoothness": self._reward_action_smoothness,
         }
         reward_items = {}
@@ -467,7 +465,6 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
 
         state.reward_terms = reward_items
         reward += self._reward_foot_lateral_terms(reward_items)
-        self._previous_dof_vel[:] = self.get_dof_vel()[:, -self._num_action :]
         self._previous_feet_pos[:] = self.feet_pos
         self._previous_feet_world_pos[:] = self._feet_world_pos
         return reward * self.cfg.ctrl_dt
@@ -510,7 +507,6 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._current_actions[env_ids] = 0.0
         self._last_actions[env_ids] = 0.0
         self._last_last_actions[env_ids] = 0.0
-        self._previous_dof_vel[env_ids] = 0.0
         self._previous_feet_pos[env_ids] = self.feet_pos[env_ids]
         self._previous_feet_world_pos[env_ids] = self._feet_world_pos[env_ids]
 
@@ -718,12 +714,6 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         world_delta = (self._feet_world_pos - self._previous_feet_world_pos) / self.cfg.ctrl_dt
         speed = np.linalg.norm(world_delta[:, :, :2], axis=2)
         return np.sum(speed * support, axis=1) / self._num_feet
-
-    def _reward_dof_acc(self, linvel, gyro, dof_pos) -> np.ndarray:
-        del linvel, gyro, dof_pos
-        dof_vel = self.get_dof_vel()[:, -self._num_action :]
-        acceleration = (dof_vel - self._previous_dof_vel) / self.cfg.ctrl_dt
-        return np.sum(np.square(acceleration), axis=1)
 
     def _reward_action_smoothness(self, linvel, gyro, dof_pos) -> np.ndarray:
         del linvel, gyro, dof_pos

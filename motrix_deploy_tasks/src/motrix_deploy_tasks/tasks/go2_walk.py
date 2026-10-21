@@ -53,6 +53,10 @@ _REMOTE_WIRING = {
     "deadman_button": "L1",
 }
 
+# Conservative command slew limits used only by the MuJoCo sim2sim entry.
+# Units are (m/s^2, m/s^2, rad/s^2) for (vx, vy, yaw_rate).
+_SIM_COMMAND_ACCELERATION_LIMITS = np.array([0.8, 0.6, 1.0], dtype=np.float32)
+
 
 class Go2WalkTaskSpec(TaskSpec):
     """Self-contained control, command, gait and termination parameters."""
@@ -113,6 +117,12 @@ class Go2WalkPolicyProcessor(PolicyProcessor[PlanarVelocityCommand]):
         self._termination_min_up_z = spec.termination_min_up_z
         self._previous_action: FloatArray = np.zeros(self.robot.joint_count, dtype=np.float32)
         self._phase = np.float32(0.0)
+        self._command_ramp_enabled = False
+        self._ramped_velocity = np.zeros(3, dtype=np.float32)
+
+    def enable_sim_command_ramp(self) -> None:
+        """Apply conservative command acceleration limits for sim2sim input."""
+        self._command_ramp_enabled = True
 
     @property
     def command_lower(self) -> FloatArray:
@@ -133,10 +143,21 @@ class Go2WalkPolicyProcessor(PolicyProcessor[PlanarVelocityCommand]):
         """Reset action and gait history; callers provide validated state and command."""
         self._previous_action.fill(0)
         self._phase = np.float32(0.0)
+        self._ramped_velocity.fill(0)
 
     def build_observation(self, state: RobotState, context: ControlContext[PlanarVelocityCommand]) -> FloatArray:
         """Consume runtime-validated state and PolicyController-validated input commands."""
-        velocity = context.command.values[0, :]
+        requested_velocity = context.command.values[0, :]
+        if self._command_ramp_enabled:
+            max_delta = _SIM_COMMAND_ACCELERATION_LIMITS * np.float32(context.dt_s)
+            self._ramped_velocity += np.clip(
+                requested_velocity - self._ramped_velocity,
+                -max_delta,
+                max_delta,
+            )
+            velocity = self._ramped_velocity.copy()
+        else:
+            velocity = requested_velocity
         phase = np.zeros(4, dtype=np.float32)
         if np.linalg.norm(velocity) < self._standing_threshold:
             self._phase = np.float32(0.0)
@@ -254,6 +275,8 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
         spawn_pose: str | None = None,
     ) -> CommandBinding[PlanarVelocityCommand]:
         """Derive the crouch preparation from the simulation spawn pose and build the command source."""
+        if simulation:
+            self.policy_io.enable_sim_command_ramp()
         if simulation and spawn_pose == "lie_down":
             self.enable_simulation_preparation()
         command_lower, command_upper = self.command_bounds

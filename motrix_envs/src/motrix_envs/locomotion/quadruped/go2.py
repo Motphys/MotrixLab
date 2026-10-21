@@ -41,8 +41,6 @@ class Go2WalkDirectEnvCfg(QuadrupedWalkEnvCfg):
             lower=np.array([-1.0, -0.5, -0.5], dtype=np.float32),
             upper=np.array([1.0, 0.5, 0.5], dtype=np.float32),
             standing_probability=0.1,
-            single_axis_probability=0.45,
-            boundary_probability=0.15,
             resampling_seconds_range=(5.0, 10.0),
         )
     )
@@ -73,11 +71,9 @@ class Go2WalkDirectEnvCfg(QuadrupedWalkEnvCfg):
         scales=RewardScales(
             tracking_lin_vel=2.0,
             flat_orientation=-2.5,
-            stand_still=-1.0,
-            # feet_slide=-0.1,
-            # dof_acc=-2.5e-7,
-            # action_smoothness=-0.01,
-            # contact=0.1,
+            stand_still=-1,
+            feet_slide=-0.5,
+            action_smoothness=-0.01,
         ),
         tracking_ang_vel_sigma=0.05,
         target_foot_height=0.05,
@@ -98,20 +94,7 @@ class Go2WalkDirectEnvCfg(QuadrupedWalkEnvCfg):
         """Return a deterministic Go2 evaluation config."""
 
         cfg = super().for_play()
-        velocity = replace(
-            cfg.commands.velocity,
-            lower=np.array([0.5, 0.0, 0.0], dtype=np.float32),
-            upper=np.array([0.5, 0.0, 0.0], dtype=np.float32),
-            standing_probability=0.0,
-            single_axis_probability=0.0,
-            boundary_probability=0.0,
-            resampling_seconds_range=None,
-        )
-        return replace(
-            cfg,
-            commands=replace(cfg.commands, velocity=velocity),
-            noise_config=replace(cfg.noise_config, level=0.0),
-        )
+        return replace(cfg, noise_config=replace(cfg.noise_config, level=0.0))
 
 
 @registry.envcfg("go2-walk-rough")
@@ -146,9 +129,19 @@ class Go2WalkRoughDirectEnvCfg(Go2WalkDirectEnvCfg):
             stand_still=-1.0,
         ),
         target_foot_height=0.1,
-        # Rough terrain needs free lateral foothold selection, so it does not
-        # inherit the flat-ground foot-placement regularizers.
-        foot_lateral_terms=(),
+        # A weak rear-foot guardrail: preserve terrain-dependent foothold
+        # selection while discouraging pathological inward/outward swings.
+        foot_lateral_terms=(
+            FootLateralRewardCfg(
+                name="rear_swing_width_rough",
+                feet=("rear_left", "rear_right"),
+                phase="swing",
+                min_abs_y=0.10,
+                max_abs_y=0.20,
+                width_tolerance=0.04,
+                width_scale=-0.005,
+            ),
+        ),
     )
 
     def for_play(self) -> "Go2WalkRoughDirectEnvCfg":
