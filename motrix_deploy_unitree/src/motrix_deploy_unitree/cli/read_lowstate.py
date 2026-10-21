@@ -8,7 +8,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from motrix_deploy_unitree.config import G1_29DOF_JOINT_NAME_TO_MOTOR_ID, GO2_JOINT_NAME_TO_MOTOR_INDEX
+from motrix_deploy_unitree.config.g1 import G1_29DOF_JOINT_NAME_TO_MOTOR_ID
+from motrix_deploy_unitree.config.go2 import GO2_JOINT_NAME_TO_MOTOR_INDEX
 from motrix_deploy_unitree.remote import BUTTON_NAMES, decode_wireless_remote
 
 GO2_JOINT_NAMES = tuple(GO2_JOINT_NAME_TO_MOTOR_INDEX)

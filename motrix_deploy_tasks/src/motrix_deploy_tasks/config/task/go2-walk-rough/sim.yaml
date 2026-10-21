@@ -11,6 +11,7 @@ runtime:
     base_linear_velocity: global_linvel
   deploy_env_id: rough
   robot_id: go2
+  robot_init_key_pose: lie_down
   # Attach offset from the model's root height (0.445), clearing the terrain at reset.
   robot_translation: [0.0, 0.0, -0.025]
   robot_rotation: [0.0, 0.0, 0.0, 1.0]

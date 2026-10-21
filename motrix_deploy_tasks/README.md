@@ -17,6 +17,21 @@ plugin; no workspace config path is required.
 See the [deployment tutorial](../docs/source/en/user_guide/tutorial/advanced/motrix_deploy.md)
 for export, configuration, and hardware safety procedures.
 
+## G1 shared startup
+
+G1 Walk and WBT own their startup control. Simulation immediately applies FixStand
+joint PD at the configured default standing pose, then waits for `P` to enable policy;
+`O` stops. Headless simulation confirms automatically after the initial standing command.
+Hardware retains passive waiting, measured-to-default preparation and separate policy
+confirmation through its remote/operator profile. Startup parameters live under
+`task_settings.preparation`. Programmatic callers pass task execution settings when
+constructing a task with the keyword-only `settings` argument; `None` uses the defaults.
+
+Startup and skill readiness run inside the task's normal controller lifecycle, shared
+by simulation and hardware. Simulation uses only its scene/reset settings for the initial
+pose; the floating base remains free during startup and policy control. No support or
+sling is simulated, and simulation runs do not validate unsupported real-robot balance.
+
 ## G1 WBT dance: MuJoCo / MotrixSim sim2sim
 
 Use the standard **export → artifact → `mxlab deploy`** pipeline. The `g1_wbt/v1` task
@@ -50,21 +65,21 @@ Notes:
 - No velocity command is needed: WBT motion is artifact-owned.
 - The same artifact runs on MuJoCo and MotrixSim (`runtime.backend=motrixsim`, with
   `runtime.physics.solver_iterations=3` matching the training budget). It is not a
-  hardware deployment recipe: the current Unitree transport is Go2-specific, and sim2sim
-  success is not evidence of hardware safety.
+  replacement for hardware acceptance: sim2sim success is not evidence of hardware safety.
 - The recipe's 0.002 s physics step (10 substeps per 0.02 s control tick) keeps the stiff
   preparation PD inside MuJoCo's explicit-damping stability region.
 
-The task runs a four-phase lifecycle mirroring real deployment practice — `prepare` (ramp
+After shared startup, the task runs a four-phase skill lifecycle — `prepare` (ramp
 measured joints to the robot's default standing pose with artifact-embedded gains and
 timing, gated on continuously measured readiness), `policy_hold`, `playback`, `damping`.
 The dance ends in a deliberately leaned pose that only the tracking policy can balance;
 after playback the task enters measured damping directly. Ending upright requires the
 motion clip itself to finish at the standing pose.
-Takeover after measured readiness is automatic by default; programmatic applications can
-stage it manually via `automatic_start=False`, `attach_keyboard`, or the request methods.
-The CLI routes no task-specific options — operator input and preparation timing are task
-semantics embedded in the artifact or set programmatically. See the
+After the shared startup, headless takeover and playback are automatic. With a viewer,
+`P` authorizes the prepared skill's policy and `M` starts motion playback; `O` stops.
+Programmatic applications can stage the skill via `automatic_start=False` or the request
+methods. The artifact owns skill preparation and tracking; `task_settings.preparation`
+configures the preceding shared startup. See the
 [deployment tutorial](../docs/source/en/user_guide/tutorial/advanced/motrix_deploy.md)
 for the complete runtime, session, and controller contracts.
 

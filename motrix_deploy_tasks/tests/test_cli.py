@@ -30,7 +30,6 @@ from motrix_deploy.artifact import (
 from motrix_deploy.artifact.schema import PayloadSpec
 from motrix_deploy.contracts import RobotSpec, TensorSpec
 from motrix_deploy.env import assemble_deploy_scene, create_deploy_env
-from motrix_deploy.robot.g1_standing import resolve_g1_standing_gains
 from motrix_deploy_tasks.tasks.go2_walk import Go2WalkTaskSpec
 from motrix_env_core.config.scene import FlatTerrainCfg, HFieldTerrainCfg, SceneCfg
 
@@ -77,7 +76,7 @@ def test_cli_help() -> None:
 
 
 def test_hardware_cli_help_selects_hardware_recipe() -> None:
-    pytest.importorskip("motrix_deploy_unitree.config")
+    pytest.importorskip("motrix_deploy_unitree.config.go2")
     result = subprocess.run(
         [
             sys.executable,
@@ -97,21 +96,16 @@ def test_hardware_cli_help_selects_hardware_recipe() -> None:
 
 
 def test_g1_hardware_recipe_composes_named_gains_and_operator_profile() -> None:
-    unitree_config = pytest.importorskip("motrix_deploy_unitree.config")
+    unitree_runtime = pytest.importorskip("motrix_deploy_unitree.config.runtime")
     with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
         cfg = compose(
             config_name="deploy",
-            overrides=["task=g1-walk-flat/hardware", "runtime.network_interface=eth0"],
+            overrides=["task=g1-walk-flat/hardware", "runtime.transport.network_interface=eth0"],
         )
     runtime = OmegaConf.to_object(cfg.runtime)
 
-    assert isinstance(runtime, unitree_config.UnitreeBackendConfig)
-    assert isinstance(runtime.robot, unitree_config.UnitreeG1_29DOFRobotCfg)
-    assert runtime.robot.mode_pr == 0
-    assert runtime.robot.expected_mode_machine == 5
-    assert runtime.robot.override_policy_gains is False
-    assert set(runtime.robot.kp) == set(runtime.robot.actuation.motors)
-    assert set(runtime.robot.kd) == set(runtime.robot.actuation.motors)
+    assert isinstance(runtime, unitree_runtime.UnitreeRuntimeConfig)
+    assert runtime.robot == "g1-29dof"
     assert runtime.operator is not None
     assert set(runtime.operator.intents) == {
         "request_stand",
@@ -132,7 +126,7 @@ def test_g1_hardware_recipe_composes_named_gains_and_operator_profile() -> None:
 )
 def test_installed_recipes_compose_outside_workspace(tmp_path, task, runtime_kind, backend) -> None:
     if runtime_kind == "hardware":
-        pytest.importorskip("motrix_deploy_unitree.config")
+        pytest.importorskip("motrix_deploy_unitree.config.g1")
     result = subprocess.run(
         [sys.executable, "-m", "motrixlab.cli", "deploy", f"task={task}", "--cfg", "job"],
         cwd=tmp_path,
@@ -250,78 +244,79 @@ def test_installed_go2_task_can_be_created_without_preimport(tmp_path: Path) -> 
 
 
 def test_hardware_hydra_config_selects_runtime_defaults() -> None:
-    unitree_config = pytest.importorskip("motrix_deploy_unitree.config")
-    unitree_hardware = pytest.importorskip("motrix_deploy_unitree.hardware")
+    unitree_runtime = pytest.importorskip("motrix_deploy_unitree.config.runtime")
+    unitree_config = pytest.importorskip("motrix_deploy_unitree.config.control")
     with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
         cfg = compose(
             config_name="deploy",
             overrides=[
                 "task=go2-walk-flat/hardware",
                 "artifact=artifact.deploy",
-                "runtime.network_interface=enp3s0",
+                "runtime.transport.network_interface=enp3s0",
             ],
         )
 
     assert cfg.runtime.backend == "unitree"
     runtime = OmegaConf.to_object(cfg.runtime)
-    assert isinstance(runtime, unitree_config.UnitreeBackendConfig)
-    assert isinstance(runtime.robot, unitree_config.UnitreeGo2RobotCfg)
-    assert isinstance(runtime.robot, unitree_hardware.HardwareRobotCfg)
-    assert runtime.network_interface == "enp3s0"
+    assert isinstance(runtime, unitree_runtime.UnitreeRuntimeConfig)
+    assert runtime.robot == "go2"
+    assert isinstance(runtime.control, unitree_config.UnitreeControlConfig)
+    assert isinstance(runtime.transport, unitree_runtime.UnitreeTransportConfig)
+    assert runtime.transport.network_interface == "enp3s0"
     assert cfg.duration_s is not None and cfg.duration_s > 0
-    assert "command" not in cfg
-    assert cfg.runtime.robot.lie_down_button == "B"
+    assert runtime.control.damping_duration_s >= 0
+    assert runtime.control.damping_kd >= 0
+    assert runtime.control.emergency_stop_button == "select"
 
 
 def test_g1_29dof_hardware_recipe_selects_explicit_robot_contract() -> None:
-    unitree_config = pytest.importorskip("motrix_deploy_unitree.config")
-    unitree_hardware = pytest.importorskip("motrix_deploy_unitree.hardware")
+    unitree_runtime = pytest.importorskip("motrix_deploy_unitree.config.runtime")
     with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
         cfg = compose(
             config_name="deploy",
             overrides=[
                 "task=g1-wbt-dance/hardware",
-                "runtime.network_interface=enp3s0",
+                "runtime.transport.network_interface=enp3s0",
             ],
         )
 
     runtime = OmegaConf.to_object(cfg.runtime)
-    assert isinstance(runtime, unitree_config.UnitreeBackendConfig)
-    assert type(runtime.robot) is unitree_config.UnitreeG1_29DOFRobotCfg
-    assert runtime.robot.mode_pr == 0
-    assert runtime.robot.expected_mode_machine == 5
-    assert runtime.robot.motor_slot_count == 35
-    assert runtime.robot.command_publish_period_s == pytest.approx(0.001)
+    assert isinstance(runtime, unitree_runtime.UnitreeRuntimeConfig)
+    assert runtime.robot == "g1-29dof"
+    assert runtime.control.command_publish_period_s == pytest.approx(0.001)
     assert cfg.artifact == "artifacts/g1-wbt-dance.deploy"
-    assert isinstance(runtime.robot, unitree_hardware.HardwareRobotCfg)
-    # FixStand gains are fixed in one place, not per recipe.
-    standing_kp, standing_kd = resolve_g1_standing_gains(tuple(runtime.robot.actuation.motors))
-    np.testing.assert_array_equal(
-        np.asarray([runtime.robot.kp[name] for name in runtime.robot.actuation.motors], np.float32), standing_kp
-    )
-    np.testing.assert_array_equal(
-        np.asarray([runtime.robot.kd[name] for name in runtime.robot.actuation.motors], np.float32), standing_kd
-    )
-    assert runtime.network_interface == "enp3s0"
+    assert runtime.transport.network_interface == "enp3s0"
     assert cfg.duration_s is not None and cfg.duration_s > 0
     assert "command" not in cfg
 
 
-def test_hardware_hydra_config_accepts_explicit_gain_overrides() -> None:
-    pytest.importorskip("motrix_deploy_unitree.config")
+def test_hardware_hydra_config_accepts_explicit_preparation_overrides() -> None:
+    pytest.importorskip("motrix_deploy_unitree.config.go2")
     with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
         cfg = compose(
             config_name="deploy",
             overrides=[
                 "task=go2-walk-flat/hardware",
                 "artifact=artifact.deploy",
-                "runtime.robot.kp=25.0",
-                "runtime.robot.kd=[0.4,0.4,0.4,0.5,0.5,0.5,0.6,0.6,0.6,0.7,0.7,0.7]",
+                "task_settings.preparation.kp=25.0",
+                "task_settings.preparation.kd=[0.4,0.4,0.4,0.5,0.5,0.5,0.6,0.6,0.6,0.7,0.7,0.7]",
+                "task_settings.preparation.ramp_duration_s=0.75",
+                "task_settings.preparation.start_button=R1",
+                "task_settings.preparation.policy_button=X",
+                "task_settings.preparation.stop_button=Y",
             ],
         )
 
-    assert cfg.runtime.robot.kp == pytest.approx(25.0)
-    assert list(cfg.runtime.robot.kd) == pytest.approx([0.4, 0.4, 0.4, 0.5, 0.5, 0.5, 0.6, 0.6, 0.6, 0.7, 0.7, 0.7])
+    preparation = OmegaConf.to_container(cfg.task_settings.preparation)
+    expected = {
+        "kp": 25.0,
+        "kd": [0.4, 0.4, 0.4, 0.5, 0.5, 0.5, 0.6, 0.6, 0.6, 0.7, 0.7, 0.7],
+        "ramp_duration_s": 0.75,
+        "start_button": "R1",
+        "policy_button": "X",
+        "stop_button": "Y",
+    }
+    assert {name: preparation[name] for name in expected} == expected
 
 
 @pytest.mark.parametrize("backend", ["mujoco", "motrixsim"])

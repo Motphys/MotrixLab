@@ -5,6 +5,7 @@
 
 import time
 from dataclasses import replace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -33,6 +34,57 @@ from motrix_deploy.runtime.lifecycle import ControllerStep
 from motrix_deploy.runtime.result import LatencySummary, RolloutResult
 from motrix_deploy.runtime.scheduler import FixedStepScheduler, RealtimeScheduler
 from motrix_env_core.input import CommandBinding, PlanarVelocityCommand
+
+
+def test_hardware_control_acquisition_precedes_robot_open(manifest_factory, monkeypatch):
+    manifest = manifest_factory()
+    robot = FakeRobotInterface(manifest.robot)
+    prepared, controller = runtime_for(manifest, robot, steps=1)
+    monkeypatch.setattr(robot, "acquire_control", lambda: robot.events.append("acquire_control"))
+    runtime = HardwareRuntime(robot, realtime=False)
+    runtime.bind_session(
+        ControlSession(
+            robot=robot,
+            controller=controller,
+            command_binding=prepared.session.command_binding,
+            period_s=manifest.control.period_s,
+            state_timeout_s=manifest.control.state_timeout_s,
+        )
+    )
+    with runtime:
+        assert runtime.opened
+        assert robot.events == []
+    assert runtime.run().success
+    assert robot.events.index("acquire_control") < robot.events.index("open")
+    assert robot.events[-2:] == ["stop", "close"]
+    with pytest.raises(ValidationError, match="single-use"):
+        runtime.run()
+    assert robot.events.count("acquire_control") == 1
+
+
+@pytest.mark.parametrize("invalid", ["unbound", "scheduler"])
+def test_hardware_preconditions_reject_before_control_acquisition(manifest_factory, invalid, monkeypatch):
+    manifest = manifest_factory()
+    robot = FakeRobotInterface(manifest.robot)
+    monkeypatch.setattr(robot, "acquire_control", lambda: pytest.fail("invalid runtime must not acquire control"))
+    runtime = HardwareRuntime(
+        robot,
+        scheduler=FixedStepScheduler(manifest.control.period_s * 2) if invalid == "scheduler" else None,
+        realtime=False,
+    )
+    if invalid == "scheduler":
+        _, controller = runtime_for(manifest, robot, steps=1)
+        runtime.bind_session(
+            ControlSession(
+                robot=robot,
+                controller=controller,
+                period_s=manifest.control.period_s,
+                state_timeout_s=manifest.control.state_timeout_s,
+            )
+        )
+    with pytest.raises(ValidationError, match="runtime.session|runtime.scheduler"):
+        runtime.run()
+    assert robot.events == []
 
 
 class _FailingBinding(CommandBinding[PlanarVelocityCommand]):
@@ -212,8 +264,8 @@ def test_runtime_validates_state_contract_and_freshness(manifest_factory, kind, 
     manifest = manifest_factory()
 
     class StateBackend(FakeRobotInterface):
-        def read_state(self, timeout_s):
-            state = super().read_state(timeout_s)
+        def read_state(self):
+            state = super().read_state()
             if kind == "invalid":
                 return None
             if kind == "stale":
@@ -227,6 +279,33 @@ def test_runtime_validates_state_contract_and_freshness(manifest_factory, kind, 
     result = runtime.run()
     assert not result.success and result.exit_reason == reason
     assert backend.events[-2:] == ["stop", "close"]
+
+
+def test_repeated_snapshot_is_usable_until_original_receive_time_expires(manifest_factory, monkeypatch):
+    manifest = manifest_factory()
+    now = [time.monotonic_ns()]
+    monkeypatch.setattr("motrix_deploy.runtime.control.time", SimpleNamespace(monotonic_ns=lambda: now[0]))
+
+    class CachedRobot(FakeRobotInterface):
+        def read_state(self):
+            if not hasattr(self, "snapshot"):
+                self.snapshot = super().read_state()
+            return self.snapshot
+
+    robot = CachedRobot(manifest.robot)
+    runtime, _ = runtime_for(manifest, robot, steps=10)
+    session = runtime.session
+    try:
+        assert session.start()
+        assert session.tick(elapsed_time_s=0.0)
+        assert len(robot.commands) == 1
+        now[0] = robot.snapshot.receive_time_ns + round(manifest.control.state_timeout_s * 1e9) + 1
+        assert not session.tick(elapsed_time_s=manifest.control.period_s)
+        assert len(robot.commands) == 1
+        assert session.result().exit_reason == "state_timeout"
+    finally:
+        session.stop()
+        robot.close()
 
 
 def test_open_validation_failure_cleans_before_first_command(manifest_factory):
@@ -252,7 +331,7 @@ def test_runtime_interrupts_reach_backend_cleanup(manifest_factory, error, reaso
     manifest = manifest_factory()
 
     class InterruptedRobot(FakeRobotInterface):
-        def read_state(self, timeout_s):
+        def read_state(self):
             raise error
 
     backend = InterruptedRobot(manifest.robot)

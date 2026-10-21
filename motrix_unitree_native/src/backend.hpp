@@ -51,7 +51,7 @@ class G1Backend {
   ~G1Backend();
 
   void open(double connect_timeout_s);
-  StateSnapshot read_state(double timeout_s, std::int64_t after_sequence);
+  StateSnapshot read_state();
   void write_command(const std::array<float, 29>& position,
                      const std::array<float, 29>& velocity,
                      const std::array<float, 29>& torque,

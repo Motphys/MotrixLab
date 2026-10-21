@@ -104,10 +104,8 @@ class Robot(RobotInterface):
         self._last_communication_ns = time.monotonic_ns()
         self._health_reason = ""
 
-    def read_state(self, timeout_s: float) -> RobotState:
+    def read_state(self) -> RobotState:
         self._require_open()
-        if timeout_s <= 0:
-            raise TimeoutError(f"MuJoCo state timeout must be positive, got {timeout_s}")
         self._runtime.check_viewer_running()
         self._last_communication_ns = time.monotonic_ns()
         return self._state()

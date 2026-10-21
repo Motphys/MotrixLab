@@ -1,31 +1,25 @@
 # @package _global_
 defaults:
   - /runtime@runtime: _unitree_schema
-  - /unitree_robot@runtime.robot: go2
+  - /unitree_control@runtime.control: go2
   - _self_
 
 artifact: artifacts/go2-walk-flat.deploy
 
 runtime:
   backend: unitree
-  network_interface: enp5s0
-  domain_id: 0
-  lowcmd_topic: rt/lowcmd
-  lowstate_topic: rt/lowstate
-  connect_timeout_s: 5.0
-  subscriber_queue_depth: 10
-  validate_crc: true
-  robot:
+  robot: go2
+  transport:
+    implementation: python_sdk
+    network_interface: ???
+
+task_settings:
+  preparation:
     kp: 50
     kd: 1
-    default_transition_duration_s: 2.0
-    damping_duration_s: 1.0
-    damping_kd: 8.0
-    wait_for_remote_buttons: true
+    ramp_duration_s: 2.0
+    max_joint_error_rad: 0.25
     start_button: start
-    enable_button: A
-    emergency_stop_button: select
-    lie_down_button: B
-    lie_down_duration_s: 2.0
-    motor_mode: 10
+    policy_button: A
+    stop_button: B
 duration_s: 300.0

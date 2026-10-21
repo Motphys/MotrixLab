@@ -1,13 +1,14 @@
 # Go2 Flat-Terrain Walking: From Training to Physical Deployment
 
-Run an exported Go2 policy in MuJoCo before attempting hardware deployment. With the task and MuJoCo plugins installed,
-a bounded headless check is:
+Use the same deployment artifact to check a Go2 policy in simulation before attempting hardware deployment. With an
+artifact and the task/MuJoCo plugins installed, a bounded headless check is:
 
 ```bash
 mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
 ```
 
-The following steps create that artifact, explain interactive control, and cover the existing Unitree hardware workflow.
+The workflow below covers training, export, simulation, operator-confirmed hardware deployment, and basic diagnostics.
+Simulation success is not evidence of hardware safety.
 
 ## 1. Install and train
 
@@ -19,381 +20,189 @@ source .venv/bin/activate
 mxlab train task=go2-walk-flat/rslrl.ppo
 ```
 
-Training results are saved under `runs/go2-walk-flat/`. Skip training if you already have a metadata-backed run.
+Training results are saved under `runs/go2-walk-flat/`. Skip training if you already have a run with its metadata.
+Export needs the run's training provider and environment package; deployment needs the task package and the backend
+plugin for the target.
 
-## 2. Export and inspect the artifact
+## 2. Export and inspect
 
 ```bash
 mxlab export-deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
 mxlab deploy inspect artifact=artifacts/go2-walk-flat.deploy
 ```
 
-`env=go2-walk-flat` selects the latest metadata-backed run. To select a specific run, use
-`run_dir=<run-dir>` instead of `env`: exactly one of `env` and `run_dir` must be set. `output=<new-artifact-dir>` changes
-the destination; when omitted, it defaults to `artifacts/<env-name>.deploy`. Existing artifact directories are not
-overwritten. Confirm that inspection reports `valid: true`.
+`env=go2-walk-flat` selects the latest run with metadata. Use `run_dir=<run-dir>` instead to select a specific run;
+exactly one of `env` and `run_dir` is required. Existing artifact directories are not overwritten: choose a new output
+path when exporting again. Confirm that inspection reports `valid: true`.
 
-`mxlab export-deploy` creates a deployment artifact; `mxlab export-onnx` exports a standalone ONNX policy.
-Export uses the current directory's `./configs` when present, or an
-explicit `--config-dir <path>`; project files take precedence and missing files fall back to `motrix_rl.configs`.
-Both `export_deploy.yaml` and `export_onnx.yaml` ship there, so export does not require a repository checkout.
-Deployment export keeps its numerical-check options under `validation.*` (for example `validation.atol=3e-5`),
-not the ONNX export command's `parity.*`.
+The artifact contains the policy and the robot/task settings needed to interpret it. Copy the complete directory, not
+just its ONNX file. `mxlab export-onnx` exports a standalone model and is not a replacement for deployment export.
 
-Before export, install the training provider used by the run and the environment's profile compiler.
+## 3. Check in simulation
 
-The artifact directory is self-contained:
-
-```text
-go2-walk-flat.deploy/
-├── manifest.json        # robot/control/task settings, payload checksums
-├── policy/model.onnx    # exported actor with input normalization
-└── task/                # task-owned payloads (e.g. the G1 motion NPZ)
-```
-
-Deployment also needs the installed `motrix_deploy_tasks` plugin, which supplies the walking implementation, deployment
-scenes, and Hydra recipes, plus the runtime plugin for the target. The recipes work outside the repository without a
-workspace config path. Task defaults compose the typed runtime configuration; you do not need a separate runtime
-override. Common top-level settings are `artifact` and `duration_s`. Runtime settings live under `runtime`;
-Unitree robot-specific options live under `runtime.robot`, while transport settings such as `runtime.network_interface`
-remain directly under `runtime`. The configuration type distinguishes simulation from hardware. `runtime.backend`
-selects the plugin (`mujoco` or `motrixsim` for simulation, or `unitree` for hardware). `runtime.backend` is a scalar
-string selector, not a nested configuration mapping or Hydra group.
-
-## 3. Check in MuJoCo
-
-Use the headless command above for a bounded run, or open the viewer:
+Open the MuJoCo viewer:
 
 ```bash
 mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
 ```
 
-Hold `W/S` to move forward/backward, `A/D` sideways, and `Q/E` to turn. Close the window, press Esc, or press Ctrl-C to stop.
-The recipe selects the flat scene and the `go2` robot. Headless mode uses constant zero velocity. Set `duration_s` for a bounded run: it allows
-`ceil(duration_s / control_period_s)` control ticks, using the artifact's control period, not a wall-clock timeout.
-Startup and shutdown may take additional wall time.
+Hold `W/S` to move forward/backward, `A/D` sideways, and `Q/E` to turn. Close the window, press Esc, or press Ctrl+C to
+stop. Headless mode uses zero velocity. `duration_s` bounds policy execution time, not the entire process's wall time;
+startup and shutdown can take additional time.
 
-Simulation-only settings are `runtime.viewer` and `runtime.realtime`.
-`runtime.realtime=null` follows `runtime.viewer`; use `runtime.realtime=true` to pace a headless run in real time,
-or `runtime.realtime=false` to run without real-time pacing.
-
-### Assemble a runtime in Python
-
-The complete `examples/deploy_to_sim.py` example composes a scene, walking task, sample ONNX policy, and input binding:
-
-```bash
-python examples/deploy_to_sim.py --headless --steps 100
-```
-
-The example loads the model externally and injects it into the task; the task computes commands, the control session
-owns robot I/O and execution statistics, and the runtime owns physics, scheduling and the viewer. The
-[advanced assembly](#assemble-the-runtime-and-task-explicitly) section shows the same composition step by step.
-Raw ONNX use requires explicit task preprocessing and action settings; the artifact supplies those settings for the CLI.
-
-### Select native MotrixSim
-
-With `motrix-deploy-motrixsim` installed, switch the backend to `motrixsim` to reuse the same artifact and scene recipe:
+With the native MotrixSim deployment plugin installed, reuse the same artifact and recipe:
 
 ```bash
 mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
-  runtime.backend=motrixsim runtime.viewer=true
+  runtime.backend=motrixsim
 ```
 
-The Python example also supports native MotrixSim:
+Use `task=go2-walk-rough/sim` for the supplied rough-terrain scene. Changing the scene does not make a flat-terrain policy
+suitable for rough terrain; check that the policy is appropriate for the test.
+
+## 4. Run on Go2 hardware
+
+### Prepare the robot and connection
+
+Use reliable load-bearing support, clearance for every leg, an operator-ready independent emergency stop, and a second
+operator. Stop all other low-level command publishers. Neither damping nor a stopped deployment maintains standing
+support. Do not proceed without a supported recovery plan.
+
+Find the Ethernet interface connected to the robot:
 
 ```bash
-python examples/deploy_to_sim.py --backend motrixsim
+ip -br addr
 ```
 
-## 4. Run on the real robot
-
-Suspend the robot, put it in low-level/debug mode, connect Ethernet, and keep an independent emergency stop and operator
-ready. Startup can physically stand the robot down before the remote Start gate. Inspect the artifact first, then replace
-`enp5s0` with the actual interface:
+Replace `enp5s0` below with that interface. First perform the read-only check in section 5. Then start deployment:
 
 ```bash
 mxlab deploy task=go2-walk-flat/hardware \
   artifact=artifacts/go2-walk-flat.deploy \
-  runtime.network_interface=enp5s0
+  runtime.transport.network_interface=enp5s0
 ```
 
-Hardware runs are always real-time internally; the hardware runtime has no `runtime.viewer` or `runtime.realtime` fields.
-Press Start, wait for the default-pose transition, then
-press A. Hold L1 and move the sticks to command motion. B requests lie-down; Select triggers emergency stop. Stop paths
-send damping commands before closing DDS. Software tests do not replace a suspended real-robot check.
+### Hand over official control
 
-The installed hardware recipe composes these Hydra defaults:
+If official control is active, the command asks for two confirmations:
 
-```yaml
-defaults:
-  - /runtime@runtime: _unitree_schema
-  - /unitree_robot@runtime.robot: go2
-  - _self_
-```
+1. Type `yes` only when ready to authorize the official StandDown movement.
+2. Observe that movement has finished and the body has reliable support. Then type `down` to authorize release.
 
-It selects `runtime.backend=unitree` and sets `runtime.robot.kp=50` and `runtime.robot.kd=1`.
-Set both gains to `null` to retain artifact gains, or supply non-negative scalars or per-joint values in canonical joint
-order. Go2 transition, damping, remote-button, and motor settings also live under `runtime.robot`.
+An accepted StandDown request does not prove that movement is complete. If official control is already released, these
+prompts and official movements are skipped. Refusal, EOF, or Ctrl+C at a confirmation aborts deployment; cancelling at
+`down` preserves official ownership but does not undo StandDown.
 
-For read-only diagnostics without a command publisher:
+**Official control is not restored automatically.** After release, an error or interruption does not restore it either.
+This handoff and these prompts are Go2-specific, not a G1 startup procedure.
+
+### Prepare, take over, and stop
+
+| Control | Action |
+| --- | --- |
+| Start | Begin the transition to the default standing pose. |
+| A | Enable the policy after measured readiness. Press it again after preparation is ready; holding it early does not bypass readiness. |
+| Hold L1 + sticks | Send motion commands. Start with small commands under protection. |
+| B | After preparation has started, transition toward the built-in lie-down pose, then damp and finish. Before Start, finish with damping only. |
+| Select | Latch a software emergency damping stop; not a substitute for an independent emergency stop. |
+
+The B transition is constrained by the artifact's joint limits. A startup warning indicates a limited target that may
+only produce a shallow crouch; it does not guarantee body contact or stability. Maintain load-bearing protection when
+stopping. Communication loss, state timeout, Ctrl+C, and other faults **do not execute the normal lie-down trajectory**.
+
+After exit, ensure that all low-level publishers have stopped before restoring official control using the robot's
+supported procedure. Do not enable two controllers simultaneously.
+
+## 5. Diagnose before running a policy
+
+### Read state without commanding motion
 
 ```bash
-motrix-deploy-unitree read-lowstate enp5s0
+motrix-deploy-unitree read-lowstate enp5s0 --robot go2 --duration-s 10
 ```
 
-For a bounded single-joint check, with the same hardware precautions:
+Check for valid state samples and CRC/decode errors. The tool sends no motor commands and does not release official
+control. Remote buttons may still affect the official controller while it is active; do not treat button checks as
+side-effect-free.
+
+### Run a bounded single-joint test
+
+This test needs no artifact or policy. It can move **all twelve joints**, including with `--offset 0`, because it first
+moves the whole robot to a holding pose. Use support, clearance, and gains reviewed for this robot and setup.
+
+First explicitly release official control; follow its `yes` and `down` confirmations:
 
 ```bash
-motrix-deploy-unitree joint-control enp5s0 FL_thigh_joint 0.9 \
-  --artifact artifacts/go2-walk-flat.deploy
+motrix-deploy-unitree release-control enp5s0
 ```
 
-This helper uses the artifact's robot, gain, timing, and limit settings. It waits for Start and A, moves the joint, holds,
-returns to the default pose, and closes with damping.
-
-## Deploy the G1 WBT dance
-
-The G1 whole-body-tracking dance task uses the same export → artifact → `mxlab deploy` pipeline. The artifact embeds
-the servo gains, action scales, preparation gains and timing, safety thresholds, and the motion clip itself (as a
-`payloads/motion.npz` payload with its checksum in the manifest), so deployment needs neither Torch nor an RL environment.
-Export needs the training provider and task environment packages, but does **not** train:
+Then run the test with explicitly selected gains:
 
 ```bash
-source .venv/bin/activate
-RUN=runs/g1-wbt-dance/motrix/torch/fastsac/<run-dir>
-mxlab export-deploy run_dir="$RUN" \
-  output=artifacts/g1-wbt-dance-software-pd.deploy validation.atol=3e-5
-
-mxlab deploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy
+motrix-deploy-unitree joint-control enp5s0 FL_thigh_joint \
+  --offset 0.05 --kp "${KP:?Set reviewed stiffness}" --kd "${KD:?Set reviewed damping}"
 ```
 
-Headless validation and artifact inspection:
+The command displays its targets and asks for `yes` before connecting. Start begins the holding-pose transition; A
+starts the selected-joint test. `--offset` is in radians relative to the holding pose, not the initial measured angle;
+use `--target` instead for an absolute angle. B returns to the holding pose and stops, except before or during startup,
+when it cancels directly into damping. **This diagnostic B behavior differs from walking deployment's lie-down.**
 
-```bash
-mxlab deploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy \
-  runtime.viewer=false
-mxlab deploy inspect artifact=artifacts/g1-wbt-dance.deploy
-```
+Use `motrix-deploy-unitree joint-control --help` for motion/startup timing options. Limit checks and startup protections
+do not certify mechanical safety or total actuator torque.
 
-The default duration comes from the embedded motion clip; shorter runs use `duration_s`, longer durations are rejected
-before opening the backend instead of looping or holding. No velocity command is needed: the motion is artifact-owned.
-The same artifact runs on MuJoCo and MotrixSim (`runtime.backend=motrixsim`, with
-`runtime.physics.solver_iterations=3` matching the training budget). It is not a hardware deployment recipe: the
-Unitree hardware backend currently implements only Go2; G1 hardware is not implemented, and sim2sim success is not
-evidence of hardware safety.
+## 6. Common settings and failures
 
-The task mirrors real deployment practice with four phases: `prepare` (ramp measured joints to the default standing
-pose, gated on continuously measured readiness), `policy_hold`, `playback`, and `damping`. Takeover after readiness is
-automatic by default; programmatic applications can stage it manually with `automatic_start=False`, the request
-methods, or an attached keyboard (`p` start policy, `m` start motion, `o` stop). Note that the dance ends in a
-deliberately leaned pose that only the tracking policy can balance: after the playback budget the task enters measured
-damping directly, and ending upright requires the motion clip itself to finish at the standing pose.
-
-## Advanced usage
-
-### Add a deployment profile compiler
-
-An environment package publishes one zero-argument registration callback in the
-`motrix_deploy.profiles` group. Declare the provider in `pyproject.toml`:
-
-```toml
-[project.entry-points."motrix_deploy.profiles"]
-my-project = "my_project.deploy:register"
-```
-
-In `my_project/deploy/__init__.py`, register the environment-to-compiler mappings:
-
-```python
-def register() -> None:
-    from motrix_deploy.profile import register_profile_compiler
-    from my_project.deploy.walk import build_profile
-
-    register_profile_compiler("my-walk-flat", build_profile)
-```
-
-Implement `build_profile(env_name: str) -> DeploymentProfile` in `my_project/deploy/walk.py`, importing
-`DeploymentProfile` from `motrix_deploy.profile`. The compiler builds the selected environment's robot, task,
-control settings, training-space observation/action sizes, and task-owned payloads into that profile.
-The registration callback only declares mappings: do not create environments or models or read motion data there.
-One callback can register several Env IDs, and the same compiler can serve multiple IDs.
-
-Install the package, then export a matching run:
-
-```bash
-mxlab export-deploy run_dir=/path/to/my-walk-flat/run output=artifacts/my-walk-flat.deploy
-```
-
-The first profile lookup, listing, or build loads all installed provider callbacks, once per process.
-`registered_profile_compilers()` in `motrix_deploy.profile` therefore executes registration code before listing Env IDs;
-only `build_deployment_profile(env_name)` invokes the selected environment's compiler.
-Install the import dependencies of every provider: a provider with missing dependencies can prevent discovery even
-when a different Env ID was requested. Duplicate provider names, duplicate compiler Env IDs, and provider loading or
-registration failures are reported as errors.
-
-Profile discovery needs no application-side registration imports. Providers use the deployment API without an RL
-dependency; `motrix-rl` consumes their profiles for export, not the reverse. Built-in compiler mappings are listed in the
-[Motrix Environments README](https://github.com/Motphys/MotrixLab/blob/main/motrix_envs/README.md).
-
-### Load a task spec from YAML
-
-For a programmatic application, keep the complete Go2 task fields in `task.yaml` (the contents of
-`task.config`, not the manifest envelope). OmegaConf loads and merges configuration and resolves interpolations;
-Pydantic then validates the plain dictionary:
-
-```python
-from omegaconf import OmegaConf
-from motrix_deploy_tasks.tasks.go2_walk import Go2WalkTaskSpec
-
-cfg = OmegaConf.load("task.yaml")
-spec = Go2WalkTaskSpec.model_validate(OmegaConf.to_container(cfg, resolve=True))
-```
-
-`Go2WalkTaskSpec` uses field constraints and a model validator for joint-vector lengths and ordered bounds.
-No separate `validate()` call is needed. Use the artifact reader for a full deployment manifest.
-
-### Hardware sensor and motor wiring
-
-`motrix_deploy_unitree.hardware.UnitreeGo2HardwareCfg` owns asset-free hardware poses and wiring.
-`HardwareSensorBinding` maps SDK IMU fields, including `wxyz` quaternion conversion to canonical `xyzw`;
-`UnitreeMotorBinding` maps canonical joint names to SDK motor indices. The artifact still owns the policy joint
-order, default pose, and limits.
-
-### Select a deployment world
-
-Select a world with `runtime.deploy_env_id` and a robot with `runtime.robot_id`. To keep the same Go2 recipe and
-artifact but switch its world:
+Pass overrides after the selected task, for example:
 
 ```bash
 mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
-  runtime.deploy_env_id=rough
+  runtime.viewer=false runtime.realtime=true duration_s=5.0
 ```
 
-A world-only override leaves robot attachment placement unchanged. Adjust `runtime.robot_translation` if the terrain
-needs different clearance; the complete `task=go2-walk-rough/sim` recipe supplies its own attachment defaults.
-`RobotCfg.translation`/`rotation` are attachment transforms composed once with the model's intrinsic base pose:
-Go2's intrinsic base height is 0.445 m, so the flat recipe's -0.114 m offset gives 0.331 m and the rough recipe's
--0.025 m offset gives 0.42 m.
+| Setting | Use |
+| --- | --- |
+| `artifact` | Choose the complete deployment artifact directory. |
+| `duration_s` | Bound policy execution; it does not impose a wall-clock timeout. |
+| `runtime.backend` | Select `mujoco` or `motrixsim` for simulation. Use the hardware recipe for Unitree. |
+| `runtime.viewer`, `runtime.realtime` | Simulation display and pacing only. Hardware execution is always paced in real time. |
+| `runtime.transport.network_interface` | Required Ethernet interface for hardware. |
+| `task_settings.preparation` | Go2 preparation gains, timing, readiness limits, and buttons. Preparation gains do not replace policy gains. |
 
-The installed flat recipe selects the world and robot by ID:
+Tune hardware preparation only after checking mechanical clearance, support, and the reported measured error. A visually
+plausible pose does not establish safe policy takeover. Do not relax communication timeouts to hide missing state.
 
-```yaml
-runtime:
-  backend: mujoco
-  deploy_env_id: flat
-  robot_id: go2
-  robot_translation: [0.0, 0.0, -0.114]
-  robot_rotation: [0.0, 0.0, 0.0, 1.0]
-```
+| Symptom | Next check |
+| --- | --- |
+| Interface does not match an available interface | Run `ip -br addr` on the machine/environment running deployment. |
+| No valid state or CRC/decode errors | Stop at read-only diagnostics and check network/device setup. |
+| Standing preparation timed out | Inspect the reported joints, speed, and tilt; check interference and load before tuning. |
+| `state_timeout` during execution | Treat it as a fault stop. Preserve the result/error, ensure support, and investigate reception before retrying. |
 
-`runtime.physics` uses the shared `SimCfg` (`dt`, `solver_iterations`, `solver_tolerance`, `gravity`, defaulting to
-`dt=0.002, solver_iterations=100`); optional fields set to `None` preserve model-source values. Set physics values
-before runtime construction — changing `dt` after compilation is not supported.
+## 7. Other tasks and Python examples
 
-`runtime.sensor_bindings` maps state roles to model-local sensor names and supports only `base_angular_velocity`,
-`base_linear_acceleration`, and `base_linear_velocity` (`str | None`). MuJoCo requires the angular-velocity and
-acceleration bindings; the optional `base_linear_velocity` remains `None` when unbound.
-
-Programmatic applications assemble the same scene and pass it to `SimulationRuntimeConfig`:
-
-```python
-from motrix_deploy.env import assemble_deploy_scene
-from motrix_deploy.runtime.config import SensorBindings, SimulationRuntimeConfig
-from motrix_env_core.config.sim import SimCfg
-
-scene = assemble_deploy_scene("flat", "go2")
-scene.objs.robot.translation = (0.0, 0.0, -0.114)
-scene.objs.robot.rotation = (0.0, 0.0, 0.0, 1.0)
-config = SimulationRuntimeConfig(
-    scene=scene,
-    physics=SimCfg(dt=0.002, solver_iterations=100),
-    sensor_bindings=SensorBindings(
-        base_angular_velocity="gyro",
-        base_linear_acceleration="accelerometer",
-        base_linear_velocity="global_linvel",
-    ),
-)
-```
-
-Additional worlds come from installed plugins: declare a zero-argument `SceneCfg` factory in the
-`motrix_deploy.envs` entry-point group, and `motrix_deploy.env.available_deploy_envs()` lists the installed IDs.
-
-### Assemble the runtime and task explicitly
-
-The runtime factory selects the backend and prepares `runtime.robot`; its `RobotSpec` is available before `open()`.
-Load the model externally, then construct and bind the session. Using the `config` above and your application-owned
-`task_spec`, `model`, and Go2 `command_binding`:
-
-```python
-from motrix_deploy.runtime.control import ControlSession
-from motrix_deploy.runtime.factory import create_simulation_runtime
-from motrix_deploy.task import create_task
-
-runtime = create_simulation_runtime("mujoco", config)
-robot = runtime.robot
-task = create_task(task_spec, robot.spec, model, steps=50)
-session = ControlSession(
-    robot=robot,
-    controller=task,
-    command_binding=command_binding,
-    period_s=0.02,
-    state_timeout_s=0.1,
-)
-runtime.bind_session(session)
-with runtime:
-    result = runtime.run()
-```
-
-`create_task(spec, robot, policy, steps=None)` resolves the concrete task class from the spec's task name; tasks that
-reference artifact payloads (such as the G1 motion NPZ) receive the artifact through the same call. The control period
-must be an integer multiple of the physics timestep. `command_binding` defaults to `None`: autonomous tasks like the
-G1 dance omit it, while Go2 walking requires an externally assembled velocity binding whose values the task validates
-against its velocity bounds. Hardware applications use `create_hardware_runtime(name, config, context)` and the same
-session assembly.
-
-`runtime.run()` returns a rollout result with the success flag, exit reason, completed model steps, wall time, and
-latency statistics; simulation runs additionally report `real_time_factor`.
-
-### Select native MotrixSim deployment
-
-The installed simulation recipes default to MuJoCo. With `motrix-deploy-motrixsim`
-installed, choose the native backend using the same recipe and artifact:
+G1 WBT dance uses its own artifact and task recipe. For a simulation check:
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
-  runtime.backend=motrixsim runtime.viewer=false runtime.realtime=false duration_s=1.0
+mxlab deploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy runtime.viewer=false
 ```
 
-The same override works for `task=go2-walk-rough/sim`; no duplicated task recipe is
-needed. Programmatic applications call `create_simulation_runtime("motrixsim", config)`
-and follow the explicit session-assembly sequence above. The Go2 state mappings remain
-`gyro`, `accelerometer`, and `global_linvel`: native sensors validate local angular
-velocity/acceleration and world-frame linear velocity. Removing `runtime.viewer=false` enables the
-native viewer and its keyboard provider in a working graphical environment.
+The artifact supplies the motion clip; no velocity commands are needed. Its duration cannot exceed that clip. Playback
+ends with damping, not a guaranteed standing recovery. Do not apply Go2 controls or its handoff procedure to G1.
 
-For the programmatic ONNX example, run
-`python examples/deploy_to_sim.py --backend motrixsim --headless --steps 50`
-with a matching ONNX policy; see the example's policy-file options. This path loads raw ONNX, not a
-`.deploy` manifest: task preprocessing, tensor specs, and control settings are explicit
-in the Python example and must match the model. Headless uses a zero-velocity command; windowed mode uses
-the viewer keyboard provider when available.
-
-### Use an external Hydra config
-
-The native commands above work with the installed task package, without a checkout config directory. The canonical
-built-in runtime recipes live in `motrix_deploy_tasks/config/task/{task}/{sim,hardware}.yaml`; prefer `task=...` to select them.
-For a custom application's own configuration, Hydra's standard `--config-path` and `--config-name` remain available.
-This illustrative command assumes you have authored `/absolute/path/to/my_app/config/deploy.yaml`; it does not select
-or copy a built-in recipe:
+Run the programmatic Python example from the repository root; it neither reads an artifact nor invokes the deployment CLI:
 
 ```bash
-mxlab deploy \
-  --config-path /absolute/path/to/my_app/config \
-  --config-name deploy \
-  artifact=artifacts/go2-walk-flat.deploy
+python examples/deploy.py --headless --steps 100
+python examples/deploy.py --backend motrixsim --headless --steps 100
 ```
 
-Use an absolute config path: Hydra resolves relative paths against the CLI module, not the shell's current directory.
-External configs own their defaults and complete runtime/backend configuration, and need not use the installed `task`
-group. For simulation, select `runtime=sim` in defaults and provide `runtime.backend`, `runtime.deploy_env_id`, and `runtime.robot_id`, plus all
-settings required by the selected backend (including MuJoCo state-sensor mappings). The artifact does not supply these
-runtime choices. Use Hydra's normal options; there is no additional `--config` argument.
+After completing the hardware safety preparations in section 4, explicitly select the real robot:
+
+```bash
+python examples/deploy.py --real --network-interface enp5s0
+```
+
+The example uses raw ONNX with robot and task parameters declared in code. When replacing the model, verify its training
+contract; matching input/output dimensions alone is not sufficient for hardware use. The real path retains control handoff
+and remote confirmations. CLI deployment still uses the artifact workflow above.

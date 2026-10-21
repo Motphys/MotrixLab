@@ -6,13 +6,16 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import metadata
-from typing import Any
+from typing import TYPE_CHECKING
 
 from motrix_deploy.artifact.schema import ControlSpec
 from motrix_deploy.contracts import RobotSpec
 from motrix_deploy.runtime.base import DeploymentRuntime, SimulationRuntime
 from motrix_deploy.runtime.config import SimulationRuntimeConfig
 from motrix_deploy.runtime.hardware import HardwareRuntime
+
+if TYPE_CHECKING:
+    from motrix_deploy.config import HardwareRuntimeCfg
 
 
 @dataclass(frozen=True)
@@ -47,11 +50,11 @@ def create_simulation_runtime(
 
 
 def create_hardware_runtime(
-    name: str,
-    config: Any,
+    config: "HardwareRuntimeCfg",
     context: RuntimeCreateContext,
 ) -> HardwareRuntime:
-    """Create a hardware host from a typed recipe or plugin-decoded mapping."""
+    """Create a hardware host selected by the plugin-owned recipe's backend."""
+    name = config.backend
     runtime = _validate_runtime(name, _load_factory(name)(config, context))
     if not isinstance(runtime, HardwareRuntime):
         runtime.close()

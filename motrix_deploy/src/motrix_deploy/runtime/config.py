@@ -41,6 +41,16 @@ class SensorBindings:
 
 @dataclass(frozen=True)
 class SimulationRuntimeConfig:
+    """Backend-neutral simulation assembly settings.
+
+    Attributes:
+        scene: Complete scene to compile for the selected backend.
+        physics: Physics timestep, gravity and solver settings.
+        render: Whether to create a viewer.
+        realtime: Whether to pace execution to wall-clock time.
+        sensor_bindings: Semantic state fields mapped to model-local sensors.
+    """
+
     scene: SceneCfg
     physics: SimCfg = field(default_factory=lambda: SimCfg(dt=0.002, solver_iterations=100))
     render: bool = False

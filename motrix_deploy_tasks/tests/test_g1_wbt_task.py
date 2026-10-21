@@ -29,7 +29,13 @@ def _task(
     steps=None,
     automatic=False,
     preparation=None,
+    settings=None,
 ):
+    settings = (
+        {"preparation": {"default_transition_duration_s": 0.02, "kp": 10.0, "kd": 1.0}}
+        if settings is None
+        else settings
+    )
     motion = _motion(reference_quaternions)
     spec = G1WbtTaskSpec(
         action_scale=[0.5] * 29,
@@ -50,7 +56,9 @@ def _task(
         np.full(29, 10, np.float32),
     )
     return (
-        G1WbtDeployTask(spec, robot, NoOpPolicy(29), steps=steps, automatic_start=automatic, motion=motion)
+        G1WbtDeployTask(
+            spec, robot, NoOpPolicy(29), steps=steps, settings=settings, automatic_start=automatic, motion=motion
+        )
         if controller
         else G1WbtPolicyProcessor(spec, robot, motion)
     )
@@ -66,6 +74,22 @@ def _state():
         np.array([1, 2, 3], np.float32),
         np.zeros(3, np.float32),
     )
+
+
+def _start_skill(task: G1WbtDeployTask, state: RobotState) -> None:
+    """Complete real headless startup before exercising the independent skill clock.
+
+    The fixture's synthetic joint names need explicit startup gains rather than
+    the real G1 FixStand mapping. Drive the startup controller itself so no skill
+    tick or readiness time is consumed before each test's first task.step call.
+    """
+    task.prepare(simulation=True)
+    task.reset(state)
+    first = task._startup.step(state, ControlContext(0, 0.0, None, dt_s=0.02))
+    assert first.command is not None and not first.complete
+    assert task._startup.step(state, ControlContext(1, 0.02, None, dt_s=0.02)).complete
+    assert task._startup.phase == "complete"
+    assert task.policy_controller.completed_steps == 0
 
 
 # Ramp- and settle-free preparation for lifecycle tests that exercise handover timing.
@@ -307,7 +331,7 @@ def test_composite_handover_hold_playback_clocks_and_finite_damping():
         return record
 
     controller.policy_io.build_observation = observation
-    controller.reset(state)
+    _start_skill(controller, state)
     assert controller.step(state, ControlContext(0, 3.0, None, dt_s=0.02)).command is not None
     assert controller.policy_controller.completed_steps == 0
     controller.request_policy_start()
@@ -346,7 +370,7 @@ def test_composite_handover_hold_playback_clocks_and_finite_damping():
 def test_composite_stop_request_during_ready_hold_enters_damping():
     controller = _task(controller=True, steps=2, preparation=_instant)
     state = _state()
-    controller.reset(state)
+    _start_skill(controller, state)
     assert controller.step(state, ControlContext(0, 0.0, None, dt_s=0.02)).command is not None
     assert controller.preparation_ready
     assert controller.phase == "prepare"
@@ -365,7 +389,7 @@ def test_early_latched_requests_wait_for_measured_readiness_and_hold_once():
         preparation={"preparation_ramp_duration_s": 0.1, "preparation_settle_duration_s": 0.1},
     )
     state = _state()
-    controller.reset(state)
+    _start_skill(controller, state)
     controller.request_policy_start()
     controller.request_motion_start()
     for step in range(0, 10):
@@ -388,7 +412,7 @@ def test_task_preparation_times_out_before_first_readiness():
     controller = _task(controller=True, steps=2, preparation=_instant)
     state = _state()
     state.joint_velocity.fill(2)  # Continuous readiness is never reached.
-    controller.reset(state)
+    _start_skill(controller, state)
     controller.request_policy_start()  # Latched intent does not bypass the gate.
     assert controller.step(state, ControlContext(0, 0.0, None, dt_s=0.02)).command is not None
     failed = controller.step(state, ControlContext(250, 5.0, None, dt_s=0.02))  # Stage-local 5 s timeout.
@@ -401,12 +425,9 @@ def test_task_preparation_times_out_before_first_readiness():
 def test_composite_checks_last_model_interval_before_damping():
     from motrix_deploy.errors import ControlFailure
 
-    task = _task(controller=True, preparation=_instant)
-    controller = G1WbtDeployTask(
-        task.spec, task.robot, NoOpPolicy(29), steps=1, automatic_start=False, motion=task.motion
-    )
+    controller = _task(controller=True, steps=1, preparation=_instant)
     state = _state()
-    controller.reset(state)
+    _start_skill(controller, state)
     controller.request_policy_start()
     controller.request_motion_start()
     assert controller.step(state, ControlContext(0, 0.0, None, dt_s=0.02)).command is not None
@@ -444,7 +465,7 @@ def test_attached_keyboard_press_edges_drive_phase_requests():
     keyboard = _FakeKeyboard()
     task.attach_keyboard(keyboard)
     state = _state()
-    task.reset(state)
+    _start_skill(task, state)
     assert task.step(state, ControlContext(0, 0.0, None, dt_s=0.02)).command is not None
     assert task.preparation_ready and task.phase == "prepare"  # Ready, waiting for input.
     keyboard.press("p")
@@ -460,7 +481,7 @@ def test_attached_keyboard_stop_request_enters_damping():
     keyboard = _FakeKeyboard()
     task.attach_keyboard(keyboard)
     state = _state()
-    task.reset(state)
+    _start_skill(task, state)
     task.step(state, ControlContext(0, 0.0, None, dt_s=0.02))
     task.step(state, ControlContext(1, 0.02, None, dt_s=0.02))
     keyboard.press("o")
@@ -474,7 +495,7 @@ def test_automatic_start_gates_on_readiness_and_hold_ticks():
     task = _task(controller=True, steps=2, preparation=_instant)
     task.enable_automatic_start(hold_ticks=2)
     state = _state()
-    task.reset(state)
+    _start_skill(task, state)
     task.step(state, ControlContext(0, 0.0, None, dt_s=0.02))
     assert task.phase == "prepare" and task.preparation_ready
     task.step(state, ControlContext(1, 0.02, None, dt_s=0.02))
@@ -494,7 +515,7 @@ def test_operator_input_rejects_invalid_configuration():
 def test_default_automatic_start_progresses_after_measured_readiness():
     task = _task(controller=True, steps=2, automatic=True, preparation=_instant)
     state = _state()
-    task.reset(state)
+    _start_skill(task, state)
     assert task.step(state, ControlContext(0, 0.0, None, dt_s=0.02)).command is not None
     assert task.preparation_ready and task.phase == "prepare"
     # Takeover happens on the tick after readiness without any request call.

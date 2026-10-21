@@ -64,6 +64,20 @@ def test_selected_class_receives_policy_and_budget_and_executes_as_session_contr
     assert backend.events[-2:] == ["stop", "close"]
 
 
+def test_task_without_execution_settings_support_accepts_empty_settings(manifest_factory):
+    manifest = manifest_factory()
+    task = create_task(manifest.task, manifest.robot, policy(), settings={})
+
+    assert task.spec is manifest.task
+    assert task.robot is manifest.robot
+
+
+def test_task_without_execution_settings_support_rejects_nonempty_settings(manifest_factory):
+    manifest = manifest_factory()
+    with pytest.raises(ValueError, match="does not support execution settings"):
+        create_task(manifest.task, manifest.robot, policy(), settings={"preparation": {"start_button": "X"}})
+
+
 def test_missing_plugin_reports_available_names(monkeypatch, manifest_factory):
     manifest = manifest_factory()
     _install(monkeypatch, [SimpleNamespace(name="other/v1", load=Mock())])
@@ -95,7 +109,7 @@ def test_plugin_task_exposes_root_reset_step_and_stop(manifest_factory):
     backend = FakeRobotInterface(manifest.robot)
     backend.open()
     try:
-        state = backend.read_state(0.1)
+        state = backend.read_state()
         task.reset(state)
         assert task.step(state, ControlContext(0, 0.0, None, dt_s=0.02)).complete
         task.request_stop()

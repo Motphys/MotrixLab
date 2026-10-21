@@ -228,13 +228,13 @@ def test_initial_state_command_step_contract_is_headless() -> None:
     viewer_modules_before = {name for name in sys.modules if name.startswith("mujoco.viewer")}
     backend.open()
 
-    initial = backend.robot.read_state(timeout_s=0.1)
+    initial = backend.robot.read_state()
     assert backend.data is not None
     assert backend.data.ncon == 0
     target = spec.default_joint_position + np.float32(0.01)
     backend.robot.write_command(_command(target))
     backend.advance_control_period()
-    stepped = backend.robot.read_state(timeout_s=0.1)
+    stepped = backend.robot.read_state()
     backend.robot.stop()
     backend.close()
     backend.robot.stop()
@@ -288,10 +288,10 @@ def test_glfw_viewer_syncs_without_owning_simulation_step() -> None:
     assert backend.keyboard is viewer.keyboard_device
     assert camera_configs == [backend.scene.system_camera]
     backend.open()
-    initial = backend.robot.read_state(timeout_s=0.1)
+    initial = backend.robot.read_state()
     backend.robot.write_command(_command(spec.default_joint_position))
     backend.advance_control_period()
-    stepped = backend.robot.read_state(timeout_s=0.1)
+    stepped = backend.robot.read_state()
 
     assert backend.robot.capabilities.supports_rendering is True
     assert viewer.open_count == 1
@@ -301,7 +301,7 @@ def test_glfw_viewer_syncs_without_owning_simulation_step() -> None:
 
     viewer.running = False
     with pytest.raises(KeyboardInterrupt, match="viewer was closed"):
-        backend.robot.read_state(timeout_s=0.1)
+        backend.robot.read_state()
     backend.close()
     assert viewer.close_count == 1
 
@@ -421,7 +421,7 @@ def test_sensor_bindings_resolve_robot_names_and_are_cached(monkeypatch: pytest.
     assert backend.data is not None
     backend.data.qvel[:6] = [0.3, -0.2, 0.1, 0.4, -0.5, 0.6]
     backend.mj.mj_forward(backend.model, backend.data)
-    state = backend.robot.read_state(0.1)
+    state = backend.robot.read_state()
     for role in ("base_angular_velocity", "base_linear_acceleration", "base_linear_velocity"):
         np.testing.assert_allclose(getattr(state, role), backend.data.sensordata[backend.robot._sensor_slices[role]])
     np.testing.assert_allclose(backend.data.xpos[backend.robot._base_body_id], backend.model.qpos0[:3])
@@ -482,14 +482,14 @@ def test_direct_scene_cfg_headless_uses_supplied_robot_floor_and_placement() -> 
     assert backend.robot._cfg is not robot
     backend.open()
     try:
-        state = backend.robot.read_state(0.1)
+        state = backend.robot.read_state()
         np.testing.assert_allclose(backend.data.xpos[backend.robot._base_body_id], backend.model.qpos0[:3])
         np.testing.assert_allclose(state.base_orientation_xyzw, robot.rotation)
         floor_id = backend.mj.mj_name2id(backend.model, backend.mj.mjtObj.mjOBJ_GEOM, "floor")
         assert backend.model.geom_pos[floor_id, 2] == pytest.approx(0.2)
         backend.robot.write_command(_command(_spec().default_joint_position))
         backend.advance_control_period()
-        assert backend.robot.read_state(0.1).sample_time_ns == 10_000_000
+        assert backend.robot.read_state().sample_time_ns == 10_000_000
     finally:
         backend.close()
 
@@ -515,12 +515,12 @@ def test_robot_description_switch_needs_no_backend_specific_wiring(robot_type) -
     spec.validate_compatible(backend.robot.spec)
     backend.open()
     try:
-        state = backend.robot.read_state(0.1)
+        state = backend.robot.read_state()
         np.testing.assert_allclose(state.joint_position, spec.default_joint_position)
         zeros = np.zeros(spec.joint_count, dtype=np.float32)
         backend.robot.write_command(JointServoCommand(spec.default_joint_position, zeros, zeros, zeros, zeros))
         backend.advance_control_period()
-        assert backend.robot.read_state(0.1).sample_time_ns > state.sample_time_ns
+        assert backend.robot.read_state().sample_time_ns > state.sample_time_ns
         assert backend.robot.health().healthy
     finally:
         backend.close()
@@ -577,7 +577,7 @@ def test_direct_scene_recipe_runs_with_training_imports_blocked() -> None:
         config = SimulationRuntimeConfig.from_mapping(values)
         backend = MujocoRuntime(config, control_period_s=0.02)
         backend.open()
-        assert np.isfinite(backend.robot.read_state(0.1).joint_position).all()
+        assert np.isfinite(backend.robot.read_state().joint_position).all()
         backend.close()
         assert not any(name == 'motrix_envs' or name.startswith('motrix_envs.') for name in sys.modules)
         """
@@ -595,7 +595,7 @@ def test_hybrid_pd_command_is_recomputed_as_torque_each_physics_substep(
     spec = _spec()
     backend = _backend()
     backend.open()
-    initial = backend.robot.read_state(0.1)
+    initial = backend.robot.read_state()
     desired_position = initial.joint_position + np.linspace(0.01, 0.02, 12, dtype=np.float32)
     desired_velocity = np.linspace(-0.3, 0.3, 12, dtype=np.float32)
     feedforward_torque = np.linspace(-1.0, 1.0, 12, dtype=np.float32)
@@ -636,7 +636,7 @@ def test_hybrid_pd_command_is_recomputed_as_torque_each_physics_substep(
         )
         np.testing.assert_allclose(applied_torque, expected_torque, atol=1e-6)
     assert not np.array_equal(snapshots[0][2], snapshots[1][2])
-    assert backend.robot.read_state(0.1).sample_time_ns == 20_000_000
+    assert backend.robot.read_state().sample_time_ns == 20_000_000
     backend.robot.stop()
     np.testing.assert_array_equal(backend.data.ctrl[backend.robot._actuator_indices], 0.0)
     backend.close()

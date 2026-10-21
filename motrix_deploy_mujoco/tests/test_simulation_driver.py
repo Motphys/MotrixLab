@@ -142,7 +142,7 @@ def test_torque_controller_preserves_control_and_physics_cadence(driver, monkeyp
 
 def test_controller_step_never_writes_or_advances_physics(driver):
     simulation, controller, robot, _ = driver
-    state = robot.read_state(0.1)
+    state = robot.read_state()
     context = ControlContext(0, 0.0, ConstantPlanarVelocityBinding((0.0, 0.0, 0.0)).read_command(), dt_s=0.02)
     before_time = simulation.data.time
     before_control = simulation.data.ctrl.copy()

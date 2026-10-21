@@ -4,7 +4,7 @@
 """Typed artifact specification and runtime skeleton for ``g1_walk/v1``."""
 
 import math
-from typing import Annotated, ClassVar
+from typing import Annotated, Any, ClassVar
 
 import numpy as np
 from pydantic import Field, model_validator
@@ -19,6 +19,7 @@ from motrix_deploy.runtime.context import ControlContext
 from motrix_deploy.runtime.control import PolicyController
 from motrix_deploy.runtime.lifecycle import ControllerStep
 from motrix_deploy.task import DeployTask
+from motrix_deploy_tasks.tasks.g1_startup import G1StartupController, G1StartupSettings
 from motrix_env_core.input import (
     BoundedGamePadPlanarVelocityBinding,
     CommandBinding,
@@ -267,6 +268,8 @@ class G1WalkDeployTask(DeployTask[PlanarVelocityCommand]):
         policy: Policy,
         steps: int | None = None,
         artifact: object | None = None,
+        *,
+        settings: dict[str, Any] | None = None,
     ) -> None:
         del artifact
         self.spec = spec
@@ -276,6 +279,12 @@ class G1WalkDeployTask(DeployTask[PlanarVelocityCommand]):
         self._keyboard_attached = False
         self._gamepad_attached = False
         self._operator_profile: OperatorProfileCfg | None = None
+        settings = {} if settings is None else settings
+        if set(settings) - {"preparation"}:
+            raise ValueError("G1 Walk execution settings only support preparation")
+        self._startup_settings = G1StartupSettings(**settings.get("preparation", {}))
+        self._startup: G1StartupController
+        self._startup_stopped = False
 
     def configure_operator(self, profile: OperatorProfileCfg | None) -> None:
         """Store task-owned gamepad command wiring from the selected recipe."""
@@ -290,11 +299,21 @@ class G1WalkDeployTask(DeployTask[PlanarVelocityCommand]):
     ) -> CommandBinding[PlanarVelocityCommand]:
         """Bind viewer keys to velocity commands, or stand still without a keyboard."""
 
-        del simulation, spawn_pose
+        del spawn_pose
+        if not simulation and not isinstance(device, GamePadDevice):
+            raise ValueError("G1 hardware startup requires a gamepad")
+        self._startup = G1StartupController(
+            self.robot,
+            self._startup_settings,
+            device,
+            self._operator_profile if isinstance(device, GamePadDevice) else None,
+            simulation=simulation,
+        )
         command_lower, command_upper = self.command_bounds
         if isinstance(device, KeyboardDevice):
             self._keyboard_attached = True
             self._gamepad_attached = False
+            self._startup.poll_device = False
             return KeyboardPlanarVelocityBinding(
                 device,
                 command_lower=command_lower,
@@ -305,6 +324,7 @@ class G1WalkDeployTask(DeployTask[PlanarVelocityCommand]):
             if velocity is not None:
                 self._keyboard_attached = False
                 self._gamepad_attached = True
+                self._startup.poll_device = False
                 return BoundedGamePadPlanarVelocityBinding(
                     device,
                     linear_x_axis=velocity.linear_x_axis,
@@ -332,12 +352,14 @@ class G1WalkDeployTask(DeployTask[PlanarVelocityCommand]):
     @property
     def operator_hint(self) -> str | None:
         if self._keyboard_attached:
-            return "w/s forward/back  a/d left/right  q/e turn left/right"
+            return "FixStand active  p enable policy  o stop  w/s forward/back  a/d left/right  q/e turn left/right"
         if self._gamepad_attached:
             return "G1 remote: LT+Up stand  RB+X enable policy  LT+B passive  select emergency stop"
         return None
 
     def reset(self, state: RobotState) -> None:
+        self._startup_stopped = False
+        self._startup.reset(state)
         self.policy_controller.reset(state)
 
     def step(
@@ -345,9 +367,20 @@ class G1WalkDeployTask(DeployTask[PlanarVelocityCommand]):
         state: RobotState,
         context: ControlContext[PlanarVelocityCommand],
     ) -> ControllerStep:
+        if self._startup.phase != "complete":
+            if self._startup_stopped:
+                return ControllerStep(complete=True, success=False)
+            decision = self._startup.step(state, context)
+            if not decision.complete:
+                return decision
+            self.policy_controller.reset(state)
+        if isinstance(self._startup.device, KeyboardDevice):
+            if self._startup.device.is_key_down("o"):
+                self.request_stop()
         return self.policy_controller.step(state, context)
 
     def request_stop(self) -> None:
+        self._startup_stopped = True
         self.policy_controller.request_stop()
 
     def validate_command(self, command: PlanarVelocityCommand | None) -> None:

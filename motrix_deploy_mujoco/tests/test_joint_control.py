@@ -32,11 +32,11 @@ def test_reopen_preserves_source_limits_and_torque_response(control_scene_config
     for _ in range(2):
         with runtime:
             np.testing.assert_allclose(runtime.robot.spec.torque_limit, spec.torque_limit)
-            initial = runtime.robot.read_state(0.1)
+            initial = runtime.robot.read_state()
             assert initial.sample_time_ns == 0
             runtime.robot.write_command(JointTorqueCommand(torque))
             runtime.advance_control_period()
-            state = runtime.robot.read_state(0.1)
+            state = runtime.robot.read_state()
             assert state.sample_time_ns == 20_000_000
             np.testing.assert_allclose(runtime.data.ctrl, torque)
             observed.append(state)

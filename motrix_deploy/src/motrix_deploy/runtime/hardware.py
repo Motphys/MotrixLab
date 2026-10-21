@@ -40,6 +40,8 @@ class HardwareRuntime(DeploymentRuntime):
     def run(self) -> RolloutResult:
         if self.session is None:
             raise ValidationError("runtime.session", "a bound control session", None)
+        if self._used:
+            raise ValidationError("runtime.session", "a single-use execution", "already executed")
         scheduler = self.scheduler
         if scheduler is None:
             scheduler = (
@@ -49,6 +51,7 @@ class HardwareRuntime(DeploymentRuntime):
             raise ValidationError("runtime.scheduler.period_s", self.session.period_s, scheduler.period_s)
         self.open()
         try:
+            self.robot.acquire_control()
             return self._run_session(scheduler)
         finally:
             self.close()

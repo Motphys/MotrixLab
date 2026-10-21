@@ -169,7 +169,7 @@ def test_measured_fk_matches_randomized_simulator_world_orientation(profile, bac
             joints = rng.uniform(profile.robot.position_lower, profile.robot.position_upper).astype(np.float32)
             # All three waist angles are independently sampled, not yaw-only probes.
             _set_fk_pose(runtime, backend, _random_quaternion(rng), joints)
-            state = runtime.robot.read_state(0.1)
+            state = runtime.robot.read_state()
             np.testing.assert_allclose(state.joint_position, joints, atol=1e-6, rtol=0)
             # Direct simulator query is a test oracle, not public deployment state.
             name = runtime.scene.objs.robot.resolve_name("torso_link")

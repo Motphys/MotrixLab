@@ -5,6 +5,7 @@
 
 import copy
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -15,9 +16,13 @@ from motrix_deploy.errors import EmergencyStopError, PassiveRequestedError
 from motrix_deploy.operator import ButtonGestureCfg, OperatorProfileCfg
 from motrix_deploy.runtime.factory import RuntimeCreateContext
 from motrix_deploy.runtime.hardware import HardwareRuntime
-from motrix_deploy_unitree.config import UnitreeBackendConfig, UnitreeG1_29DOFRobotCfg
-from motrix_deploy_unitree.hardware import G1_29DOF_JOINT_NAMES, UnitreeG1_29DOFHardwareCfg
-from motrix_deploy_unitree.interface import UnitreeG1_29DOFRobot, UnitreeSdkBindings
+from motrix_deploy_unitree.config.control import load_control_config
+from motrix_deploy_unitree.config.g1 import (
+    G1_29DOF_JOINT_NAMES,
+    UnitreeG129DOFHardwareCfg,
+)
+from motrix_deploy_unitree.config.runtime import UnitreeRuntimeConfig, UnitreeTransportConfig
+from motrix_deploy_unitree.g1.python_robot import UnitreeG1_29DOFRobot, UnitreeSdkBindings
 from motrix_deploy_unitree.plugin import create_runtime
 
 
@@ -123,19 +128,16 @@ def _spec(joint_names: tuple[str, ...] = G1_29DOF_JOINT_NAMES) -> RobotSpec:
     )
 
 
-def _config(**overrides) -> UnitreeBackendConfig:
+def _config(**overrides) -> UnitreeRuntimeConfig:
     robot_values = {
-        "wait_for_remote_buttons": False,
-        "default_transition_duration_s": 0.02,
         "damping_duration_s": 0.0,
-        "kp": 20.0,
-        "kd": 1.0,
         "command_publish_period_s": None,
     }
     robot_values.update(overrides)
-    return UnitreeBackendConfig(
-        network_interface="eth0",
-        robot=UnitreeG1_29DOFRobotCfg(**robot_values),
+    return UnitreeRuntimeConfig(
+        transport=UnitreeTransportConfig(network_interface="eth0"),
+        robot="g1-29dof",
+        control=replace(load_control_config("g1"), **robot_values),
     )
 
 
@@ -148,9 +150,11 @@ def _remote_payload(*buttons: str) -> bytes:
     return bytes(payload)
 
 
-def _backend(config: UnitreeBackendConfig, bus: _Bus, *, spec: RobotSpec | None = None) -> UnitreeG1_29DOFRobot:
+def _backend(config: UnitreeRuntimeConfig, bus: _Bus, *, spec: RobotSpec | None = None) -> UnitreeG1_29DOFRobot:
     return UnitreeG1_29DOFRobot(
-        config,
+        transport=config.transport,
+        control=config.control,
+        operator=config.operator,
         control_period_s=0.02,
         state_timeout_s=0.1,
         spec=_spec() if spec is None else spec,
@@ -160,7 +164,7 @@ def _backend(config: UnitreeBackendConfig, bus: _Bus, *, spec: RobotSpec | None 
 
 
 def test_g1_hardware_uses_explicit_joint_name_to_motor_id_mapping() -> None:
-    hardware = UnitreeG1_29DOFHardwareCfg()
+    hardware = UnitreeG129DOFHardwareCfg()
     hardware.validate()
     assert tuple(hardware.key_pose.joint_names) == G1_29DOF_JOINT_NAMES
     assert {name: binding.index for name, binding in hardware.actuation.motors.items()} == {
@@ -174,7 +178,7 @@ def test_g1_state_and_command_follow_artifact_joint_names_not_policy_indices() -
     bus = _Bus()
     backend = _backend(_config(), bus, spec=_spec(joint_names))
     backend.open()
-    state = backend.read_state(0.1)
+    state = backend.read_state()
     expected_motor_ids = [G1_29DOF_JOINT_NAMES.index(name) for name in joint_names]
     assert state.joint_position.tolist() == pytest.approx(expected_motor_ids)
 
@@ -204,34 +208,59 @@ def test_g1_state_and_command_follow_artifact_joint_names_not_policy_indices() -
     backend.close()
 
 
-def test_named_startup_gains_follow_artifact_joint_order() -> None:
-    joint_names = G1_29DOF_JOINT_NAMES[7:] + G1_29DOF_JOINT_NAMES[:7]
-    kp = {name: float(index + 1) for index, name in enumerate(G1_29DOF_JOINT_NAMES)}
-    kd = {name: float(index + 1) / 10.0 for index, name in enumerate(G1_29DOF_JOINT_NAMES)}
+@pytest.mark.parametrize("startup_mode", ["one_shot", "state_machine"])
+def test_enable_allows_output_without_startup_motion_or_confirmation(startup_mode) -> None:
     bus = _Bus()
-    backend = _backend(_config(kp=kp, kd=kd), bus, spec=_spec(joint_names))
+    backend = _backend(_config(startup_mode=startup_mode), bus)
+    backend.open()
+    try:
+        assert bus.commands == []
+        backend.enable()
+        assert bus.commands == []
+        zeros = np.zeros(29, dtype=np.float32)
+        backend.write_command(JointServoCommand(zeros, zeros, zeros, zeros, np.full(29, 3.0, dtype=np.float32)))
+        assert len(bus.commands) == 1
+        assert all(motor.kp == 0.0 and motor.kd == pytest.approx(3.0) for motor in bus.commands[-1].motor_cmd[:29])
+    finally:
+        backend.close()
+
+
+def test_enable_rejects_remote_emergency_stop_without_motion() -> None:
+    bus = _Bus()
+    backend = _backend(_config(), bus)
+    backend.open()
+    try:
+        bus.state.wireless_remote = _remote_payload("select")
+        bus.callback(copy.deepcopy(bus.state))
+        with pytest.raises(EmergencyStopError):
+            backend.enable()
+        assert bus.commands == []
+    finally:
+        backend.close()
+
+
+def test_stop_publishes_only_passive_damping_after_policy_output() -> None:
+    bus = _Bus()
+    config = _config(damping_duration_s=0.04, damping_kd=2.5)
+    backend = _backend(config, bus)
     backend.open()
     backend.enable()
-
-    command = bus.commands[-1]
-    for name in joint_names:
-        motor_id = G1_29DOF_JOINT_NAMES.index(name)
-        assert command.motor_cmd[motor_id].kp == pytest.approx(kp[name])
-        assert command.motor_cmd[motor_id].kd == pytest.approx(kd[name])
-    backend.close()
-
-
-def test_state_machine_startup_enables_command_stream_without_legacy_pose_ramp() -> None:
-    bus = _Bus()
-    backend = _backend(_config(startup_mode="state_machine", kp=None, kd=None), bus)
-    backend.open()
-    backend.enable()
-
     zeros = np.zeros(29, dtype=np.float32)
-    backend.write_command(JointServoCommand(zeros, zeros, zeros, zeros, np.full(29, 3.0, dtype=np.float32)))
-
-    assert len(bus.commands) == 1
-    assert all(motor.kp == 0.0 and motor.kd == pytest.approx(3.0) for motor in bus.commands[-1].motor_cmd[:29])
+    backend.write_command(
+        JointServoCommand(
+            joint_position=np.full(29, 0.2, dtype=np.float32),
+            joint_velocity=zeros,
+            feedforward_torque=zeros,
+            kp=np.full(29, 17, dtype=np.float32),
+            kd=np.ones(29, dtype=np.float32),
+        )
+    )
+    before = len(bus.commands)
+    backend.stop()
+    assert len(bus.commands) > before
+    for command in bus.commands[before:]:
+        for motor in command.motor_cmd[:29]:
+            assert (motor.dq, motor.tau, motor.kp, motor.kd) == (0.0, 0.0, 0.0, 2.5)
     backend.close()
 
 
@@ -256,7 +285,7 @@ def test_operator_alias_gesture_requests_passive_damping() -> None:
     bus.callback(copy.deepcopy(bus.state))
 
     with pytest.raises(PassiveRequestedError):
-        backend.read_state(0.1)
+        backend.read_state()
     backend.close()
 
 
@@ -279,7 +308,7 @@ def test_select_remains_an_unconditional_emergency_stop() -> None:
     bus.callback(copy.deepcopy(bus.state))
 
     with pytest.raises(EmergencyStopError):
-        backend.read_state(0.1)
+        backend.read_state()
     backend.close()
 
 
@@ -317,3 +346,41 @@ def test_g1_periodic_writer_repeats_latest_command() -> None:
     backend.close()
     assert len(bus.commands) >= 3
     assert all(command.crc == 123 for command in bus.commands)
+
+
+def test_g1_cached_reads_preserve_arrival_time_and_update_on_callback(monkeypatch) -> None:
+    bus = _Bus()
+    backend = _backend(_config(), bus)
+    now = [1_000_000_000]
+    backend._clock_ns = lambda: now[0]
+    backend.open()
+    try:
+        first = backend.read_state()
+        monkeypatch.setattr(backend._condition, "wait", lambda *_: pytest.fail("cached reads must not wait"))
+        now[0] += 1_000_000_000
+        cached = backend.read_state()
+        assert cached.receive_time_ns == first.receive_time_ns
+        assert cached.sample_time_ns == first.sample_time_ns
+        np.testing.assert_array_equal(cached.joint_position, first.joint_position)
+        bus.state.motor_state[0].q += 0.1
+        bus.callback(copy.deepcopy(bus.state))
+        updated = backend.read_state()
+        assert updated.receive_time_ns == now[0]
+        assert updated.joint_position[0] != first.joint_position[0]
+    finally:
+        backend.close()
+
+
+def test_g1_open_wait_is_bounded_without_valid_first_frame(monkeypatch) -> None:
+    config = _config()
+    config.transport.connect_timeout_s = 0.001
+    bus = _Bus()
+    bus.state.crc = 0
+    backend = _backend(config, bus)
+    now = [0]
+    backend._clock_ns = lambda: now[0]
+    monkeypatch.setattr(backend._condition, "wait", lambda _: now.__setitem__(0, 2_000_000))
+    with pytest.raises(TimeoutError, match="no valid Unitree LowState"):
+        backend.open()
+    assert bus.commands == []
+    backend.close()

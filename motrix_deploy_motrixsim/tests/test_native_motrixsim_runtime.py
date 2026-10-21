@@ -55,7 +55,7 @@ def test_native_scene_init_pose_preserves_artifact_default_and_clips_servo_limit
         spec = runtime.robot.spec
         pose = runtime.scene.objs.robot.key_pose.poses["lie_down"]
         expected = np.clip(pose, spec.position_lower, spec.position_upper)
-        np.testing.assert_allclose(runtime.robot.read_state(0.1).joint_position, expected, atol=1e-6)
+        np.testing.assert_allclose(runtime.robot.read_state().joint_position, expected, atol=1e-6)
         np.testing.assert_allclose(spec.default_joint_position, runtime.scene.objs.robot.key_pose.poses["default"])
         assert runtime.scene.objs.robot.init_key_pose == "lie_down"
 
@@ -121,7 +121,7 @@ def test_native_factory_session_cadence_and_owner(monkeypatch):
     assert runtime.robot.capabilities.control_modes == (JointControlMode.SERVO, JointControlMode.TORQUE)
     assert runtime.robot.capabilities.max_command_rate_hz == 1 / runtime.config.physics.dt
     with pytest.raises(RuntimeError):
-        runtime.robot.read_state(0.1)
+        runtime.robot.read_state()
     bind_session(runtime, steps=5)
     calls = []
     original = runtime.robot.apply_control
@@ -148,7 +148,7 @@ def test_native_factory_session_cadence_and_owner(monkeypatch):
 def test_native_servo_feedforward_snapshots_and_clipping():
     runtime = MotrixSimRuntime(config())
     with runtime:
-        state = runtime.robot.read_state(0.1)
+        state = runtime.robot.read_state()
         old_position = state.joint_position.copy()
         count = runtime.robot.spec.joint_count
         zeros = np.zeros(count, dtype=np.float32)
@@ -163,7 +163,7 @@ def test_native_servo_feedforward_snapshots_and_clipping():
         np.testing.assert_allclose(actual, expected, atol=1e-5)
         runtime._step()
         runtime.robot.apply_control()
-        current = runtime.robot.read_state(0.1)
+        current = runtime.robot.read_state()
         expected = 10 * (target - 0.1 - current.joint_position) - current.joint_velocity + 0.5
         expected = np.clip(expected, -runtime.robot.spec.torque_limit, runtime.robot.spec.torque_limit)
         np.testing.assert_allclose(
@@ -188,7 +188,7 @@ def test_stop_applies_zero_torque_across_substeps(backend):
         pytest.importorskip("mujoco")
     runtime = create_simulation_runtime(backend, config())
     with runtime:
-        held = runtime.robot.read_state(0.1).joint_position.copy()
+        held = runtime.robot.read_state().joint_position.copy()
         count = runtime.robot.spec.joint_count
         runtime.robot.write_command(JointTorqueCommand(np.ones(count, dtype=np.float32)))
         runtime.robot.apply_control()
@@ -203,7 +203,7 @@ def test_stop_applies_zero_torque_across_substeps(backend):
             runtime.data.qpos[runtime.robot._joint_qpos_indices] = displaced
             runtime.mj.mj_forward(runtime.model, runtime.data)
         for _ in range(3):
-            runtime.robot.read_state(0.1)
+            runtime.robot.read_state()
             runtime.robot.apply_control()
             controls = (
                 np.asarray(runtime.model.get_actuator_ctrls(runtime.data)).reshape(-1)
@@ -229,7 +229,7 @@ def test_stop_applies_zero_torque_across_substeps(backend):
 def test_native_repeated_reset_preserves_compiled_placement_and_sensor_state():
     runtime = MotrixSimRuntime(config())
     with runtime:
-        initial = runtime.robot.read_state(0.1)
+        initial = runtime.robot.read_state()
         base = (runtime.scene.objs.robot.resolved_base_link_name,)
         position = runtime.model.compile_query({"position": mtx.query.LinkPosition(base)}).allocate(runtime.data)
         position.execute(runtime.data)
@@ -241,9 +241,9 @@ def test_native_repeated_reset_preserves_compiled_placement_and_sensor_state():
             runtime.robot.write_command(JointTorqueCommand(np.ones(runtime.robot.spec.joint_count, dtype=np.float32)))
             for _ in range(5):
                 runtime._step()
-            assert runtime.robot.read_state(0.1).sample_time_ns == 10_000_000
+            assert runtime.robot.read_state().sample_time_ns == 10_000_000
             runtime.reset()
-            reset = runtime.robot.read_state(0.1)
+            reset = runtime.robot.read_state()
             assert reset.sample_time_ns == 0
             position.execute(runtime.data)
             np.testing.assert_allclose(position["position"].reshape(3), initial_position, atol=1e-6)
@@ -273,7 +273,7 @@ def test_native_sensor_bindings_are_actual_live_native_values():
         v[0, base.dof_vel_indices] = [0.7, 0.4, 0.2, 0.1, 0.2, 0.3]
         runtime.data.reset(runtime.model, dof_pos=q, dof_vel=v, forward_kinematic=True)
         runtime._step()
-        state = runtime.robot.read_state(0.1)
+        state = runtime.robot.read_state()
         for role in ("base_angular_velocity", "base_linear_acceleration", "base_linear_velocity"):
             name = getattr(runtime.config.sensor_bindings, role)
             expected = runtime.model.get_sensor_value(name, runtime.data).reshape(3)
@@ -292,7 +292,7 @@ def test_native_instance_names_preserve_artifact_local_robot_contract():
         assert runtime.robot.spec.joint_names == tuple(cfg.scene.objs.robot.key_pose.joint_names)
         assert runtime.robot.spec.base_link_name == cfg.scene.objs.robot.base_link_name
         np.testing.assert_allclose(
-            runtime.robot.read_state(0.1).joint_position, runtime.robot.spec.default_joint_position, atol=1e-6
+            runtime.robot.read_state().joint_position, runtime.robot.spec.default_joint_position, atol=1e-6
         )
         bind_session(runtime)
         assert runtime.run().success
@@ -316,7 +316,7 @@ def test_native_motor_source_supported():
     with runtime:
         runtime.robot.write_command(JointTorqueCommand(np.ones(len(names), dtype=np.float32)))
         runtime._step()
-        assert runtime.robot.read_state(0.1).sample_time_ns == 2_000_000
+        assert runtime.robot.read_state().sample_time_ns == 2_000_000
 
 
 @pytest.mark.parametrize("period", [0.001, 0.003])

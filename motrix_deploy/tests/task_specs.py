@@ -17,7 +17,8 @@ class TestTaskSpec(TaskSpec):
 class TestDeployTask(DeployTask[object]):
     spec_type = TestTaskSpec
 
-    def __init__(self, spec, robot, policy, steps=None, artifact=None):
+    def __init__(self, spec, robot, policy, steps=None, artifact=None, *, settings=None):
+        super().__init__(settings=settings)
         self.spec = spec
         self.robot = robot
         self.policy = policy

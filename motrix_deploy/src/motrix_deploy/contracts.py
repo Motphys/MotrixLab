@@ -215,6 +215,48 @@ class JointServoCommand:
         if np.any(self.kp < 0) or np.any(self.kd < 0):
             raise ValidationError("command.gains", "non-negative values", "negative gain")
 
+    def copy(self) -> "JointServoCommand":
+        """Return an independent command with a copy of every array."""
+        return JointServoCommand(
+            joint_position=self.joint_position.copy(),
+            joint_velocity=self.joint_velocity.copy(),
+            feedforward_torque=self.feedforward_torque.copy(),
+            kp=self.kp.copy(),
+            kd=self.kd.copy(),
+        )
+
+    def validate_for(
+        self,
+        spec: RobotSpec,
+        *,
+        position_lower: FloatArray | None = None,
+        position_upper: FloatArray | None = None,
+        torque_limit: FloatArray | None = None,
+    ) -> None:
+        """Validate current values against a robot and explicitly selected command bounds."""
+        self.__post_init__()  # Arrays remain mutable after construction.
+        expected = (spec.joint_count,)
+        if self.joint_position.shape != expected:
+            raise ValidationError("command.joint_count", expected, self.joint_position.shape)
+        lower = spec.position_lower if position_lower is None else position_lower
+        upper = spec.position_upper if position_upper is None else position_upper
+        torque = spec.torque_limit if torque_limit is None else torque_limit
+        if np.any(np.abs(self.feedforward_torque) > torque):
+            raise ValidationError(
+                "command.feedforward_torque", "inside configured torque limits", self.feedforward_torque.tolist()
+            )
+        outside = (self.joint_position < lower) | (self.joint_position > upper)
+        if np.any(outside):
+            raise ValidationError(
+                "command.joint_position",
+                "inside configured command position range",
+                {
+                    name: {"target": float(self.joint_position[i]), "lower": float(lower[i]), "upper": float(upper[i])}
+                    for i, name in enumerate(spec.joint_names)
+                    if outside[i]
+                },
+            )
+
     @property
     def mode(self) -> JointControlMode:
         return JointControlMode.SERVO
@@ -231,6 +273,20 @@ class JointTorqueCommand:
             actual = self.torque.shape if isinstance(self.torque, np.ndarray) else type(self.torque)
             raise ValidationError("command.torque.shape", "(joint_count,)", actual)
         _validate_float32_array(self.torque, path="command.torque", shape=(self.torque.size,))
+
+    def copy(self) -> "JointTorqueCommand":
+        """Return an independent command with a copy of its torque array."""
+        return JointTorqueCommand(torque=self.torque.copy())
+
+    def validate_for(self, spec: RobotSpec, *, torque_limit: FloatArray | None = None) -> None:
+        """Validate current torque values against the selected robot limits."""
+        self.__post_init__()  # Arrays remain mutable after construction.
+        expected = (spec.joint_count,)
+        if self.torque.shape != expected:
+            raise ValidationError("command.joint_count", expected, self.torque.shape)
+        limit = spec.torque_limit if torque_limit is None else torque_limit
+        if np.any(np.abs(self.torque) > limit):
+            raise ValidationError("command.torque", "inside configured torque limits", self.torque.tolist())
 
     @property
     def mode(self) -> JointControlMode:

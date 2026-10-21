@@ -48,6 +48,60 @@ def test_contracts_preserve_valid_array_references() -> None:
     assert command.joint_position is source
 
 
+@pytest.mark.parametrize("mode", [JointControlMode.SERVO, JointControlMode.TORQUE])
+def test_command_copy_owns_all_arrays(mode: JointControlMode) -> None:
+    values = np.array([0.25, 0.5], dtype=np.float32)
+    if mode is JointControlMode.SERVO:
+        command = JointServoCommand(
+            joint_position=values,
+            joint_velocity=values,
+            feedforward_torque=values,
+            kp=values,
+            kd=values,
+        )
+        fields = ("joint_position", "joint_velocity", "feedforward_torque", "kp", "kd")
+    else:
+        command = JointTorqueCommand(torque=values)
+        fields = ("torque",)
+    copied = command.copy()
+    assert copied is not command
+    assert type(copied) is type(command)
+    for field in fields:
+        original = getattr(command, field)
+        clone = getattr(copied, field)
+        np.testing.assert_array_equal(clone, original)
+        assert not np.shares_memory(clone, original)
+        clone[0] = 1
+        assert original[0] == 0.25
+    values[1] = 2
+    for field in fields:
+        assert getattr(copied, field)[1] == 0.5
+
+
+def test_command_validation_uses_selected_bounds_and_rechecks_mutable_values() -> None:
+    spec = robot_spec()
+    servo = JointServoCommand(*(np.zeros(2, dtype=np.float32) for _ in range(5)))
+    servo.validate_for(spec)
+    servo.joint_position[0] = 1.5
+    with pytest.raises(ValidationError, match="command.joint_position"):
+        servo.validate_for(spec)
+    servo.validate_for(spec, position_upper=np.full(2, 2, dtype=np.float32))
+    servo.kp[0] = -1
+    with pytest.raises(ValidationError, match="command.gains"):
+        servo.validate_for(spec, position_upper=np.full(2, 2, dtype=np.float32))
+
+    torque = JointTorqueCommand(np.zeros(2, dtype=np.float32))
+    torque.validate_for(spec)
+    torque.torque[0] = 2
+    with pytest.raises(ValidationError, match="command.torque"):
+        torque.validate_for(spec, torque_limit=np.ones(2, dtype=np.float32))
+    torque.torque[0] = np.nan
+    with pytest.raises(ValidationError, match="command.torque"):
+        torque.validate_for(spec)
+    with pytest.raises(ValidationError, match="command.joint_count"):
+        JointTorqueCommand(np.zeros(1, dtype=np.float32)).validate_for(spec)
+
+
 def test_joint_command_modes_are_readonly() -> None:
     zero = np.zeros(2, dtype=np.float32)
     servo = JointServoCommand(zero, zero, zero, zero, zero)

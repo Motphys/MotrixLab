@@ -10,14 +10,14 @@ and the SDK `RenderApp`; it does not run physics through MuJoCo or a training en
 From an installed workspace environment:
 
 ```bash
-python examples/deploy_to_sim.py --backend motrixsim --headless --steps 50
-python examples/deploy_to_sim.py --backend motrixsim
+python examples/deploy.py --backend motrixsim --headless --steps 50
+python examples/deploy.py --backend motrixsim
 ```
 
-See [the shared simulation example](../examples/deploy_to_sim.py) for the complete
+See [the shared simulation example](../examples/deploy.py) for the complete
 raw ONNX walking controller with explicit task preprocessing and control settings.
-The example uses the bundled Go2 policy. For another matching policy, adapt the
-policy path in the Python example; this programmatic path does not read a `.deploy` manifest. MuJoCo remains that script's default backend.
+The example uses the bundled Go2 policy. Use `--policy` for another policy matching the
+explicit task settings; this programmatic path does not read a `.deploy` manifest. MuJoCo remains that script's default backend.
 Artifact deployment reuses the installed simulation recipes rather than introducing
 backend-specific task copies:
 

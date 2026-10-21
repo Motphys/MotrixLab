@@ -11,6 +11,7 @@ from controller_helpers import ConstantPolicy, _TestPolicyProcessor
 from fake_robot import FakeRobotInterface
 
 import motrix_deploy.runtime.factory as runtime_factory
+from motrix_deploy.config import HardwareRuntimeCfg
 from motrix_deploy.errors import ValidationError
 from motrix_deploy.runtime.control import ControlSession, PolicyController
 from motrix_deploy.runtime.factory import create_hardware_runtime
@@ -108,8 +109,9 @@ def test_factory_produces_host_for_explicit_session_binding(monkeypatch, manifes
     entry = SimpleNamespace(name="fake", value="fake:factory", load=lambda: factory)
     monkeypatch.setattr(runtime_factory, "_runtime_entry_points", lambda: (entry,))
     context = runtime_factory.RuntimeCreateContext(robot=manifest.robot, control=manifest.control)
-    runtime = create_hardware_runtime("fake", {}, context)
-    assert calls == [({}, context)]
+    config = HardwareRuntimeCfg(backend="fake")
+    runtime = create_hardware_runtime(config, context)
+    assert calls == [(config, context)]
     assert runtime.robot is robot and not runtime.opened
     controller = make_controller(manifest, steps=2)
     session = bind(runtime, controller)

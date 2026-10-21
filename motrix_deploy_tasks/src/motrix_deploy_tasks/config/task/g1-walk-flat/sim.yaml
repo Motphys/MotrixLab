@@ -17,3 +17,12 @@ runtime:
   physics:
     dt: 0.002
     solver_iterations: 100
+
+task_settings:
+  preparation:
+    default_transition_duration_s: 3.0
+    wait_for_remote_buttons: true
+    start_button: start
+    enable_button: A
+    kp: null
+    kd: null

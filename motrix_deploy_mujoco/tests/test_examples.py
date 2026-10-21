@@ -17,7 +17,7 @@ from control_helpers import DummyServoPolicyProcessor
 
 ROOT = Path(__file__).parents[2]
 EXAMPLES = ROOT / "examples"
-EXAMPLE_SCRIPT = EXAMPLES / "deploy_to_sim.py"
+EXAMPLE_SCRIPT = EXAMPLES / "deploy.py"
 
 
 @pytest.fixture
@@ -55,7 +55,7 @@ def onnx_policy(tmp_path, control_scene_config, control_gains):
         context = ControlContext(
             step=0, elapsed_time_s=0.0, command=ConstantPlanarVelocityBinding((0.0, 0.0, 0.0)).read_command(), dt_s=0.02
         )
-        state = runtime.robot.read_state(0.1)
+        state = runtime.robot.read_state()
         task.reset(state, context)
         observation_size = task.build_observation(state, context).size
         runtime.robot.close()
@@ -184,7 +184,7 @@ def test_robot_commands_do_not_advance_or_own_the_world(control_scene_config, co
     assert interface.spec is spec
     with simulation:
         interface.open()
-        before = interface.read_state(0.1)
+        before = interface.read_state()
         context = ControlContext(
             step=0, elapsed_time_s=0.0, command=ConstantPlanarVelocityBinding((0.0, 0.0, 0.0)).read_command(), dt_s=0.02
         )
@@ -192,11 +192,11 @@ def test_robot_commands_do_not_advance_or_own_the_world(control_scene_config, co
         np.testing.assert_array_equal(observation, np.zeros(spec.joint_count, dtype=np.float32))
         assert observation.dtype == np.float32
         interface.write_command(task.process_action(np.zeros(spec.joint_count, dtype=np.float32)))
-        after_write = interface.read_state(0.1)
+        after_write = interface.read_state()
         assert after_write.sample_time_ns == before.sample_time_ns
         np.testing.assert_array_equal(after_write.joint_position, before.joint_position)
         simulation.advance_control_period()
-        advanced = interface.read_state(0.1)
+        advanced = interface.read_state()
         assert advanced.sample_time_ns > before.sample_time_ns
         interface.stop()
         interface.close()

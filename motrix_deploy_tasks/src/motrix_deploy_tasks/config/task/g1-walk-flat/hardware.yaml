@@ -1,7 +1,7 @@
 # @package _global_
 defaults:
   - /runtime@runtime: _unitree_schema
-  - /unitree_robot@runtime.robot: g1-29dof
+  - /unitree_control@runtime.control: g1
   - _self_
 
 artifact: artifacts/g1-flat.deploy
@@ -9,14 +9,10 @@ duration_s: 30.0
 
 runtime:
   backend: unitree
-  transport: native_cpp
-  network_interface: ???
-  domain_id: 0
-  lowcmd_topic: rt/lowcmd
-  lowstate_topic: rt/lowstate
-  connect_timeout_s: 5.0
-  subscriber_queue_depth: 10
-  validate_crc: true
+  robot: g1-29dof
+  transport:
+    implementation: native_cpp
+    network_interface: ???
 
   operator:
     intents:
@@ -42,16 +38,12 @@ runtime:
       range_scale: [0.25, 0.25, 0.25]
       deadman_button: null
 
-  robot:
-    mode_pr: 0
-    expected_mode_machine: 5
-    motor_mode: 1
-    command_publish_period_s: 0.001
-    command_timeout_s: 0.1
+task_settings:
+  preparation:
     default_transition_duration_s: 3.0
-    damping_duration_s: 1.0
-    damping_kd: 3.0
     wait_for_remote_buttons: true
-    allow_lie_down: false
-    override_policy_gains: false
-    # FixStand gains are fixed in motrix_robots.g1_standing; artifact gains own the policy phase.
+    start_button: start
+    enable_button: A
+    # null selects the shared FixStand gains, not the policy tracking gains.
+    kp: null
+    kd: null
