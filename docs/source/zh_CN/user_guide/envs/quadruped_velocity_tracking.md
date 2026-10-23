@@ -63,6 +63,7 @@
 quadruped_velocity_tracking/adding_robot
 quadruped_velocity_tracking/env_design
 quadruped_velocity_tracking/config_tuning
+quadruped_velocity_tracking/go2_flat_sim2real
 
 ```
 
