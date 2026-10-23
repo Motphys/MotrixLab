@@ -3,6 +3,7 @@
 
 import importlib
 import platform
+from contextlib import ExitStack
 from queue import Empty
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -23,6 +24,8 @@ from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.registry import EnvBuildSpec
 from motrix_env_motrixsim.torch_env import TorchEnv, TorchEnvState, TorchObs
+from motrix_rl.execution.building import BuildRuntime
+from motrix_rl.execution.workers import WorkerRuntime, WorkerSettings, worker_entry
 
 _SIM_BACKENDS = ["np", "torch"]
 
@@ -223,40 +226,45 @@ def _collect_in_spawn(sim_backend: str, tmp_path) -> tuple[torch.Tensor, ...]:
     action_scale = torch.ones(_ACT_DIM)
     action_bias = torch.zeros(_ACT_DIM)
     ring = SharedTransitionRing(2, _NUM_ENVS, *dims)
-    weights = WeightChannelShared(_OBS_DIM)
+    weights = WeightChannelShared(_OBS_DIM, obs_normalization=cfg.agent.obs_normalization)
     control = Control()
     ctx = mp.get_context("spawn")
-    stats_queue = ctx.Queue(maxsize=2)
-    error_queue = ctx.Queue(maxsize=2)
+    resources = ExitStack()
+    build = BuildRuntime(resources)
+    event_queue = build.queue()
+    start_event = build.event()
+    start_event.set()
+    runtime = WorkerRuntime("collector", event_queue, start_event, build.event())
     weight_tx = HostWeightSender(weights, actor_param_numel(cfg, dims, action_scale, action_bias))
     # Ship the real handshake messages: weight slots (publisher learner) and
     # ring slots (draining learner; None for the host SharedTransitionRing).
-    handshake = StartupHandshake(ctx, num_collectors=1, barrier=False)
+    handshake = StartupHandshake(build, num_collectors=1)
     handshake.ship_weight_slots(0, weight_tx.params)
     handshake.ship_ring_slots(0, None)
 
     env_cls = _AsyncNpEnv if sim_backend == "np" else _AsyncTorchEnv
     env_spec = EnvBuildSpec(env_cls, EnvCfg(scene=SceneCfg()))
     process = ctx.Process(
-        target=run_collector_process,
+        target=worker_entry,
+        args=(runtime, run_collector_process),
         kwargs={
-            "env_spec": env_spec,
-            "cfg": cfg,
-            "num_envs": _NUM_ENVS,
-            "dims": dims,
-            "action_scale": action_scale,
-            "action_bias": action_bias,
-            "ring": ring,
-            "weights": weights,
-            "control": control,
-            "stats_queue": stats_queue,
-            "error_queue": error_queue,
-            "num_iterations": 1,
-            "logging_interval": 1,
-            "is_resume": False,
-            "seed": 7,
-            "run_dir": str(tmp_path),
-            "handshake": handshake,
+            "settings": WorkerSettings(seed=7),
+            "kwargs": {
+                "env_spec": env_spec,
+                "cfg": cfg,
+                "num_envs": _NUM_ENVS,
+                "dims": dims,
+                "action_scale": action_scale,
+                "action_bias": action_bias,
+                "ring": ring,
+                "weights": weights,
+                "control": control,
+                "num_iterations": 1,
+                "logging_interval": 1,
+                "is_resume": False,
+                "seed": 7,
+                "handshake": handshake,
+            },
         },
     )
 
@@ -267,15 +275,17 @@ def _collect_in_spawn(sim_backend: str, tmp_path) -> tuple[torch.Tensor, ...]:
         process.join(timeout=5)
         pytest.fail(f"{sim_backend} collector process did not exit")
 
+    messages = []
     try:
-        child_error = error_queue.get_nowait()
+        while True:
+            messages.append(event_queue.get_nowait())
     except Empty:
-        child_error = None
+        pass
     finally:
-        stats_queue.close()
-        error_queue.close()
+        resources.close()
 
-    assert child_error is None
+    assert not [message for message in messages if message.kind == "error"]
+    assert any(message.kind == "finish" for message in messages)
     assert process.exitcode == 0
     assert control.collector_steps == 1
     count, views = ring.read_span()

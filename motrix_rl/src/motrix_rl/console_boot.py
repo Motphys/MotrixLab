@@ -1,13 +1,13 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Rich panel rendering for the async FastSAC trainer's parent process.
+"""Rich worker-startup panel rendering for a trainer's parent process.
 
 The boot panel (worker startup table + worker-log tail) runs on the
 alternate screen via ``rich.live.Live`` while workers boot at different
-speeds. Everything here is pure rendering; the boot loop, readiness
-tracking and error handling stay in ``train.py``. The post-boot training
-panel is shared across frameworks and lives in ``motrix_rl.console``.
+speeds. Everything here is pure rendering; the caller owns the boot loop,
+readiness tracking and error handling. The post-boot training panel lives
+in ``motrix_rl.console``.
 
 Frame geometry is the core contract: the panel is a vertical ``Layout``
 where the worker table takes a fixed number of lines and the log region

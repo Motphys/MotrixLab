@@ -194,6 +194,54 @@ def _render_panel(stats: TrainingPanelStats, *, view: str = "overview", width: i
     return capture.get()
 
 
+@pytest.mark.parametrize("rich", [False, True])
+def test_training_panel_shows_ppo_metrics_without_replay_buffer(rich: bool) -> None:
+    stats = _panel_stats(
+        buffer_size=None,
+        buffer_capacity=None,
+        training_metrics={"value_loss": 0.25, "surrogate_loss": -0.125},
+    )
+
+    panel = _render_panel(stats) if rich else format_training_panel(stats)
+
+    assert "value_loss" in panel
+    assert "0.250" in panel
+    assert "surrogate_loss" in panel
+    assert "-0.125" in panel
+    assert "buffer" not in panel.lower()
+    assert "None" not in panel
+    assert "return" in panel
+    assert "env-steps/s" in panel
+
+
+@pytest.mark.parametrize("rich", [False, True])
+@pytest.mark.parametrize("warming", [False, True])
+def test_training_panel_without_replay_buffer_omits_occupancy_when_metrics_unavailable(
+    rich: bool, warming: bool
+) -> None:
+    stats = _panel_stats(buffer_size=None, buffer_capacity=None, warming=warming)
+
+    panel = _render_panel(stats) if rich else format_training_panel(stats)
+
+    assert "warmup" in panel if warming else "training metrics unavailable" in panel
+    assert "buffer" not in panel.lower()
+    assert "None" not in panel
+    if not rich:
+        train_line = next(line for line in panel.splitlines() if line.startswith(" train"))
+        assert "(" not in train_line
+
+
+@pytest.mark.parametrize("metrics", [None, {"critic_loss": 0.25}])
+def test_format_training_panel_keeps_replay_buffer_occupancy(metrics: dict[str, float] | None) -> None:
+    panel = format_training_panel(_panel_stats(training_metrics=metrics, warming=metrics is None))
+
+    if metrics is None:
+        assert "warmup - filling replay buffer (512/100.0k)" in panel
+    else:
+        assert "critic_loss 0.250" in panel
+        assert " buffer      512/100.0k" in panel
+
+
 def test_render_training_panel_overview_keeps_timing_tree_hidden() -> None:
     stats = _panel_stats(
         timing_groups={
@@ -438,3 +486,28 @@ def test_console_module_degrades_without_posix_tty_support(_reload_console_modul
     stats = _panel_stats()
     assert "Run progress" in _render_panel(stats)
     assert "iter" in reloaded.format_training_panel(stats)
+
+
+@pytest.mark.parametrize("rich", [False, True])
+def test_learning_iter_is_separate_from_collection_budget(rich):
+    stats = _panel_stats(
+        iteration=25,
+        total_iterations=100,
+        learning_iteration=13,
+        update_idx=52,
+        progress_unit="collection steps",
+        iterations_per_second=5.0,
+    )
+    if rich:
+        console = Console(width=240, force_terminal=False)
+        with console.capture() as capture:
+            console.print(render_training_panel(stats))
+        text = " ".join(capture.get().split())
+    else:
+        text = format_training_panel(stats)
+    assert "iter 13" in text
+    assert "collection steps 25/100" in text
+    assert "gradient rounds 52" in text
+    assert "25.0%" in text
+    assert "13/100" not in text
+    assert console_module._iter_rate_text(stats) == "5 collection steps/s"

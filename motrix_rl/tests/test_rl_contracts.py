@@ -5,7 +5,10 @@ import json
 import threading
 from dataclasses import dataclass
 
+import pytest
+
 from motrix_rl.contracts import AgentProvider, RlFramework, TrainerBase, TrainerContext, TrainerHandle
+from motrix_rl.execution.contracts import ExecutionCancelled
 from motrix_rl.metrics import JSONL_FILENAME, JsonlSink, MetricsLogger
 
 
@@ -107,8 +110,8 @@ def test_trainer_handle_does_not_wait_for_a_stuck_sink(tmp_path):
     assert states == ["running", "finished"]
 
 
-def test_trainer_handle_reports_killed_on_keyboard_interrupt(tmp_path):
-    error = KeyboardInterrupt()
+@pytest.mark.parametrize("error", [KeyboardInterrupt(), ExecutionCancelled("cancel requested")])
+def test_trainer_handle_reports_killed_on_cancellation(tmp_path, error):
     raised, states = _train(tmp_path, error)
 
     assert raised is error

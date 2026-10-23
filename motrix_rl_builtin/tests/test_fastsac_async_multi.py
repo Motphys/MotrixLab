@@ -11,23 +11,18 @@ import pytest
 import torch
 from fastsac_async_mocks import make_mock_learner
 from motrix_rl_builtin.fastsac.async_impl.learner import Learner
-from motrix_rl_builtin.fastsac.async_impl.numa import select_collector_cpus
 from motrix_rl_builtin.fastsac.async_impl.stats import aggregate_collector_stats
 from motrix_rl_builtin.fastsac.async_impl.topology import (
     CollectorInfo,
     LearnerInfo,
     TrainerTopology,
-    resolve_collector_inference_devices,
-    resolve_learner_devices,
     resolve_trainer_topology,
     ring_transport_is_ipc,
-    split_num_envs,
 )
 from motrix_rl_builtin.fastsac.async_impl.train import Trainer
 from motrix_rl_builtin.fastsac.async_impl.transport import Control, SharedTransitionRing
 
 from motrix_rl import numa as system_numa
-from motrix_rl.numa import parse_cpulist
 
 
 def test_control_aggregates_per_collector_steps() -> None:
@@ -58,15 +53,6 @@ def test_single_collector_control_matches_previous_single_counter() -> None:
     control.inc_collector_steps(0)
 
     assert control.collector_steps == 8
-
-
-def test_split_num_envs_requires_even_division() -> None:
-    assert split_num_envs(2048, 2) == [1024, 1024]
-    assert split_num_envs(2048, 1) == [2048]
-    with pytest.raises(ValueError, match="divide evenly"):
-        split_num_envs(2048, 3)
-    with pytest.raises(ValueError, match="num_collectors must be >= 1"):
-        split_num_envs(2048, 0)
 
 
 def _strict_learner(num_updates: int) -> Learner:
@@ -217,31 +203,6 @@ def test_extend_batch_matches_repeated_extend_including_wraparound() -> None:
     assert batched.num_stored == 5
 
 
-def test_parse_cpulist() -> None:
-    assert parse_cpulist("0-3,8,10-11") == [0, 1, 2, 3, 8, 10, 11]
-    assert parse_cpulist(" 5 ") == [5]
-    assert parse_cpulist("") == []
-
-
-def test_select_collector_cpus_chunks_and_shares() -> None:
-    base = [0, 1, 2, 3, 4, 5]
-
-    # without cpus_per_collector every collector shares the full set
-    assert select_collector_cpus(base, 0, None) == base
-    assert select_collector_cpus(base, 1, None) == base
-
-    assert select_collector_cpus(base, 0, 3) == [0, 1, 2]
-    assert select_collector_cpus(base, 1, 3) == [3, 4, 5]
-    # over-subscription is a config error, not a silent empty binding
-    with pytest.raises(ValueError, match="no CPUs"):
-        select_collector_cpus(base, 2, 4)
-
-    with pytest.raises(ValueError, match="positive"):
-        select_collector_cpus(base, 0, 0)
-    with pytest.raises(ValueError, match="empty"):
-        select_collector_cpus([], 0, None)
-
-
 def test_topology_pairs_collectors_with_owning_learner(monkeypatch) -> None:
     monkeypatch.setattr(system_numa, "available_numa_nodes", lambda: [0, 1])
     monkeypatch.setattr(system_numa, "gpu_numa_node", lambda index, runtime: {0: 0, 1: 1}.get(index))
@@ -343,20 +304,6 @@ def test_topology_unbound_without_gpu_locality(monkeypatch) -> None:
     assert [learner.numa_node for learner in topo.learners] == [0]
 
 
-@pytest.mark.parametrize(("hip_version", "runtime"), [(None, "cuda"), ("6.3", "hip")])
-def test_topology_passes_explicit_gpu_runtime(monkeypatch, hip_version, runtime) -> None:
-    from motrix_rl_builtin.fastsac.async_impl.topology import _learner_node
-
-    seen = []
-    monkeypatch.setattr(torch.version, "hip", hip_version)
-    monkeypatch.setattr(system_numa, "gpu_numa_node", lambda index, runtime: seen.append((index, runtime)) or 2)
-    assert _learner_node(torch.device("cuda:1"), multi_node=True) == 2
-    assert seen == [(1, runtime)]
-    assert _learner_node(torch.device("cpu"), multi_node=True) is None
-    assert _learner_node(torch.device("cuda:1"), multi_node=False) is None
-    assert seen == [(1, runtime)]
-
-
 def test_topology_rejects_bad_counts() -> None:
     opts = SimpleNamespace(transition_ipc="auto", weight_ipc="auto", weight_ipc_min_bytes=0)
     with pytest.raises(ValueError, match="divide evenly"):
@@ -401,6 +348,8 @@ def _lockstep_learner(num_updates: int, utd_mode: str, last_gstep: int = 5) -> t
         cfg=SimpleNamespace(num_updates=num_updates),
         rb=SimpleNamespace(num_stored=1),
         device=torch.device("cpu"),
+        learning_iteration=7,
+        update_idx=28,
     )
     learner.async_options = SimpleNamespace(utd_mode=utd_mode, idle_sleep_s=0.0)
     learner.control = SimpleNamespace(collector_steps=100, num_collectors=2, stop=False)
@@ -412,7 +361,13 @@ def _lockstep_learner(num_updates: int, utd_mode: str, last_gstep: int = 5) -> t
     learner.weights = []
     learner.agent.rb.num_stored = 10
     calls: list = []
-    learner.agent.update = lambda n: calls.append(n) or {}
+
+    def update(n):
+        calls.append(n)
+        learner.agent.learning_iteration += 1
+        learner.agent.update_idx += n
+
+    learner.agent.update = update
     learner.publish_if_due = lambda: None
     return learner, calls
 
@@ -425,10 +380,15 @@ def test_lockstep_strict_due_scales_with_global_step_delta(monkeypatch) -> None:
 
     assert learner.maybe_train(8)  # delta 3
     assert sum(calls) == 12 and all(c == 4 for c in calls)
+    assert learner.learning_iteration == 10  # three catch-up chunks, not one poll
+    assert learner.update_idx == 40
     assert not learner.maybe_train(8)  # no new global batches -> no update
     assert sum(calls) == 12
+    assert learner.learning_iteration == 10
     assert learner.maybe_train(9)
     assert sum(calls) == 16
+    assert learner.learning_iteration == 11
+    assert learner.update_idx == 44
 
 
 def test_lockstep_learner_bound_runs_base_on_any_progress(monkeypatch) -> None:
@@ -441,6 +401,8 @@ def test_lockstep_learner_bound_runs_base_on_any_progress(monkeypatch) -> None:
     assert sum(calls) == 4
     assert not learner.maybe_train(6)
     assert sum(calls) == 4
+    assert learner.learning_iteration == 8
+    assert learner.update_idx == 32
 
 
 def test_lockstep_gated_before_learning_starts(monkeypatch) -> None:
@@ -452,79 +414,22 @@ def test_lockstep_gated_before_learning_starts(monkeypatch) -> None:
 
     assert not learner.maybe_train(8)
     assert calls == []
+    assert learner.learning_iteration == 7
+    assert learner.update_idx == 28
 
 
 def _ipc_opts(mode: str = "auto") -> SimpleNamespace:
     return SimpleNamespace(transition_ipc=mode)
 
 
-def test_resolve_collector_inference_devices_colocates_with_owner(monkeypatch) -> None:
-    """Generic "cuda" resolves to the owning learner's GPU for every learner count.
-
-    Regression: the single-learner path used to resolve the generic spec
-    in-process via torch.cuda.current_device(), which silently crossed GPUs
-    (and therefore disabled the IPC transports) when the current device
-    drifted from the learner's.
-    """
-    cuda = lambda n: torch.device("cuda", n)  # noqa: E731
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+def test_single_explicit_learner_device_controls_transport(monkeypatch) -> None:
+    """An explicit rank-0 GPU overrides the trainer default for both transports."""
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
-
-    # single learner on an index-less cuda device: every collector gets the
-    # learner's GPU explicitly (index 0), never the ambient current device
-    devices = resolve_collector_inference_devices("cuda", [], 3, 1, torch.device("cuda"))
-    assert devices == [cuda(0)] * 3
-
-    # single learner on cuda:1: collectors follow it
-    devices = resolve_collector_inference_devices("cuda", [], 2, 1, cuda(1))
-    assert devices == [cuda(1)] * 2
-
-    # multi-learner: collectors chunk to their owning learner's GPU
-    devices = resolve_collector_inference_devices("cuda", [cuda(0), cuda(1)], 4, 2, cuda(0))
-    assert devices == [cuda(0), cuda(0), cuda(1), cuda(1)]
-
-    # explicit specs pass through unchanged (even cross-GPU)
-    devices = resolve_collector_inference_devices("cuda:1", [], 2, 1, cuda(0))
-    assert devices == [cuda(1)] * 2
-
-    # generic "cuda" with a non-CUDA owner resolves explicitly to the default
-    # device — no index-less spec ever reaches a worker
-    devices = resolve_collector_inference_devices("cuda", [], 2, 1, torch.device("cpu"))
-    assert devices == [cuda(0)] * 2
-    devices = resolve_collector_inference_devices("cpu", [cuda(0), cuda(1)], 4, 2, cuda(0))
-    assert devices == [torch.device("cpu")] * 4
-
-    # the resolved co-located layout keeps the IPC ring the default
-    flags = ring_transport_is_ipc(_ipc_opts(), [], [cuda(0)] * 4, 4, 1, torch.device("cuda"))
-    assert flags == [True] * 4
-
-    # invalid specs are rejected
-    with pytest.raises(ValueError, match="collector_inference_device"):
-        resolve_collector_inference_devices("meta", [], 1, 1, cuda(0))
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
-    with pytest.raises(RuntimeError, match="only 1 device"):
-        resolve_collector_inference_devices("cuda:1", [], 1, 1, cuda(0))
-
-
-def test_generic_cuda_falls_back_when_cuda_unavailable(monkeypatch) -> None:
-    """Generic "cuda" degrades to the default device on a CUDA-less host.
-
-    Only when NO explicit learner layout exists — with explicit learner
-    devices the resolution stays pure device arithmetic (worker-side
-    validation owns availability), so co-location proceeds unchanged.
-    """
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    cpu = torch.device("cpu")
-
-    # no learner layout: generic "cuda" follows the default device
-    devices = resolve_collector_inference_devices("cuda", [], 2, 1, cpu)
-    assert devices == [cpu, cpu]
-
-    # explicit learner layout: pure arithmetic, co-location proceeds
-    # even though CUDA is unavailable on this host
-    cuda = lambda n: torch.device("cuda", n)  # noqa: E731
-    devices = resolve_collector_inference_devices("cuda", [cuda(0), cuda(1)], 4, 2, cpu)
-    assert devices == [cuda(0), cuda(0), cuda(1), cuda(1)]
+    opts = SimpleNamespace(transition_ipc="auto", weight_ipc_min_bytes=4)
+    topology = resolve_trainer_topology(4, 2, 1, ["cuda:1"], "cuda", torch.device("cuda:0"), opts, 1)
+    assert [c.ring_ipc for c in topology.collectors] == [True, True]
+    assert [c.weight_ipc for c in topology.collectors] == [True, True]
+    assert all(c.device == torch.device("cuda:1") for c in topology.collectors)
 
 
 def test_ring_transport_ipc_colocated_collectors() -> None:
@@ -615,26 +520,3 @@ def _trainer_with_device(device: str | None) -> Trainer:
     trainer = Trainer.__new__(Trainer)
     trainer._rlcfg = SimpleNamespace(device=device)
     return trainer
-
-
-def test_resolve_learner_devices_expands_generic_cuda(monkeypatch) -> None:
-    monkeypatch.setattr("torch.cuda.device_count", lambda: 4)
-
-    devices = resolve_learner_devices(None, 2, torch.device("cuda"))
-    assert [str(d) for d in devices] == ["cuda:0", "cuda:1"]
-
-    devices = resolve_learner_devices(["cuda:3", "cuda:1"], 2, torch.device("cuda"))
-    assert [str(d) for d in devices] == ["cuda:3", "cuda:1"]
-
-
-def test_resolve_learner_devices_rejects_bad_configs(monkeypatch) -> None:
-    monkeypatch.setattr("torch.cuda.device_count", lambda: 2)
-
-    with pytest.raises(ValueError, match="exactly num_learners"):
-        resolve_learner_devices(["cuda:0"], 2, torch.device("cuda"))
-    with pytest.raises(ValueError, match="more than once"):
-        resolve_learner_devices(["cuda:0", "cuda:0"], 2, torch.device("cuda"))
-    with pytest.raises(ValueError, match="does not exist"):
-        resolve_learner_devices(["cuda:0", "cuda:5"], 2, torch.device("cuda"))
-    with pytest.raises(ValueError, match="requires CUDA"):
-        resolve_learner_devices(None, 2, torch.device("cpu"))

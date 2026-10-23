@@ -5,6 +5,7 @@
 
 import logging
 import random
+import sys
 
 import numpy as np
 import torch
@@ -12,12 +13,13 @@ from rsl_rl.runners import OnPolicyRunner
 
 from motrix_env_core import registry as env_registry
 from motrix_env_core.renderer import RenderConfig
-from motrix_rl import checkpoints
 from motrix_rl.config import CheckpointConfig, LoggingConfig
 from motrix_rl.contracts import TrainerBase, TrainerContext
 from motrix_rl.device import resolve_default_device
 from motrix_rl_rslrl.cfg import RslrlCfg
 from motrix_rl_rslrl.torch import wrap_env
+from motrix_rl_rslrl.torch.train.execution import run_sync
+from motrix_rl_rslrl.torch.train.logging import RslrlTrainingLogger
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +27,8 @@ logger = logging.getLogger(__name__)
 class Trainer(TrainerBase):
     """RSLRL PPO Trainer.
 
-    This class wraps RSLRL's OnPolicyRunner to provide a training interface
-    consistent with the SKRL trainer implementation.
+    Uses native RSLRL PPO primitives with MotrixLab synchronous scheduling
+    and the shared training console; playback retains OnPolicyRunner.
     """
 
     _env_name: str
@@ -72,50 +74,43 @@ class Trainer(TrainerBase):
             seed=self._context.seed,
         )
 
-        logger.info(f"Using device: {device}")
-
-        # Wrap environment for RSLRL
-        vec_env = wrap_env(env, device, render=self._render)
-
-        # Create RSLRL config - use to_dict() method
-        rslrl_cfg = self._create_rslrl_config()
-
-        run_dir = self._context.run_dir
-        runner = OnPolicyRunner(
-            vec_env,
-            rslrl_cfg,
-            log_dir=str(run_dir),
-            device=device,
-        )
-
-        # Start training
-        logger.info(f"Starting training for {self._env_name}")
-        logger.info(f"Number of environments: {self._context.num_envs}")
-
-        # Get max_iterations from config
-        total_iterations = rslrl_cfg["max_iterations"]
-        logger.info(f"Number of learning iterations: {total_iterations}")
-
-        runner.learn(num_learning_iterations=total_iterations)
-        checkpoint_path = checkpoints.final_checkpoint_path(self._context.checkpoint_format, run_dir)
-        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        runner.save(str(checkpoint_path))
-        checkpoints.record_checkpoint_artifact(
-            run_dir,
-            checkpoints.BEST_POLICY,
-            checkpoint_path,
-            checkpoints.POLICY,
-            checkpoint_format=self._context.checkpoint_format,
-        )
-        checkpoints.record_checkpoint_artifact(
-            run_dir,
-            checkpoints.LATEST_TRAINING_STATE,
-            checkpoint_path,
-            checkpoints.TRAINING_STATE,
-            checkpoint_format=self._context.checkpoint_format,
-        )
-
-        logger.info("Training completed")
+        vec_env = training_log = None
+        try:
+            vec_env = wrap_env(env, device, render=self._render)
+            rslrl_cfg = self._create_rslrl_config()
+            # Reuse native algorithm construction/distributed setup and checkpoint
+            # helpers, not its monolithic learn() or console renderer.
+            runner = OnPolicyRunner(vec_env, rslrl_cfg, log_dir=None, device=str(device))
+            training_log = RslrlTrainingLogger(
+                log_dir=str(self._context.run_dir),
+                cfg=rslrl_cfg,
+                env_cfg=vec_env.cfg,
+                num_envs=vec_env.num_envs,
+                is_distributed=runner.is_distributed,
+                gpu_world_size=runner.gpu_world_size,
+                gpu_global_rank=runner.gpu_global_rank,
+                device=str(device),
+            )
+            runner.logger = training_log
+            run_sync(runner, self._context)
+        finally:
+            # Preserve training exceptions/cancellation while attempting all cleanup.
+            active_error = sys.exc_info()[1]
+            cleanup_error = None
+            closers = []
+            if training_log is not None:
+                closers.append(training_log.close)
+            if vec_env is not None:
+                closers.append(vec_env.close)
+            for close in closers:
+                try:
+                    close()
+                except BaseException as exc:
+                    logger.warning("RSLRL training cleanup failed", exc_info=True)
+                    if cleanup_error is None:
+                        cleanup_error = exc
+            if active_error is None and cleanup_error is not None:
+                raise cleanup_error
 
     def play(self, policy_path: str) -> None:
         """Evaluate a trained policy.

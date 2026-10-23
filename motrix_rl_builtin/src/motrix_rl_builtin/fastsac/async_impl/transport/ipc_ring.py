@@ -43,19 +43,14 @@ host-side protocol of the shared-memory ring carries over unchanged.
 
 from __future__ import annotations
 
-from collections import deque, namedtuple
-
 import torch
 
-from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsPayload, FinalObsStorage, RingCursors
-
-# A slot-boundary event and the cursor value it certifies once complete:
-# the write (or read) cursor value the entry advances the shared cursor to
-# when its event is observed finished.
-_PendingEvent = namedtuple("_PendingEvent", ["cursor", "event"])
+from motrix_rl.transport.cuda_ring import CudaTensorRing
+from motrix_rl.transport.ring import RingCursors
+from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsPayload, FinalObsStorage
 
 
-class IpcTransitionRing:
+class IpcTransitionRing(CudaTensorRing):
     """SPSC transition ring backed by one fused CUDA-IPC device tensor.
 
     The producer endpoint is built in the collector process from the shipped
@@ -82,9 +77,7 @@ class IpcTransitionRing:
         expected = (capacity, num_envs, obs_dim + critic_obs_dim + act_dim + 3)
         if tuple(slots.shape) != expected:
             raise ValueError(f"IPC slot tensor shape {tuple(slots.shape)} does not match {expected}")
-        self.cursors = cursors
-        self.slots = slots
-        self.capacity = capacity
+        super().__init__(cursors, slots)
         self.num_envs = num_envs
         self.obs_dim = obs_dim
         self.critic_obs_dim = critic_obs_dim
@@ -97,56 +90,10 @@ class IpcTransitionRing:
         self._o3 = self._o2 + act_dim
         self._o4 = self._o3 + 1  # reward
         self._o5 = self._o4 + 1  # done
-        # Endpoint-local issued counts. The shared cursors hold only the
-        # event-proven (published) values, which LAG the issued counts while
-        # copies are in flight — so slot indexing and publish targets must come
-        # from the issued counts, never from the cursors.
-        self._write_issued_count = self.cursors.write_completed_count
-        self._read_issued_count = self.cursors.read_completed_count
-        # Producer-side: events of pushed-but-not-yet-published slots, in
-        # order. (published cursor value, event) — the write cursor value the
-        # entry certifies once its event completes. Deques: flush pops from
-        # the head, and list.pop(0) would shift the remaining entries.
-        self._write_events: deque[_PendingEvent] = deque()
-        # Consumer-side: events of committed-but-not-yet-advanced reads.
-        self._read_events: deque[_PendingEvent] = deque()
         # Single pinned staging reused by every push; guarded by _staging_event.
         self._staging = torch.empty((num_envs, expected[2]), dtype=torch.float32, pin_memory=True)
         self._staging_event = torch.cuda.Event()
         self._staging_used = False
-
-    # -------------------------------------------------------------- producer
-    def _flush_writes(self) -> None:
-        """Advance ``_write`` to the boundary of completed push events."""
-        events = self._write_events
-        while events and events[0].event.query():
-            self.cursors._write[0] = events.popleft().cursor
-
-    @property
-    def write_completed_count(self) -> int:
-        """Cumulative slots whose writes completed and were published."""
-        self._flush_writes()
-        return self.cursors.write_completed_count
-
-    @property
-    def read_completed_count(self) -> int:
-        """Cumulative slots whose reads completed and were released."""
-        self._flush_reads()
-        return self.cursors.read_completed_count
-
-    @property
-    def write_issued_count(self) -> int:
-        """Cumulative slots submitted for writing, including copies in flight."""
-        return self._write_issued_count
-
-    @property
-    def read_issued_count(self) -> int:
-        """Cumulative slots consumed, including acknowledgements still in flight."""
-        return self._read_issued_count
-
-    def size(self) -> int:
-        """Published but not yet released slot count, including reads in flight."""
-        return self.write_completed_count - self.read_completed_count
 
     def is_full(self) -> bool:
         # Backpressure must count the producer's issued (in-flight included)
@@ -194,31 +141,13 @@ class IpcTransitionRing:
         s[:, self._o4 : self._o5].copy_(dones.reshape(-1, 1))
         s[:, self._o5 :].copy_(truncations.reshape(-1, 1))
         issued = self._write_issued_count
-        slot = issued % self.capacity
         if store is not None:
             store.write(issued, final_obs)
         stream = torch.cuda.current_stream(self.slots.device)
-        self.slots[slot].copy_(s, non_blocking=True)
-        event = torch.cuda.Event()
-        event.record(stream)
-        self._write_events.append(_PendingEvent(issued + 1, event))
-        self._write_issued_count = issued + 1
+        self.write_slot(s)
         self._staging_event.record(stream)
         self._staging_used = True
         return True
-
-    # -------------------------------------------------------------- consumer
-    def _flush_reads(self) -> None:
-        """Advance ``_read`` to the boundary of completed commit events."""
-        events = self._read_events
-        while events and events[0].event.query():
-            self.cursors._read[0] = events.popleft().cursor
-
-    def has_next(self) -> bool:
-        # Flush this endpoint's commit events so the producer's is_full sees
-        # freed slots (the learner's every-loop poll).
-        self._flush_reads()
-        return self.write_completed_count > self._read_issued_count
 
     def read_span(self) -> tuple[int, tuple[torch.Tensor, ...]]:
         """Longest contiguous unread run, as ``(count, field_views)``.
@@ -228,13 +157,9 @@ class IpcTransitionRing:
         scalar fields). Their data is complete: the producer only publishes a
         slot after its H2D event completed. Returns ``(0, ())`` when empty.
         """
-        self._flush_reads()
-        available = self.write_completed_count - self._read_issued_count
-        if available <= 0:
+        count, run = super().read_span()
+        if count == 0:
             return 0, ()
-        slot = self._read_issued_count % self.capacity
-        count = min(available, self.capacity - slot)
-        run = self.slots[slot : slot + count]
         return count, (
             run[:, :, self._o0 : self._o1],
             run[:, :, self._o1 : self._o2],
@@ -249,16 +174,3 @@ class IpcTransitionRing:
         if self.final_obs_store is None:
             return [None] * count
         return self.final_obs_store.read(self._read_issued_count, count)
-
-    def commit_reads(self, n: int) -> None:
-        """Release ``n`` slots of a consumed run once their reads completed.
-
-        Call AFTER the consumer's D2D copies reading the run have been
-        enqueued on the current stream: the recorded event orders the cursor
-        advance behind those copies, so the producer can never overwrite a
-        slot the learner is still reading.
-        """
-        event = torch.cuda.Event()
-        event.record(torch.cuda.current_stream(self.slots.device))
-        self._read_events.append(_PendingEvent(self._read_issued_count + n, event))
-        self._read_issued_count += n

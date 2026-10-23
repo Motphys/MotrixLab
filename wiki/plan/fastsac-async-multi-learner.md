@@ -15,3 +15,10 @@
 - [x] 测试：分区映射、锁步 due 计算、config 校验、collector 设备解析（CPU 可跑，不依赖 N 卡）
 - [x] ruff + 全量 motrix_rl 测试 + 提交推送
 - [ ] 真实多卡（≥2 GPU）环境端到端验证（本机单卡，仅验证了校验路径与单/多 collector 全链路）
+
+## 验收边界
+
+本计划的代码与 CPU/单卡测试用于保护 FastSAC 多 learner 拓扑；它不等同于通用异步框架的完整硬件验收。
+framework-ready 的公共 execution/transport 契约见 [RL 多算法架构设计](../design/rl-multi-algorithm-architecture.md) 和
+[motrix_rl execution guide](../../motrix_rl/src/motrix_rl/execution/README.md)。真实多卡、跨 NUMA 吞吐和 APPO provider
+均不属于本计划已完成项；APPO 不在当前分支实现范围内。

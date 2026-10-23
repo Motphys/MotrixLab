@@ -6,7 +6,7 @@
 
 同步与异步执行共用 `motrix` framework 下唯一的 `fastsac` provider，对外方法名统一为 `motrix.fastsac`。`algo.asynchronous` 只选择执行拓扑，不改变算法、配置类型、run 身份或 checkpoint 格式。算法本身（`Actor`/`Critic`/`SimpleReplayBuffer`/`EmpiricalNormalization`/`FastSacAgent`）**原样复用、逐字节一致**。异构执行是默认模式，首要目标是让采样与训练各自满速。
 
-算法原理见 [SAC 与 FastSAC 算法原理入门](../research/sac-and-fastsac-primer.md)；所处的多算法框架见 [RL 多算法架构设计](./rl-multi-algorithm-architecture.md)。
+算法原理见 [SAC 与 FastSAC 算法原理入门](../research/sac-and-fastsac-primer.md)；所处的多算法框架见 [RL 多算法架构设计](./rl-multi-algorithm-architecture.md)。公共执行层与算法层的目标接口、Process 所有权及最终验收，以其中的[异步训练架构目标与验收](./rl-multi-algorithm-architecture.md#异步训练架构目标与验收)为准。本文描述 FastSAC 特有的数据与调度语义；现有 session/worker wiring 不代表已满足目标架构。
 
 ---
 
@@ -67,22 +67,25 @@ CUDA 推理的数据边界为：CPU policy observation 先复制到预分配 pin
 
 ## 3. 代码结构与接入
 
-通用算法组件留在 `motrix_rl/fastsac/`，同步与异步各自只保留编排层。由于 `async` 是 Python 关键字，异步实现的内部包名用 `async_impl`；公共配置字段使用 `asynchronous`。
+FastSAC 算法实现与 session adapter 位于 `motrix_rl_builtin`，公共 `AsyncTrainerBase` 负责父进程编排，通用执行与传输原语位于 `motrix_rl`。FastSAC session 负责 worker 参数、预期退出、首批指标门槛和训练日志；spawn、readiness 等待、放行、监控与进程回收由基类统一执行。由于 `async` 是 Python 关键字，异步实现的内部包名用 `async_impl`；公共配置字段使用 `asynchronous`。
 
 ```
-motrix_rl/src/motrix_rl/fastsac/
+motrix_rl/src/motrix_rl/
+├── execution/                # 算法无关的阶段、进程生命周期与取消
+└── transport/                # 算法无关的 SPSC ring、CUDA ring、snapshot
+
+motrix_rl_builtin/src/motrix_rl_builtin/fastsac/
 ├── agent.py / buffer.py / networks.py / wrap_np.py
 ├── config.py                 # FastSacCfg 与共享配置
 ├── framework.py              # 注册 motrix.fastsac，根据配置选择 Trainer
-├── sync/
-│   └── train.py              # 同步 Trainer
+├── sync/train.py             # 同步 Trainer
 └── async_impl/
-    ├── shm.py                # 共享内存原语：SharedTransitionRing / WeightSnapshot / Control
-    ├── numa.py               # 多 collector 的 NUMA/CPU 绑定（sched_setaffinity + libnuma set_membind）
+    ├── transport/            # FastSAC transition/final-observation payload adapter
+    ├── numa.py               # 多 collector 的 NUMA/CPU 绑定
     ├── collector.py          # Collector：CPU 采样进程逻辑
     ├── learner.py            # Learner：GPU 训练进程逻辑 + UTD 治理
-    ├── worker.py             # module-level 进程入口（可被 spawn pickle）+ 共享 builder
-    └── train.py              # Trainer(TrainerBase)：分配共享内存、spawn 两进程、编排生命周期
+    ├── worker.py             # spawn 进程入口与共享 builder
+    └── train.py              # AsyncTrainerBase 的 FastSAC session / worker 描述
 ```
 
 **复用（import，不复制）**：`fastsac.networks.{Actor, Critic}`、`fastsac.buffer.{SimpleReplayBuffer, EmpiricalNormalization}`、`fastsac.agent.FastSacAgent`、`fastsac.wrap_np.FastSacNpEnvWrap`、`fastsac.config.FastSacAgentCfg`。
@@ -99,21 +102,23 @@ mxlab train task=g1-walk-flat/motrix.fastsac algo.asynchronous=false # 同步 ba
 
 ---
 
-## 4. 共享内存原语（`shm.py`）
+## 4. 共享传输原语与 FastSAC adapter（`transport/`）
 
 三个通道全部由父进程在 spawn 前分配、`.share_memory_()`，子进程通过 spawn reduction 继承句柄。所有跨进程标量都是**对齐 int64 共享 tensor**：每个游标 / 计数器**只有单一写方**，故无需原子 RMW（CAS / fetch_add）；「数据先于游标可见」这一顺序依赖**当前仅在强内存序 ISA（x86-64 / TSO）上成立**，代码不插入任何内存屏障。**弱内存序（ARM64）暂不支持**：Python 无可移植的独立 fence，`atomics` 包也只提供 `atomicview` 上的有序 load/store（且无 x86 wheel），要支持 ARM 需把每个游标 / `_seq` 的 store/load 改走 `atomicview` 的 `RELEASE`/`ACQUIRE`，属于对这些站点的重构。
 
 ### 4.1 SharedTransitionRing — SPSC 有界背压环
 
-单生产者（collector）单消费者（learner）的环形缓冲。每个 slot 存**一个 env-step 的全 `num_envs` 批**，与同步版「一次 `extend` 写 `num_envs` 条」的粒度一致。八个字段各为一块 `(capacity, num_envs, dim)` 共享 tensor，与 `SimpleReplayBuffer.extend` 入参一一对应：
+单生产者（collector）单消费者（learner）的环形缓冲。每个 slot 存**一个 env-step 的全 `num_envs` 批**，与同步版「一次 `extend` 写 `num_envs` 条」的粒度一致。FastSAC adapter 的六个字段各为一块 `(capacity, num_envs, dim)` 共享 tensor，与 `SimpleReplayBuffer.extend` 的 transition 入参对应：
 
 | 字段 | dtype | 形状 |
 |---|---|---|
-| `obs` / `next_obs` | f32 | `(C, N, obs_dim)` |
-| `critic_obs` / `next_critic_obs` | f32 | `(C, N, critic_obs_dim)` |
+| `obs` | f32 | `(C, N, obs_dim)` |
+| `critic_obs` | f32 | `(C, N, critic_obs_dim)` |
 | `actions` | f32 | `(C, N, act_dim)` |
 | `rewards` | f32 | `(C, N)` |
 | `dones` / `truncations` | i64 | `(C, N)` |
+
+`next_obs` / `next_critic_obs` 不在 ring 中单独传输：普通 transition 由 learner 根据相邻 slot 的 observation 构造，自动 reset 与 time-limit truncation 的终态观测由 final-observation sidecar 覆盖。通用 `motrix_rl.transport` 只定义字段布局和所有权，不定义这些 FastSAC successor/replay 语义。
 
 （`C = ring_capacity`，默认 64；`N = num_envs`。）
 
@@ -172,7 +177,7 @@ RTX 5090 上以 K1 WBT、2048 environments 和默认 `weight_publish_interval=4`
 约 2.6%，不是主瓶颈。细分 wall time 还包括 collector 等待 learner 完成发布、稳定 CPU snapshot 拷贝，以及同卡
 learner 竞争下的 CUDA stream completion；不能把最后一项全部归因于 memcpy。
 
-因此当前传输继续使用 CPU shared-memory snapshot，不引入 CUDA IPC。先执行两个更小且直接针对剖析结果的改动：
+Host shared-memory snapshot 是通用回退路径；满足同卡与参数量条件时也支持 CUDA IPC snapshot（见 §2）。Host 路径通过以下流水优化减少 collector 关键路径开销：
 
 - learner 在把 seqlock 置为 odd 之前完成 actor/normalizer 的 D2H materialization，使 collector 能继续读取上一个完整
   version，不为 learner 的 CUDA completion 自旋；actor 参数先在 device 上 flatten，再做一次 D2H。
@@ -185,9 +190,9 @@ learner 竞争下的 CUDA stream completion；不能把最后一项全部归因�
 enqueue 的平均 wall time。CUDA completion 若被流水到下一次 inference，会体现在 `collector_sample_actions_ms`；判断优化
 必须同时看 `collect_ms_per_batch` 与 `env_steps_per_s`，不能只看 `collector_sync_ms`。
 
-只有后续完整训练剖析证明剩余 GPU transfer 在端到端 collector critical path 中占主导，并且 CPU snapshot 方案无法通过
-流水隐藏时，才升级到 persistent CUDA IPC snapshot。届时必须同时解决跨进程 CUDA event、slot reuse acknowledgement、
-producer lifetime 和 compiled collector 固定参数地址，不能只把 H2D 替换成无同步的 D2D。
+CUDA IPC snapshot 的选择仍应由完整训练剖析决定，不能只依据局部 memcpy 时间判断收益。设备 slot 由 sender 保活，
+发布与读取都等待 CUDA completion；receiver 先复制到私有设备 staging、复检版本，再加载 compiled collector 的固定参数地址，
+不能把 host 路径替换成无同步的 D2D。
 
 ### 4.3 Control — 共享标量
 
