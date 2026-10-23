@@ -635,14 +635,13 @@ def run_learner_process(
         last_log_time = start_time
         last_log_step = resume_step
         train_started = False
-        # First payload goes out immediately (step 0) so the parent's panel
-        # quiescence gate opens as soon as collectors take their first steps,
-        # instead of after a silent full log window; resume keeps window
-        # alignment.
-        if logging_interval > 0 and resume_step:
-            next_log = ((resume_step // logging_interval) + 1) * logging_interval
-        else:
-            next_log = 0
+        # Initial and first-update payloads keep console readiness independent
+        # of publication cadence. Subsequent windows follow learner iterations,
+        # not collection progress (which can run far ahead in learner-bound mode).
+        initial_payload_sent = False
+        next_log = (
+            ((learner.learning_iteration // logging_interval) + 1) * logging_interval if logging_interval > 0 else 0
+        )
         next_save = ((resume_step // save_interval) + 1) * save_interval if save_interval > 0 else 0
         t_learn_win = 0.0  # wall-clock spent in learner train calls this log window
         learner_train_samples_ms: list[float] = []
@@ -712,7 +711,7 @@ def run_learner_process(
                 else:
                     # Data arrived, but replay/batch readiness still gated training.
                     learner_gate_wait_samples_ms.append(idle_ms)
-            if step >= next_log or first_update:
+            if not initial_payload_sent or first_update or (trained and learner.learning_iteration >= next_log):
                 # Publish first-update completion immediately: the startup
                 # handoff must not wait an entire user logging interval.
                 # One compact payload per log window to the parent (panel +
@@ -748,6 +747,8 @@ def run_learner_process(
                     "step": step,
                     "sps": sps,
                     "updates": learner.update_idx,
+                    "update_idx": learner.update_idx,
+                    "learning_iteration": learner.learning_iteration,
                     "training_started": train_started,
                     "metrics": metrics_log,
                     "warming": warming,
@@ -778,7 +779,12 @@ def run_learner_process(
                 learner_gate_wait_samples_ms = []
                 # Recompute the window edge (not +=) so the immediate first
                 # payload cannot shift every later window off the interval.
-                next_log = ((step // logging_interval) + 1) * logging_interval if logging_interval > 0 else 0
+                initial_payload_sent = True
+                next_log = (
+                    ((learner.learning_iteration // logging_interval) + 1) * logging_interval
+                    if logging_interval > 0
+                    else 0
+                )
 
             if is_primary and save_interval > 0 and step >= next_save and step > 0:
                 agent.global_step = step
@@ -804,6 +810,25 @@ def run_learner_process(
                     except Full:
                         logger.warning("panel queue full; checkpoint notice for %s dropped", path)
                 next_save += save_interval
+
+        # Flush the unfinished learner window with the final counters. Empty
+        # windows stay empty; never relabel a preceding window's diagnostics
+        # with a newer learner iteration.
+        try:
+            panel_queue.put(
+                {
+                    "rank": rank,
+                    "learner_counters": {
+                        "learning_iteration": learner.learning_iteration,
+                        "update_idx": learner.update_idx,
+                        "updates": learner.update_idx,
+                        "metrics": agent.window_metrics.stats_and_reset() if train_started else None,
+                    },
+                },
+                timeout=1.0,
+            )
+        except Full:
+            logger.warning("panel queue full; final learner counters dropped")
 
         if num_learners > 1:
             # All ranks have consumed the identical global step count, so the

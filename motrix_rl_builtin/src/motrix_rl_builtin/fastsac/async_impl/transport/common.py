@@ -48,12 +48,11 @@ All cross-process safety here rests on two invariants:
 from __future__ import annotations
 
 import torch
-from torch import nn
 
-
-def _shared(shape, dtype) -> torch.Tensor:
-    """Allocate a zero-initialized CPU tensor in shared memory (usable across spawn children)."""
-    return torch.zeros(shape, dtype=dtype).share_memory_()
+from motrix_rl.transport.ring import shared_tensor as _shared
+from motrix_rl.transport.snapshot import bind_flat_params as bind_flat_params
+from motrix_rl.transport.snapshot import flatten_params as flatten_params
+from motrix_rl.transport.snapshot import load_flat_params as load_flat_params
 
 
 # ---------------------------------------------------------------- control block
@@ -72,7 +71,7 @@ class Control:
     def __init__(self, num_collectors: int = 1):
         self.num_collectors = num_collectors
         self._stop = _shared((1,), torch.int64)
-        self._global_step = _shared((1,), torch.int64)  # learner iteration counter
+        self._global_step = _shared((1,), torch.int64)  # full-batch collection progress, not learner iterations
         # one env-step-batch counter per collector, single-writer each
         self._collector_steps = [_shared((1,), torch.int64) for _ in range(num_collectors)]
 
@@ -116,40 +115,6 @@ class Control:
 
     def inc_collector_steps(self, collector_id: int) -> None:
         self._collector_steps[collector_id][0] += 1
-
-
-# ---------------------------------------------------------------- flat-param helpers
-def flatten_params(module: nn.Module) -> torch.Tensor:
-    """Flatten module parameters into one contiguous float vector on the module's device."""
-    return torch.cat([p.detach().reshape(-1).float() for p in module.parameters()])
-
-
-def load_flat_params(module: nn.Module, flat: torch.Tensor) -> None:
-    """Inverse of :func:`flatten_params`; copies a flat vector into the params."""
-    offset = 0
-    for p in module.parameters():
-        n = p.numel()
-        p.data.copy_(flat[offset : offset + n].view_as(p).to(p.device))
-        offset += n
-
-
-def bind_flat_params(module: nn.Module) -> torch.Tensor:
-    """Bind all module parameters to views of one device-contiguous flat tensor.
-
-    The collector owns an inference-only actor, so its parameters do not need
-    optimizer storage. Binding them once lets every later CPU snapshot version
-    reach CUDA through one H2D copy instead of one transfer per parameter.
-    """
-    params = list(module.parameters())
-    flat = torch.empty(sum(p.numel() for p in params), dtype=params[0].dtype, device=params[0].device)
-    offset = 0
-    with torch.no_grad():
-        for param in params:
-            view = flat[offset : offset + param.numel()].view_as(param)
-            view.copy_(param)
-            param.data = view
-            offset += param.numel()
-    return flat
 
 
 # obs-normalizer stat buffers that the collector needs (read-only) to reproduce

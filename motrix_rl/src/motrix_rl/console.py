@@ -51,8 +51,9 @@ class TrainingPanelStats:
     mean_return: float
     mean_episode_length: float
     episodes: int
-    buffer_size: float
-    buffer_capacity: float
+    # None for on-policy algorithms without a replay buffer; kwargs remain required.
+    buffer_size: float | None
+    buffer_capacity: float | None
     collect_ms: float
     learn_ms: float
     learn_percent: float
@@ -60,6 +61,11 @@ class TrainingPanelStats:
     # Rolling-window iteration rate; None = same unavailable-rate semantics as
     # steps_per_second. Falls back to the cumulative average when absent.
     iterations_per_second: float | None = None
+    # Learner-side counters are optional; iteration remains the algorithm's
+    # stopping/collection progress for backward-compatible panel layouts.
+    learning_iteration: int | None = None
+    update_idx: int | None = None
+    progress_unit: str = "iterations"
     training_metrics: Mapping[str, Any] | None = None
     reward_terms: Mapping[str, Any] = field(default_factory=dict)
     env_metrics: Mapping[str, Any] = field(default_factory=dict)
@@ -191,11 +197,24 @@ def _eta_seconds(stats: TrainingPanelStats) -> float | None:
 
 
 def _iter_rate_text(stats: TrainingPanelStats) -> str:
+    unit = "collection steps/s" if stats.progress_unit == "collection steps" else "iter/s"
     if stats.iterations_per_second is not None:
-        return f"{stats.iterations_per_second:,.0f} iter/s"
+        return f"{stats.iterations_per_second:,.0f} {unit}"
     if stats.steps_per_second is None:
         return "warming up" if stats.warming else "measuring…"
-    return f"{stats.iteration / max(stats.elapsed_seconds, 1e-9):,.0f} iter/s"
+    return f"{stats.iteration / max(stats.elapsed_seconds, 1e-9):,.0f} {unit}"
+
+
+def _progress_text(stats: TrainingPanelStats) -> str:
+    if stats.learning_iteration is None:
+        return f"iter {stats.iteration:,}/{stats.total_iterations:,}"
+    if stats.progress_unit == "collection steps":
+        return f"iter {stats.learning_iteration:,} · collection steps {stats.iteration:,}/{stats.total_iterations:,}"
+    return f"iter {stats.learning_iteration:,}/{stats.total_iterations:,}"
+
+
+def _gradient_text(stats: TrainingPanelStats) -> str:
+    return f" · gradient rounds {stats.update_idx:,}" if stats.update_idx is not None else ""
 
 
 def format_training_panel(stats: TrainingPanelStats, *, title: str = "rl") -> str:
@@ -220,7 +239,7 @@ def format_training_panel(stats: TrainingPanelStats, *, title: str = "rl") -> st
         else ("warming up" if stats.warming else "measuring…")
     )
     header = (
-        f" {title} - iter {stats.iteration}/{stats.total_iterations} ({pct:.1f}%) - "
+        f" {title} - {_progress_text(stats)}{_gradient_text(stats)} ({pct:.1f}%) - "
         f"{sps_text} - {hms(stats.elapsed_seconds)}{eta_text}"
     )
     lines = [
@@ -249,10 +268,17 @@ def format_training_panel(stats: TrainingPanelStats, *, title: str = "rl") -> st
         parts = [f"{gpu_util:.0f}%" if gpu_util is not None else "n/a", _format_memory(gpu_mem)]
         lines.append(" system      gpu " + "  ".join(parts))
     metrics = stats.training_metrics
-    buf = f"{si(stats.buffer_size)}/{si(stats.buffer_capacity)}"
+    buf = (
+        f"{si(stats.buffer_size)}/{si(stats.buffer_capacity)}"
+        if stats.buffer_size is not None and stats.buffer_capacity is not None
+        else None
+    )
     if metrics is None:
-        message = "warmup - filling replay buffer" if stats.warming else "training metrics unavailable"
-        lines.append(f" train       {message} ({buf})")
+        message = "training metrics unavailable"
+        if stats.warming:
+            message = "warmup - filling replay buffer" if buf is not None else "warmup"
+        suffix = f" ({buf})" if buf is not None else ""
+        lines.append(f" train       {message}{suffix}")
     else:
         toks = _format_metric_items(metrics)
         colw = max(len(t) for t in toks) + 2 if toks else 1
@@ -261,7 +287,8 @@ def format_training_panel(stats: TrainingPanelStats, *, title: str = "rl") -> st
             prefix = " train       " if i == 0 else " " * 13
             row = "".join(t.ljust(colw) for t in toks[i : i + per_line])
             lines.append((prefix + row).rstrip())
-        lines.append(f" buffer      {buf}")
+        if buf is not None:
+            lines.append(f" buffer      {buf}")
 
     terms = stats.reward_terms
     if terms:
@@ -759,7 +786,12 @@ def render_training_panel(stats: TrainingPanelStats, *, title: str = "rl", view:
         card(
             f"Run progress ({progress * 100:.1f}%)",
             Group(
-                Text(f"{stats.iteration:,}/{stats.total_iterations:,} iters", style="white"),
+                Text(
+                    _progress_text(stats) + _gradient_text(stats)
+                    if stats.learning_iteration is not None
+                    else f"{stats.iteration:,}/{stats.total_iterations:,} iters",
+                    style="white",
+                ),
                 progress_row,
                 _run_progress_time_text(stats),
             ),
@@ -802,9 +834,11 @@ def render_training_panel(stats: TrainingPanelStats, *, title: str = "rl", view:
     if train_items:
         train_parts.append(_rich_compact_metric_grid(train_items, limit=None))
     else:
-        train_parts.append(
-            Text("warmup - filling replay buffer" if stats.warming else "training metrics unavailable", style="grey70")
-        )
+        message = "training metrics unavailable"
+        if stats.warming:
+            has_buffer = stats.buffer_size is not None and stats.buffer_capacity is not None
+            message = "warmup - filling replay buffer" if has_buffer else "warmup"
+        train_parts.append(Text(message, style="grey70"))
     training = Panel(Group(*train_parts), title=f"Training ({len(train_items)})", border_style="grey37", padding=(0, 1))
     left_blocks: list[Any] = [training]
     if stats.reward_terms:

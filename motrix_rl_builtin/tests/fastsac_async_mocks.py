@@ -51,6 +51,9 @@ class ThreadQueue(queue.Queue):
     def close(self) -> None:
         pass
 
+    def cancel_join_thread(self) -> None:
+        pass
+
 
 class ThreadProcess:
     """A worker "process" that runs ``script(self)`` on a thread; its return value is the exit code."""
@@ -71,6 +74,10 @@ class ThreadProcess:
 
     def _run(self) -> None:
         self.exitcode = self._script(self)
+
+    @property
+    def pid(self) -> int | None:
+        return self._thread.ident
 
     def start(self) -> None:
         self._thread.start()

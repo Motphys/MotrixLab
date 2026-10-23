@@ -231,6 +231,11 @@ class Learner:
     def update_idx(self) -> int:
         return self.agent.update_idx
 
+    @property
+    def learning_iteration(self) -> int:
+        """Completed update calls, including each strict-mode catch-up chunk."""
+        return self.agent.learning_iteration
+
     # ------------------------------------------------------------------ ingest
     def drain(self) -> int:
         """Move up to ``max_ingest_per_iter`` slots per ring into the replay buffer.

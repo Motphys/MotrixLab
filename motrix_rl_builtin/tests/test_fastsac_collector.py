@@ -537,3 +537,29 @@ def test_transition_ring_full_gates_before_actions_and_resumes():
     assert collector.step_once()
     assert env.steps == len(calls) == control.collector_steps == 2
     assert ring.write_completed_count == 2
+
+
+@pytest.mark.parametrize("identity", [False, True])
+def test_weight_snapshot_roundtrip_preserves_exact_normalizer_state(identity):
+    actor, source = _source_policy()
+    if identity:
+        source = torch.nn.Identity()
+        destination = torch.nn.Identity()
+    else:
+        destination = EmpiricalNormalization(_OBS_DIM, device="cpu")
+        source.count.fill_(2**53 + 7)
+    target, _ = _source_policy()
+    with torch.no_grad():
+        for parameter in target.parameters():
+            parameter.zero_()
+    shared = WeightChannelShared(_OBS_DIM)
+    sender = HostWeightSender(shared, sum(parameter.numel() for parameter in actor.parameters()))
+    receiver = HostWeightReceiver(shared, sender.params)
+    sender.publish(actor, source)
+    assert receiver.maybe_load(target, destination)[0] == 1
+    for expected, actual in zip(actor.parameters(), target.parameters()):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    if not identity:
+        for name in ("_mean", "_std", "_var", "count"):
+            torch.testing.assert_close(getattr(destination, name), getattr(source, name), rtol=0, atol=0)
+        assert destination.count.item() == 2**53 + 7

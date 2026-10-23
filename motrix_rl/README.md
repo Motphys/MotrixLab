@@ -12,6 +12,10 @@ Plugins register through the `motrix_rl.frameworks` Python entry-point group whe
 registry queries and explicitly before Hydra training-task composition; importing the control plane alone does not
 hard-code plugin imports. Provider/trainer contracts live in `motrix_rl.contracts` inside this package.
 
+Algorithm adapters can reuse the opt-in [Sync / Async execution layer](src/motrix_rl/execution/README.md)
+for phase scheduling, bounded data handoff, parameter versions and worker lifecycle management without
+moving algorithm-specific data or update policies into the control plane.
+
 The control plane has its own general runtime dependencies (including Torch); splitting provider packages does not make
 `motrix-rl` itself a dependency-free package. `motrix-rl` never depends on provider plugins, including through optional
 extras. The workspace root requires `motrix-rl-builtin` and `motrix-rl-skrl`, ensuring FastSAC and SKRL Torch are available

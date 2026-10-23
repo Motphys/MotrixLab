@@ -401,6 +401,8 @@ def _lockstep_learner(num_updates: int, utd_mode: str, last_gstep: int = 5) -> t
         cfg=SimpleNamespace(num_updates=num_updates),
         rb=SimpleNamespace(num_stored=1),
         device=torch.device("cpu"),
+        learning_iteration=7,
+        update_idx=28,
     )
     learner.async_options = SimpleNamespace(utd_mode=utd_mode, idle_sleep_s=0.0)
     learner.control = SimpleNamespace(collector_steps=100, num_collectors=2, stop=False)
@@ -412,7 +414,13 @@ def _lockstep_learner(num_updates: int, utd_mode: str, last_gstep: int = 5) -> t
     learner.weights = []
     learner.agent.rb.num_stored = 10
     calls: list = []
-    learner.agent.update = lambda n: calls.append(n) or {}
+
+    def update(n):
+        calls.append(n)
+        learner.agent.learning_iteration += 1
+        learner.agent.update_idx += n
+
+    learner.agent.update = update
     learner.publish_if_due = lambda: None
     return learner, calls
 
@@ -425,10 +433,15 @@ def test_lockstep_strict_due_scales_with_global_step_delta(monkeypatch) -> None:
 
     assert learner.maybe_train(8)  # delta 3
     assert sum(calls) == 12 and all(c == 4 for c in calls)
+    assert learner.learning_iteration == 10  # three catch-up chunks, not one poll
+    assert learner.update_idx == 40
     assert not learner.maybe_train(8)  # no new global batches -> no update
     assert sum(calls) == 12
+    assert learner.learning_iteration == 10
     assert learner.maybe_train(9)
     assert sum(calls) == 16
+    assert learner.learning_iteration == 11
+    assert learner.update_idx == 44
 
 
 def test_lockstep_learner_bound_runs_base_on_any_progress(monkeypatch) -> None:
@@ -441,6 +454,8 @@ def test_lockstep_learner_bound_runs_base_on_any_progress(monkeypatch) -> None:
     assert sum(calls) == 4
     assert not learner.maybe_train(6)
     assert sum(calls) == 4
+    assert learner.learning_iteration == 8
+    assert learner.update_idx == 32
 
 
 def test_lockstep_gated_before_learning_starts(monkeypatch) -> None:
@@ -452,6 +467,8 @@ def test_lockstep_gated_before_learning_starts(monkeypatch) -> None:
 
     assert not learner.maybe_train(8)
     assert calls == []
+    assert learner.learning_iteration == 7
+    assert learner.update_idx == 28
 
 
 def _ipc_opts(mode: str = "auto") -> SimpleNamespace:

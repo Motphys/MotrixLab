@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, is_dataclass
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
+from motrix_rl.execution.contracts import ExecutionCancelled
 from motrix_rl.metrics import MetricsLogger
 
 CfgT = TypeVar("CfgT")
@@ -73,7 +74,7 @@ class TrainerHandle:
         self.metrics.run("running", **self.run_info)
         try:
             self.trainer.train()
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, ExecutionCancelled):
             self.metrics.run("killed")
             raise
         except BaseException as exc:
