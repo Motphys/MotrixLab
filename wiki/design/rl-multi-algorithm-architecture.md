@@ -61,6 +61,54 @@ RL 集成层需要在同一套入口下承载多个 RL 框架和多种算法：
 
 `rllib` 是 RL 框架 namespace，也是 run metadata 与 CLI method 中的第一段。`algo` 是该 framework 内部的算法/agent 名称。`train_backend` 是训练实现所用的计算后端（如 `jax` / `torch`，也允许自定义名称）。
 
+### 4.1a 共享执行与 Tensor 传输边界
+
+`motrix_rl.execution` 管理阶段交接、取消和进程生命周期；
+`motrix_rl.transport` 提供有界 SPSC tensor slots 与版本化 inference snapshot。
+算法插件提供 payload 布局、采样和学习逻辑，不需要重新实现共享内存所有权协议。
+
+```text
+既有 runner / TrainerContext / metrics / checkpoint artifacts
+                  │
+           算法 Training Adapter
+                  │
+        execution：阶段 / 生命周期 / 停止
+                  │
+Collector ── 有界 SPSC tensor ring ── Learner
+    ▲                                  │
+    └──── 一致 inference snapshot ──────┘
+                  │
+       算法拥有 replay / unroll storage
+```
+
+- `transport.ring.SharedTensorRing` 接受有序 `TensorField` 布局，支持不同 shape/dtype
+  的字段。`read_span` 返回借用 view；只有读取或复制完成后才能 `commit_reads`。
+- `transport.cuda_ring.CudaTensorRing` 运输一个固定 shape 的 CUDA slot；打包布局由
+  算法定义。issued cursor 用于预留容量，completed cursor 只在 CUDA event 完成后发布。
+  producer 必须保持 copy source 不变直至复制完成；consumer 必须在当前 slots-device
+  stream 上排完所有读取，再确认释放。CUDA owner 必须保持 slots 存活直到 peer 退出。
+- `transport.snapshot` 原子发布 float32 flat model parameters 与具名辅助 tensor，
+  共享一个 seqlock/version。CPU staging、CUDA IPC 和双缓冲一致性由通道负责；
+  auxiliary state 的语义和加载时机由算法决定。它不是任意 module state_dict 序列化器。
+- host cursor/seqlock 仍依赖 x86-64 TSO；不宣称支持 ARM，也不是 MPMC。
+  readiness、retry/backoff 和取消属于执行/调用层；数据通道不拥有监控线程。
+
+FastSAC 每个 collector 保持一条 ring、一个参数通道，多个 ring 按原 topology 分配给
+唯一 learner。算法适配器保留六字段 transition 布局、CUDA fused float32 packing、
+单 pinned staging 和稀疏 final-observation sidecar。sidecar 在 slot 发布前写入，只有
+completed read acknowledgement 才允许复用。其 replay 继续利用相邻 observation
+构成 next observation；generation 对齐、UTD、DDP、NUMA 和恢复进度不属于通用 ring。
+
+transport 不等于 replay：前者限制在途数据，后者决定历史保留与采样。使用 unroll 的算法
+可以提供序列、behavior log probability、mask 和版本布局，而不经过 FastSAC replay。
+Sync 可以直接交接本进程数据，无需为接口统一引入 ring copy。共享 transport 本身不代表
+已提供所有算法的 worker wiring、学习预算策略或 APPO 实现。
+
+验证覆盖 host 和 CUDA slot 环回、背压、借用 view 生命周期、实际 spawn/IPC、
+不同 unroll 布局和 snapshot auxiliary 布局；FastSAC 原有 replay/final observation、
+collector、pipeline 和 DDP 测试继续保护算法行为。单 GPU IPC 验证不替代多 GPU NCCL、
+跨 NUMA 吞吐与端到端训练性能验收。
+
 ### 4.1 Workspace package boundaries
 
 RL 集成拆分为控制平面（同时持有稳定 contracts）和可选 provider 插件两个边界：

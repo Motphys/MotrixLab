@@ -83,6 +83,8 @@ def test_rl_trainer_supports_sim_backend(monkeypatch, sim_backend: str) -> None:
     next_obs, rewards, dones, extras = wrapped.step(torch.zeros((_NUM_ENVS, _ACT_DIM)))
     assert all(tensor.device.type == "cpu" for tensor in (obs["policy"], next_obs["policy"], rewards, dones))
     assert extras["time_outs"].device.type == "cpu"
+    assert extras["Reward"] is env.state.reward_terms
+    assert extras["metrics"] == env.state.process_metrics()
 
     actions = env.step.call_args.args[0]
     assert isinstance(actions, np.ndarray if sim_backend == "np" else torch.Tensor)

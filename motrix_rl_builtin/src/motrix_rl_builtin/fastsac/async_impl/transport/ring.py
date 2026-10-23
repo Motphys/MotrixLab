@@ -42,38 +42,8 @@ from dataclasses import dataclass
 
 import torch
 
-from motrix_rl_builtin.fastsac.async_impl.transport.common import _shared
-
-
-class RingCursors:
-    """Host shared-memory read/write cursors shared by both ring transports.
-
-    Counts are cumulative env-step batches (slots), not physical slot indices;
-    they do not wrap at capacity. Completed writes are published to the consumer,
-    and completed reads release slots to the producer.
-
-    Created once by the parent process and inherited by both workers. Each
-    cursor has a single writer (the producer owns ``_write``, the consumer
-    owns ``_read``), so plain aligned int64 stores publish progress coherently
-    on x86/TSO without barriers.
-    """
-
-    def __init__(self):
-        self._write = _shared((1,), torch.int64)
-        self._read = _shared((1,), torch.int64)
-
-    @property
-    def write_completed_count(self) -> int:
-        # Consumer reads this; single-writer producer, so a plain aligned int64
-        # load is coherent. On x86/TSO the data loads that follow cannot be
-        # reordered ahead of it, so no acquire barrier is needed (x86-only).
-        return int(self._write[0])
-
-    @property
-    def read_completed_count(self) -> int:
-        # Producer reads this; single-writer consumer. On x86/TSO the following
-        # is_full() decision is based on an up-to-date value without a barrier.
-        return int(self._read[0])
+from motrix_rl.transport.ring import RingCursors, SharedTensorRing, TensorField
+from motrix_rl.transport.ring import shared_tensor as _shared
 
 
 @dataclass
@@ -154,7 +124,7 @@ class FinalObsStorage:
 
 
 # ---------------------------------------------------------------- transition ring
-class SharedTransitionRing:
+class SharedTransitionRing(SharedTensorRing):
     """SPSC ring of transition batches with bounded backpressure (host fields).
 
     Each slot holds one env-step batch: the six tensors produced by one
@@ -190,41 +160,22 @@ class SharedTransitionRing:
         cursors: RingCursors | None = None,
         final_obs_store: FinalObsStorage | None = None,
     ):
-        if capacity < 1:
-            raise ValueError(f"ring_capacity must be >= 1, got {capacity}")
-        self.capacity = capacity
-        self.num_envs = num_envs
         f32, i64 = torch.float32, torch.int64
-        self.obs = _shared((capacity, num_envs, obs_dim), f32)
-        self.critic_obs = _shared((capacity, num_envs, critic_obs_dim), f32)
-        self.actions = _shared((capacity, num_envs, act_dim), f32)
-        self.rewards = _shared((capacity, num_envs), f32)
-        self.dones = _shared((capacity, num_envs), i64)
-        self.truncations = _shared((capacity, num_envs), i64)
-        self.cursors = cursors if cursors is not None else RingCursors()
+        super().__init__(
+            capacity,
+            (
+                TensorField("obs", (num_envs, obs_dim), f32),
+                TensorField("critic_obs", (num_envs, critic_obs_dim), f32),
+                TensorField("actions", (num_envs, act_dim), f32),
+                TensorField("rewards", (num_envs,), f32),
+                TensorField("dones", (num_envs,), i64),
+                TensorField("truncations", (num_envs,), i64),
+            ),
+            cursors,
+        )
+        self.num_envs = num_envs
+        self.obs, self.critic_obs, self.actions, self.rewards, self.dones, self.truncations = self.tensors
         self.final_obs_store = final_obs_store
-
-    @property
-    def write_completed_count(self) -> int:
-        return self.cursors.write_completed_count
-
-    @property
-    def read_completed_count(self) -> int:
-        return self.cursors.read_completed_count
-
-    @property
-    def write_issued_count(self) -> int:
-        """Cumulative slots written; host writes complete synchronously."""
-        return self.write_completed_count
-
-    @property
-    def read_issued_count(self) -> int:
-        """Cumulative slots consumed; host acknowledgements complete synchronously."""
-        return self.read_completed_count
-
-    def size(self) -> int:
-        """Published but not yet released slot count."""
-        return self.write_completed_count - self.read_completed_count
 
     def is_full(self) -> bool:
         """Whether slots or worst-case final rows prevent another env step."""
@@ -261,47 +212,11 @@ class SharedTransitionRing:
         # Publish the slot. On x86/TSO the field copies above are guaranteed
         # visible before this cursor bump, so a consumer that reads the new
         # write_completed_count also sees the data (x86-only; ARM would need a release here).
-        self.cursors._write[0] += 1
+        self.publish_write()
         return True
-
-    def has_next(self) -> bool:
-        """Whether at least one unread slot is committed (i.e. readable)."""
-        return self.size() > 0
-
-    def read_span(self) -> tuple[int, tuple]:
-        """Longest contiguous unread run, as ``(count, field_views)``.
-
-        ``field_views`` is the six per-field tensors of shape
-        ``(count, num_envs, dim)`` (``(count, num_envs)`` for the scalar
-        fields) — contiguous in the slot (leading) dimension, so the consumer
-        can move the whole run with one copy per field. Returns ``(0, ())``
-        when empty. Does NOT advance the read cursor; free the run with
-        :meth:`commit_reads` once the data has been copied out.
-        """
-        size = self.size()
-        if size <= 0:
-            return 0, ()
-        slot = self.read_completed_count % self.capacity
-        count = min(size, self.capacity - slot)
-        return count, (
-            self.obs[slot : slot + count],
-            self.critic_obs[slot : slot + count],
-            self.actions[slot : slot + count],
-            self.rewards[slot : slot + count],
-            self.dones[slot : slot + count],
-            self.truncations[slot : slot + count],
-        )
 
     def read_final_span(self, count: int) -> list[FinalObsPayload | None]:
         """Owned final payloads aligned with the current transition read span."""
         if self.final_obs_store is None:
             return [None] * count
         return self.final_obs_store.read(self.read_completed_count, count)
-
-    def commit_reads(self, n: int) -> None:
-        """Advance the read cursor by ``n`` slots of a consumed contiguous run.
-
-        On x86/TSO the consumer's reads complete before this cursor bump, so
-        the producer's is_full() cannot reuse a slot still being copied out.
-        """
-        self.cursors._read[0] += n

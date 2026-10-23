@@ -1,7 +1,9 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 import random
+import sys
 import time
 from pathlib import Path
 
@@ -16,6 +18,8 @@ from motrix_rl import checkpoints
 from motrix_rl.console import TrainingPanelStats, emit_training_panel, open_training_live
 from motrix_rl.contracts import TrainerBase, TrainerContext
 from motrix_rl.device import resolve_default_device
+from motrix_rl.execution.contracts import Parameters
+from motrix_rl.execution.synchronous import SyncExecution
 from motrix_rl.system_metrics import (
     CpuLoadSampler,
     GpuMemoryUsageSampler,
@@ -110,6 +114,7 @@ class Trainer(TrainerBase):
         run_dir = self._context.run_dir
         training_log = TrainingLogger(run_dir, self._context.metrics)
 
+        env = None
         try:
             env = self._make_env(self._context.num_envs, render=self._render)
             agent = self._make_agent(env)
@@ -177,8 +182,18 @@ class Trainer(TrainerBase):
             print(f"[motrix.fastsac sync] saved checkpoint to {ckpt_path}")
             training_log.event("checkpoint_saved", step=agent.global_step, path=str(ckpt_path))
         finally:
-            # Close on failure too, so buffered TensorBoard events are flushed.
-            training_log.close()
+            # Attempt both cleanups without masking a training failure or Ctrl+C.
+            active_error = sys.exc_info()[1]
+            cleanup_error = None
+            for close in ([env.close] if env is not None else []) + [training_log.close]:
+                try:
+                    close()
+                except BaseException as exc:
+                    logging.getLogger(__name__).warning("training resource cleanup failed", exc_info=True)
+                    if cleanup_error is None:
+                        cleanup_error = exc
+            if active_error is None and cleanup_error is not None:
+                raise cleanup_error
 
     # -------------------------------------------------------- sync train loop
     def _run_loop(
@@ -249,143 +264,194 @@ class Trainer(TrainerBase):
         # the loaded policy (random warmup caused a large transient return drop).
         is_resume = agent.global_step > 0
         local = 0
+        last_observed_learning_iteration = agent.learning_iteration
+
+        def collect(parameters, cancellation):
+            nonlocal obs, critic_obs, ep_return, ep_len, recent_returns, recent_lengths
+            nonlocal n_episodes, term_count, t_collect
+            # ---------------- collector phase: decision + env.step + buffer write + bookkeeping
+            t0 = time.perf_counter()
+            warming = local < cfg.learning_starts
+            if cfg.learning_starts > 0 and local == cfg.learning_starts:
+                training_log.event("warmup_done", step=agent.global_step)
+            if warming and not is_resume:
+                actions = torch.empty(agent.num_envs, agent.act_dim, device=device).uniform_(-1.0, 1.0)
+                actions = actions * agent.actor.action_scale + agent.actor.action_bias
+            else:
+                actions = agent.act(obs, deterministic=False)
+
+            result = env.step(actions)
+            next_obs, next_critic_obs = result.obs, result.critic_obs
+            rewards, terminated, truncated = result.reward, result.terminated, result.truncated
+
+            agent.rb.extend(obs, critic_obs, actions, rewards, terminated.long(), truncated.long())
+
+            ep_return += rewards
+            ep_len += 1
+            done_idx = torch.nonzero(terminated | truncated, as_tuple=False).flatten()
+            if done_idx.numel():
+                # Vectorized: one batched gather + clear instead of
+                # per-episode Python-level scalar indexing.
+                recent_returns.extend(ep_return[done_idx].tolist())
+                recent_lengths.extend(ep_len[done_idx].tolist())
+                ep_return[done_idx] = 0.0
+                ep_len[done_idx] = 0.0
+                n_episodes += int(done_idx.numel())
+            recent_returns = recent_returns[-100:]
+            recent_lengths = recent_lengths[-100:]
+
+            obs = next_obs
+            critic_obs = next_critic_obs
+
+            # accumulate per-term reward means over the logging window.
+            # info["Reward"] holds each term's per-env contribution as a (N,)
+            # array (shared convention across backends); mean over envs here.
+            reward_terms = result.info.get("Reward")
+            if reward_terms:
+                for k, v in reward_terms.items():
+                    term_accum[k] = term_accum.get(k, 0.0) + float(v.mean())
+                term_count += 1
+            t_collect += time.perf_counter() - t0
+
+            return result, warming
+
+        def learn(sample, cancellation):
+            nonlocal t_learn
+            _, warming = sample.value
+            previous_iteration = agent.learning_iteration
+            # ---------------- learner phase: num_updates gradient steps on a sampled batch
+            if not warming:
+                t1 = time.perf_counter()
+                agent.update(cfg.num_updates)
+                t_learn += time.perf_counter() - t1
+
+            # The sync collector shares the agent; the version still marks the
+            # exact boundary at which the next collection sees updated weights.
+            if agent.learning_iteration == previous_iteration:
+                return None
+            return Parameters(None, sample.policy_version + 1)
+
+        def on_step(progress):
+            nonlocal last_log_time, last_log_step, term_accum, term_count, t_collect, t_learn
+            nonlocal last_checkpoint_path, local, last_observed_learning_iteration
+            result, warming = current_sample[0]
+            rewards = result.reward
+            # Collection/checkpoint progress counts completed handoffs. Learning
+            # progress is independent: warmup and update(0) do not advance it.
+            local += 1
+            agent.global_step += 1
+            did_learn = agent.learning_iteration > last_observed_learning_iteration
+            last_observed_learning_iteration = agent.learning_iteration
+            learning_boundary = did_learn and agent.learning_iteration % logging_interval == 0
+            # A fresh run can show initial warmup progress at learning step zero.
+            # Do not repeatedly publish step zero except for the final handoff.
+            first_warmup = local == 1 and warming and agent.learning_iteration == 0
+            final_handoff = agent.global_step == num_iterations
+            if learning_boundary or first_warmup or final_handoff:
+                now = time.time()
+                sps = (agent.global_step - last_log_step) * agent.num_envs / max(now - last_log_time, 1e-6)
+                # Window-aggregated diagnostics (means + extremes since the
+                # last log window), shared semantics with the async
+                # trainer's payload.
+                metrics_log = agent.window_metrics.stats_and_reset() if not warming and cfg.num_updates > 0 else None
+                mean_ret = sum(recent_returns) / len(recent_returns) if recent_returns else float("nan")
+                mean_len = sum(recent_lengths) / len(recent_lengths) if recent_lengths else float("nan")
+                term_means = {k: v / max(term_count, 1) for k, v in term_accum.items()}
+                # window-mean per-iter phase timings (ms); ratio shows collector/learner balance
+                n_iter_win = max(agent.global_step - last_log_step, 1)
+                collect_ms = t_collect * 1000.0 / n_iter_win
+                learn_ms = t_learn * 1000.0 / n_iter_win
+                phase_total = t_collect + t_learn
+                learn_pct = 100.0 * t_learn / max(phase_total, 1e-9)
+                info = result.info
+                # generic env metrics channel: the wrapper merges the state's
+                # metrics snapshot into infos["metrics"], so backends log them
+                # without hardcoding any metric name.
+                env_metrics = {k: float(np.mean(v)) for k, v in info.get("metrics", {}).items()}
+                stats = TrainingPanelStats(
+                    iteration=agent.global_step,
+                    total_iterations=num_iterations,
+                    steps_per_second=sps,
+                    elapsed_seconds=now - start_time,
+                    mean_return=mean_ret,
+                    mean_episode_length=mean_len,
+                    episodes=n_episodes,
+                    buffer_size=agent.rb.num_stored * agent.num_envs,
+                    buffer_capacity=agent.rb.buffer_size * agent.num_envs,
+                    collect_ms=collect_ms,
+                    learn_ms=learn_ms,
+                    learn_percent=learn_pct,
+                    warming=warming,
+                    training_metrics=metrics_log,
+                    reward_terms=term_means,
+                    env_metrics=env_metrics,
+                    learning_iteration=agent.learning_iteration,
+                    update_idx=agent.update_idx,
+                    progress_unit="collection steps",
+                    cpu_load=cpu_sampler.sample(),
+                    gpu_utilization_percent=gpu_sampler.sample(),
+                    memory_usage=memory_sampler.sample(),
+                    gpu_memory_usage=gpu_memory_sampler.sample(),
+                    gpu_devices=sample_gpu_devices(gpu_sampler, gpu_memory_sampler),
+                    checkpoint_path=last_checkpoint_path,
+                )
+                emit_training_panel(live, stats, title=f"{self._env_name}/motrix.fastsac")
+                scalars = {
+                    "rollout/mean_return": mean_ret,
+                    "rollout/mean_ep_len": mean_len,
+                    "rollout/env_reward": float(rewards.mean()),
+                    "perf/env_steps_per_s": sps,
+                    "perf/collect_ms_per_iter": collect_ms,
+                    "perf/learn_ms_per_iter": learn_ms,
+                    "perf/learn_pct": learn_pct,
+                    **{f"metrics/{k}": v for k, v in env_metrics.items()},
+                    **{f"reward/{k}": v for k, v in term_means.items()},
+                    **{f"train/{k}": v for k, v in (metrics_log or {}).items()},
+                    "progress/learning_iteration": agent.learning_iteration,
+                    "progress/update_idx": agent.update_idx,
+                    "progress/collection_step": agent.global_step,
+                }
+                # Log axes are learner iterations and explicit transition count;
+                # the collection clock remains the stopping/checkpoint target.
+                training_log.scalars(
+                    scalars,
+                    agent.learning_iteration,
+                    env_steps=agent.global_step * agent.num_envs,
+                    live_extra=lambda: system_scalars(stats),
+                    placeholders=() if recent_returns else ROLLOUT_MEANS,
+                )
+                last_log_time, last_log_step = now, agent.global_step
+                term_accum, term_count = {}, 0
+                t_collect, t_learn = 0.0, 0.0
+
+            # Persist completed handoffs; resuming must not repeat a saved update.
+            if save_interval > 0 and self._context.checkpoint_dir is not None:
+                if agent.global_step < num_iterations and agent.global_step % save_interval == 0:
+                    path = Path(self._context.checkpoint_dir) / f"model_{agent.global_step:07d}.pt"
+                    torch.save(agent.state_dict(), path)
+                    record_checkpoint(path)
+                    training_log.event("checkpoint_saved", step=agent.global_step, path=str(path))
+                    if console is not None:
+                        last_checkpoint_path = str(path)
+                    else:
+                        emit_msg(f"saved checkpoint {path}")
+
+        # Keep logging payloads local to this adapter, not in executor metadata.
+        current_sample = [None]
+
+        def collect_and_record(parameters, cancellation):
+            value = collect(parameters, cancellation)
+            current_sample[0] = value
+            return value
+
         try:
-            while agent.global_step < num_iterations:
-                # ---------------- collector phase: decision + env.step + buffer write + bookkeeping
-                t0 = time.perf_counter()
-                warming = local < cfg.learning_starts
-                if cfg.learning_starts > 0 and local == cfg.learning_starts:
-                    training_log.event("warmup_done", step=agent.global_step)
-                if warming and not is_resume:
-                    actions = torch.empty(agent.num_envs, agent.act_dim, device=device).uniform_(-1.0, 1.0)
-                    actions = actions * agent.actor.action_scale + agent.actor.action_bias
-                else:
-                    actions = agent.act(obs, deterministic=False)
-
-                result = env.step(actions)
-                next_obs, next_critic_obs = result.obs, result.critic_obs
-                rewards, terminated, truncated = result.reward, result.terminated, result.truncated
-
-                agent.rb.extend(obs, critic_obs, actions, rewards, terminated.long(), truncated.long())
-
-                ep_return += rewards
-                ep_len += 1
-                done_idx = torch.nonzero(terminated | truncated, as_tuple=False).flatten()
-                if done_idx.numel():
-                    # Vectorized: one batched gather + clear instead of
-                    # per-episode Python-level scalar indexing.
-                    recent_returns.extend(ep_return[done_idx].tolist())
-                    recent_lengths.extend(ep_len[done_idx].tolist())
-                    ep_return[done_idx] = 0.0
-                    ep_len[done_idx] = 0.0
-                    n_episodes += int(done_idx.numel())
-                recent_returns = recent_returns[-100:]
-                recent_lengths = recent_lengths[-100:]
-
-                obs = next_obs
-                critic_obs = next_critic_obs
-
-                # accumulate per-term reward means over the logging window.
-                # info["Reward"] holds each term's per-env contribution as a (N,)
-                # array (shared convention across backends); mean over envs here.
-                reward_terms = result.info.get("Reward")
-                if reward_terms:
-                    for k, v in reward_terms.items():
-                        term_accum[k] = term_accum.get(k, 0.0) + float(v.mean())
-                    term_count += 1
-                t_collect += time.perf_counter() - t0
-
-                # ---------------- learner phase: num_updates gradient steps on a sampled batch
-                if not warming:
-                    t1 = time.perf_counter()
-                    agent.update(cfg.num_updates)
-                    t_learn += time.perf_counter() - t1
-
-                if agent.global_step % logging_interval == 0:
-                    now = time.time()
-                    sps = (agent.global_step - last_log_step) * agent.num_envs / max(now - last_log_time, 1e-6)
-                    # Window-aggregated diagnostics (means + extremes since the
-                    # last log window), shared semantics with the async
-                    # trainer's payload.
-                    metrics_log = agent.window_metrics.stats_and_reset() if not warming else None
-                    mean_ret = sum(recent_returns) / len(recent_returns) if recent_returns else float("nan")
-                    mean_len = sum(recent_lengths) / len(recent_lengths) if recent_lengths else float("nan")
-                    term_means = {k: v / max(term_count, 1) for k, v in term_accum.items()}
-                    # window-mean per-iter phase timings (ms); ratio shows collector/learner balance
-                    n_iter_win = max(agent.global_step - last_log_step, 1)
-                    collect_ms = t_collect * 1000.0 / n_iter_win
-                    learn_ms = t_learn * 1000.0 / n_iter_win
-                    phase_total = t_collect + t_learn
-                    learn_pct = 100.0 * t_learn / max(phase_total, 1e-9)
-                    info = result.info
-                    # generic env metrics channel: the wrapper merges the state's
-                    # metrics snapshot into infos["metrics"], so backends log them
-                    # without hardcoding any metric name.
-                    env_metrics = {k: float(np.mean(v)) for k, v in info.get("metrics", {}).items()}
-                    stats = TrainingPanelStats(
-                        iteration=agent.global_step,
-                        total_iterations=num_iterations,
-                        steps_per_second=sps,
-                        elapsed_seconds=now - start_time,
-                        mean_return=mean_ret,
-                        mean_episode_length=mean_len,
-                        episodes=n_episodes,
-                        buffer_size=agent.rb.num_stored * agent.num_envs,
-                        buffer_capacity=agent.rb.buffer_size * agent.num_envs,
-                        collect_ms=collect_ms,
-                        learn_ms=learn_ms,
-                        learn_percent=learn_pct,
-                        warming=warming,
-                        training_metrics=metrics_log,
-                        reward_terms=term_means,
-                        env_metrics=env_metrics,
-                        cpu_load=cpu_sampler.sample(),
-                        gpu_utilization_percent=gpu_sampler.sample(),
-                        memory_usage=memory_sampler.sample(),
-                        gpu_memory_usage=gpu_memory_sampler.sample(),
-                        gpu_devices=sample_gpu_devices(gpu_sampler, gpu_memory_sampler),
-                        checkpoint_path=last_checkpoint_path,
-                    )
-                    emit_training_panel(live, stats, title=f"{self._env_name}/motrix.fastsac")
-                    scalars = {
-                        "rollout/mean_return": mean_ret,
-                        "rollout/mean_ep_len": mean_len,
-                        "rollout/env_reward": float(rewards.mean()),
-                        "perf/env_steps_per_s": sps,
-                        "perf/collect_ms_per_iter": collect_ms,
-                        "perf/learn_ms_per_iter": learn_ms,
-                        "perf/learn_pct": learn_pct,
-                        **{f"metrics/{k}": v for k, v in env_metrics.items()},
-                        **{f"reward/{k}": v for k, v in term_means.items()},
-                        **{f"train/{k}": v for k, v in (metrics_log or {}).items()},
-                    }
-                    # Iteration global_step has already collected (the counter
-                    # advances at the end of the loop), so it is the
-                    # (global_step + 1)-th batch of num_envs transitions.
-                    training_log.scalars(
-                        scalars,
-                        agent.global_step,
-                        env_steps=(agent.global_step + 1) * agent.num_envs,
-                        live_extra=lambda: system_scalars(stats),
-                        placeholders=() if recent_returns else ROLLOUT_MEANS,
-                    )
-                    last_log_time, last_log_step = now, agent.global_step
-                    term_accum, term_count = {}, 0
-                    t_collect, t_learn = 0.0, 0.0
-
-                if save_interval > 0 and self._context.checkpoint_dir is not None and agent.global_step > 0:
-                    if agent.global_step % save_interval == 0:
-                        path = Path(self._context.checkpoint_dir) / f"model_{agent.global_step:07d}.pt"
-                        torch.save(agent.state_dict(), path)
-                        record_checkpoint(path)
-                        training_log.event("checkpoint_saved", step=agent.global_step, path=str(path))
-                        if console is not None:
-                            last_checkpoint_path = str(path)
-                        else:
-                            emit_msg(f"saved checkpoint {path}")
-
-                local += 1
-                agent.global_step += 1
+            SyncExecution().run(
+                collect_and_record,
+                learn,
+                initial_parameters=Parameters(None),
+                max_iterations=max(0, num_iterations - agent.global_step),
+                on_step=on_step,
+            )
         finally:
             if live is not None:
                 live.stop()

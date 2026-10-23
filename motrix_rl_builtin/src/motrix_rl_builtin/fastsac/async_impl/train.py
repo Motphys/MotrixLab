@@ -16,9 +16,12 @@ per-process training bodies live in ``worker.py``. Select this topology with
 
 from __future__ import annotations
 
+import math
 import os
 import random
+import sys
 import time
+from contextlib import ExitStack
 from pathlib import Path
 from queue import Empty
 
@@ -32,6 +35,7 @@ from motrix_rl import checkpoints
 from motrix_rl.console import TrainingPanelStats, emit_training_panel, open_training_live
 from motrix_rl.contracts import TrainerBase, TrainerContext
 from motrix_rl.device import resolve_default_device
+from motrix_rl.execution.processes import ProcessExitError, ProcessSupervisor
 from motrix_rl.numa import spawn_placement
 from motrix_rl.runs import annotate_run
 from motrix_rl.system_metrics import (
@@ -138,13 +142,17 @@ class Trainer(TrainerBase):
 
     # ------------------------------------------------------------------ train
     def train(self) -> None:
+        with ExitStack() as resources:
+            training_log = TrainingLogger(self._context.run_dir, self._context.metrics)
+            resources.callback(training_log.close)
+            self._train(training_log, resources)
+
+    def _train(self, training_log: TrainingLogger, resources: ExitStack) -> None:
         cfg = self._rlcfg
         num_iterations = cfg.trainer.num_learning_iterations
         async_options = cfg.trainer.async_options
         logging_interval = self._context.logging.interval
         save_interval = self._context.checkpoint.interval
-        # Parent-only: the live logger holds a thread and locks and never reaches the workers.
-        training_log = TrainingLogger(self._context.run_dir, self._context.metrics)
         train_started_at = time.perf_counter()
 
         if self._context.logging.backend != "tensorboard":
@@ -153,9 +161,11 @@ class Trainer(TrainerBase):
         # Read dims once in the parent (cheap 1-env build), then discard. Each
         # child rebuilds its own env because env objects are not picklable across spawn.
         probe = self._make_env(1, render=None, device=torch.device("cpu"))
-        obs_dim, critic_obs_dim, act_dim, action_scale, action_bias = self._dims(probe)
-        max_episode_steps = probe.max_episode_steps
-        probe.close()
+        try:
+            obs_dim, critic_obs_dim, act_dim, action_scale, action_bias = self._dims(probe)
+            max_episode_steps = probe.max_episode_steps
+        finally:
+            probe.close()
         dims = (obs_dim, critic_obs_dim, act_dim)
 
         learner_device = self._device()
@@ -246,29 +256,40 @@ class Trainer(TrainerBase):
         control = Control(num_collectors)
 
         resume_step = 0
+        resume_learning_iteration = 0
         is_resume = False
         if self._resume_from:
             # Peek global_step so the collector warms up with the loaded policy and
             # the shared async counters continue from the checkpoint iteration.
             ckpt = torch.load(self._resume_from, map_location="cpu", weights_only=False)
             resume_step = int(ckpt.get("global_step", 0))
+            resume_learning_iteration = int(ckpt.get("learning_iteration", 0))
             is_resume = resume_step > 0
             control.resume_collector_steps(resume_step)
             control.global_step = resume_step
             training_log.event("resumed", step=resume_step, path=str(self._resume_from), global_step=resume_step)
 
         ctx = mp.get_context("spawn")
-        stats_queues = [ctx.Queue(maxsize=8) for _ in range(num_collectors)]
-        error_queue = ctx.Queue(maxsize=8)
+
+        def _queue(maxsize: int):
+            queue = ctx.Queue(maxsize=maxsize)
+            # Never wait for a feeder whose reader may have died.
+            resources.callback(queue.close)
+            resources.callback(queue.cancel_join_thread)
+            return queue
+
+        stats_queues = [_queue(8) for _ in range(num_collectors)]
+        error_queue = _queue(8)
         # Per-window worker payloads for the parent-rendered panel: rollout
         # snapshots from every collector (stats_queues below) plus one learner
         # payload per rank. All workers are peers; the parent is the recorder.
-        panel_queue = ctx.Queue(maxsize=8 * max(num_collectors + num_learners, 1))
+        panel_queue = _queue(8 * max(num_collectors + num_learners, 1))
         # Startup handshake (parent-arbitrated, see transport/handshake.py):
         # learners ship slot tensors through the per-collector one-shot
         # queues; workers report readiness, the parent renders a boot panel
         # and releases everyone at once.
         handshake = StartupHandshake(ctx, num_collectors)
+        resources.callback(handshake.close)
         reported_errors: set[tuple[str, str]] = set()
         seed = self._context.seed
 
@@ -411,6 +432,14 @@ class Trainer(TrainerBase):
         # function runs, and affinity + memory policy survive fork+exec, so
         # the child's import-time allocations are node-local from the start
         # (the worker re-binds itself afterwards as a no-op refinement).
+        def _finish_errors() -> None:
+            try:
+                _drain_child_errors()
+            except Exception:
+                pass
+
+        resources.callback(_finish_errors)
+        supervisor = resources.enter_context(ProcessSupervisor(control.set_stop, unblock=handshake.release))
         log_dir = self._context.run_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         learner_log_name = (lambda rank: f"learner{rank}.log") if num_learners > 1 else (lambda rank: "learner.log")
@@ -419,13 +448,13 @@ class Trainer(TrainerBase):
                 spawn_placement(learner_numa_nodes[rank] if learner_numa_nodes else None, f"learner-spawn[{rank}]"),
                 inherit_log_stdio(log_dir / learner_log_name(rank)),
             ):
-                p.start()
+                supervisor.start(p)
         for i, p in enumerate(p_collectors):
             with (
                 spawn_placement(numa_nodes[i], f"collector-spawn[{i}]"),
                 inherit_log_stdio(log_dir / f"collector{i}.log"),
             ):
-                p.start()
+                supervisor.start(p)
 
         # -------------------------------------------------- startup panel + barrier
         # Workers boot at different speeds (env/numba compile vs CUDA init and
@@ -434,7 +463,11 @@ class Trainer(TrainerBase):
         # crash or the boot timeout aborts via the shared stop flag.
         expected = {("collector", i) for i in range(num_collectors)} | {("learner", r) for r in range(num_learners)}
         ready: set[tuple[str, int]] = set()
-        boot_deadline = time.time() + max(float(os.environ.get("MOTRIX_BOOT_TIMEOUT_S", "600")), 30.0)
+        boot_timeout = float(os.environ.get("MOTRIX_BOOT_TIMEOUT_S", "600"))
+        if not math.isfinite(boot_timeout) or boot_timeout <= 0:
+            raise ValueError("MOTRIX_BOOT_TIMEOUT_S must be finite and positive")
+        boot_timeout = max(boot_timeout, 30.0)
+        boot_deadline = time.monotonic() + boot_timeout
         from rich.live import Live
 
         log_names = [f"collector{i}.log" for i in range(num_collectors)]
@@ -452,6 +485,7 @@ class Trainer(TrainerBase):
         # the transition between panels is a data-source switch, not a wait.
         per_collector_stats: dict[int, dict | None] = {i: None for i in range(num_collectors)}
         learner_payloads: dict[int, dict | None] = {r: None for r in range(num_learners)}
+        learner_counters: dict[int, dict] = {}
 
         def _drain_worker_stats() -> None:
             for queue in stats_queues:
@@ -468,8 +502,16 @@ class Trainer(TrainerBase):
                     if notice is not None:
                         # Reported at the learner's own step as soon as it arrives.
                         training_log.event("checkpoint_saved", step=notice["step"], path=notice["path"])
+                    elif "learner_counters" in payload:
+                        learner_counters[payload["rank"]] = payload["learner_counters"]
                     else:
                         learner_payloads[payload["rank"]] = payload
+                        learner_counters[payload["rank"]] = {
+                            "learning_iteration": payload["learning_iteration"],
+                            "update_idx": payload["update_idx"],
+                            "updates": payload["updates"],
+                            "metrics": payload["metrics"],
+                        }
             except Empty:
                 pass
 
@@ -486,6 +528,22 @@ class Trainer(TrainerBase):
                 )
                 and control.collector_steps > 0
             )
+
+        completion_deadline: float | None = None
+
+        def _check_workers() -> None:
+            nonlocal completion_deadline
+            # Each collector sets stop on completion, so the first finished
+            # shard can stop its peers before every shard reaches the target.
+            exited = supervisor.check_exits(
+                allow_clean_exit=lambda p: any(
+                    control.collector_steps_at(i) >= num_iterations for i in range(num_collectors)
+                )
+            )
+            if (exited or control.stop) and completion_deadline is None:
+                completion_deadline = time.monotonic() + 60.0
+            if completion_deadline is not None and time.monotonic() > completion_deadline:
+                raise TimeoutError("workers did not finish within 60s after a peer exited")
 
         def _handoff_gate_line() -> str:
             """One-line panel-data readiness summary for the handoff view."""
@@ -532,10 +590,11 @@ class Trainer(TrainerBase):
                             f"(traceback: async_errors/{process_name}_error.log)"
                         )
                         break
-                    if time.time() > boot_deadline:
+                    supervisor.check_exits()
+                    if time.monotonic() > boot_deadline:
                         control.set_stop()
                         missing = sorted(expected - ready)
-                        abort_reason = f"worker startup timed out after 600s; missing: {missing}"
+                        abort_reason = f"worker startup timed out after {boot_timeout:g}s; missing: {missing}"
                         break
                     time.sleep(0.25)
                 # ------------------------------------------------ handoff phase
@@ -552,8 +611,12 @@ class Trainer(TrainerBase):
                 # quiescence gate opens, then fall through to the training
                 # panel whose first frame is therefore fully aggregated.
                 if abort_reason is None:
+                    handoff_deadline = time.monotonic() + boot_timeout
                     while not _panel_data_ready():
                         _drain_worker_stats()
+                        _check_workers()
+                        if time.monotonic() > handoff_deadline:
+                            raise TimeoutError(f"worker panel handoff timed out after {boot_timeout:g}s")
                         # A run shorter than replay warmup may end without an
                         # update payload; let normal shutdown collect its result.
                         if all(not p.is_alive() for p in p_learners):
@@ -564,6 +627,7 @@ class Trainer(TrainerBase):
                             process_name = None
                         if process_name is not None:
                             control.set_stop()
+                            _record_error_trace(process_name, traceback_text)
                             abort_reason = f"worker {process_name} failed after startup"
                             break
                         if interactive:
@@ -599,8 +663,9 @@ class Trainer(TrainerBase):
         panel_last_log_step = resume_step
         panel_last_updates = 0
         panel_last_weight_version = 0
+        panel_last_learning_iteration = resume_learning_iteration
         panel_next_log = (
-            ((resume_step // max(logging_interval, 1)) + 1) * logging_interval if logging_interval > 0 else 0
+            ((resume_learning_iteration // logging_interval) + 1) * logging_interval if logging_interval > 0 else 0
         )
         # warmup_done edge, detected on the panel's own state.
         panel_was_warming = resume_step < cfg.agent.learning_starts
@@ -609,7 +674,7 @@ class Trainer(TrainerBase):
             nonlocal panel_anchored, panel_start_time, panel_last_render, console, live, panel_open_attempted
             nonlocal panel_rate_samples
             nonlocal panel_last_log_time, panel_last_log_step, panel_last_updates, panel_next_log
-            nonlocal panel_last_weight_version, panel_was_warming
+            nonlocal panel_last_weight_version, panel_was_warming, panel_last_learning_iteration
             # ALWAYS drain first: the quiescence gate below waits for learner
             # payloads that can only arrive through this drain — draining
             # after the gate would deadlock the workers on a full queue.
@@ -639,7 +704,10 @@ class Trainer(TrainerBase):
                 panel_anchored = True
             last_stats = aggregate_collector_stats(per_collector_stats)
             payloads = [p for p in learner_payloads.values() if p]
-            primary = payloads[0] if payloads else None
+            primary = learner_payloads[0]
+            # DDP learners are replicas, not additive work counters. Use rank 0
+            # consistently with checkpoint and training-metric ownership.
+            primary_counters = learner_counters.get(0)
             now = time.time()
             # Windowed rate. The window is meaningless right after the anchor
             # (Δt ≈ 0 → absurd rate) or before any step landed (Δstep = 0);
@@ -669,7 +737,7 @@ class Trainer(TrainerBase):
             # and timing_mean divides by zero.
             learn_ms = timing_mean([p["learn_ms"] for p in payloads if p["learn_ms"] is not None]) if payloads else 0.0
             learn_pct = timing_mean([p["learn_pct"] for p in payloads]) if payloads else 0.0
-            updates = primary["updates"] if primary else panel_last_updates
+            updates = primary_counters["update_idx"] if primary_counters else panel_last_updates
             utd = updates / max(step, 1)
             collector_timing_ms = last_stats.get("timing_ms", {})
             collector_timing_detail_ms = {k: v for k, v in collector_timing_ms.items() if k != "collect"}
@@ -684,8 +752,11 @@ class Trainer(TrainerBase):
             stats = TrainingPanelStats(
                 iteration=step,
                 total_iterations=num_iterations,
+                progress_unit="collection steps",
                 steps_per_second=sps,
                 iterations_per_second=iters,
+                learning_iteration=primary_counters["learning_iteration"] if primary_counters else None,
+                update_idx=primary_counters["update_idx"] if primary_counters else None,
                 elapsed_seconds=now - panel_start_time,
                 mean_return=last_stats["return"],
                 mean_episode_length=last_stats["ep_len"],
@@ -712,17 +783,28 @@ class Trainer(TrainerBase):
             if panel_was_warming and not warming:
                 training_log.event("warmup_done", step=step)
             panel_was_warming = warming
-            if step >= panel_next_log:
+            learning_iteration = primary_counters["learning_iteration"] if primary_counters else None
+            if (
+                learning_iteration is not None
+                and learning_iteration > panel_last_learning_iteration
+                and (force or learning_iteration >= panel_next_log)
+            ):
                 scalars = {
                     "rollout/mean_return": last_stats["return"],
                     "rollout/mean_ep_len": last_stats["ep_len"],
+                    "progress/collection_step": step,
                 }
+                if primary_counters:
+                    # The log x-axis is completed learner iterations; explicit
+                    # env_steps below retains the independent collection axis.
+                    scalars["progress/learning_iteration"] = primary_counters["learning_iteration"]
+                    scalars["progress/update_idx"] = primary_counters["update_idx"]
                 if sps is not None:
                     scalars["perf/env_steps_per_s"] = sps
                 scalars["perf/updates_per_s"] = (updates - panel_last_updates) / max(now - panel_last_log_time, 1e-6)
                 scalars["async/policy_lag"] = last_stats["policy_lag"]
                 if primary and primary.get("weight_version") is not None:
-                    scalars["async/weight_publishes_per_iter"] = (
+                    scalars["async/weight_publishes_per_collection_step"] = (
                         primary["weight_version"] - panel_last_weight_version
                     ) / max(step - panel_last_log_step, 1)
                     panel_last_weight_version = primary["weight_version"]
@@ -750,71 +832,49 @@ class Trainer(TrainerBase):
                     scalars[f"metrics/{k}"] = v
                 for k, v in last_stats["reward_terms"].items():
                     scalars[f"reward/{k}"] = v
-                if primary and primary["metrics"] is not None:
-                    for k, v in primary["metrics"].items():
+                metrics_log = primary_counters.get("metrics") if primary_counters else None
+                if metrics_log:
+                    for k, v in metrics_log.items():
                         scalars[f"train/{k}"] = v
                 training_log.scalars(
                     scalars,
-                    step,
+                    learning_iteration,
                     env_steps=collector_steps * per_collector_envs,
                     live_extra=lambda: system_scalars(stats),
                     placeholders=() if last_stats["episodes"] else ROLLOUT_MEANS,
                 )
                 panel_last_log_time, panel_last_log_step, panel_last_updates = now, step, updates
-                panel_next_log += logging_interval
+                panel_last_learning_iteration = learning_iteration
+                panel_next_log = (
+                    ((learning_iteration // logging_interval) + 1) * logging_interval if logging_interval > 0 else 0
+                )
 
         try:
             # monitor: exit when every learner has finished; abort all if any worker crashes.
             while True:
-                crashed = [p for p in (*p_learners, *p_collectors) if not p.is_alive() and p.exitcode not in (0, None)]
-                learners_done = [p for p in p_learners if not p.is_alive()]
-                if crashed:
-                    for p in crashed:
-                        print(f"[motrix.fastsac async] {p.name} crashed (exit {p.exitcode}); stopping.")
+                try:
+                    _check_workers()
+                except ProcessExitError as exc:
+                    p = exc.process
                     _drain_child_errors()
-                    crash_step = control.collector_steps // num_collectors
-                    for p in crashed:
-                        error_log = Path("async_errors") / f"{error_roles[p.name]}_error.log"
-                        training_log.event(
-                            "worker_crashed",
-                            step=crash_step,
-                            worker=p.name,
-                            exitcode=p.exitcode,
-                            error_log=error_log.as_posix() if (self._context.run_dir / error_log).exists() else None,
-                        )
+                    error_log = Path("async_errors") / f"{error_roles[p.name]}_error.log"
+                    training_log.event(
+                        "worker_crashed",
+                        step=control.collector_steps // num_collectors,
+                        worker=p.name,
+                        exitcode=p.exitcode,
+                        error_log=error_log.as_posix() if (self._context.run_dir / error_log).exists() else None,
+                    )
+                    raise
+                errors = _drain_child_errors()
+                if errors:
+                    raise RuntimeError(f"worker {errors[0][0]} failed during training")
+                if all(p.exitcode is not None for p in p_learners):
                     break
-                if learners_done:
-                    _drain_child_errors()
-                    if len(learners_done) == len(p_learners):
-                        break
                 _render_panel()
                 time.sleep(0.5)
         finally:
-            # Ctrl+C reaches the parent as KeyboardInterrupt and every worker via
-            # its SIGINT handler (stop-flag unwind). Shutdown is an escalation
-            # ladder with per-step exception isolation: one stuck child must
-            # never skip the cleanup of the others (that is how orphans holding
-            # GPU memory were produced).
-            control.set_stop()
-
-            def _shutdown(processes, grace_s):
-                for p in processes:
-                    try:
-                        p.join(timeout=grace_s)
-                        if not p.is_alive():
-                            continue
-                        print(f"[motrix.fastsac async] terminating {p.name}")
-                        p.terminate()  # SIGTERM: unwinds queue feeder threads
-                        p.join(timeout=3.0)
-                        if p.is_alive():
-                            print(f"[motrix.fastsac async] killing {p.name}")
-                            p.kill()  # SIGKILL: e.g. blocked inside a NCCL collective
-                            p.join(timeout=3.0)
-                    except Exception as exc:  # noqa: BLE001 - isolation by design
-                        print(f"[motrix.fastsac async] shutdown of {p.name} failed: {exc}")
-
-            _shutdown(p_collectors, grace_s=8.0)
-            _shutdown(p_learners, grace_s=8.0)
+            supervisor.__exit__(*sys.exc_info())
             try:
                 _drain_child_errors()
             except Exception:
@@ -840,32 +900,7 @@ class Trainer(TrainerBase):
                     "mean_env_steps_per_s": int(total_env_steps / max(wall_time_s, 1e-9)),
                 },
             )
-            training_log.close()
-            try:
-                panel_queue.close()
-            except Exception:
-                pass
-            handshake.close()
-            for stats_queue in stats_queues:
-                try:
-                    while True:
-                        stats_queue.get_nowait()
-                except Exception:
-                    pass
-                stats_queue.close()
-            try:
-                error_queue.close()
-            except Exception:
-                pass
-
-        for p in p_learners:
-            if p.exitcode not in (0, None):
-                raise RuntimeError(
-                    f"motrix.fastsac async learner process '{p.name}' failed with exit code {p.exitcode}"
-                )
-        for i, p in enumerate(p_collectors):
-            if p.exitcode not in (0, None):
-                raise RuntimeError(f"motrix.fastsac async collector {i} process failed with exit code {p.exitcode}")
+        supervisor.check_exits(allow_clean_exit=lambda p: True)
         # The primary learner wrote the final checkpoint before exiting cleanly.
         final_path = checkpoints.final_checkpoint_path(self._context.checkpoint_format, self._context.run_dir)
         if final_path.exists():

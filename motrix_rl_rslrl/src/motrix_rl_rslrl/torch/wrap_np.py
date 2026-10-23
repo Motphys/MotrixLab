@@ -11,6 +11,7 @@ from tensordict import TensorDict
 from motrix_env_core.array.env import NpObs
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.renderer import RenderConfig, create_renderer
+from motrix_rl.utils import env_infos
 
 
 class RslrlNpEnvWrap(VecEnv):
@@ -103,7 +104,10 @@ class RslrlNpEnvWrap(VecEnv):
 
         # Build extras dict (RSLRL calls it "extras" not "infos")
         # time_outs: rows truncated without failing, for value bootstrapping.
-        extras = {"time_outs": torch.from_numpy(state.truncated & ~state.terminated).to(self._device)}
+        extras = {
+            **env_infos(state),
+            "time_outs": torch.from_numpy(state.truncated & ~state.terminated).to(self._device),
+        }
 
         return obs, rewards, dones, extras
 

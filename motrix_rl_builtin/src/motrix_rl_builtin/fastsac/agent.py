@@ -69,7 +69,10 @@ class FastSacAgent:
         # policy_frequency gating (so the actor/Q ratio is exactly 1/policy_freq
         # across calls, not just within one) and exposed to trainers for UTD /
         # publish-cadence bookkeeping.
+        # Three distinct clocks: global_step is collected batches, update_idx is
+        # gradient rounds, and learning_iteration counts positive update() calls.
         self.update_idx = 0
+        self.learning_iteration = 0
         self._last_update_timing_ms: dict[str, float] = {}
         # Window-aggregated diagnostics (see window_metrics.py): means and
         # per-key extremes accumulated across update() calls until the trainer
@@ -359,7 +362,8 @@ class FastSacAgent:
         Policy-frequency gating uses the persistent ``self.update_idx`` counter
         (not a per-call ``i``), so the actor/Q update ratio is exactly
         ``1 / policy_frequency`` across calls. The counter is bumped by
-        ``num_updates`` before returning.
+        ``num_updates`` before returning. A successful positive call also advances
+        ``learning_iteration`` once, independently of its gradient-round count.
         """
         cfg = self.cfg
         if num_updates <= 0:
@@ -413,6 +417,7 @@ class FastSacAgent:
                 timing_s["actor"] += time.perf_counter() - stage_started
 
         self.update_idx += num_updates
+        self.learning_iteration += 1
         timing_s["total"] = time.perf_counter() - update_started
         self._last_update_timing_ms = {key: value * 1000.0 for key, value in timing_s.items()}
 
@@ -448,7 +453,8 @@ class FastSacAgent:
 
         Includes canonical network state (actor, both critics, critic target), the temperature
         ``log_alpha``, both observation normalizers, all three optimizers and the
-        ``global_step``. Optimizer state is included so training can resume
+        ``global_step`` (collection batches), ``update_idx`` (gradient rounds), and
+        ``learning_iteration`` (positive update calls). Optimizer state is included so training can resume
         exactly; :meth:`load_state_dict` can skip it for inference-only loads.
         Compiled runtime wrappers are deliberately excluded from the checkpoint
         contract so enabling ``torch.compile`` never changes parameter names.
@@ -465,6 +471,7 @@ class FastSacAgent:
             "alpha_optimizer": self.alpha_optimizer.state_dict(),
             "global_step": self.global_step,
             "update_idx": self.update_idx,
+            "learning_iteration": self.learning_iteration,
         }
 
     def load_state_dict(self, ckpt: dict, load_optimizers: bool = True) -> None:
@@ -491,3 +498,4 @@ class FastSacAgent:
                 self.alpha_optimizer.load_state_dict(ckpt["alpha_optimizer"])
         self.global_step = ckpt.get("global_step", 0)
         self.update_idx = ckpt.get("update_idx", self.update_idx)
+        self.learning_iteration = ckpt.get("learning_iteration", 0)

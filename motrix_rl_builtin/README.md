@@ -11,3 +11,8 @@ It depends only on `motrix-rl` for control-plane services and provider/trainer c
 Torch runtime dependencies. It registers via the `motrix_rl.frameworks` entry-point group:
 `builtin = "motrix_rl_builtin.plugin:register"`. Consumers query `motrix_rl.frameworks` rather than importing plugin
 internals to trigger registration.
+
+FastSAC shares the training console and execution primitives described in the
+[execution guide](../motrix_rl/src/motrix_rl/execution/README.md#learning-and-collection-clocks).
+The console distinguishes completed learner iterations from collection progress; the existing training budget
+and resume checkpoints remain collection-based.
