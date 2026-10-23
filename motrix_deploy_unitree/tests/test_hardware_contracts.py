@@ -6,33 +6,29 @@
 import subprocess
 import sys
 import textwrap
-from dataclasses import FrozenInstanceError
 
 import pytest
 from hydra import compose, initialize
 from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
-from omegaconf.errors import ConfigAttributeError, ConfigKeyError, ReadonlyConfigError
 
-from motrix_deploy_unitree.actuation import Actuation, UnitreeMotorBinding
-from motrix_deploy_unitree.hardware import HardwareRobotCfg, UnitreeGo2HardwareCfg
-from motrix_deploy_unitree.sensor import HardwareSensorBinding, HardwareSensorBindings
+from motrix_deploy_unitree.config.go2 import UnitreeGo2HardwareCfg
+from motrix_deploy_unitree.config.hardware import (
+    Actuation,
+    HardwareRobotCfg,
+    UnitreeMotorBinding,
+)
 from motrix_env_core.config.scene.base import KeyPoseCfg
 
 
-def test_hardware_preserves_sensor_and_motor_mapping() -> None:
+def test_hardware_preserves_motor_mapping() -> None:
     robot = UnitreeGo2HardwareCfg()
     robot.validate()
     assert type(robot.key_pose) is KeyPoseCfg
     assert "default" in robot.key_pose.poses
     assert "lie_down" in robot.key_pose.poses
-    assert robot.sensors == HardwareSensorBindings(
-        base_orientation_xyzw=HardwareSensorBinding("imu_state.quaternion", quaternion_order="wxyz"),
-        base_angular_velocity=HardwareSensorBinding("imu_state.gyroscope"),
-        base_linear_acceleration=HardwareSensorBinding("imu_state.accelerometer"),
-    )
-    # SDK motor addresses, enabled modes, and wire quaternion order are hardware contracts.
+    # SDK motor addresses and enabled modes are hardware contracts.
     assert [robot.actuation.motors[name].index for name in robot.key_pose.joint_names] == [
         3,
         4,
@@ -51,42 +47,32 @@ def test_hardware_preserves_sensor_and_motor_mapping() -> None:
     assert set(robot.actuation.motors) == set(robot.key_pose.joint_names)
 
 
+def test_hardware_control_contract_rejects_invalid_pose_and_limits() -> None:
+    robot = UnitreeGo2HardwareCfg()
+    spec = robot.to_robot_spec()
+    assert spec.joint_names == tuple(robot.key_pose.joint_names)
+    with pytest.raises(ValueError, match="unknown hold pose"):
+        robot.to_robot_spec("unknown")
+    robot.key_pose.poses["outside"] = [float(value) for value in spec.position_upper + 1.0]
+    with pytest.raises(ValueError, match="inside position range"):
+        robot.to_robot_spec("outside")
+    robot.position_lower = [0.0]
+    with pytest.raises(ValueError, match="shape"):
+        robot.to_robot_spec()
+
+
 def test_hardware_defaults_are_instance_local() -> None:
     first = UnitreeGo2HardwareCfg()
     second = UnitreeGo2HardwareCfg()
     assert first == second
-    assert first.sensors is not second.sensors
-    assert first.sensors.base_angular_velocity is not second.sensors.base_angular_velocity
     assert first.key_pose.joint_names is not second.key_pose.joint_names
     assert first.key_pose.poses is not second.key_pose.poses
     for pose_name in first.key_pose.poses:
         assert first.key_pose.poses[pose_name] is not second.key_pose.poses[pose_name]
         first.key_pose.poses[pose_name][0] += 1.0
-    first.sensors.base_angular_velocity = HardwareSensorBinding("custom.gyro")
     first.key_pose.joint_names[0] = "custom_joint"
     first.actuation.motors.clear()
     assert second == UnitreeGo2HardwareCfg()
-
-    first_generic = HardwareRobotCfg()
-    second_generic = HardwareRobotCfg()
-    first_generic.sensors.base_angular_velocity = HardwareSensorBinding("custom.gyro")
-    assert first_generic.sensors is not second_generic.sensors
-    assert second_generic.sensors == HardwareSensorBindings()
-
-
-def test_sensor_binding_leaf_is_frozen_but_role_can_be_replaced() -> None:
-    bindings = HardwareSensorBindings(base_angular_velocity=HardwareSensorBinding("imu.gyro"))
-    with pytest.raises(FrozenInstanceError):
-        bindings.base_angular_velocity.field = "custom.gyro"
-    cfg = OmegaConf.structured(bindings)
-    with pytest.raises(ReadonlyConfigError):
-        cfg.base_angular_velocity.field = "custom.gyro"
-    cfg.base_angular_velocity = HardwareSensorBinding("custom.gyro")
-    restored = OmegaConf.to_object(cfg)
-    assert type(restored) is HardwareSensorBindings
-    assert type(restored.base_angular_velocity) is HardwareSensorBinding
-    assert restored.base_angular_velocity.field == "custom.gyro"
-    assert bindings.base_angular_velocity.field == "imu.gyro"
 
 
 @pytest.mark.parametrize("source", [UnitreeGo2HardwareCfg, UnitreeGo2HardwareCfg()])
@@ -94,97 +80,54 @@ def test_hardware_structured_configuration_overrides_round_trip(source) -> None:
     robot = UnitreeGo2HardwareCfg()
     cfg = OmegaConf.structured(source)
     cfg.key_pose.poses.default[0] += 1.0
-    cfg.sensors.base_angular_velocity = HardwareSensorBinding("custom.gyro")
-    cfg.sensors.base_linear_acceleration = None
     restored = OmegaConf.to_object(cfg)
     restored.validate()
     assert type(restored) is UnitreeGo2HardwareCfg
     assert type(restored.key_pose) is KeyPoseCfg
-    assert type(restored.sensors) is HardwareSensorBindings
     assert restored.key_pose.poses["default"][0] == robot.key_pose.poses["default"][0] + 1.0
-    assert restored.sensors == HardwareSensorBindings(
-        base_orientation_xyzw=robot.sensors.base_orientation_xyzw,
-        base_angular_velocity=HardwareSensorBinding("custom.gyro"),
-    )
     assert robot == UnitreeGo2HardwareCfg()
 
 
 def test_hardware_hydra_composition_and_instantiation() -> None:
-    schema_name = "hardware_sensor_bindings_test_schema"
+    schema_name = "hardware_wiring_test_schema"
     ConfigStore.instance().store(name=schema_name, node=UnitreeGo2HardwareCfg)
+    first_joint = UnitreeGo2HardwareCfg().key_pose.joint_names[0]
     with initialize(version_base=None, config_path=None):
-        cfg = compose(
-            config_name=schema_name,
-            overrides=[
-                "sensors.base_angular_velocity=null",
-                "sensors.base_linear_acceleration=null",
-            ],
-        )
+        cfg = compose(config_name=schema_name)
+    # Frozen actuation mappings are replaced as typed values, not mutated field-by-field.
+    motors = UnitreeGo2HardwareCfg().actuation.motors.copy()
+    motors[first_joint] = UnitreeMotorBinding(motors[first_joint].index, enabled_mode=1)
+    cfg.actuation = Actuation(motors=motors)
     restored = OmegaConf.to_object(cfg)
     restored.validate()
-    assert type(restored.sensors) is HardwareSensorBindings
-    assert restored.sensors == HardwareSensorBindings(
-        base_orientation_xyzw=UnitreeGo2HardwareCfg().sensors.base_orientation_xyzw,
+    assert isinstance(restored.actuation, Actuation)
+    assert restored.actuation.motors[first_joint] == UnitreeMotorBinding(
+        UnitreeGo2HardwareCfg().actuation.motors[first_joint].index, enabled_mode=1
     )
-    # Frozen leaf mappings are replaced as typed values rather than merged field-by-field.
-    cfg.sensors.base_angular_velocity = HardwareSensorBinding("custom.gyro")
-    restored = OmegaConf.to_object(cfg)
-    assert restored.sensors.base_angular_velocity == HardwareSensorBinding("custom.gyro")
     composed = instantiate(
-        {"_target_": "motrix_deploy_unitree.hardware.UnitreeGo2HardwareCfg", "sensors": cfg.sensors},
+        {"_target_": "motrix_deploy_unitree.config.go2.UnitreeGo2HardwareCfg", "actuation": cfg.actuation},
         _convert_="object",
     )
     composed.validate()
-    assert composed.sensors == restored.sensors
-    assert type(composed.sensors) is HardwareSensorBindings
-
-    customized = instantiate(
-        {
-            "_target_": "motrix_deploy_unitree.hardware.HardwareRobotCfg",
-            "sensors": {
-                "_target_": "motrix_deploy_unitree.sensor.HardwareSensorBindings",
-                "base_angular_velocity": {
-                    "_target_": "motrix_deploy_unitree.sensor.HardwareSensorBinding",
-                    "field": "custom.gyro",
-                },
-            },
-        }
-    )
-    customized.validate()
-    assert customized.sensors == HardwareSensorBindings(
-        base_angular_velocity=HardwareSensorBinding("custom.gyro"),
-    )
-    assert type(customized.sensors.base_angular_velocity) is HardwareSensorBinding
-
-
-def test_sensor_roles_are_checked_at_structured_configuration_boundary() -> None:
-    cfg = OmegaConf.structured(HardwareRobotCfg)
-    with pytest.raises(ConfigAttributeError, match="base_angluar_velocity"):
-        OmegaConf.update(cfg, "sensors.base_angluar_velocity", {"field": "imu.gyro"})
-    with pytest.raises(ConfigKeyError, match="base_angluar_velocity"):
-        OmegaConf.merge(cfg, {"sensors": {"base_angluar_velocity": {"field": "imu.gyro"}}})
+    assert composed.actuation == restored.actuation
+    assert composed.key_pose == restored.key_pose
 
 
 def test_custom_asset_free_hardware_key_pose() -> None:
     key_pose = KeyPoseCfg(joint_names=["hip"], poses={"default": [0.0]})
-    sensors = HardwareSensorBindings(base_angular_velocity=HardwareSensorBinding("imu.gyro"))
     robot = HardwareRobotCfg(
         key_pose=key_pose,
-        sensors=sensors,
         actuation=Actuation(motors={"hip": UnitreeMotorBinding(0)}),
     )
     robot.validate()
     assert robot.key_pose is key_pose
-    assert robot.sensors is sensors
-    assert robot.sensors.base_angular_velocity == HardwareSensorBinding("imu.gyro")
     cfg = OmegaConf.structured(robot)
-    cfg.sensors.base_linear_acceleration = HardwareSensorBinding("imu.accelerometer")
+    cfg.key_pose.poses.default[0] = 0.1
     restored = OmegaConf.to_object(cfg)
     restored.validate()
-    assert restored.sensors == HardwareSensorBindings(
-        base_angular_velocity=HardwareSensorBinding("imu.gyro"),
-        base_linear_acceleration=HardwareSensorBinding("imu.accelerometer"),
-    )
+    assert restored.key_pose.poses["default"] == [0.1]
+    assert robot.key_pose.poses["default"] == [0.0]
+    assert restored.actuation == robot.actuation
 
 
 def test_key_pose_validates_canonical_order() -> None:
@@ -201,11 +144,10 @@ def test_actuation_rejects_duplicate_motor_indices_and_unknown_joints() -> None:
         HardwareRobotCfg(actuation=Actuation(motors={"unknown": UnitreeMotorBinding(0)})).validate()
 
 
-@pytest.mark.parametrize("module", ["config", "sensor"])
 @pytest.mark.integration
-def test_hardware_configuration_imports_without_models_assets_or_sdk(module: str) -> None:
+def test_hardware_configuration_imports_without_models_assets_or_sdk() -> None:
     script = textwrap.dedent(
-        f"""
+        """
         import importlib
         import importlib.abc
         import sys
@@ -220,10 +162,9 @@ def test_hardware_configuration_imports_without_models_assets_or_sdk(module: str
                     raise ImportError('hardware configuration cannot import ' + fullname)
 
         sys.meta_path.insert(0, BlockHardwareRuntimeDependencies())
-        importlib.import_module('motrix_deploy_unitree.{module}')
-        from motrix_deploy_unitree.config import UnitreeBackendConfig, UnitreeGo2RobotCfg
-        from motrix_deploy_unitree.hardware import UnitreeGo2HardwareCfg
-        from motrix_deploy_unitree.interface import _load_sdk_bindings
+        importlib.import_module('motrix_deploy_unitree.config.go2')
+        from motrix_deploy_unitree.config.runtime import UnitreeTransportConfig
+        from motrix_deploy_unitree.config.go2 import UnitreeGo2HardwareCfg
 
         def forbidden_exists(self):
             raise AssertionError('hardware must not check asset path existence')
@@ -231,29 +172,10 @@ def test_hardware_configuration_imports_without_models_assets_or_sdk(module: str
         Path.exists = forbidden_exists
         hardware = UnitreeGo2HardwareCfg()
         hardware.validate()
-        config = UnitreeBackendConfig(
-            network_interface='eth0',
-            robot=UnitreeGo2RobotCfg(
-                key_pose=hardware.key_pose,
-                sensors=hardware.sensors,
-                actuation=hardware.actuation,
-            ),
-        )
-        assert isinstance(config.robot, UnitreeGo2RobotCfg)
-        assert config.robot.key_pose is hardware.key_pose
-        assert config.robot.sensors is hardware.sensors
-        assert config.robot.actuation is hardware.actuation
-        assert config.robot.lie_down_position().shape == (12,)
+        config = UnitreeTransportConfig(network_interface='eth0')
+        assert tuple(hardware.key_pose.joint_names)
         assert not any(name == root or name.startswith(root + '.')
                        for name in sys.modules for root in blocked)
-        # The SDK is requested only by the explicit transport loader, not imports/configuration.
-        try:
-            _load_sdk_bindings()
-        except RuntimeError as error:
-            assert 'Unitree Go2 support requires' in str(error)
-            assert isinstance(error.__cause__, ImportError)
-        else:
-            raise AssertionError('transport loader must request the blocked SDK')
         """
     )
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)

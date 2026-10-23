@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Annotated, ClassVar
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar
 
 import numpy as np
 from pydantic import Field
@@ -23,6 +23,7 @@ from motrix_deploy.contracts import (
     float32_array,
 )
 from motrix_deploy.errors import ValidationError
+from motrix_deploy.operator import OperatorProfileCfg
 from motrix_deploy.policy import Policy
 from motrix_deploy.policy.processing import PolicyProcessor
 from motrix_deploy.runtime.context import ControlContext
@@ -30,6 +31,8 @@ from motrix_deploy.runtime.control import PolicyController
 from motrix_deploy.runtime.lifecycle import ControllerStep
 from motrix_deploy.runtime.preparation import JointServoPreparationState, SkillPreparationSpec
 from motrix_deploy.task import DeployTask
+from motrix_deploy_tasks.tasks.g1_startup import G1StartupController, G1StartupSettings
+from motrix_env_core.input import GamePadDevice, InputDevice, KeyboardDevice
 
 FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 NonNegativeFloat = Annotated[FiniteFloat, Field(ge=0)]
@@ -375,6 +378,7 @@ class G1WbtDeployTask(DeployTask[None]):
         policy: Policy,
         steps: int | None = None,
         *,
+        settings: dict[str, Any] | None = None,
         automatic_start: bool = True,
         motion: G1WbtMotion | None = None,
         artifact: Artifact | None = None,
@@ -431,6 +435,31 @@ class G1WbtDeployTask(DeployTask[None]):
         # request methods only) or attach a keyboard for operator staging.
         self._automatic_hold_ticks = 0 if automatic_start else None
         self._held_ticks = 0
+        settings = {} if settings is None else settings
+        if set(settings) - {"preparation"}:
+            raise ValueError("G1 WBT execution settings only support preparation")
+        self._startup_settings = G1StartupSettings(**settings.get("preparation", {}))
+        self._startup: G1StartupController
+        self._operator_profile: OperatorProfileCfg | None = None
+
+    def configure_operator(self, profile: OperatorProfileCfg | None) -> None:
+        self._operator_profile = profile
+
+    def prepare(self, *, simulation: bool, device: InputDevice | None = None, spawn_pose: str | None = None):
+        del spawn_pose
+        if not simulation and not isinstance(device, GamePadDevice):
+            raise ValueError("G1 hardware startup requires a gamepad")
+        self._startup = G1StartupController(
+            self.robot,
+            self._startup_settings,
+            device,
+            self._operator_profile if isinstance(device, GamePadDevice) else None,
+            simulation=simulation,
+        )
+        if isinstance(device, KeyboardDevice):
+            self.attach_keyboard(device)
+        self.validate_command(None)
+        return None
 
     @property
     def phase(self) -> str:
@@ -460,6 +489,7 @@ class G1WbtDeployTask(DeployTask[None]):
         self.transitions.append(self._record)
 
     def reset(self, state: RobotState) -> None:
+        self._startup.reset(state)
         self._stop_requested = False
         self._policy_start_requested = False
         self._motion_start_requested = False
@@ -501,7 +531,7 @@ class G1WbtDeployTask(DeployTask[None]):
         """One-line key reference printed by the CLI when keyboard input is attached."""
         if self._keyboard is None:
             return None
-        return "p start policy  m start motion  o stop"
+        return "FixStand active  p confirm startup / start policy  m start motion  o stop"
 
     def _process_operator_inputs(self) -> None:
         if self._keyboard is not None:
@@ -562,6 +592,15 @@ class G1WbtDeployTask(DeployTask[None]):
         return replace(decision, success=not self._stop_requested)
 
     def step(self, state: RobotState, context: ControlContext[None]) -> ControllerStep:
+        if self._startup.phase != "complete":
+            if self._stop_requested:
+                return ControllerStep(complete=True, success=False)
+            decision = self._startup.step(state, context)
+            if not decision.complete:
+                return decision
+            # Skill preparation begins from the measured post-startup state.
+            self.ready.reset(state)
+            return self._deterministic_step(state, context)
         self._process_operator_inputs()
         if self._phase == "complete":
             return ControllerStep(complete=True, success=not self._stop_requested)

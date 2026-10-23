@@ -35,14 +35,15 @@ def run(cfg: DeployRunConfig) -> int:
     if default_duration_s is not None and duration_s > default_duration_s + 1e-9:
         raise ValueError("duration_s exceeds the task's finite playback budget")
     policy = OnnxPolicy(artifact.policy_path, manifest.policy.input, manifest.policy.output)
-    task = create_task(manifest.task, manifest.robot, policy, steps=steps, artifact=artifact)
+    task = create_task(
+        manifest.task, manifest.robot, policy, steps=steps, artifact=artifact, settings=cfg.task_settings
+    )
     simulation = isinstance(cfg.runtime, SimRuntimeCfg)
     spawn_pose = cfg.runtime.robot_init_key_pose if simulation else None
     if simulation:
         runtime = create_simulation_runtime(cfg.runtime.backend, cfg.runtime.build_runtime_config())
     else:
         runtime = create_hardware_runtime(
-            cfg.runtime.backend,
             cfg.runtime,
             RuntimeCreateContext(
                 robot=manifest.robot,
@@ -111,7 +112,6 @@ def run_program(cfg: ProgramRunConfig) -> int:
         runtime = create_simulation_runtime(cfg.runtime.backend, cfg.runtime.build_runtime_config())
     else:
         runtime = create_hardware_runtime(
-            cfg.runtime.backend,
             cfg.runtime,
             RuntimeCreateContext(robot=program.robot, control=program.control),
         )

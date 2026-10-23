@@ -12,6 +12,7 @@ from fake_robot import FakeRobotInterface
 
 import motrix_deploy.runtime.factory as runtime_factory
 from motrix_deploy.artifact import ControlSpec
+from motrix_deploy.config import HardwareRuntimeCfg
 from motrix_deploy.contracts import RobotSpec
 from motrix_deploy.runtime.config import SimulationRuntimeConfig
 from motrix_deploy.runtime.factory import (
@@ -34,6 +35,11 @@ class _EntryPoint:
         return self.target
 
 
+@dataclass
+class _FakeHardwareCfg(HardwareRuntimeCfg):
+    response: float = 0.5
+
+
 def test_runtime_plugin_is_discovered_and_constructed(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
     spec = RobotSpec(
@@ -47,7 +53,7 @@ def test_runtime_plugin_is_discovered_and_constructed(monkeypatch: pytest.Monkey
 
     def factory(config, context):
         calls.append((config, context))
-        robot = FakeRobotInterface(context.robot, response=config["response"])
+        robot = FakeRobotInterface(context.robot, response=config.response)
         return HardwareRuntime(robot)
 
     entry_point = _EntryPoint("fake", "test:factory", factory)
@@ -57,7 +63,8 @@ def test_runtime_plugin_is_discovered_and_constructed(monkeypatch: pytest.Monkey
         control=ControlSpec(period_s=0.02, state_timeout_s=0.1),
     )
 
-    runtime = create_hardware_runtime("fake", {"name": "fake", "response": 0.5}, context)
+    config = _FakeHardwareCfg(backend="fake", response=0.5)
+    runtime = create_hardware_runtime(config, context)
 
     assert isinstance(runtime, HardwareRuntime)
     assert isinstance(runtime.robot, FakeRobotInterface)
@@ -65,7 +72,8 @@ def test_runtime_plugin_is_discovered_and_constructed(monkeypatch: pytest.Monkey
     assert not runtime.opened
     assert runtime.robot.spec is context.robot
     assert registered_runtimes() == ("fake",)
-    assert calls == [({"name": "fake", "response": 0.5}, context)]
+    assert calls == [(config, context)]
+    assert calls[0][0] is config
     with pytest.raises(TypeError, match="does not provide a SimulationRuntime"):
         monkeypatch.setattr(
             runtime_factory,
@@ -86,7 +94,7 @@ def test_runtime_plugin_discovery_rejects_missing_duplicate_and_invalid_factorie
     )
     monkeypatch.setattr(runtime_factory, "_runtime_entry_points", lambda: ())
     with pytest.raises(ValueError, match="installed runtimes: none"):
-        create_hardware_runtime("missing", {}, context)
+        create_hardware_runtime(HardwareRuntimeCfg(backend="missing"), context)
 
     duplicates = (
         _EntryPoint("duplicate", "first:factory", lambda config, context: object()),
@@ -94,9 +102,9 @@ def test_runtime_plugin_discovery_rejects_missing_duplicate_and_invalid_factorie
     )
     monkeypatch.setattr(runtime_factory, "_runtime_entry_points", lambda: duplicates)
     with pytest.raises(ValueError, match="Multiple deployment runtime plugins"):
-        create_hardware_runtime("duplicate", {}, context)
+        create_hardware_runtime(HardwareRuntimeCfg(backend="duplicate"), context)
 
     invalid = _EntryPoint("invalid", "invalid:factory", lambda config, context: object())
     monkeypatch.setattr(runtime_factory, "_runtime_entry_points", lambda: (invalid,))
     with pytest.raises(TypeError, match="expected DeploymentRuntime"):
-        create_hardware_runtime("invalid", {}, context)
+        create_hardware_runtime(HardwareRuntimeCfg(backend="invalid"), context)

@@ -7,8 +7,8 @@ The simulated runtime recipe is a structured schema installed in Hydra's
 ConfigStore ``runtime`` group, mirroring how RL providers install their
 algorithm schemas: ``runtime/sim.yaml`` composes ``_sim_schema`` so a task
 recipe's runtime section is typed and validated at compose time. Hardware
-runtimes stay a plain mapping because their schema is owned by the installed
-backend plugin, which decodes it strictly at the factory boundary.
+recipes use HardwareRuntimeCfg subclasses whose schemas are owned by the
+installed backend plugins.
 """
 
 from dataclasses import dataclass, field
@@ -84,6 +84,7 @@ class DeployRunConfig:
     # expressible in OmegaConf, so the CLI narrows it by isinstance.
     runtime: Any = MISSING
     duration_s: float | None = None
+    task_settings: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.artifact:

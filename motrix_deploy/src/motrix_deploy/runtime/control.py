@@ -184,7 +184,7 @@ class ControlSession(Generic[CommandT]):
 
     def _read_state(self, previous: int | None) -> "RobotState":
         try:
-            state = self.robot.read_state(self.state_timeout_s)
+            state = self.robot.read_state()
         except TimeoutError as error:
             raise ControlFailure("state_timeout", str(error)) from error
         except (EmergencyStopError, LieDownRequestedError, PassiveRequestedError):

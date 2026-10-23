@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -12,9 +15,10 @@ from motrix_deploy.artifact.schema import ControlSpec
 from motrix_deploy.contracts import JointServoCommand, RobotSpec
 from motrix_deploy.errors import ValidationError
 from motrix_deploy.runtime.factory import RuntimeCreateContext
-from motrix_deploy_unitree.config import UnitreeBackendConfig, UnitreeG1_29DOFRobotCfg
-from motrix_deploy_unitree.hardware import G1_29DOF_JOINT_NAMES
-from motrix_deploy_unitree.native_interface import UnitreeG1NativeRobot
+from motrix_deploy_unitree.config.control import load_control_config
+from motrix_deploy_unitree.config.g1 import G1_29DOF_JOINT_NAMES
+from motrix_deploy_unitree.config.runtime import UnitreeRuntimeConfig, UnitreeTransportConfig
+from motrix_deploy_unitree.g1.native_robot import UnitreeG1NativeRobot
 from motrix_deploy_unitree.plugin import create_runtime
 
 
@@ -28,9 +32,7 @@ class _NativeFake:
     def open(self, timeout_s: float) -> None:
         assert timeout_s > 0
 
-    def read_state(self, timeout_s: float, after_sequence: int) -> dict[str, object]:
-        assert timeout_s > 0
-        self.sequence = max(self.sequence + 1, after_sequence + 1)
+    def read_state(self) -> dict[str, object]:
         return {
             "sequence": self.sequence,
             "receive_time_ns": 1_000_000 + self.sequence,
@@ -76,24 +78,32 @@ def _spec() -> RobotSpec:
     )
 
 
-def _config() -> UnitreeBackendConfig:
-    return UnitreeBackendConfig(
-        transport="native_cpp",
-        network_interface="eth0",
-        robot=UnitreeG1_29DOFRobotCfg(
-            wait_for_remote_buttons=False,
+def _config() -> UnitreeRuntimeConfig:
+    return UnitreeRuntimeConfig(
+        transport=UnitreeTransportConfig(implementation="native_cpp", network_interface="eth0"),
+        robot="g1-29dof",
+        control=replace(
+            load_control_config("g1"),
             startup_mode="state_machine",
-            kp=20.0,
-            kd=1.0,
         ),
     )
 
 
 def test_native_adapter_normalizes_snapshot_and_forwards_command() -> None:
     native = _NativeFake()
-    robot = UnitreeG1NativeRobot(_config(), 0.02, 0.1, spec=_spec(), native_backend=native, sleep=lambda _: None)
+    config = _config()
+    robot = UnitreeG1NativeRobot(
+        config.transport,
+        config.control,
+        control_period_s=0.02,
+        state_timeout_s=0.1,
+        spec=_spec(),
+        operator=config.operator,
+        native_backend=native,
+        sleep=lambda _: None,
+    )
     robot.open()
-    state = robot.read_state(0.1)
+    state = robot.read_state()
     assert state.joint_position.shape == (29,)
     np.testing.assert_array_equal(state.joint_position[:3], np.asarray([0.0, 1.0, 2.0], dtype=np.float32))
     np.testing.assert_allclose(state.base_orientation_xyzw, [0.0, 0.0, 0.0, 1.0])
@@ -103,6 +113,9 @@ def test_native_adapter_normalizes_snapshot_and_forwards_command() -> None:
     robot.write_command(JointServoCommand(zeros, zeros, zeros, np.ones(29, np.float32), np.ones(29, np.float32)))
     assert native.enabled
     assert native.commands[-1][0] == "servo"
+    # The backend forwards the command gains without applying startup overrides.
+    np.testing.assert_array_equal(native.commands[-1][1][3], np.ones(29, np.float32))
+    np.testing.assert_array_equal(native.commands[-1][1][4], np.ones(29, np.float32))
     robot.close()
     assert native.closed
 
@@ -118,12 +131,25 @@ def test_native_factory_receives_configured_damping_gain() -> None:
             recorded.update(kwargs)
 
     config = _config()
-    robot = UnitreeG1NativeRobot(config, 0.02, 0.1, spec=_spec(), native_factory=_Recorder, sleep=lambda _: None)
+    robot = UnitreeG1NativeRobot(
+        config.transport,
+        config.control,
+        control_period_s=0.02,
+        state_timeout_s=0.1,
+        spec=_spec(),
+        operator=config.operator,
+        native_factory=_Recorder,
+        sleep=lambda _: None,
+    )
     robot.open()
     robot.close()
-    assert recorded["damping_kd"] == config.robot.damping_kd
-    assert recorded["command_period_s"] == config.robot.command_publish_period_s
-    assert recorded["command_timeout_s"] == config.robot.command_timeout_s
+    assert recorded["lowcmd_topic"] == "rt/lowcmd"
+    assert recorded["lowstate_topic"] == "rt/lowstate"
+    assert recorded["validate_crc"] is True
+    assert recorded["subscriber_queue_depth"] == 10
+    assert recorded["damping_kd"] == config.control.damping_kd
+    assert recorded["command_period_s"] == config.control.command_publish_period_s
+    assert recorded["command_timeout_s"] == config.control.command_timeout_s
 
 
 def test_native_transport_selects_g1_native_robot() -> None:
@@ -137,7 +163,17 @@ def test_native_transport_selects_g1_native_robot() -> None:
 
 def test_native_adapter_enforces_robot_command_limits() -> None:
     native = _NativeFake()
-    robot = UnitreeG1NativeRobot(_config(), 0.02, 0.1, spec=_spec(), native_backend=native, sleep=lambda _: None)
+    config = _config()
+    robot = UnitreeG1NativeRobot(
+        config.transport,
+        config.control,
+        control_period_s=0.02,
+        state_timeout_s=0.1,
+        spec=_spec(),
+        operator=config.operator,
+        native_backend=native,
+        sleep=lambda _: None,
+    )
     robot.open()
     robot.enable()
     zeros = np.zeros(29, dtype=np.float32)
@@ -152,3 +188,58 @@ def test_native_adapter_enforces_robot_command_limits() -> None:
             )
         )
     robot.close()
+
+
+def test_native_cached_reads_preserve_time_and_process_gestures_once() -> None:
+    native = _NativeFake()
+    config = _config()
+    robot = UnitreeG1NativeRobot(
+        config.transport,
+        config.control,
+        spec=_spec(),
+        control_period_s=0.02,
+        state_timeout_s=0.1,
+        native_backend=native,
+        sleep=lambda _: None,
+    )
+    seen = []
+    robot._intent_evaluator = SimpleNamespace(update=lambda buttons, stamp: seen.append(stamp) or set())
+    robot.open()
+    try:
+        first = robot.read_state()
+        cached = robot.read_state()
+        assert first.receive_time_ns == cached.receive_time_ns
+        assert first.sample_time_ns == cached.sample_time_ns
+        np.testing.assert_array_equal(first.joint_position, cached.joint_position)
+        assert seen == [first.receive_time_ns]
+        native.sequence += 1
+        updated = robot.read_state()
+        assert updated.receive_time_ns > first.receive_time_ns
+        assert seen == [first.receive_time_ns, updated.receive_time_ns]
+    finally:
+        robot.close()
+
+
+@pytest.mark.parametrize("startup_mode", ["one_shot", "state_machine"])
+def test_native_enable_allows_output_without_startup_motion_or_confirmation(startup_mode) -> None:
+    config = _config()
+    native = _NativeFake()
+    robot = UnitreeG1NativeRobot(
+        config.transport,
+        config.control,
+        spec=_spec(),
+        control_period_s=0.02,
+        state_timeout_s=0.1,
+        native_backend=native,
+        sleep=lambda _: pytest.fail("enable must not wait for startup"),
+    )
+    robot.open()
+    try:
+        robot.enable()
+        assert native.enabled
+        assert native.commands == []
+        zeros = np.zeros(29, dtype=np.float32)
+        robot.write_command(JointServoCommand(zeros, zeros, zeros, zeros, zeros))
+        assert len(native.commands) == 1
+    finally:
+        robot.close()

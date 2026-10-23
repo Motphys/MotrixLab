@@ -73,7 +73,7 @@ def test_complete_scene_reuses_one_copy_without_inserting_another_robot() -> Non
     backend.open()
     try:
         assert backend.model.njnt == 13
-        np.testing.assert_allclose(backend.robot.read_state(0.1).base_orientation_xyzw, robot.rotation, atol=1e-6)
+        np.testing.assert_allclose(backend.robot.read_state().base_orientation_xyzw, robot.rotation, atol=1e-6)
     finally:
         backend.close()
     assert robot.translation == (4, 5, 6)
@@ -91,16 +91,16 @@ def test_file_scene_and_custom_objects_preserved_placement_has_no_double_transfo
     backend = create_runtime(config, control_period_s=0.02)
     backend.open()
     try:
-        state = backend.robot.read_state(0.1)
+        state = backend.robot.read_state()
         np.testing.assert_allclose(backend.data.xpos[backend.robot._base_body_id], backend.model.qpos0[:3])
         np.testing.assert_allclose(state.base_orientation_xyzw, robot.rotation, atol=1e-6)
         np.testing.assert_allclose(backend.model.geom("obstacle").pos, [5, 6, 7])
         assert backend.model.geom("platform").pos[2] == pytest.approx(0.2)
         assert state.sample_time_ns == 0
-        assert backend.robot.read_state(0.1).receive_time_ns >= state.receive_time_ns
+        assert backend.robot.read_state().receive_time_ns >= state.receive_time_ns
         backend.robot.write_command(_command(_spec().default_joint_position))
         backend.advance_control_period()
-        assert backend.robot.read_state(0.1).sample_time_ns == 20_000_000
+        assert backend.robot.read_state().sample_time_ns == 20_000_000
     finally:
         backend.close()
     assert scene.file == path and scene.objs.robot is robot
@@ -134,7 +134,7 @@ def test_robot_attach_transform_and_init_key_pose_are_reset_once(rotation) -> No
     )
     with runtime:
         for _ in range(2):
-            state = runtime.robot.read_state(0.1)
+            state = runtime.robot.read_state()
             np.testing.assert_allclose(runtime.data.xpos[runtime.robot._base_body_id], expected_position, atol=1e-6)
             np.testing.assert_allclose(state.base_orientation_xyzw, expected_quat[[1, 2, 3, 0]], atol=1e-6)
             np.testing.assert_allclose(state.joint_position, robot.key_pose.poses["custom"], atol=1e-6)
@@ -157,7 +157,7 @@ def test_scene_init_pose_preserves_artifact_default_and_clips_servo_limits() -> 
     with runtime:
         spec = runtime.robot.spec
         expected = np.clip(scene.objs.robot.key_pose.poses["lie_down"], spec.position_lower, spec.position_upper)
-        np.testing.assert_allclose(runtime.robot.read_state(0.1).joint_position, expected, atol=1e-6)
+        np.testing.assert_allclose(runtime.robot.read_state().joint_position, expected, atol=1e-6)
         np.testing.assert_allclose(spec.default_joint_position, scene.objs.robot.key_pose.poses["default"])
         assert scene.objs.robot.init_key_pose == "lie_down"
 
@@ -221,7 +221,7 @@ def test_failed_open_releases_session_and_viewer_idempotently(failure, monkeypat
     backend.close()
     assert viewer.closes == 1
     with pytest.raises(RuntimeError, match="not open"):
-        backend.robot.read_state(0.1)
+        backend.robot.read_state()
 
 
 @pytest.mark.integration
@@ -252,7 +252,7 @@ def test_robot_io_lifecycle_preserves_world_and_rebinds_on_runtime_reopen(contro
         np.testing.assert_array_equal(data.ctrl, 0.0)
         assert not robot.health().healthy
         with pytest.raises(RuntimeError, match="not open"):
-            robot.read_state(0.1)
+            robot.read_state()
         with pytest.raises(RuntimeError, match="not open"):
             robot.open()
 
@@ -261,12 +261,12 @@ def test_robot_io_lifecycle_preserves_world_and_rebinds_on_runtime_reopen(contro
         assert runtime.robot is robot and robot.spec is spec
         robot.open()
         assert robot.health().healthy
-        state = robot.read_state(0.1)
+        state = robot.read_state()
         assert state.sample_time_ns == 0
         np.testing.assert_array_equal(state.joint_position, spec.default_joint_position)
     assert not robot.health().healthy
     with pytest.raises(RuntimeError, match="not open"):
-        robot.read_state(0.1)
+        robot.read_state()
 
 
 def test_runtime_requires_primary_scene_robot() -> None:
@@ -360,7 +360,7 @@ def test_public_simulation_factory_returns_model_derived_robot_spec() -> None:
     assert runtime.robot is port and port.spec is spec
     with runtime:
         port.open()
-        np.testing.assert_array_equal(port.read_state(0.1).joint_position, spec.default_joint_position)
+        np.testing.assert_array_equal(port.read_state().joint_position, spec.default_joint_position)
     assert runtime.model is None and runtime.data is None
 
 

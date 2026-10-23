@@ -3,15 +3,18 @@
 
 """Typed artifact specification and runtime for ``go2_walk/v1``."""
 
-from dataclasses import dataclass
-from typing import Annotated, ClassVar
+import logging
+from dataclasses import dataclass, fields
+from math import isfinite
+from typing import Annotated, Any, ClassVar
 
 import numpy as np
+from motrix_robots.unitree import UnitreeGo2Robot
 from pydantic import Field, model_validator
 
 from motrix_deploy.artifact.schema import TaskSpec
 from motrix_deploy.contracts import FloatArray, JointServoCommand, RobotSpec, RobotState, float32_array
-from motrix_deploy.errors import ValidationError
+from motrix_deploy.errors import ControlFailure, ValidationError
 from motrix_deploy.policy import Policy
 from motrix_deploy.policy.processing import PolicyProcessor
 from motrix_deploy.runtime.context import ControlContext
@@ -200,7 +203,7 @@ def _projected_gravity(orientation_xyzw: FloatArray) -> FloatArray:
 
 @dataclass(frozen=True)
 class Go2WalkPreparationSettings:
-    """Simulation-only standing transition; keep it separate from policy gains."""
+    """Measured standing transition and operator controls, separate from policy gains."""
 
     ramp_duration_s: float = 2.0
     settle_duration_s: float = 0.5
@@ -213,28 +216,76 @@ class Go2WalkPreparationSettings:
     damping_duration_s: float = 1.0
     stop_damping_duration_s: float = 10.0
     damping_kd: float = 8.0
+    start_button: str = "start"
+    policy_button: str = "A"
+    stop_button: str = "B"
+
+    def __post_init__(self) -> None:
+        buttons = (self.start_button, self.policy_button, self.stop_button)
+        if all(isinstance(button, str) for button in buttons):
+            if len(set(buttons)) != len(buttons):
+                raise ValueError("preparation start, policy and stop buttons must be distinct")
+            if any(button.casefold() == "select" for button in (self.start_button, self.policy_button)):
+                raise ValueError("preparation startup buttons must not use the backend Select emergency stop")
+        for field in fields(self):
+            value = getattr(self, field.name)
+            if field.name.endswith("_button"):
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"preparation.{field.name} must be a nonempty button name")
+            elif (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                or not 0 < value <= FLOAT32_MAX
+            ):
+                raise ValueError(f"preparation.{field.name} must be finite and positive (float32 representable)")
 
 
 class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
-    """Go2 walking task, optionally with a simulated measured-state preparation flow."""
+    """Go2 walking policy with task-owned measured preparation and operator shutdown."""
 
     spec_type = Go2WalkTaskSpec
 
     def __init__(
-        self, spec: Go2WalkTaskSpec, robot: RobotSpec, policy: Policy, steps: int | None = None, artifact=None
+        self,
+        spec: Go2WalkTaskSpec,
+        robot: RobotSpec,
+        policy: Policy,
+        steps: int | None = None,
+        artifact=None,
+        *,
+        settings: dict[str, Any] | None = None,
     ):
         self.spec = spec
         self.robot = robot
         self.policy_io = Go2WalkPolicyProcessor(spec, robot)
         self.policy_controller = PolicyController(self.policy_io, policy, steps=steps)
-        self._preparation: Go2WalkPreparationSettings | None = None
-        self._stage = "policy"
+        settings = {} if settings is None else settings
+        if not isinstance(settings, dict):
+            raise ValueError("task_settings must be a dict")
+        unknown = settings.keys() - {"preparation"}
+        if unknown:
+            raise ValueError(f"Unknown Go2 task settings: {sorted(unknown)}")
+        preparation = Go2WalkPreparationSettings()
+        if "preparation" in settings:
+            values = settings["preparation"]
+            if not isinstance(values, dict):
+                raise ValueError("task_settings.preparation must be a dict")
+            preparation = Go2WalkPreparationSettings(**values)
+        self._preparation = preparation
+
+        self._stage = "wait_stand"
         self._stage_start_s = 0.0
         self._stop_requested = False
         self._start_position: FloatArray | None = None
         self._ready_since_s: float | None = None
         self._policy_start_s = 0.0
         self._keyboard = None
+        self._gamepad: GamePadDevice | None = None
+        self._shutdown_position: FloatArray | None = None
+        self._shutdown_duration_s = 2.0
+        self._shutdown_requested = False
+        self._return_to_spawn_pose = False
         self._poll_keyboard = True
         self._automatic_start = True
         self._stand_requested = False
@@ -243,7 +294,7 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
         self._zeros = np.zeros(robot.joint_count, dtype=np.float32)
 
     def enable_simulation_preparation(self, settings: Go2WalkPreparationSettings | None = None) -> None:
-        """Use measured crouch-to-stand and damping stages in opt-in simulation."""
+        """Configure measured crouch-to-stand and damping stages for simulation."""
         self._preparation = settings if settings is not None else Go2WalkPreparationSettings()
 
     def prepare(
@@ -253,9 +304,27 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
         device: InputDevice | None = None,
         spawn_pose: str | None = None,
     ) -> CommandBinding[PlanarVelocityCommand]:
-        """Derive the crouch preparation from the simulation spawn pose and build the command source."""
-        if simulation and spawn_pose == "lie_down":
-            self.enable_simulation_preparation()
+        """Bind input for the shared crouch-to-stand preparation and policy lifecycle."""
+        if not simulation:
+            if not isinstance(device, GamePadDevice):
+                raise ValidationError(
+                    "operator.gamepad", "a GamePadDevice for hardware preparation", type(device).__name__
+                )
+            pose = UnitreeGo2Robot().key_pose
+            if set(pose.joint_names) != set(self.robot.joint_names):
+                raise ValidationError("robot.joint_names", "the canonical Go2 joints", self.robot.joint_names)
+            positions = dict(zip(pose.joint_names, pose.poses["lie_down"], strict=True))
+            target = np.asarray([positions[name] for name in self.robot.joint_names], dtype=np.float32)
+            bounded = np.clip(target, self.robot.position_lower, self.robot.position_upper).astype(np.float32)
+            limited = np.flatnonzero(bounded != target)
+            if limited.size:
+                logging.getLogger(__name__).warning(
+                    "Go2 shutdown crouch is limited by artifact joint bounds at %s; "
+                    "the bounded pose does not guarantee body support on the ground.",
+                    ", ".join(self.robot.joint_names[index] for index in limited),
+                )
+            self._shutdown_position = bounded
+        self._return_to_spawn_pose = simulation
         command_lower, command_upper = self.command_bounds
         if isinstance(device, KeyboardDevice):
             binding: CommandBinding[PlanarVelocityCommand] = KeyboardPlanarVelocityBinding(
@@ -279,9 +348,13 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
             # Headless playback holds still; the policy keeps standing commands in bounds.
             binding = ConstantPlanarVelocityBinding((0.0, 0.0, 0.0))
             self.validate_command(binding.read_command())
-        if self._preparation is not None and isinstance(device, KeyboardDevice):
+        if isinstance(device, KeyboardDevice):
             # Share the device with the velocity binding; let it poll first when present.
             self.attach_keyboard(device, poll=not isinstance(binding, KeyboardPlanarVelocityBinding))
+        if isinstance(device, GamePadDevice):
+            # The command binding polls this shared device before each controller step.
+            self._gamepad = device
+            self._automatic_start = False
         return binding
 
     def attach_keyboard(self, keyboard, *, poll: bool = True) -> None:
@@ -298,16 +371,33 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
 
     def request_policy_start(self) -> None:
         """Latch takeover intent; policy still waits for measured standing readiness."""
-        self._policy_start_requested = True
+        if self._preparation_ready:
+            self._policy_start_requested = True
 
     @property
     def operator_hint(self) -> str | None:
+        if self._gamepad is not None:
+            settings = self._preparation
+            return (
+                f"{settings.start_button} stand up (Start)  {settings.policy_button} enable policy (A, after ready)  "
+                f"{settings.stop_button} lie down then stop (B)  Select emergency stop"
+            )
         if self._keyboard is None:
             return None
+        if self._shutdown_position is not None or self._return_to_spawn_pose:
+            return "r stand up (Start)  p enable policy (A)  o lie down then close"
         return "r stand up (Start)  p enable policy (A)  o damp for 10s then close"
 
     def _process_operator_input(self) -> None:
-        if self._keyboard is not None:
+        if self._gamepad is not None:
+            settings = self._preparation
+            if self._gamepad.is_button_down(settings.start_button):
+                self.request_stand()
+            if self._stage == "wait_policy" and self._gamepad.is_button_down(settings.policy_button):
+                self.request_policy_start()
+            if self._gamepad.is_button_pressing(settings.stop_button):
+                self._shutdown_requested = True
+        elif self._keyboard is not None:
             if self._poll_keyboard:
                 self._keyboard.poll()
             if self._keyboard.is_key_down("r"):
@@ -315,7 +405,10 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
             if self._stage == "wait_policy" and self._keyboard.is_key_down("p"):
                 self.request_policy_start()
             if self._keyboard.is_key_down("o"):
-                self.request_stop()
+                if self._shutdown_position is not None:
+                    self._shutdown_requested = True
+                else:
+                    self.request_stop()
         elif self._automatic_start:
             self.request_stand()
             if self._preparation_ready:
@@ -333,17 +426,71 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
         self.policy_io.validate_command(command)
 
     def reset(self, state: RobotState) -> None:
-        self._stage = "wait_stand" if self._preparation is not None else "policy"
+        if self._return_to_spawn_pose and self._shutdown_position is None:
+            # Capture the simulation's actual initialized crouch, not an asset pose
+            # that may have been clipped when bound to this artifact.
+            self._shutdown_position = np.clip(
+                state.joint_position, self.robot.position_lower, self.robot.position_upper
+            ).astype(np.float32)
+        self._stage = "wait_stand"
         self._stage_start_s = 0.0
         self._stop_requested = False
+        self._shutdown_requested = False
         self._start_position = state.joint_position.copy()
         self._ready_since_s = None
         self._policy_start_s = 0.0
         self._stand_requested = False
         self._policy_start_requested = False
         self._preparation_ready = False
-        if self._preparation is None:
-            self.policy_controller.reset(state)
+
+    def _validate_transition_start(self, state: RobotState, transition: str) -> None:
+        # Clamping an out-of-range measured start would skip the ramp and apply
+        # startup stiffness at a discontinuous position target. Fail closed instead.
+        if np.any(state.joint_position < self.robot.position_lower) or np.any(
+            state.joint_position > self.robot.position_upper
+        ):
+            raise ControlFailure(
+                f"{transition}_initial_state_out_of_range",
+                f"Go2 {transition} measured joint positions must be inside robot position limits before ramping",
+            )
+
+    def _preparation_diagnostics(self, state: RobotState, elapsed: float, tilt: float) -> str:
+        """Describe readiness at failure without logging on the control hot path."""
+        settings = self._preparation
+        errors = np.abs(state.joint_position - self.robot.default_joint_position)
+        speeds = np.abs(state.joint_velocity)
+        stable_s = 0.0 if self._ready_since_s is None else max(0.0, elapsed - self._ready_since_s)
+        unmet = []
+        if elapsed < settings.ramp_duration_s:
+            unmet.append("ramp_duration")
+        if np.any(errors > settings.max_joint_error_rad):
+            unmet.append("joint_position_error")
+        if np.any(speeds > settings.max_joint_velocity_rad_s):
+            unmet.append("joint_velocity")
+        if tilt > settings.max_base_tilt_rad:
+            unmet.append("base_tilt")
+        if stable_s + 1e-9 < settings.settle_duration_s:
+            unmet.append("settle_duration")
+        joints = "; ".join(
+            f"{name}: measured={state.joint_position[i]:.6f} rad, "
+            f"target={self.robot.default_joint_position[i]:.6f} rad, "
+            f"abs_error={errors[i]:.6f} rad, velocity={state.joint_velocity[i]:.6f} rad/s"
+            for i, name in enumerate(self.robot.joint_names)
+            if errors[i] > settings.max_joint_error_rad or speeds[i] > settings.max_joint_velocity_rad_s
+        )
+        error_index = int(np.argmax(errors))
+        speed_index = int(np.argmax(speeds))
+        return (
+            f"unmet=[{', '.join(unmet)}]; elapsed={elapsed:.3f}s, "
+            f"ramp_required={settings.ramp_duration_s:.3f}s, timeout={settings.timeout_s:.3f}s; "
+            f"stable={stable_s:.3f}/{settings.settle_duration_s:.3f}s; "
+            f"max_abs_error={errors[error_index]:.6f}/{settings.max_joint_error_rad:.6f} rad "
+            f"({self.robot.joint_names[error_index]}); "
+            f"max_abs_velocity={speeds[speed_index]:.6f}/{settings.max_joint_velocity_rad_s:.6f} rad/s "
+            f"({self.robot.joint_names[speed_index]}); "
+            f"tilt={tilt:.6f}/{settings.max_base_tilt_rad:.6f} rad; "
+            f"violating_joints=[{joints}]"
+        )
 
     def _servo(self, position: FloatArray, kp: float, kd: float) -> JointServoCommand:
         return JointServoCommand(
@@ -356,12 +503,30 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
 
     def step(self, state: RobotState, context: ControlContext[PlanarVelocityCommand]) -> ControllerStep:
         settings = self._preparation
-        if settings is None:
-            return self.policy_controller.step(state, context)
         self._process_operator_input()
         if self._stop_requested and self._stage not in {"damping", "complete"}:
             self._stage = "damping"
             self._stage_start_s = context.elapsed_time_s
+        elif self._shutdown_requested and self._stage not in {"shutdown", "damping", "complete"}:
+            if self._stage == "wait_stand":
+                # Before standing, measured folded joints may be outside model limits.
+                # Do not initiate an active trajectory just to finish the task.
+                self._stage = "damping"
+            else:
+                self._validate_transition_start(state, "shutdown")
+                self._stage = "shutdown"
+                self._start_position = state.joint_position.copy()
+            self._stage_start_s = context.elapsed_time_s
+        if self._stage == "shutdown":
+            elapsed = context.elapsed_time_s - self._stage_start_s
+            if elapsed + 1e-9 >= self._shutdown_duration_s:
+                self._stage = "damping"
+                self._stage_start_s = context.elapsed_time_s
+            else:
+                assert self._start_position is not None and self._shutdown_position is not None
+                fraction = np.float32(min((elapsed + context.dt_s) / self._shutdown_duration_s, 1.0))
+                target = self._start_position + fraction * (self._shutdown_position - self._start_position)
+                return ControllerStep(command=self._servo(target, settings.kp, settings.kd))
         if self._stage == "wait_stand":
             if not self._stand_requested:
                 return ControllerStep(command=self._servo(state.joint_position, 0.0, settings.damping_kd))
@@ -373,7 +538,12 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
             x, y, _, _ = state.base_orientation_xyzw
             tilt = float(np.arccos(np.clip(1 - 2 * (float(x) ** 2 + float(y) ** 2), -1, 1)))
             if tilt > settings.max_base_tilt_rad:
-                return ControllerStep(error=f"unsafe base tilt during Go2 preparation: {tilt:.3f} rad")
+                return ControllerStep(
+                    error=(
+                        "unsafe base tilt during Go2 preparation: "
+                        + self._preparation_diagnostics(state, elapsed, tilt)
+                    )
+                )
             ready = (
                 elapsed >= settings.ramp_duration_s
                 and np.max(np.abs(state.joint_position - self.robot.default_joint_position))
@@ -388,7 +558,9 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
                 self._preparation_ready = True
                 self._stage = "wait_policy"
             elif elapsed + 1e-9 >= settings.timeout_s:
-                return ControllerStep(error="Go2 standing preparation timed out")
+                return ControllerStep(
+                    error="Go2 standing preparation timed out: " + self._preparation_diagnostics(state, elapsed, tilt)
+                )
             else:
                 assert self._start_position is not None
                 fraction = np.float32(min((elapsed + context.dt_s) / settings.ramp_duration_s, 1.0))
@@ -397,6 +569,21 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
         if self._stage == "wait_policy":
             if not self._policy_start_requested:
                 return ControllerStep(command=self._servo(self.robot.default_joint_position, settings.kp, settings.kd))
+            # Readiness is measured again at takeover, not trusted as a stale latch.
+            self._preparation_ready = False
+            self._policy_start_requested = False
+            self._validate_transition_start(state, "preparation")
+            x, y, _, _ = state.base_orientation_xyzw
+            tilt = float(np.arccos(np.clip(1 - 2 * (float(x) ** 2 + float(y) ** 2), -1, 1)))
+            if (
+                np.max(np.abs(state.joint_position - self.robot.default_joint_position)) > settings.max_joint_error_rad
+                or np.max(np.abs(state.joint_velocity)) > settings.max_joint_velocity_rad_s
+                or tilt > settings.max_base_tilt_rad
+            ):
+                raise ControlFailure(
+                    "preparation_not_ready", "Go2 measured standing readiness was lost before policy takeover"
+                )
+            self._preparation_ready = True
             self.policy_controller.reset(state)
             self._policy_start_s = context.elapsed_time_s
             self._stage = "policy"
@@ -426,7 +613,4 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
         return ControllerStep(complete=True, success=not self._stop_requested)
 
     def request_stop(self) -> None:
-        if self._preparation is None:
-            self.policy_controller.request_stop()
-        else:
-            self._stop_requested = True
+        self._stop_requested = True

@@ -38,6 +38,24 @@ def test_deploy_run_config_decodes_typed_simulation_runtime() -> None:
     assert config.duration_s == pytest.approx(0.1)
 
 
+def test_deploy_run_config_preserves_nested_task_settings_as_plain_dicts() -> None:
+    settings = {"preparation": {"kp": [12.0, 15.0], "start_button": "X"}, "enabled": True}
+    config = _typed_config({"artifact": "artifact.deploy", "runtime": _sim_runtime(), "task_settings": settings})
+
+    assert type(config.task_settings) is dict
+    assert type(config.task_settings["preparation"]) is dict
+    assert config.task_settings == settings
+
+
+def test_deploy_run_config_task_settings_defaults_are_independent() -> None:
+    first = _typed_config({"artifact": "first.deploy", "runtime": _sim_runtime()})
+    second = _typed_config({"artifact": "second.deploy", "runtime": _sim_runtime()})
+
+    assert first.task_settings == second.task_settings == {}
+    first.task_settings["preparation"] = {"start_button": "X"}
+    assert second.task_settings == {}
+
+
 def test_deploy_run_config_defaults_to_unbounded_duration() -> None:
     config = _typed_config({"artifact": "artifact.deploy", "runtime": _sim_runtime()})
 

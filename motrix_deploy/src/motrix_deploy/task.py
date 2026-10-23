@@ -28,6 +28,11 @@ class DeployTask(ABC, Generic[CommandT]):
         """Artifact-owned playback budget, if no CLI duration is supplied."""
         return None
 
+    def __init__(self, *, settings: dict[str, Any] | None = None) -> None:
+        """Reject execution settings unless the concrete task supports them."""
+        if settings:
+            raise ValueError(f"{type(self).__name__} does not support execution settings")
+
     @abstractmethod
     def reset(self, state: RobotState) -> None: ...
 
@@ -102,9 +107,11 @@ def create_task(
     policy: Policy,
     steps: int | None = None,
     artifact: Any | None = None,
+    *,
+    settings: dict[str, Any] | None = None,
 ) -> DeployTask[Any]:
     """Construct a task; ``artifact`` supplies file payloads for tasks that reference them."""
-    return load_task_type(spec.name)(spec, robot, policy, steps=steps, artifact=artifact)
+    return load_task_type(spec.name)(spec, robot, policy, steps=steps, artifact=artifact, settings=settings)
 
 
 __all__ = ["DeployTask", "create_task", "available_tasks", "load_task_type"]

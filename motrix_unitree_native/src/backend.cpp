@@ -151,6 +151,7 @@ void G1Backend::open(double connect_timeout_s) {
 }
 
 void G1Backend::lowstate_handler(const void* message) {
+  const auto receive_time_ns = now_ns();
   const auto* incoming = static_cast<const LowState*>(message);
   if (incoming == nullptr) return;
   LowState state = *incoming;
@@ -167,7 +168,7 @@ void G1Backend::lowstate_handler(const void* message) {
   }
 
   StateSnapshot snapshot;
-  snapshot.receive_time_ns = now_ns();
+  snapshot.receive_time_ns = receive_time_ns;
   for (int i = 0; i < kMotorCount; ++i) {
     const auto motor_index = static_cast<std::size_t>(motor_indices_[static_cast<std::size_t>(i)]);
     snapshot.joint_position[static_cast<std::size_t>(i)] = state.motor_state()[motor_index].q();
@@ -220,26 +221,10 @@ bool G1Backend::valid_mode(const LowState& state) const {
   return expected_mode_machine_ < 0 || state.mode_machine() == expected_mode_machine_;
 }
 
-StateSnapshot G1Backend::read_state(double timeout_s, std::int64_t after_sequence) {
-  if (timeout_s <= 0.0 || !std::isfinite(timeout_s)) {
-    throw std::invalid_argument("state timeout must be positive and finite");
-  }
-  std::unique_lock<std::mutex> lock(mutex_);
-  const auto deadline = std::chrono::steady_clock::now() +
-                        std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                            std::chrono::duration<double>(timeout_s));
-  const auto fresh = [this, after_sequence] {
-    return have_state_ &&
-           (after_sequence < 0 || static_cast<std::int64_t>(latest_state_.sequence) > after_sequence);
-  };
-  while (!fresh()) {
-    if (state_condition_.wait_until(lock, deadline) == std::cv_status::timeout) {
-      std::string message = "no fresh G1 LowState received before timeout";
-      const std::string& reason = !state_error_.empty() ? state_error_ : publish_error_;
-      if (!reason.empty()) message += ": " + reason;
-      throw NativeTimeoutError(message);
-    }
-  }
+StateSnapshot G1Backend::read_state() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!opened_ || closed_) throw std::runtime_error("native Unitree backend is not open");
+  if (!have_state_) throw std::runtime_error("no valid G1 LowState is available");
   return latest_state_;
 }
 
