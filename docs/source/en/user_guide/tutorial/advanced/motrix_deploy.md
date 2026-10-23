@@ -27,7 +27,7 @@ plugin for the target.
 ## 2. Export and inspect
 
 ```bash
-mxlab export-deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
+mxlab export-deploy env=go2-walk-flat
 mxlab deploy inspect artifact=artifacts/go2-walk-flat.deploy
 ```
 
@@ -124,32 +124,6 @@ motrix-deploy-unitree read-lowstate enp5s0 --robot go2 --duration-s 10
 Check for valid state samples and CRC/decode errors. The tool sends no motor commands and does not release official
 control. Remote buttons may still affect the official controller while it is active; do not treat button checks as
 side-effect-free.
-
-### Run a bounded single-joint test
-
-This test needs no artifact or policy. It can move **all twelve joints**, including with `--offset 0`, because it first
-moves the whole robot to a holding pose. Use support, clearance, and gains reviewed for this robot and setup.
-
-First explicitly release official control; follow its `yes` and `down` confirmations:
-
-```bash
-motrix-deploy-unitree release-control enp5s0
-```
-
-Then run the test with explicitly selected gains:
-
-```bash
-motrix-deploy-unitree joint-control enp5s0 FL_thigh_joint \
-  --offset 0.05 --kp "${KP:?Set reviewed stiffness}" --kd "${KD:?Set reviewed damping}"
-```
-
-The command displays its targets and asks for `yes` before connecting. Start begins the holding-pose transition; A
-starts the selected-joint test. `--offset` is in radians relative to the holding pose, not the initial measured angle;
-use `--target` instead for an absolute angle. B returns to the holding pose and stops, except before or during startup,
-when it cancels directly into damping. **This diagnostic B behavior differs from walking deployment's lie-down.**
-
-Use `motrix-deploy-unitree joint-control --help` for motion/startup timing options. Limit checks and startup protections
-do not certify mechanical safety or total actuator torque.
 
 ## 6. Common settings and failures
 

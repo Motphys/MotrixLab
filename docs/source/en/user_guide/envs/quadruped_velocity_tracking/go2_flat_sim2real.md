@@ -1,137 +1,120 @@
-# Go2 flat-ground walking: sim2sim and sim2real
+# Physical deployment
 
-This page describes the complete path from a `go2-walk-flat` training policy to deployment: export an artifact, check it in MuJoCo or MotrixSim, and then run it on the real robot through the Unitree SDK2 DDS backend. The artifact keeps the policy, joint order, default pose, action scaling, and control period together; passing simulation does not guarantee hardware safety.
+This page explains how to deploy the `go2-walk-flat` policy to a Unitree Go2: export and inspect a deployment artifact, check the policy in MuJoCo or MotrixSim, and then connect the real robot using the safety procedure. Simulation success does not establish hardware safety. For the first run, prepare load-bearing support, an independent emergency stop, and an on-site operator.
 
-## 1. Train the policy
+```{video} /_static/videos/go2_hardware_deployment.mp4
+:nocontrols:
+:autoplay:
+:playsinline:
+:muted:
+:loop:
+:width: 100%
+:align: center
+```
+
+## 1. Train and export the policy
+
+If you do not already have a training run, execute this from the repository root:
 
 ```bash
 source .venv/bin/activate
 mxlab train task=go2-walk-flat/rslrl.ppo
 ```
 
-Training outputs are stored under `runs/go2-walk-flat/`, and the trained gait should be replayed with `mxlab play` for inspection.
-
-## 2. Export and inspect the artifact
+Training results are stored under `runs/go2-walk-flat/`. Export the latest run with metadata, or select a specific run with `run_dir`; exactly one of them may be set. When `output` is omitted, the artifact is saved to `artifacts/<env>.deploy` by default:
 
 ```bash
-mxlab export-deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
+mxlab export-deploy env=go2-walk-flat
+# or:
+mxlab export-deploy run_dir=/path/to/run
+
 mxlab deploy inspect artifact=artifacts/go2-walk-flat.deploy
 ```
 
-To pin a specific experiment, use `run_dir=/path/to/run` instead of `env`; exactly one may be set. Inspection must report `valid: true`. The artifact is self-contained:
+Inspection must report `valid: true`. Add `output=<artifact-path>` only when a custom output location is needed.
 
-```text
-go2-walk-flat.deploy/
-├── manifest.json        # robot, control, task settings, and payload checksums
-├── policy/model.onnx    # exported actor with input normalization
-└── task/                # task-owned payloads (for example, a G1 motion NPZ)
-```
+Deployment requires `motrix_deploy_tasks` and the backend plugin for the selected target. The deployment recipe uses `runtime.transport.network_interface` to select the hardware Ethernet interface.
 
-Deployment also requires the `motrix_deploy_tasks` plugin, which provides the walking task implementation, deployment scene, and Hydra recipe, together with the runtime plugin for the selected target. The recipe is installed with the plugin and does not require a workspace configuration path when run outside the repository. Task defaults compose the typed runtime configuration, so no separate runtime group override is needed. Common top-level settings are `artifact` and `duration_s`. Runtime settings live under `runtime`; Unitree robot options live under `runtime.robot`, while transport settings such as `runtime.network_interface` remain directly under `runtime`. The configuration distinguishes simulation and hardware execution; `runtime.backend` selects `mujoco` or `motrixsim` for simulation and `unitree` for hardware. It is a scalar string selector, not a nested configuration mapping or Hydra config group.
+## 2. Check the policy in simulation first
 
-## 3. sim2sim: MuJoCo
-
-Headless bounded run:
-
-```bash
-mxlab deploy task=go2-walk-flat/sim \
-  artifact=artifacts/go2-walk-flat.deploy \
-  runtime.viewer=false duration_s=2.0
-```
-
-For interactive viewing, omit `runtime.viewer=false` to use the MuJoCo viewer:
+Open the MuJoCo viewer:
 
 ```bash
 mxlab deploy task=go2-walk-flat/sim \
   artifact=artifacts/go2-walk-flat.deploy
 ```
 
-In the viewer, use `W/S` for forward/backward motion, `A/D` for lateral motion, and `Q/E` for yaw; press Esc or Ctrl-C to exit.
+Use `W/S` for forward/backward motion, `A/D` for lateral motion, and `Q/E` for yaw. Close the window, press Esc, or press Ctrl-C to exit.
 
-```{video} /_static/videos/go2_sim2sim.mp4
-:nocontrols:
-:autoplay:
-:playsinline:
-:muted:
-:loop:
-:width: 60%
-:align: center
-```
-
-To select native MotrixSim, install `motrix-deploy-motrixsim` and reuse the same artifact:
+After installing `motrix-deploy-motrixsim`, the same artifact can be reused:
 
 ```bash
 mxlab deploy task=go2-walk-flat/sim \
   artifact=artifacts/go2-walk-flat.deploy \
-  runtime.backend=motrixsim runtime.viewer=true
+  runtime.backend=motrixsim
 ```
 
-Use `task=go2-walk-rough/sim` to select the packaged rough-terrain scene. Changing the scene does not mean that a flat-ground policy is suitable for rough terrain; confirm policy applicability before testing.
+`task=go2-walk-rough/sim` selects the rough-terrain scene, but a flat-ground policy is not automatically suitable for rough terrain. Go2 flat-ground training uses approximately `kp=35, kd=0.5` by default, while the hardware recipe uses `kp=50, kd=1`; confirm such differences before hardware execution.
 
-Velocity tracking in simulation also does not equal hardware tracking. Simulation may randomize action delay, friction, mass, center of mass, observation noise, and other factors. A policy that walks in simulation is not necessarily stable on the real robot. Go2 simulation training and the artifact use approximately `kp=35, kd=0.5` by default, while the hardware recipe overrides these to `kp=50, kd=1`; this is one clear difference between sim2sim and sim2real.
+## 3. Connect the robot and prepare safely
 
-## 4. Hardware deployment: Unitree Go2 sim2real
+Before starting:
 
-Before starting, prepare reliable load-bearing supports, sufficient clearance for all legs, an independent emergency stop that the operator can reach, and a second operator. Stop all other low-level command publishers. Damping and deployment shutdown do not provide standing support; do not continue without a supported recovery plan. Before hardware execution, suspend the Go2 and switch it to low-level/debug mode.
+- use reliable load-bearing support and provide clearance for every leg;
+- prepare an independent emergency stop within the operator's reach and assign a second operator;
+- stop every other low-level command publisher;
+- remember that damping or deployment shutdown cannot maintain standing support, and prepare a supported recovery plan;
+- for the first run, suspend the Go2 and switch it to low-level/debug mode.
 
-Find the wired network interface and replace `enp5s0` in the commands below with the actual interface:
+Find the wired interface connected to the robot:
 
 ```bash
 ip -br addr
 ```
 
-Connect the PC and Go2 with an Ethernet cable and verify that they can communicate. Set the PC Ethernet address on the same subnet as the robot, for example:
+Replace `enp5s0` in the commands below with the actual interface. The PC and Go2 must be on the same subnet, for example:
 
 ```text
 PC address: 192.168.123.100
 Go2 address: 192.168.123.161
 ```
 
-Test the connection to the Go2 onboard computer:
+Connect the Ethernet cable and verify communication:
 
 ```bash
 ping 192.168.123.161
 ```
 
-### Read-only state check
+## 4. Perform a read-only check before running the policy
 
-This diagnostic does not create a command publisher. Replace `enp5s0` with the actual interface:
-
-```bash
-motrix-deploy-unitree read-lowstate enp5s0
-```
-
-Check that valid state messages continue to arrive and that there are no CRC or decoding errors. The tool does not send motor commands or take official control. While official control remains active, remote buttons may also trigger official actions; do not treat button checks as side-effect-free operations.
-
-### Bounded single-joint check
-
-This test does not require an artifact or policy, but the whole body first transitions to a hold pose. Therefore all 12 joints may move even with `--offset 0`. Prepare supports and clearance, and use gains verified for the current robot and support arrangement, such as `kp=50` and `kd=1`.
+The read-only diagnostic does not create a command publisher or send motor commands:
 
 ```bash
-motrix-deploy-unitree joint-control enp5s0 FL_thigh_joint 0.9 \
-  --artifact artifacts/go2-walk-flat.deploy
+motrix-deploy-unitree read-lowstate enp5s0 --robot go2 --duration-s 10
 ```
 
-`Start` begins the hold-pose transition and `A` starts the selected joint test. `B` returns to the hold pose and then stops; before the test starts or while the startup transition is still running, `B` cancels and applies damping directly.
+Confirm that valid state samples continue to arrive and that there are no CRC or decoding errors. Remote buttons may still trigger the official controller while it is active; do not treat button checks as side-effect-free.
 
-### Full hardware run
+## 5. Start the hardware policy
 
-Keep `kp=50` and `kd=1` for the first run; do not increase gains before the suspended check. To reduce the fall risk from a DDS disconnect, press `L2+A` twice first to request lie-down. Replace `enp5s0` with the actual interface:
+Keep `kp=50` and `kd=1` for the first run; do not increase gains before the suspended check. Maintain load-bearing protection when stopping. Communication loss, state timeout, Ctrl-C, and other faults do not execute the normal lie-down trajectory.
 
 ```bash
 mxlab deploy task=go2-walk-flat/hardware \
   artifact=artifacts/go2-walk-flat.deploy \
-  runtime.network_interface=enp5s0
+  runtime.transport.network_interface=enp5s0
 ```
 
-Press `Start`, wait for the pose transition to finish, then press `A` to enable the policy. Hold `L1` while moving the stick to send commands. `B` requests lie-down and `Select` triggers the emergency stop. Send damping before closing DDS.
+If official control is still active, deployment asks for two confirmations: type `yes` only when ready to authorize the official StandDown movement; after observing that movement has finished and the body has reliable support, type `down` to authorize release. If official control has already been released, this step is skipped. An error or interruption after release does not restore official control automatically; never enable two controllers at once.
 
-```{video} /_static/videos/go2_sim2real_h264.mp4
-:nocontrols:
-:autoplay:
-:playsinline:
-:muted:
-:loop:
-:width: 50%
-:align: center
-```
+Use these controls during preparation and operation:
+
+| Control | Action |
+| --- | --- |
+| `Start` | Begin the transition to the default standing pose. |
+| `A` | Enable the policy after preparation is complete and measured state is ready. |
+| Hold `L1` and move the sticks | Send velocity commands; use small commands on the first run. |
+| `B` | Transition toward the built-in lie-down pose, then finish with damping. Before preparation starts, apply damping only. |
+| `Select` | Latch a software emergency damping stop; not a substitute for an independent emergency stop. |
+
+The Go2 task maps the left stick to planar motion and the right stick to yaw; `L1` must be held for stick commands to reach the policy. At the end, confirm that all low-level publishers have stopped before restoring official control using the robot's supported procedure.

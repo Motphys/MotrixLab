@@ -24,7 +24,7 @@ mxlab train task=go2-walk-flat/rslrl.ppo
 ## 2. 导出与检查
 
 ```bash
-mxlab export-deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
+mxlab export-deploy env=go2-walk-flat
 mxlab deploy inspect artifact=artifacts/go2-walk-flat.deploy
 ```
 
@@ -112,31 +112,6 @@ motrix-deploy-unitree read-lowstate enp5s0 --robot go2 --duration-s 10
 
 检查是否持续收到有效状态，以及是否有 CRC 或解码错误。该工具不发送电机指令，也不释放官方控制权。
 官方控制仍活动时，遥控器按键可能同时触发官方动作，不要将按键检查视为无副作用操作。
-
-### 有界单关节测试
-
-此测试不需要 artifact 或策略，但会先让全身过渡到保持姿态，因此**即使 `--offset 0`，全部 12 个关节仍可能运动**。
-必须准备支撑和活动空间，并使用已针对当前机器人和支撑方式核验的增益。
-
-先显式释放官方控制，并按提示完成 `yes` 和 `down` 确认：
-
-```bash
-motrix-deploy-unitree release-control enp5s0
-```
-
-再用明确选择的增益执行测试：
-
-```bash
-motrix-deploy-unitree joint-control enp5s0 FL_thigh_joint \
-  --offset 0.05 --kp "${KP:?请设置已核验的刚度}" --kd "${KD:?请设置已核验的阻尼}"
-```
-
-命令会展示目标，并在连接前要求输入 `yes`。Start 开始保持姿态过渡，A 开始所选关节测试。
-`--offset` 单位为 rad，相对于保持姿态而非启动实测角度；绝对目标用 `--target` 替代。
-B 返回保持姿态后停止；尚未开始或仍在启动过渡时，B 直接取消并阻尼。
-**这里的 B 不同于行走部署的趴下行为。**
-
-运动及启动时序选项见 `motrix-deploy-unitree joint-control --help`。限位和启动保护不认证机械安全，也不保证总输出力矩安全。
 
 ## 6. 常用设置与故障处理
 
