@@ -16,18 +16,10 @@ Build helpers (``build_env`` / ``build_agent``) are shared with the single-proce
 from __future__ import annotations
 
 import logging
-import os
-import random
-import sys
 import time
-import traceback
-from contextlib import contextmanager
-from multiprocessing.queues import Queue
 from pathlib import Path
-from queue import Empty, Full
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import torch
 
 if TYPE_CHECKING:
@@ -39,7 +31,7 @@ from motrix_env_core.renderer import RenderConfig
 from motrix_env_motrixsim.torch_env import TorchEnv
 from motrix_rl import checkpoints
 from motrix_rl.device import resolve_default_device
-from motrix_rl.numa import apply_binding
+from motrix_rl.execution.workers import WorkerRuntime
 from motrix_rl_builtin.fastsac.agent import FastSacAgent
 from motrix_rl_builtin.fastsac.async_impl.collector import Collector
 from motrix_rl_builtin.fastsac.async_impl.learner import CollectorEndpoint, Learner
@@ -64,16 +56,6 @@ from motrix_rl_builtin.fastsac.wrap_np import FastSacNpEnvWrap
 from motrix_rl_builtin.fastsac.wrap_torch import FastSacTorchEnvWrap
 
 logger = logging.getLogger(__name__)
-
-
-def set_seed(seed: int | None) -> None:
-    if seed is None:
-        return
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
 
 
 def build_env(
@@ -154,168 +136,10 @@ def build_agent(
 
 
 # ------------------------------------------------------------------ collector process
-def _available_cpu_ids() -> set[int]:
-    """CPU ids this process may run on (Linux affinity mask, Windows process mask)."""
-    if hasattr(os, "sched_getaffinity"):
-        return set(os.sched_getaffinity(0))
-    if sys.platform == "win32":
-        import ctypes
-
-        process_mask = ctypes.c_ulonglong()
-        system_mask = ctypes.c_ulonglong()
-        kernel32 = ctypes.windll.kernel32
-        got = kernel32.GetProcessAffinityMask(
-            kernel32.GetCurrentProcess(), ctypes.byref(process_mask), ctypes.byref(system_mask)
-        )
-        if got:
-            return {i for i in range(64) if process_mask.value & (1 << i)}
-    return set(range(os.cpu_count() or 1))
-
-
-def _set_cpu_affinity(cpus: set[int]) -> None:
-    """Pin this process to ``cpus``; best-effort and never fatal.
-
-    Raises OSError (or skips with a warning on platforms without an affinity
-    API) so the caller can decide; permission-constrained environments
-    (cgroups/cpusets) degrade to a warning instead of killing the worker.
-    """
-    if hasattr(os, "sched_setaffinity"):
-        os.sched_setaffinity(0, cpus)
-    elif sys.platform == "win32":
-        import ctypes
-
-        mask = ctypes.c_ulonglong(sum(1 << c for c in cpus))
-        current = ctypes.windll.kernel32.GetCurrentProcess()
-        if not ctypes.windll.kernel32.SetProcessAffinityMask(current, mask):
-            raise OSError(f"SetProcessAffinityMask failed for cpus {sorted(cpus)}")
-    else:
-        logging.getLogger(__name__).warning(
-            "CPU affinity is unsupported on this platform; skipping pinning to %s", sorted(cpus)
-        )
-
-
-def _resolve_cpu_set(spec: str | None, field: str) -> set[int]:
-    """Resolve one worker's CPU affinity from a spec like ``"0:5,7"``.
-
-    Each comma-separated item is a single core id or an inclusive ``A:B``
-    range; cores outside the process's available set are dropped. An empty
-    spec or an empty effective set disables pinning.
-    """
-    if not spec:
-        return set()
-    available = _available_cpu_ids()
-    cpus: set[int] = set()
-    for item in spec.split(","):
-        item = item.strip()
-        if not item:
-            continue
-        try:
-            if ":" in item:
-                start_s, _, end_s = item.partition(":")
-                start, end = int(start_s), int(end_s)
-            else:
-                start = end = int(item)
-        except ValueError as exc:
-            raise ValueError(
-                f"{field}='{spec}': invalid core spec item '{item}' "
-                "(expected core ids or inclusive A:B ranges, e.g. '0:5,7')"
-            ) from exc
-        if start > end:
-            raise ValueError(f"{field}='{spec}': range '{item}' has start > end")
-        # Clamp to the available core span instead of enumerating the raw
-        # range: a typo like 0:1000000000 must not iterate billions of ids.
-        lo, hi = min(available), max(available)
-        cpus.update(range(max(start, lo), min(end, hi) + 1))
-    return cpus & available
-
-
-def _pin_worker_cpus(cpus: set[int]) -> None:
-    """Pin this worker process and cap its torch threads to its CPU slice.
-
-    The thread cap applies even when the affinity call fails (cgroup/cpuset
-    constraints): limiting torch to the configured core count still reduces
-    CPU contention when running unpinned.
-    """
-    if not cpus:
-        return
-    try:
-        _set_cpu_affinity(cpus)
-    except OSError as exc:
-        logging.getLogger(__name__).warning("CPU pinning to %s failed (%s); continuing unpinned", sorted(cpus), exc)
-    torch.set_num_threads(max(len(cpus), 1))
-
-
-def _install_graceful_sigint(control: Control) -> None:
-    """Turn SIGINT (terminal Ctrl+C hits the whole process group) into the
-    shared stop flag so the worker unwinds at its next loop safe point instead
-    of dying mid-CUDA/queue operation with a traceback.
-
-    A worker blocked inside a NCCL collective never returns to the interpreter,
-    so the handler cannot fire there — the parent's escalation ladder
-    (join -> terminate -> kill, see train.py) is the backstop for that case.
-    """
-    import signal
-
-    def _handler(signum, frame):  # noqa: ARG001
-        control.set_stop()
-
-    try:
-        signal.signal(signal.SIGINT, _handler)
-    except ValueError:  # not on the main thread (defensive; workers are processes)
-        pass
-
-
-@contextmanager
-def inherit_log_stdio(log_file: Path):
-    """Parent-side spawn guard: point fd 1/2 at the worker's log file while starting it.
-
-    Spawn children inherit the parent's terminal fds and re-import
-    torch/simulator modules BEFORE their entry function runs
-    (``_configure_process_logging``), so import-time prints (library banners,
-    profiler messages, warnings) would land raw on the shared terminal and
-    jitter the parent's live panel. Holding the log file on fd 1/2 across
-    ``Process.start()`` makes the child inherit it from its first
-    instruction; the parent's own fds are restored immediately afterwards.
-    """
-    log_fd = os.open(str(log_file), os.O_WRONLY | os.O_CREAT | os.O_APPEND)
-    saved_stdout, saved_stderr = os.dup(1), os.dup(2)
-    try:
-        os.dup2(log_fd, 1)
-        os.dup2(log_fd, 2)
-        yield
-    finally:
-        os.dup2(saved_stdout, 1)
-        os.dup2(saved_stderr, 2)
-        os.close(saved_stdout)
-        os.close(saved_stderr)
-        os.close(log_fd)
-
-
-def _configure_process_logging(log_file: Path) -> None:
-    """Route worker logs (e.g. manager env startup) to a file, not the terminal.
-
-    The parent renders the live panel on the shared terminal; raw worker log
-    bytes would tear the rich Live frames apart. Startup records stay
-    inspectable under the run's ``logs/`` directory; errors additionally
-    travel the error-queue channel as before.
-    """
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        filename=str(log_file),
-        filemode="a",
-        force=True,
-    )
-    # Hard hat: dup the log file onto stdout/stderr so C-level output
-    # (third-party import banners, library warnings) can never reach the
-    # shared terminal and tear the parent's Rich panel.
-    log_fd = os.open(str(log_file), os.O_WRONLY | os.O_CREAT | os.O_APPEND)
-    os.dup2(log_fd, 1)
-    os.dup2(log_fd, 2)
-    os.close(log_fd)
 
 
 def run_collector_process(
+    runtime: WorkerRuntime,
     env_spec: EnvBuildSpec,
     cfg: FastSacCfg,
     num_envs: int,
@@ -325,42 +149,28 @@ def run_collector_process(
     ring: SharedTransitionRing | RingCursors,
     weights: WeightChannelShared,
     control: Control,
-    stats_queue: Queue,
-    error_queue: Queue,
     num_iterations: int,
     logging_interval: int,
     is_resume: bool,
     seed: int | None,
-    run_dir: str,
     handshake: StartupHandshake,
     collector_id: int = 0,
-    numa_node: int | None = None,
-    cpus: list[int] | None = None,
     collector_device: str | None = None,
     final_store: FinalObsStorage | None = None,
 ) -> None:
-    role = f"collector[{collector_id}]"
-    _install_graceful_sigint(control)
+    control.bind_stop(runtime.stop_event)
     try:
-        log_dir = Path(run_dir) / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        _configure_process_logging(log_dir / f"collector{collector_id}.log")
-        # Bind before any env / staging allocation: the memory policy only
-        # affects future pages, so this must be the first thing the worker does.
-        # The binding itself was decided by the parent topology pass.
-        apply_binding(role, numa_node, cpus or [])
-        set_seed(seed)
         opts = cfg.trainer.async_options
         # The parent's topology pass resolved every collector's inference
         # device explicitly (generic "cuda" co-located with the owning
         # learner's GPU), so no generic spec is re-resolved in-process here.
         if collector_device is not None:
             opts.collector_inference_device = collector_device
-        _pin_worker_cpus(_resolve_cpu_set(opts.collector_cpu_cores, "collector_cpu_cores"))
         obs_dim, critic_obs_dim, act_dim = dims
         device = torch.device("cpu")
         env_started = time.perf_counter()
         env = build_env(env_spec, num_envs, device, seed=seed)
+        runtime.callback(env.close)
         logger.info(
             "collector startup: env build (scene + manager kernels) finished in %.3fs",
             time.perf_counter() - env_started,
@@ -370,8 +180,8 @@ def run_collector_process(
         # the publishing learner (rank 0), CUDA-IPC transition-ring slots
         # from the learner that drains this collector's ring (its owner —
         # always rank 0 in the single-learner topology).
-        weight_slots = handshake.await_weight_slots(collector_id)
-        ring_slots = handshake.await_ring_slots(collector_id)
+        weight_slots = handshake.await_weight_slots(collector_id, control)
+        ring_slots = handshake.await_ring_slots(collector_id, control)
         weight_rx = weight_receiver_for(weights, weight_slots)
         if isinstance(ring, RingCursors):
             if ring_slots is None:
@@ -408,14 +218,7 @@ def run_collector_process(
             time.perf_counter() - warmup_started,
         )
 
-        # Startup barrier: report readiness and hold until every worker (all
-        # collectors AND learners) has booted, so stepping starts in lockstep
-        # — warmup counters, weight generations and generation merge align
-        # from step one instead of converging mid-run.
-        handshake.report_ready("collector", collector_id)
-        handshake.wait_for_start(control)
-        if control.stop:
-            return
+        runtime.ready()
 
         # First snapshot once a few steps have landed: the parent's panel
         # quiescence gate opens early (not after a full logging window of
@@ -432,27 +235,20 @@ def run_collector_process(
             steps = control.collector_steps_at(collector_id)
             if not first_stats_sent and steps >= first_stats_steps:
                 first_stats_sent = True
-                stats_queue.put(collector.snapshot_stats())
+                runtime.report({"type": "collector_stats", "stats": collector.snapshot_stats()})
             elif steps % max(logging_interval, 1) == 0:
-                # replace any stale snapshot so the learner always sees the latest.
-                try:
-                    while True:
-                        stats_queue.get_nowait()
-                except Empty:
-                    pass
-                stats_queue.put(collector.snapshot_stats())
-    except BaseException:
-        if not isinstance(sys.exc_info()[1], (KeyboardInterrupt, SystemExit)):
-            # Ctrl+C is an operator action, not a defect: the stop flag is
-            # already set by the SIGINT handler; don't spam async_errors.
-            error_queue.put((role, traceback.format_exc()))
-        raise
+                runtime.report({"type": "collector_stats", "stats": collector.snapshot_stats()})
+        if control.collector_steps_at(collector_id) >= num_iterations and not runtime.should_stop():
+            runtime.finish({"reason": "peer_budget"})
     finally:
-        control.set_stop()  # signal the learner if the collector exits for any reason
+        # Algorithm completion stops peers, but never requests public cancellation.
+        if control.collector_steps_at(collector_id) >= num_iterations:
+            control.set_stop()
 
 
 # ------------------------------------------------------------------ learner process
 def run_learner_process(
+    runtime: WorkerRuntime,
     cfg: FastSacCfg,
     num_envs: int,
     dims: tuple[int, int, int],
@@ -461,7 +257,6 @@ def run_learner_process(
     rings: list[SharedTransitionRing | RingCursors],
     weights: list[WeightChannelShared],
     control: Control,
-    error_queue,
     num_iterations: int,
     logging_interval: int,
     save_interval: int,
@@ -469,13 +264,9 @@ def run_learner_process(
     checkpoint_dir: str,
     checkpoint_format: str,
     resume_from: str | None,
-    seed: int | None,
     handshake: StartupHandshake,
     all_rings: list[SharedTransitionRing],
     weight_ipc: list[bool],
-    panel_queue: Queue,
-    learner_cpus: list[int] | None = None,
-    learner_numa_node: int | None = None,
     rank: int = 0,
     num_learners: int = 1,
     rendezvous_file: str | None = None,
@@ -501,15 +292,9 @@ def run_learner_process(
         import torch.distributed as dist
     else:
         dist = None
-    _install_graceful_sigint(control)
-    _learner_log_dir = Path(run_dir) / "logs"
-    _learner_log_dir.mkdir(parents=True, exist_ok=True)
-    _configure_process_logging(_learner_log_dir / (f"learner{rank}.log" if num_learners > 1 else "learner.log"))
+    control.bind_stop(runtime.stop_event)
     try:
-        apply_binding(f"learner[{rank}]" if num_learners > 1 else "learner", learner_numa_node, learner_cpus)
-        set_seed(None if seed is None else seed + rank)
         opts = cfg.trainer.async_options
-        _pin_worker_cpus(_resolve_cpu_set(opts.learner_cpu_cores, "learner_cpu_cores"))
         num_collectors = len(all_rings)
         if learner_device is not None:
             device = torch.device(learner_device)
@@ -635,14 +420,13 @@ def run_learner_process(
         last_log_time = start_time
         last_log_step = resume_step
         train_started = False
-        # First payload goes out immediately (step 0) so the parent's panel
-        # quiescence gate opens as soon as collectors take their first steps,
-        # instead of after a silent full log window; resume keeps window
-        # alignment.
-        if logging_interval > 0 and resume_step:
-            next_log = ((resume_step // logging_interval) + 1) * logging_interval
-        else:
-            next_log = 0
+        # Initial and first-update payloads keep console readiness independent
+        # of publication cadence. Subsequent windows follow learner iterations,
+        # not collection progress (which can run far ahead in learner-bound mode).
+        initial_payload_sent = False
+        next_log = (
+            ((learner.learning_iteration // logging_interval) + 1) * logging_interval if logging_interval > 0 else 0
+        )
         next_save = ((resume_step // save_interval) + 1) * save_interval if save_interval > 0 else 0
         t_learn_win = 0.0  # wall-clock spent in learner train calls this log window
         learner_train_samples_ms: list[float] = []
@@ -659,10 +443,7 @@ def run_learner_process(
         # (see run_collector_process). Weight slots were already shipped and
         # the initial weights published, so collectors blocking on their
         # handshakes complete as soon as every learner reaches this point.
-        handshake.report_ready("learner", rank)
-        handshake.wait_for_start(control)
-        if control.stop:
-            return
+        runtime.ready()
 
         # Each collector runs until its own counter reaches num_iterations; the
         # aggregate (sum) therefore reaches num_iterations * num_collectors.
@@ -712,7 +493,7 @@ def run_learner_process(
                 else:
                     # Data arrived, but replay/batch readiness still gated training.
                     learner_gate_wait_samples_ms.append(idle_ms)
-            if step >= next_log or first_update:
+            if not initial_payload_sent or first_update or (trained and learner.learning_iteration >= next_log):
                 # Publish first-update completion immediately: the startup
                 # handoff must not wait an entire user logging interval.
                 # One compact payload per log window to the parent (panel +
@@ -748,6 +529,8 @@ def run_learner_process(
                     "step": step,
                     "sps": sps,
                     "updates": learner.update_idx,
+                    "update_idx": learner.update_idx,
+                    "learning_iteration": learner.learning_iteration,
                     "training_started": train_started,
                     "metrics": metrics_log,
                     "warming": warming,
@@ -765,10 +548,7 @@ def run_learner_process(
                 # Never block the training loop on a slow panel consumer:
                 # drop the window's payload if the queue is full (the next
                 # window's numbers supersede it anyway).
-                try:
-                    panel_queue.put_nowait(payload)
-                except Full:
-                    pass
+                runtime.report({"type": "learner_payload", "payload": payload})
                 last_log_time, last_log_step = now, step
                 t_learn_win = 0.0
                 learner_train_samples_ms = []
@@ -778,7 +558,12 @@ def run_learner_process(
                 learner_gate_wait_samples_ms = []
                 # Recompute the window edge (not +=) so the immediate first
                 # payload cannot shift every later window off the interval.
-                next_log = ((step // logging_interval) + 1) * logging_interval if logging_interval > 0 else 0
+                initial_payload_sent = True
+                next_log = (
+                    ((learner.learning_iteration // logging_interval) + 1) * logging_interval
+                    if logging_interval > 0
+                    else 0
+                )
 
             if is_primary and save_interval > 0 and step >= next_save and step > 0:
                 agent.global_step = step
@@ -799,11 +584,26 @@ def run_learner_process(
                 # after the last log window would otherwise never reach the parent.
                 # Never blocks the learner, like the log payloads.
                 if notify_checkpoints:
-                    try:
-                        panel_queue.put_nowait({"rank": rank, "checkpoint_saved": {"step": step, "path": str(path)}})
-                    except Full:
-                        logger.warning("panel queue full; checkpoint notice for %s dropped", path)
+                    runtime.report({"type": "checkpoint_saved", "step": step, "path": str(path)})
                 next_save += save_interval
+
+        # Flush the unfinished learner window with the final counters. Empty
+        # windows stay empty; never relabel a preceding window's diagnostics
+        # with a newer learner iteration.
+        runtime.report(
+            {
+                "type": "learner_payload",
+                "payload": {
+                    "rank": rank,
+                    "learner_counters": {
+                        "learning_iteration": learner.learning_iteration,
+                        "update_idx": learner.update_idx,
+                        "updates": learner.update_idx,
+                        "metrics": agent.window_metrics.stats_and_reset() if train_started else None,
+                    },
+                },
+            }
+        )
 
         if num_learners > 1:
             # All ranks have consumed the identical global step count, so the
@@ -833,11 +633,9 @@ def run_learner_process(
                 checkpoint_format=checkpoint_format,
             )
             logger.info("saved checkpoint to %s", ckpt_path)
-    except BaseException:
-        if not isinstance(sys.exc_info()[1], (KeyboardInterrupt, SystemExit)):
-            error_queue.put((f"learner[{rank}]" if num_learners > 1 else "learner", traceback.format_exc()))
-        raise
+            runtime.report({"type": "checkpoint_saved", "step": agent.global_step, "path": str(ckpt_path)})
+        if not runtime.should_stop():
+            runtime.finish({"reason": "completed"})
     finally:
-        if num_learners > 1:
+        if num_learners > 1 and dist is not None and dist.is_initialized():
             dist.destroy_process_group()
-        control.set_stop()  # tell the collectors to exit

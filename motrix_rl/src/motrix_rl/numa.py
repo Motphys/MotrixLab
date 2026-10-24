@@ -98,6 +98,62 @@ def discover_nodes(
     return nodes
 
 
+def available_cpu_ids() -> set[int]:
+    """Return CPUs available to this process, best-effort across platforms."""
+    if hasattr(os, "sched_getaffinity"):
+        return set(os.sched_getaffinity(0))
+    if sys.platform == "win32":
+        process_mask = ctypes.c_ulonglong()
+        system_mask = ctypes.c_ulonglong()
+        kernel32 = ctypes.windll.kernel32
+        if kernel32.GetProcessAffinityMask(
+            kernel32.GetCurrentProcess(), ctypes.byref(process_mask), ctypes.byref(system_mask)
+        ):
+            return {i for i in range(64) if process_mask.value & (1 << i)}
+    return set(range(os.cpu_count() or 1))
+
+
+def set_cpu_affinity(cpus: set[int]) -> None:
+    """Set process affinity strictly; an empty set disables the operation."""
+    if not cpus:
+        return
+    if hasattr(os, "sched_setaffinity"):
+        os.sched_setaffinity(0, cpus)
+    elif sys.platform == "win32":
+        mask = ctypes.c_ulonglong(sum(1 << c for c in cpus))
+        if not ctypes.windll.kernel32.SetProcessAffinityMask(ctypes.windll.kernel32.GetCurrentProcess(), mask):
+            raise OSError(f"SetProcessAffinityMask failed for cpus {sorted(cpus)}")
+    else:
+        raise OSError("CPU affinity is unsupported on this platform")
+
+
+def resolve_cpu_set(spec: str | None, field: str) -> set[int]:
+    """Resolve IDs and inclusive ``A:B`` ranges within inherited affinity."""
+    if not spec:
+        return set()
+    available = available_cpu_ids()
+    if not available:
+        return set()
+    result: set[int] = set()
+    lo, hi = min(available), max(available)
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            if ":" in item:
+                start_s, _, end_s = item.partition(":")
+                start, end = int(start_s), int(end_s)
+            else:
+                start = end = int(item)
+        except ValueError as exc:
+            raise ValueError(f"{field}={spec!r}: invalid core spec item {item!r} (expected ids or A:B ranges)") from exc
+        if start > end:
+            raise ValueError(f"{field}={spec!r}: range {item!r} has start > end")
+        result.update(range(max(start, lo), min(end, hi) + 1))
+    return result & available
+
+
 def apply_cpu_affinity(cpus: list[int] | tuple[int, ...], role: str) -> list[int]:
     """Pin the caller without expanding inherited CPU affinity; return actual CPUs."""
     if not hasattr(os, "sched_getaffinity"):
@@ -107,7 +163,7 @@ def apply_cpu_affinity(cpus: list[int] | tuple[int, ...], role: str) -> list[int
     selected = sorted(set(cpus) & allowed)
     if not selected:
         raise ValueError(f"{role}: none of the requested CPUs are allowed (affinity={sorted(allowed)})")
-    os.sched_setaffinity(0, selected)
+    set_cpu_affinity(set(selected))
     if set(cpus) - allowed:
         logger.warning("%s: dropped non-allowed CPUs %s", role, sorted(set(cpus) - allowed))
     return sorted(os.sched_getaffinity(0))

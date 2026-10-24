@@ -280,8 +280,10 @@ class Collector:
         terminated = result.terminated.detach().long()
         truncated = result.truncated.detach().long()
         t_push = time.perf_counter()
-        # Capacity was established before stepping; no other producer can use it.
-        self.ring.push(
+        # Capacity was established before stepping; still verify the ownership
+        # handoff so a transport invariant violation cannot become a silent
+        # progress/bookkeeping error.
+        pushed = self.ring.push(
             self.obs.detach(),
             self.critic_obs.detach(),
             actions.detach(),
@@ -290,6 +292,8 @@ class Collector:
             truncated,
             final_obs=final_payload,
         )
+        if not pushed:
+            raise RuntimeError("transition ring rejected a slot after capacity precheck")
         t_bookkeep = time.perf_counter()
 
         # episode bookkeeping (mirrors sync agent.py collect phase)

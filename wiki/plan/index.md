@@ -13,5 +13,7 @@
 
 ## 文档列表
 
+- [异步训练目标架构实施](async-training-target.md) — 纯 worker 描述、公共 WorkerRuntime、算法语义扩展点与 A1–A9 验收。
+
 - [fastsac-async-multi-learner.md](fastsac-async-multi-learner.md) — FastSAC 单机多卡（多 learner × DDP）实施计划
 - [motion-multi-clip-infra.md](motion-multi-clip-infra.md) — 多 motion clip 训练基础设施（MotionLibrary + WbtMotionCommand 原地泛化）分阶段实施计划

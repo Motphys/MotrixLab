@@ -122,12 +122,15 @@ def _source_policy():
     return actor, normalizer
 
 
-def _collector(device: str, *, compile: bool = False, amp: bool = False):
+def _collector(device: str, *, compile: bool = False, amp: bool = False, obs_normalization: bool = True):
     env = _CpuEnv()
     cfg = _cfg(device, compile=compile, amp=amp)
+    cfg.agent.obs_normalization = obs_normalization
     ring = SharedTransitionRing(2, _NUM_ENVS, _OBS_DIM, _CRITIC_OBS_DIM, _ACT_DIM)
     source_actor, source_normalizer = _source_policy()
-    shared = WeightChannelShared(_OBS_DIM)
+    if not obs_normalization:
+        source_normalizer = torch.nn.Identity()
+    shared = WeightChannelShared(_OBS_DIM, obs_normalization=obs_normalization)
     weight_tx = HostWeightSender(shared, sum(p.numel() for p in source_actor.parameters()))
     weight_rx = HostWeightReceiver(shared, weight_tx.params)
     weight_tx.publish(source_actor, source_normalizer)
@@ -221,6 +224,17 @@ def test_collector_explicit_cpu_placement_and_timing() -> None:
     assert "sync.actor_load" in stats["timing_ms"]
     assert collector.ring.obs.device.type == "cpu"
     assert collector.ring.critic_obs.device.type == "cpu"
+
+
+def test_collector_with_disabled_normalizer_loads_and_steps():
+    collector, source_actor, _, _ = _collector("cpu", obs_normalization=False)
+    assert isinstance(collector.obs_normalizer, torch.nn.Identity)
+    assert collector.weights.shared.specs == {}
+    assert collector.weights.loaded_version == 1
+    for actual, expected in zip(collector.actor.parameters(), source_actor.parameters()):
+        torch.testing.assert_close(actual, expected)
+    assert collector.step_once()
+    assert collector.env.last_actions is not None
 
 
 def test_collector_reports_env_step_substage_timing() -> None:
@@ -430,6 +444,18 @@ def _backpressure_collector(*, capacity=16):
     return collector, env, ring, control, actions, calls
 
 
+def test_rejected_prechecked_slot_fails_without_advancing_progress(monkeypatch):
+    collector, env, ring, control, _, _ = _backpressure_collector()
+    monkeypatch.setattr(ring, "push", lambda *args, **kwargs: False)
+    before = collector.obs.clone()
+    with pytest.raises(RuntimeError, match="after capacity precheck"):
+        collector.step_once()
+    assert env.steps == 1
+    assert control.collector_steps == collector._collect_n == collector.n_episodes == 0
+    torch.testing.assert_close(collector.obs, before)
+    torch.testing.assert_close(collector.ep_return, torch.zeros(2))
+
+
 def test_payload_backpressure_gates_before_actions_and_resumes_without_dropped_steps(monkeypatch):
     collector, env, ring, control, _, calls = _backpressure_collector()
     original_step = env.step
@@ -537,3 +563,62 @@ def test_transition_ring_full_gates_before_actions_and_resumes():
     assert collector.step_once()
     assert env.steps == len(calls) == control.collector_steps == 2
     assert ring.write_completed_count == 2
+
+
+@pytest.mark.parametrize("identity", [False, True])
+def test_weight_snapshot_roundtrip_preserves_exact_normalizer_state(identity):
+    actor, source = _source_policy()
+    if identity:
+        source = torch.nn.Identity()
+        destination = torch.nn.Identity()
+    else:
+        destination = EmpiricalNormalization(_OBS_DIM, device="cpu")
+        source.count.fill_(2**53 + 7)
+    target, _ = _source_policy()
+    with torch.no_grad():
+        for parameter in target.parameters():
+            parameter.zero_()
+    shared = WeightChannelShared(_OBS_DIM, obs_normalization=not identity)
+    sender = HostWeightSender(shared, sum(parameter.numel() for parameter in actor.parameters()))
+    receiver = HostWeightReceiver(shared, sender.params)
+    sender.publish(actor, source)
+    assert receiver.maybe_load(target, destination)[0] == 1
+    for expected, actual in zip(actor.parameters(), target.parameters()):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    if not identity:
+        for name in ("_mean", "_std", "_var", "count"):
+            torch.testing.assert_close(getattr(destination, name), getattr(source, name), rtol=0, atol=0)
+        assert destination.count.item() == 2**53 + 7
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_weight_channel_rejects_normalizer_mode_mismatch_without_mutation(enabled):
+    actor, normalizer = _source_policy()
+    target, _ = _source_policy()
+    shared = WeightChannelShared(_OBS_DIM, obs_normalization=enabled)
+    sender = HostWeightSender(shared, sum(parameter.numel() for parameter in actor.parameters()))
+    receiver = HostWeightReceiver(shared, sender.params)
+    valid = normalizer if enabled else torch.nn.Identity()
+    invalid = torch.nn.Identity() if enabled else normalizer
+    sender.publish(actor, valid)
+    before = [parameter.detach().clone() for parameter in target.parameters()]
+    with pytest.raises(ValueError, match="auxiliary schema mismatch"):
+        sender.publish(actor, invalid)
+    assert int(shared.seq[0]) == 2
+    with pytest.raises(ValueError, match="auxiliary schema mismatch"):
+        receiver.maybe_load(target, invalid)
+    assert receiver.loaded_version == 0
+    for parameter, expected in zip(target.parameters(), before):
+        torch.testing.assert_close(parameter, expected)
+    assert receiver.maybe_load(target, valid)[0] == 1
+
+
+def test_weight_channel_rejects_partial_normalizer_instead_of_disabling_it():
+    actor, _ = _source_policy()
+    partial = torch.nn.Module()
+    partial.register_buffer("_mean", torch.zeros(1, _OBS_DIM))
+    shared = WeightChannelShared(_OBS_DIM, obs_normalization=False)
+    sender = HostWeightSender(shared, sum(parameter.numel() for parameter in actor.parameters()))
+    with pytest.raises(ValueError, match="all FastSAC statistics"):
+        sender.publish(actor, partial)
+    assert int(shared.seq[0]) == 0

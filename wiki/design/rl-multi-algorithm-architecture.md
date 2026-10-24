@@ -61,6 +61,206 @@ RL 集成层需要在同一套入口下承载多个 RL 框架和多种算法：
 
 `rllib` 是 RL 框架 namespace，也是 run metadata 与 CLI method 中的第一段。`algo` 是该 framework 内部的算法/agent 名称。`train_backend` 是训练实现所用的计算后端（如 `jax` / `torch`，也允许自定义名称）。
 
+### 4.1a 共享执行与 Tensor 传输边界
+
+`motrix_rl.execution` 管理阶段交接、取消和进程生命周期；
+`motrix_rl.transport` 提供有界 SPSC tensor slots 与版本化 inference snapshot。
+公共 `AsyncTrainerBase` 继承现有 `TrainerBase`，其 `train()` 拥有整个资源作用域与父进程生命周期：
+算法声明训练计算与数据流，公共层创建 spawn context 和 process，等待 readiness、放行、监控完成与失败，最后停止并回收进程。
+它复用 `ProcessSupervisor`，不另建进程管理器。目标 `WorkerSpec` 只声明 worker ID、模块级入口、可 pickle 参数与资源配置，
+不持有 process。算法仅接收只读 worker 状态与算法进度，不自行查询或操作 OS 进程。
+算法负责完成决策与指标含义，公共层负责消息消费、日志和面板生命周期；首批更新/暖机门槛不能阻塞 readiness 放行。
+本节定义目标边界，具体接口、验收条件及尚未满足的实现差距见下节[异步训练架构目标与验收](#异步训练架构目标与验收)。
+
+公共 worker 工具提供 seed 应用、CPU 资源机制、日志重定向、callback 式 SIGINT 与通用启动闸门；
+算法决定 seed 偏移、CPU 分配、拓扑、resource slot 交付内容和训练预算。阻塞式资源交付必须检查 stop 并有限时等待。
+共享资源先登记清理，进程回收先于 queues/IPC 关闭；启动部分失败、初始化失败及运行异常不得覆盖原错。
+本层不实现 APPO，也不提供通用 replay、UTD 或算法 worker wiring。算法插件提供 payload 布局、采样和学习逻辑，
+不需要重新实现共享内存所有权协议。
+
+```text
+既有 runner / TrainerContext / metrics / checkpoint artifacts
+                  │
+           算法 Training Adapter
+                  │
+        execution：阶段 / 生命周期 / 停止
+                  │
+Collector ── 有界 SPSC tensor ring ── Learner
+    ▲                                  │
+    └──── 一致 inference snapshot ──────┘
+                  │
+       算法拥有 replay / unroll storage
+```
+
+- `transport.ring.SharedTensorRing` 接受有序 `TensorField` 布局，支持不同 shape/dtype
+  的字段。`read_span` 返回借用 view；只有读取或复制完成后才能 `commit_reads`。
+- `transport.cuda_ring.CudaTensorRing` 运输一个固定 shape 的 CUDA slot；打包布局由
+  算法定义。issued cursor 用于预留容量，completed cursor 只在 CUDA event 完成后发布。
+  producer 必须保持 copy source 不变直至复制完成；consumer 必须在当前 slots-device
+  stream 上排完所有读取，再确认释放。CUDA owner 必须保持 slots 存活直到 peer 退出。
+- `transport.snapshot` 原子发布 float32 flat model parameters 与具名辅助 tensor，
+  共享一个 seqlock/version。CPU staging、CUDA IPC 和双缓冲一致性由通道负责；
+  auxiliary state 的语义和加载时机由算法决定。它不是任意 module state_dict 序列化器。
+- host cursor/seqlock 仍依赖 x86-64 TSO；不宣称支持 ARM，也不是 MPMC。
+  readiness、retry/backoff 和取消属于执行/调用层；数据通道不拥有监控线程。
+  构造共享游标与 snapshot 时拒绝非 x86-64 主机，避免在不支持的内存序平台静默运行。
+- 公共边界拒绝负数、非整数或超过尚未消费数量的 `commit_reads`，拒绝错误的 tensor 字段布局；
+  校验失败不能推进游标。确认仍由调用方保证发生在实际读取完成或 CUDA 读取已排入约定 stream 之后。
+- Snapshot 发布前校验参数长度与辅助状态 schema，拒绝缺字段、额外字段或错误 shape/dtype，
+  失败不能打开 seqlock；读取先形成私有快照，通过版本复检后才修改推理模型。
+- `Parameters.value` 与 `Sample.value` 是 adapter 拥有的 opaque payload；冻结 dataclass 不等于
+  递归冻结 tensor。公共执行器不 clone 任意对象，不承担算法模型复制；adapter 必须提供 detached
+  immutable snapshot，并在转交后停止复用 sample 存储。这与 ring 借用 view 的显式确认是两种不同的所有权协议。
+
+FastSAC 每个 collector 保持一条 ring、一个参数通道，多个 ring 按原 topology 分配给
+唯一 learner。算法适配器保留六字段 transition 布局、CUDA fused float32 packing、
+单 pinned staging 和稀疏 final-observation sidecar。sidecar 在 slot 发布前写入，只有
+completed read acknowledgement 才允许复用。其 replay 继续利用相邻 observation
+构成 next observation；generation 对齐、UTD、DDP、NUMA 和恢复进度不属于通用 ring。
+
+transport 不等于 replay：前者限制在途数据，后者决定历史保留与采样。使用 unroll 的算法
+可以提供序列、behavior log probability、mask 和版本布局，而不经过 FastSAC replay。
+Sync 可以直接交接本进程数据，无需为接口统一引入 ring copy。共享 transport 本身不代表
+已提供所有算法的 worker wiring、学习预算策略或 APPO 实现。
+
+验证覆盖 host 和 CUDA slot 环回、背压、借用 view 生命周期、实际 spawn/IPC、
+不同 unroll 布局和 snapshot auxiliary 布局；FastSAC 原有 replay/final observation、
+collector、pipeline 和 DDP 测试继续保护算法行为。单 GPU IPC 验证不替代多 GPU NCCL、
+跨 NUMA 吞吐与端到端训练性能验收。
+
+### 异步训练架构目标与验收
+
+#### 目标与适用范围
+
+本节是自有异步训练器后续重构的验收基准。目标不是减少 FastSAC 文件行数，而是让算法层仅围绕**算法状态、计算和数据流**编程，不围绕进程对象编程。目标接口尚未全部落地，不能把本节中的类型当作当前可导入 API。
+
+适用对象是继承 `AsyncTrainerBase` 的 process-backed trainer；不强制 SKRL/RSLRL 等上游 runner 改写，不改变既有 provider discovery、`TrainerContext`、run/checkpoint 服务、同步执行器或线程参考执行器。当前具体适配对象仍为 FastSAC，不实现 APPO、通用 replay、拓扑求解器、万能 Worker 类层次或新的 backend registry。
+
+#### 所有权边界
+
+| 责任 | 算法实现层 | 公共执行层 |
+|---|---|---|
+| 配置与恢复 | 算法参数、checkpoint 内容、恢复进度解释 | run/context 与产物服务、资源作用域 |
+| 模型与数据 | actor/critic/optimizer、transition/unroll schema、replay、normalizer、final observation | schema 驱动的 ring/snapshot 机制与借用/确认协议 |
+| 布局与连接 | worker 数量/角色、环境分片、collector→learner 关系、placement 约束和传输选择 | 平台事实查询、设备解析工具、placement 应用与通道分配工具 |
+| 进程 | 声明 worker ID、入口、参数与所需资源 | spawn context、`ctx.Process`、进程句柄表、start/check/join/terminate/kill |
+| Worker 外壳 | 初始化算法对象，决定算法何时 ready，执行采样/学习及其内部同步 | 日志/seed/线程预算/信号应用、错误捕获、ready/start/stop/finish 通信 |
+| 进度与结束 | UTD、warmup、预算、锁步规则、允许的 worker 完成边界 | 收集进度与状态、执行结束决策、超时、失败及取消分类 |
+| 指标与展示 | 指标字段、权重与聚合口径、进度轴、首批指标有效条件 | queue 消费、系统采样、logger/console 生命周期、traceback 落盘、最终 drain |
+| 清理 | 立即登记自有对象的释放函数；worker 内部算法资源释放 | 回收进程后关闭共享资源，保证失败路径与原异常保护 |
+
+算法可声明/分配算法数据通道，但不实现通用 queue factory、feeder 清理规则、错误队列或 readiness 队列。公共构建作用域提供同一 spawn context 下的分配能力；确需 context 的低层共享资源构造可由作用域委托，但不得因此在算法层构造 Process。数据 payload 和 CUDA IPC handle 的含义仍由算法适配器定义，公共层不得导入 FastSAC 类型。
+
+#### 父进程算法扩展点
+
+父进程只围绕以下三个语义扩展点设计；不再要求算法回传公共生命周期 callback。以下签名为目标契约，类型名可在实施计划中细化，职责与输入/输出边界不可隐式扩大。
+
+```python
+class AsyncTrainerBase(TrainerBase):
+    @abstractmethod
+    def build_training(self, runtime: BuildRuntime) -> TrainingPlan:
+        ...
+
+    @abstractmethod
+    def evaluate_progress(
+        self, state: AlgorithmState, progress: TrainingProgress,
+    ) -> TrainingDecision:
+        ...
+
+    def collect_metrics(
+        self, state: AlgorithmState, reports: WorkerReports,
+    ) -> TrainingMetrics:
+        # 公共默认实现为空；需要算法聚合时覆写。
+        ...
+```
+
+1. **`build_training` 必需实现**：检查算法配置、获取环境维度、解释 resume、生成布局、分配/声明算法通道并返回 `TrainingPlan`。Plan 持有父进程算法 state、worker 描述与数据连接。不得包含 Process 或由算法提供的 spawn/监控循环。资源获取成功后立即登记清理；prepare 中途失败也能释放，不依赖 plan 成功返回。
+2. **`evaluate_progress` 必需实现**：根据带来源和单位的算法计数、worker 语义状态及只读 OS 状态，返回继续或结束决策，并明确哪些 worker 已到合法完成边界。计数的 sum/max/均值不能由公共层猜测。该函数不消费 queue、不等待 worker、不保存/操作 Process，也不以 `exitcode == 0` 代替算法完成证明。所有 worker 成功与否最终仍由公共层裁决。
+3. **`collect_metrics` 可选覆写**：从公共层已消费的 worker reports 计算算法指标与展示有效性。返回标准 metrics/progress/diagnostics 及数据有效条件；不调用 Rich、TensorBoard、sleep 或 queue.get。无额外聚合需求时沿用公共默认实现，不强迫算法写空方法。底层 `TrainingLogger`/`MetricsLogger` 和既有进度轴契约继续复用。
+
+`WorkerSpec` 的目标字段是稳定 ID、role、模块级 target、args/kwargs、placement/seed/线程预算等实际需要的配置；日志位置由公共层按 worker ID 推导。role 仅用于分组和状态观察，不隐含 learner 必须均匀拥有 collector 的策略。Process 与 supervisor 句柄不进入 spec、plan 或算法 state。
+
+Worker 数量、collector/learner ownership、环境 shard、learner 消费哪些 endpoint，以及 CPU/NUMA/device placement 属于公共 topology/endpoint wiring；算法不展开和创建 peer worker。算法只声明角色需求、transport capability 偏好和 payload schema，common 将其展开为带有 index/count/rank/world-size/owner 与本地 endpoint 的 worker context。CUDA IPC 的可用性和通用 transport 选择由 common 根据 producer/consumer placement 与 capability 决定；算法保留 transition schema、sidecar、generation、replay ingest、UTD 及其他算法特定 transport 约束。当前 `motrix_rl.execution.topology` 提供 `EndpointWiring`、`cuda_ipc_capable` 与 `wire_endpoints` 作为这一阶段的轻量 endpoint 描述和 capability 选择契约；它不创建算法 ring，也不理解 payload。
+
+`TrainingProgress` 提供 worker ID 关联的只读状态和独立的算法进度，包括未 ready、ready、运行、已报告完成、已退出/失败及退出码诊断；不提供 start/join/terminate 等操作。`TrainingDecision` 表达算法预算是否满足及合法完成集合，不允许忽略非零退出、提前退出或隐藏 worker 错误。取消与失败优先于成功；checkpoint 由算法决定内容与保存时机，公共层登记 artifact 通知。
+
+继承的 `play(policy)` 仍需按已有 `TrainerBase` 契约实现；它不是新增的异步编排 hook。同步/异步可复用 FastSAC builder，不增加第二套 provider 入口。
+
+#### Worker 算法入口与公共外壳
+
+Worker 使用可 spawn 的模块级函数，不 pickle Trainer，也不要求 collector/learner 继承统一算法基类：
+
+```python
+def run_collector(runtime: WorkerRuntime, config, resources) -> None:
+    ...
+
+def run_learner(runtime: WorkerRuntime, config, resources) -> None:
+    ...
+```
+
+`WorkerRuntime` 提供 `ready()`（报告初始化就绪并可取消地等待放行）、`should_stop()`、`report(...)` 与 `finish(...)`（声明算法完成）。公共外壳先应用日志/CPU/NUMA/线程/seed/信号设置，再调用算法入口；捕获异常并上报 worker ID、阶段和原 traceback。Seed 偏移、CUDA 初始化时机和 DDP rank 集成由算法声明，公共 seed 工具不得提前为父进程初始化 CUDA。
+
+`ready`、`finish`、`exit` 是三个不同事件：
+
+- 未 ready 即退出（即使退出码 0）属于启动失败。
+- 已 ready 只表示初始化完成，不表示 warmup 或首次 learner update 完成。
+- `finish` 是算法完成声明，需由预算/进度规则验证；它不替代进程最终退出状态。
+- 返回但未报告合法完成属于提前退出，除非公共层已发起停止并按取消/正常收尾协议允许退出。
+- 非零退出始终不是成功。公共外壳因已请求 stop 结束资源等待时不重复制造 worker 缺陷；父进程 Ctrl+C 保持取消语义。
+
+不统一 `collect_once`/`learn_once` 调度：FastSAC 的 generation merge、replay ingest、DDP collectives 时序仍在算法入口内。资源交付和背压等待必须可检查 stop 或有有限时退出；不能把普通 start gate 释放误认为能解除所有 queue/NCCL 阻塞。强制回收是最终兜底，不承诺训练状态可恢复。
+
+#### 公共生命周期及清理不变量
+
+```text
+公共资源作用域 → build_training → 构造/启动 workers
+  → 期间持续消费错误与状态 → 等待全部 readiness → 放行
+  → 消费报告 → evaluate_progress / collect_metrics → 执行结束决策
+  → 请求 stop / 解除可解除的等待 → 有界 reap
+  → 最终 drain / 检查迟到失败 / 登记产物 → 关闭展示与共享资源
+```
+
+- 一个 worker ID 对应一个由公共层持有的 process；父进程的 context 与所有同步对象使用一致的启动上下文。
+- Base 的 `train()` 不允许被算法复制或通过兼容 callback 绕行；没有 `start_workers`、`wait_for_ready`、`drain_errors`、`render_boot_panel`、`shutdown_workers` 等算法抽象方法。
+- 从第一个 spawn 起就有 supervisor 保护；部分 spawn、placement/log 初始化、算法 build 或 poll 失败全部进入统一资源出口。
+- Runtime 在启动与运行阶段都消费错误。首批 metrics 的展示门槛只能控制展示，不能延迟 start release。
+- 同一轮出现算法预算完成与 worker 错误时，错误优先；进程回收后继续检查迟到的非零退出，最终消息在通道关闭前消费。
+- 主异常保留对象与 traceback；清理异常记录且不覆盖主错，没有主错时清理失败必须上报。不得以宽泛吞异常把失败运行变为成功。
+- Tensor/IPC owner 保持存活直至所有借用者退出；queue 的 feeder 策略由公共资源作用域统一处理。worker 私有环境/renderer/process-group 的释放按真实接口执行，不虚构底层 `close()` 能力。
+
+#### 当前实现差距（验收基线）
+
+以下是当前磁盘实现与目标的对照，不是已完成声明：
+
+| 当前实现证据 | 目标差距 |
+|---|---|
+| `motrix_rl/execution/trainer.py` 的 `WorkerSpec.process`，Base 对既有 process 调用 start | spec 必须改为入口与参数；Process 构造及句柄所有权归公共层 |
+| FastSAC `async_impl/train.py` 的 `mp.get_context("spawn")`、`ctx.Process`、`p_learners/p_collectors` | 只声明布局与 worker；不维护进程列表 |
+| FastSAC 对 `exitcode` 的判断及 `_complete` | 改由带 ID 的只读 runtime 状态和算法完成决策，不访问 raw Process |
+| `AsyncTrainingSession` 要求算法提供 release_start、drain_ready、poll、close 等 callback | 公共启动/错误/展示/最终 drain 不再通过算法闭包回传；按三个语义扩展点划分 |
+| FastSAC 创建 error queue、handshake、queue 清理及 traceback 落盘，`_poll/_close` 控制 Live/logger | 错误、启动与展示生命周期归公共层，算法只定义 slot 内容、指标与有效条件 |
+| Worker 已调用公共 seed/日志/信号工具，但入口仍自行捕获异常、上报 ready/错误/stop | 使用公共 worker 外壳与 runtime 协议，保留算法初始化及内部循环 |
+
+已经存在的 `ProcessSupervisor`、SPSC ring/snapshot、startup barrier、worker runtime helpers、公共 console 均应复用，不重新建立平行实现。现有测试通过只证明已覆盖的行为，不能证明上表的职责迁移已完成。
+
+#### 最终验收矩阵
+
+最终实施报告必须对每项给出实现路径、验证命令/结果及限制；未满足项保持未完成，不得用测试总数或文件行数代替：
+
+| 编号 | 验收条件 | 必需证据 |
+|---|---|---|
+| A1 | FastSAC 仅提供 worker 描述，不创建或持有 Process，不选择 spawn context | 源码 review 与一次性引用扫描；原始 process 仅在公共 runtime 内 |
+| A2 | 算法只实现 build、progress decision、metrics 语义扩展点及 worker 入口，无第二个生命周期循环 | 接口/调用链 review；没有 legacy fallback、名义继承或万能 poll 闭包承载旧 train |
+| A3 | 日志、错误、readiness、进程状态、最终 drain 与资源释放由公共 runtime 管理 | 不带 FastSAC 依赖的 toy 算法和真实 CPU spawn 测试，覆盖状态/消息/回收顺序 |
+| A4 | ready、算法完成、进程退出不混淆 | 未 ready 的零退出、运行中提前零退出、合法完成、未声明完成返回、迟到非零退出回归 |
+| A5 | 启动/运行错误与取消可靠处理，不丢原错、不漏子进程 | 部分 spawn、启动超时、初始化/poll 失败、Ctrl+C、阻塞资源取消及主错+清理错测试 |
+| A6 | worker 私有资源与公共 IPC 所有权明确 | 初始化中途失败、资源交付失败及正常退出的 cleanup 测试；reap 后才关闭通道 |
+| A7 | FastSAC 算法与用户契约不变 | replay/final observation、generation、normalizer、UTD、恢复进度、checkpoint、live metrics 既有回归；短 run 无更新、首批面板门槛回归 |
+| A8 | 原生产数据路径未被通用 Python queue 替换，未引入额外热路径复制 | 代码 review、既有 transport/管线测试、可用单 GPU CUDA/IPC 实际验收；性能结论须有基准 |
+| A9 | 文档、测试与实现的边界一致 | 更新本基线差距与 API 文档，执行 lint/格式检查；逐项列出已执行、跳过及硬件限制 |
+
+引用扫描属于一次性迁移验收，不写成“旧符号必须不存在”的长期单元测试。单 GPU/CPU 证据不能替代多 GPU NCCL、跨 NUMA 吞吐或长期训练稳定性；缺少硬件验收时必须明确范围，不能宣称已验证。
+
 ### 4.1 Workspace package boundaries
 
 RL 集成拆分为控制平面（同时持有稳定 contracts）和可选 provider 插件两个边界：

@@ -10,7 +10,6 @@ breaks dashboards as well as existing TensorBoard comparisons.
 
 from __future__ import annotations
 
-import contextlib
 import math
 import re
 import threading
@@ -33,6 +32,9 @@ from motrix_rl.metrics import JsonlSink, MetricsLogger
 from motrix_rl.system_metrics import CpuLoad, GpuDeviceUsage, MemoryUsage
 
 SYNC_TB_TAGS = {
+    "progress/collection_step",
+    "progress/learning_iteration",
+    "progress/update_idx",
     "rollout/mean_return",
     "rollout/mean_ep_len",
     "rollout/env_reward",
@@ -47,12 +49,15 @@ SYNC_TB_TAGS = {
 }
 
 ASYNC_TB_TAGS = {
+    "progress/collection_step",
+    "progress/learning_iteration",
+    "progress/update_idx",
     "rollout/mean_return",
     "rollout/mean_ep_len",
     "perf/env_steps_per_s",
     "perf/updates_per_s",
     "async/policy_lag",
-    "async/weight_publishes_per_iter",
+    "async/weight_publishes_per_collection_step",
     "async/ring_fill",
     "async/weight_version",
     "async/utd",
@@ -217,6 +222,9 @@ class _SyncEnv:
         self._t = 0
         self._diverge_at = diverge_at
 
+    def close(self):
+        pass
+
     def reset(self):
         return torch.zeros(self.num_envs, 2), torch.zeros(self.num_envs, 3)
 
@@ -246,6 +254,8 @@ class _SyncAgent:
         self.actor = SimpleNamespace(action_scale=torch.ones(1), action_bias=torch.zeros(1))
         self.rb = SimpleNamespace(extend=lambda *columns: None, num_stored=0, buffer_size=4)
         self.global_step = 0
+        self.learning_iteration = 0
+        self.update_idx = 0
         self.window_metrics = SimpleNamespace(stats_and_reset=lambda: {"qf_loss": 0.25, "actor_loss": -1.5})
 
     def set_train_mode(self) -> None:
@@ -255,13 +265,21 @@ class _SyncAgent:
         return torch.zeros(self.num_envs, 1)
 
     def update(self, num_updates) -> None:
-        pass
+        if num_updates > 0:
+            self.learning_iteration += 1
+            self.update_idx += num_updates
 
     def state_dict(self):
-        return {"global_step": self.global_step}
+        return {
+            "global_step": self.global_step,
+            "learning_iteration": self.learning_iteration,
+            "update_idx": self.update_idx,
+        }
 
     def load_state_dict(self, state, load_optimizers=False) -> None:
         self.global_step = state["global_step"]
+        self.learning_iteration = state.get("learning_iteration", 0)
+        self.update_idx = state.get("update_idx", 0)
 
 
 def _train_sync(tmp_path, monkeypatch, *, resume_from=None, diverge_at=None):
@@ -286,10 +304,12 @@ def test_sync_trainer_emits_tensorboard_tags_as_live_scalars(tmp_path, monkeypat
     sink, writer = _train_sync(tmp_path, monkeypatch)
 
     scalars = [r for r in sink.records if r["kind"] == "scalars"]
-    assert [r["step"] for r in scalars] == [0, 2, 4, 6]
-    # Iteration global_step has already collected at its log point: env_steps = (global_step + 1) * num_envs,
-    # so the last point of 8 iterations reaches total_steps = 8 * num_envs.
-    assert [r["axes"]["env_steps"] for r in scalars] == [3, 9, 15, 21]
+    # Three warmup collections, then five positive learning calls: interval two
+    # publishes learner steps two/four and the final remainder at step five.
+    assert [r["step"] for r in scalars] == [0, 2, 4, 5]
+    assert [r["axes"]["env_steps"] for r in scalars] == [3, 15, 21, 24]
+    assert [r["data"]["progress/collection_step"] for r in scalars] == [1, 5, 7, 8]
+    assert [r["data"]["progress/learning_iteration"] for r in scalars] == [0, 2, 4, 5]
     assert {tag for tag, _, _ in writer.scalars} == SYNC_TB_TAGS
     _assert_live_matches_tensorboard(sink, writer, no_episode_steps=(0,))
 
@@ -326,13 +346,14 @@ def test_sync_trainer_flags_a_real_divergence(tmp_path, monkeypatch):
     nonfinite = {
         r["data"]["key"]: r["step"] for r in sink.records if r["kind"] == "event" and r["data"]["name"] == "nonfinite"
     }
-    # Episodes ending at env step 4 and later carry NaN returns (logged at global_step 4).
-    assert nonfinite["rollout/mean_return"] == 4
+    # Episode four diverges; the next learner log is iteration two, after
+    # collection five. Learner-axis labels are not collection-step labels.
+    assert nonfinite["rollout/mean_return"] == 2
 
 
 def test_sync_trainer_reports_resume(tmp_path, monkeypatch):
     resume_from = tmp_path / "resume.pt"
-    torch.save({"global_step": 4}, resume_from)
+    torch.save({"global_step": 4, "learning_iteration": 6, "update_idx": 18}, resume_from)
 
     sink, _ = _train_sync(tmp_path, monkeypatch, resume_from=str(resume_from))
 
@@ -340,11 +361,12 @@ def test_sync_trainer_reports_resume(tmp_path, monkeypatch):
     assert _events(sink) == [
         ("resumed", 4),
         ("run_started", 4),
-        ("checkpoint_saved", 4),
         ("warmup_done", 7),  # warmup restarts on resume: the replay buffer is empty
         ("checkpoint_saved", 8),
     ]
-    assert [(r["step"], r["axes"]["env_steps"]) for r in sink.records if r["kind"] == "scalars"] == [(4, 15), (6, 21)]
+    # Replay rewarms for three collections without advancing learner progress
+    # or republishing the already-saved learner step six.
+    assert [(r["step"], r["axes"]["env_steps"]) for r in sink.records if r["kind"] == "scalars"] == [(7, 24)]
 
 
 # ---------------------------------------------------------------- async trainer (parent process)
@@ -365,6 +387,10 @@ class _FastTime:
 
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds / self._speedup)
+
+    @staticmethod
+    def monotonic() -> float:
+        return time.monotonic()
 
     @staticmethod
     def perf_counter() -> float:
@@ -424,6 +450,8 @@ def _payload(step: int, checkpoint_path: str | None) -> dict:
         "step": step,
         "sps": 100.0,
         "updates": 2 * step,
+        "update_idx": 2 * step,
+        "learning_iteration": step // 2,
         "training_started": True,
         "metrics": None if warming else {"qf_loss": 0.25, "actor_loss": -1.5},
         "warming": warming,
@@ -460,51 +488,93 @@ class _Workers:
 
     def learner(self, process) -> int:
         args = process.arguments
-        control, handshake = args["control"], args["handshake"]
-        handshake.report_ready("learner", 0)
-        handshake.wait_for_start(control)
+        runtime = process.runtime
+        control = args["control"]
+        control.bind_stop(runtime.stop_event)
+        runtime.ready()
+        self._wait(lambda: len(self.ctx.processes) >= 2)
         collectors = [p.arguments for p in self.ctx.processes if p is not process]
         logged = self.sink.count("scalars")
         checkpoint_path = None
+        next_learning_log = 10
         for stage in self.stages:
             for collector_id, target in enumerate(stage.steps):
                 while control.collector_steps_at(collector_id) < target:
                     control.inc_collector_steps(collector_id)
             for collector in collectors:
-                collector["stats_queue"].put(_snapshot(collector["collector_id"], stage))
+                collector["runtime"].report(
+                    {"type": "collector_stats", "stats": _snapshot(collector["collector_id"], stage)}
+                )
             if stage.payload:
                 payload = _payload(control.collector_steps // NUM_COLLECTORS, checkpoint_path)
                 if stage.updates is not None:
                     payload["updates"] = stage.updates
+                    payload["update_idx"] = stage.updates
+                    payload["learning_iteration"] = stage.updates // 4
                     payload["training_started"] = stage.updates > 0
-                args["panel_queue"].put(payload)
+                runtime.report({"type": "learner_payload", "payload": payload})
                 if payload["updates"] == 0:
-                    self._wait(lambda: args["panel_queue"].empty() or control.stop)
                     continue
-                logged += 1
-                if self.live:
+                due = payload["learning_iteration"] >= next_learning_log
+                if due:
+                    next_learning_log = (payload["learning_iteration"] // 10 + 1) * 10
+                    logged += 1
+                if self.live and due:
                     self._wait(lambda: self.sink.count("scalars") >= logged or control.stop)
-                else:  # nothing is logged live; the parent taking the payload is all there is to wait for
-                    self._wait(lambda: args["panel_queue"].empty() or control.stop)
+                else:
+                    self._wait(lambda: self.sink.count("scalars") >= logged or control.stop)
             for step in stage.saves:
                 checkpoint_path = str(Path(args["checkpoint_dir"]) / f"model_{step:07d}.pt")
-                args["panel_queue"].put({"rank": 0, "checkpoint_saved": {"step": step, "path": checkpoint_path}})
+                runtime.report({"type": "checkpoint_saved", "step": step, "path": checkpoint_path})
         if self.crash_collector is not None:
-            args["error_queue"].put((f"collector[{self.crash_collector}]", "Traceback: boom\n"))
+            self.ctx.processes[self.crash_collector + 1].runtime.report(
+                {"traceback": "Traceback: boom\n", "phase": "target"}, kind="error"
+            )
             self.exitcodes[self.crash_collector] = 1
             self._wait(lambda: control.stop)
             return 0
+        for collector_id in range(NUM_COLLECTORS):
+            while control.collector_steps_at(collector_id) < args["num_iterations"]:
+                control.inc_collector_steps(collector_id)
+        runtime.report(
+            {
+                "type": "learner_counters",
+                "rank": 0,
+                "counters": {
+                    "learning_iteration": 13,
+                    "update_idx": 52,
+                    "updates": 52,
+                    "metrics": None,
+                },
+            }
+        )
+        runtime.finish()
+        time.sleep(0.01)
         final_path = checkpoints.final_checkpoint_path("pt", args["run_dir"])
         final_path.parent.mkdir(parents=True, exist_ok=True)
         final_path.write_bytes(b"")
+        runtime.report(
+            {"type": "checkpoint_saved", "step": control.collector_steps // NUM_COLLECTORS, "path": str(final_path)}
+        )
         return 0
+
+    def complete(self, process) -> None:
+        # Real collectors reach a target before triggering clean peer shutdown.
+        args = process.arguments
+        while args["control"].collector_steps_at(0) < args["num_iterations"]:
+            args["control"].inc_collector_steps(0)
+        args["control"].set_stop()
 
     def collector(self, process) -> int:
         args = process.arguments
-        control, handshake, collector_id = args["control"], args["handshake"], args["collector_id"]
-        handshake.report_ready("collector", collector_id)
-        handshake.wait_for_start(control)
+        runtime = process.runtime
+        control, collector_id = args["control"], args["collector_id"]
+        control.bind_stop(runtime.stop_event)
+        runtime.ready()
         self._wait(lambda: control.stop or collector_id in self.exitcodes)
+        if collector_id not in self.exitcodes:
+            runtime.finish()
+        time.sleep(0.01)
         return self.exitcodes.get(collector_id, 0)
 
     @staticmethod
@@ -528,24 +598,26 @@ def _train_async(tmp_path, monkeypatch, workers: _Workers, *, num_iterations: in
     )
     writer = _RecordingWriter()
     monkeypatch.setattr(torch.utils.tensorboard, "SummaryWriter", lambda **kwargs: writer)
-    monkeypatch.setattr(async_train, "time", _FastTime(10.0))
-    monkeypatch.setattr(async_train, "mp", SimpleNamespace(get_context=lambda method: workers.ctx))
+    from motrix_rl.execution import building, plan_execution
+
+    monkeypatch.setattr(building.mp, "get_context", lambda method: workers.ctx)
+    monkeypatch.setattr(plan_execution, "time", _FastTime(10.0))
     monkeypatch.setattr(async_train, "resolve_trainer_topology", lambda *args, **kwargs: topology)
     monkeypatch.setattr(async_train, "actor_param_numel", lambda *args: 0)
     monkeypatch.setattr(async_train, "capture_system_info", lambda **kwargs: {})
-    monkeypatch.setattr(async_train, "spawn_placement", lambda *args: contextlib.nullcontext())
-    monkeypatch.setattr(async_train, "inherit_log_stdio", lambda *args: contextlib.nullcontext())
     monkeypatch.setattr(async_train.Trainer, "_make_env", lambda self, *args, **kwargs: _ProbeEnv())
     (tmp_path / "metadata.json").write_text("{}")
     rl_cfg = SimpleNamespace(
         device="cpu",
-        agent=SimpleNamespace(batch_size=8, learning_starts=LEARNING_STARTS),
+        agent=SimpleNamespace(batch_size=8, learning_starts=LEARNING_STARTS, obs_normalization=True),
         trainer=SimpleNamespace(
             num_learning_iterations=num_iterations,
             async_options=SimpleNamespace(
                 num_collectors=NUM_COLLECTORS,
                 num_learners=1,
                 cpus_per_collector=None,
+                collector_cpu_cores=None,
+                learner_cpu_cores=None,
                 learner_devices=None,
                 collector_inference_device="cpu",
                 ring_capacity=2,
@@ -561,18 +633,65 @@ def _train_async(tmp_path, monkeypatch, workers: _Workers, *, num_iterations: in
 
 
 def test_async_panel_waits_for_first_learner_update(tmp_path, monkeypatch):
-    from motrix_rl_builtin.fastsac.async_impl import train as async_train
 
     sink = _RecordingSink(tmp_path / "metrics.jsonl")
     workers = _Workers(sink, [_Stage((10, 10), updates=0), _Stage((20, 20))])
     trainer, _ = _train_async(tmp_path, monkeypatch, workers, num_iterations=30)
     panels = []
-    monkeypatch.setattr(async_train, "emit_training_panel", lambda live, stats, **kwargs: panels.append(stats))
+    monkeypatch.setattr(
+        "motrix_rl.execution.presentation.emit_training_panel", lambda live, stats, **kwargs: panels.append(stats)
+    )
 
     trainer.train()
 
     assert panels
     assert all(panel.iteration >= 20 for panel in panels)
+
+
+@pytest.mark.parametrize("final_metrics", [{"qf_loss": 0.75}, None])
+def test_async_panel_keeps_collection_progress_separate_from_final_learner_counters(
+    tmp_path, monkeypatch, final_metrics
+):
+
+    class FinalCountersWorkers(_Workers):
+        def complete(self, process):
+            super().complete(process)
+            process.runtime.report(
+                {
+                    "type": "learner_counters",
+                    "rank": 0,
+                    "counters": {
+                        "learning_iteration": 13,
+                        "update_idx": 52,
+                        "updates": 52,
+                        "metrics": final_metrics,
+                    },
+                }
+            )
+
+    sink = _RecordingSink(tmp_path / "metrics.jsonl")
+    workers = FinalCountersWorkers(sink, [_Stage((20, 20))])
+    trainer, _ = _train_async(tmp_path, monkeypatch, workers, num_iterations=30)
+    panels = []
+    monkeypatch.setattr(
+        "motrix_rl.execution.presentation.emit_training_panel", lambda live, stats, **kwargs: panels.append(stats)
+    )
+
+    trainer.train()
+
+    assert panels[-1].iteration == 30  # total collection counter / per-collector environment basis
+    assert panels[-1].total_iterations == 30
+    assert panels[-1].learning_iteration == 13
+    assert panels[-1].update_idx == 52
+    assert panels[-1].training_metrics == {"qf_loss": 0.25, "actor_loss": -1.5}
+    assert any(panel.learning_iteration == 10 and panel.update_idx == 40 for panel in panels[:-1])
+    records = [r for r in sink.records if r["kind"] == "scalars"]
+    assert [r["step"] for r in records] == [10, 13]  # force final sub-interval publication
+    assert records[-1]["axes"]["env_steps"] == 150
+    assert records[-1]["data"]["progress/collection_step"] == 25
+    final_train = {key: value for key, value in records[-1]["data"].items() if key.startswith("train/")}
+    assert final_train == {f"train/{key}": value for key, value in (final_metrics or {}).items()}
+    assert panels[-1].progress_unit == "collection steps"
 
 
 def test_async_run_can_finish_without_any_training_update(tmp_path, monkeypatch):
@@ -586,28 +705,31 @@ def test_async_run_can_finish_without_any_training_update(tmp_path, monkeypatch)
 
 
 def test_async_panel_reports_zero_throughput_after_collection_stalls(tmp_path, monkeypatch):
-    from motrix_rl_builtin.fastsac.async_impl import train as async_train
 
     panels = []
 
     class StalledWorkers(_Workers):
-        def learner(self, process):
-            result = super().learner(process)
-            # Hold fixed collection progress across two measured windows.
+        def complete(self, process):
+            # Hold fixed collection progress across two measured windows before
+            # allowing the normal final collection target to complete.
             self._wait(lambda: len(panels) >= 3 or process.arguments["control"].stop)
-            return result
+            super().complete(process)
 
     sink = _RecordingSink(tmp_path / "metrics.jsonl")
     workers = StalledWorkers(sink, [_Stage((20, 20))])
     trainer, _ = _train_async(tmp_path, monkeypatch, workers, num_iterations=30)
-    monkeypatch.setattr(async_train, "emit_training_panel", lambda live, stats, **kwargs: panels.append(stats))
+    monkeypatch.setattr(
+        "motrix_rl.execution.presentation.emit_training_panel", lambda live, stats, **kwargs: panels.append(stats)
+    )
 
     trainer.train()
 
     assert len(panels) >= 3
-    assert panels[-1].steps_per_second == 0.0
-    assert panels[-1].iterations_per_second == 0.0
-    assert not panels[-1].warming
+    stalled = [panel for panel in panels if panel.iteration == 20]
+    assert stalled[-1].steps_per_second == 0.0
+    assert stalled[-1].iterations_per_second == 0.0
+    assert not stalled[-1].warming
+    assert [r["step"] for r in sink.records if r["kind"] == "scalars"] == [10]
 
 
 def test_async_trainer_emits_tensorboard_tags_events_and_collector_env_steps(tmp_path, monkeypatch):
@@ -619,11 +741,13 @@ def test_async_trainer_emits_tensorboard_tags_events_and_collector_env_steps(tmp
     trainer.train()
 
     scalars = [r for r in sink.records if r["kind"] == "scalars"]
-    assert sorted({r["step"] for r in scalars}) == [10, 20, 40]
-    # env_steps = collector_steps * (num_envs // num_collectors), as performance.total_env_steps
-    collector_steps = {10: 21, 20: 40, 40: 80}
+    assert sorted({r["step"] for r in scalars}) == [10, 20]
+    # Learner x-axis is independent of the collected transition count.
+    collector_steps = {10: 40, 20: 80}
     assert all(r["axes"]["env_steps"] == collector_steps[r["step"]] * 3 for r in scalars)
     assert {tag for tag, _, _ in writer.scalars} == ASYNC_TB_TAGS
+    assert all(r["data"]["progress/learning_iteration"] == r["step"] for r in scalars)
+    assert all(r["data"]["progress/update_idx"] == 4 * r["step"] for r in scalars)
     _assert_live_matches_tensorboard(sink, writer)
 
     # The checkpoint notice and the step-20 payload can land in one drain: their order is not fixed.
@@ -654,7 +778,7 @@ def test_learner_sends_checkpoint_notices_only_for_live_metrics(tmp_path, monkey
     trainer.train()
 
     (learner,) = [process for process in workers.ctx.processes if "learner" in process.name]
-    assert learner.kwargs["notify_checkpoints"] is live
+    assert learner.arguments["notify_checkpoints"] is live
 
 
 def test_async_trainer_reports_worker_crash(tmp_path, monkeypatch):
@@ -662,7 +786,7 @@ def test_async_trainer_reports_worker_crash(tmp_path, monkeypatch):
     workers = _Workers(sink, [_Stage((11, 10))], crash_collector=1)
     trainer, _ = _train_async(tmp_path, monkeypatch, workers, num_iterations=40)
 
-    with pytest.raises(RuntimeError, match="collector 1"):
+    with pytest.raises(RuntimeError, match="collector-1"):
         trainer.train()
 
     crash = _event(sink, "worker_crashed")
@@ -670,7 +794,7 @@ def test_async_trainer_reports_worker_crash(tmp_path, monkeypatch):
         "name": "worker_crashed",
         "worker": "fastsac-async-collector-1",
         "exitcode": 1,
-        "error_log": "async_errors/collector[1]_error.log",
+        "error_log": "async_errors/fastsac-async-collector-1_error.log",
     }
     assert (tmp_path / crash["error_log"]).read_text() == "Traceback: boom\n"
     assert "checkpoint_saved" not in {name for name, _ in _events(sink)}
@@ -678,7 +802,7 @@ def test_async_trainer_reports_worker_crash(tmp_path, monkeypatch):
 
 def test_async_trainer_reports_resume(tmp_path, monkeypatch):
     resume_from = tmp_path / "resume.pt"
-    torch.save({"global_step": 10}, resume_from)
+    torch.save({"global_step": 10, "learning_iteration": 7}, resume_from)
     sink = _RecordingSink(tmp_path / "metrics.jsonl")
     workers = _Workers(sink, [_Stage((20, 20))])
     trainer, _ = _train_async(tmp_path, monkeypatch, workers, num_iterations=20, resume_from=str(resume_from))
@@ -686,8 +810,8 @@ def test_async_trainer_reports_resume(tmp_path, monkeypatch):
     trainer.train()
 
     assert _event(sink, "resumed") == {"name": "resumed", "path": str(resume_from), "global_step": 10}
-    assert _events(sink)[:3] == [("resumed", 10), ("run_started", 10), ("warmup_done", 20)]
-    assert {(r["step"], r["axes"]["env_steps"]) for r in sink.records if r["kind"] == "scalars"} == {(20, 120)}
+    assert _events(sink)[:2] == [("resumed", 10), ("warmup_done", 20)]
+    assert {(r["step"], r["axes"]["env_steps"]) for r in sink.records if r["kind"] == "scalars"} == {(10, 120)}
 
 
 def test_async_trainer_emits_live_scalars_without_tensorboard(tmp_path, monkeypatch):
@@ -702,7 +826,7 @@ def test_async_trainer_emits_live_scalars_without_tensorboard(tmp_path, monkeypa
     trainer.train()
 
     scalars = [r for r in sink.records if r["kind"] == "scalars"]
-    assert sorted({r["step"] for r in scalars}) == [10, 20]
+    assert sorted({r["step"] for r in scalars}) == [10]
     assert {"rollout/mean_return", "train/qf_loss"} <= set(scalars[-1]["data"])
 
 
@@ -727,12 +851,12 @@ def test_async_trainer_reports_checkpoints_saved_after_the_last_log_window(tmp_p
 def test_async_trainer_leaves_placeholder_rollout_means_out_of_live(tmp_path, monkeypatch):
     sink = _RecordingSink(tmp_path / "metrics.jsonl")
     stages = [
-        _Stage((10, 10), episodes=0),  # nothing finished yet: NaN placeholders
-        _Stage((20, 20)),
-        _Stage((30, 30), mean_return=math.nan),  # a real divergence
+        _Stage((20, 20), episodes=0),  # learner iteration 10: NaN placeholders
+        _Stage((40, 40)),
+        _Stage((60, 60), mean_return=math.nan),  # learner iteration 30: real divergence
     ]
     workers = _Workers(sink, stages)
-    trainer, writer = _train_async(tmp_path, monkeypatch, workers, num_iterations=30)
+    trainer, writer = _train_async(tmp_path, monkeypatch, workers, num_iterations=60)
 
     trainer.train()
 

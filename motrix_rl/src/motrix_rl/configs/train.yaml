@@ -27,7 +27,7 @@ hydra:
 sim: null
 logging:
   backend: tensorboard
-  interval: 100
+  interval: 10
 
 checkpoint:
   interval: 0

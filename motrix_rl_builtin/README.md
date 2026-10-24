@@ -11,3 +11,11 @@ It depends only on `motrix-rl` for control-plane services and provider/trainer c
 Torch runtime dependencies. It registers via the `motrix_rl.frameworks` entry-point group:
 `builtin = "motrix_rl_builtin.plugin:register"`. Consumers query `motrix_rl.frameworks` rather than importing plugin
 internals to trigger registration.
+
+FastSAC shares the training console and algorithm-neutral execution primitives described in the
+[execution guide](../motrix_rl/src/motrix_rl/execution/README.md#learning-and-collection-clocks).
+Its asynchronous trainer inherits the public `AsyncTrainerBase` for worker startup, monitoring and cleanup,
+while owning FastSAC-specific topology, transition payloads, replay ingestion, UTD governance and final-observation handling;
+those are not part of the public transport contract. The console distinguishes completed
+learner iterations from collection progress; the existing training budget and resume
+checkpoints remain collection-based. APPO is not implemented by this package.

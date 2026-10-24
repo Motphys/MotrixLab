@@ -84,6 +84,40 @@ def test_policy_frequency_gating_spans_update_calls() -> None:
     agent.update(3)  # update_idx 8 -> 11: actor gates at steps 8, 10
     assert len(actor_calls) == 6
     assert agent.update_idx == 11
+    assert agent.learning_iteration == 3
+    agent.update(0)
+    assert agent.learning_iteration == 3
+    assert agent.update_idx == 11
+
+
+def test_learning_iteration_serializes_and_restores():
+    import torch
+    from motrix_rl_builtin.fastsac.agent import FastSacAgent
+
+    agent = FastSacAgent(
+        obs_dim=2,
+        critic_obs_dim=2,
+        act_dim=1,
+        num_envs=1,
+        cfg=_tiny_agent_cfg(compile=False, amp=False),
+        device=torch.device("cpu"),
+    )
+    agent.learning_iteration = 7
+    state = agent.state_dict()
+    restored = FastSacAgent(
+        obs_dim=2,
+        critic_obs_dim=2,
+        act_dim=1,
+        num_envs=1,
+        cfg=_tiny_agent_cfg(compile=False, amp=False),
+        device=torch.device("cpu"),
+    )
+    restored.load_state_dict(state, load_optimizers=False)
+    assert restored.learning_iteration == 7
+    # Legacy checkpoints cannot reconstruct the number of historical update calls.
+    state.pop("learning_iteration")
+    restored.load_state_dict(state, load_optimizers=False)
+    assert restored.learning_iteration == 0
 
 
 def test_nest_timing_path_merges_scalar_total_with_children_in_any_order() -> None:

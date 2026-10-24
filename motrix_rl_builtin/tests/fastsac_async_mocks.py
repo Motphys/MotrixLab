@@ -51,6 +51,9 @@ class ThreadQueue(queue.Queue):
     def close(self) -> None:
         pass
 
+    def cancel_join_thread(self) -> None:
+        pass
+
 
 class ThreadProcess:
     """A worker "process" that runs ``script(self)`` on a thread; its return value is the exit code."""
@@ -63,14 +66,47 @@ class ThreadProcess:
         self.exitcode: int | None = None
         self._script = script
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
+        self._algorithm_target, self._runtime, self._algorithm_args, self._algorithm_kwargs = self._unwrap()
+
+    def _unwrap(self):
+        """Expose the algorithm entry shape while retaining raw worker_entry args."""
+        from motrix_rl.execution.workers import worker_entry
+
+        if self.target is not worker_entry:
+            return self.target, None, self.args, self.kwargs
+        runtime, algorithm_target, algorithm_args, algorithm_kwargs, _settings = self.args
+        return algorithm_target, runtime, tuple(algorithm_args), dict(algorithm_kwargs)
 
     @property
     def arguments(self) -> dict:
-        """The worker entry point's arguments by parameter name."""
-        return inspect.signature(self.target).bind(*self.args, **self.kwargs).arguments
+        """The algorithm entry point's bound arguments, including ``runtime``."""
+        return dict(
+            inspect.signature(self._algorithm_target)
+            .bind(self._runtime, *self._algorithm_args, **self._algorithm_kwargs)
+            .arguments
+        )
+
+    @property
+    def runtime(self):
+        return self._runtime
 
     def _run(self) -> None:
-        self.exitcode = self._script(self)
+        from motrix_rl.execution.contracts import ExecutionCancelled
+
+        try:
+            self.exitcode = self._script(self)
+        except ExecutionCancelled:
+            if self.runtime is None or not self.runtime.stop_event.is_set():
+                self.exitcode = 1
+                raise
+            self.exitcode = 0
+        except BaseException:
+            self.exitcode = 1
+            raise
+
+    @property
+    def pid(self) -> int | None:
+        return self._thread.ident
 
     def start(self) -> None:
         self._thread.start()
@@ -106,6 +142,11 @@ class ThreadSpawnContext:
         return threading.Event()
 
     def Process(self, target, args=(), kwargs=None, name=None) -> ThreadProcess:  # noqa: N802
-        process = ThreadProcess(self.scripts[target], target, args, kwargs, name)
+        from motrix_rl.execution.workers import worker_entry
+
+        script = self.scripts.get(target)
+        if script is None and target is worker_entry:
+            script = self.scripts[args[1]]
+        process = ThreadProcess(script, target, args, kwargs, name)
         self.processes.append(process)
         return process

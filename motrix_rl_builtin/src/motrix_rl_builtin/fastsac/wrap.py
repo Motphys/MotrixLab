@@ -83,3 +83,4 @@ class FastSacEnvWrap(abc.ABC):
     def close(self) -> None:
         if self._renderer is not None:
             self._renderer.close()
+            self._renderer = None
