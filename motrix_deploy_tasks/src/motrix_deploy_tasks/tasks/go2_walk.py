@@ -275,8 +275,8 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
         spawn_pose: str | None = None,
     ) -> CommandBinding[PlanarVelocityCommand]:
         """Derive the crouch preparation from the simulation spawn pose and build the command source."""
-        if simulation:
-            self.policy_io.enable_sim_command_ramp()
+        # if simulation:
+        self.policy_io.enable_sim_command_ramp()
         if simulation and spawn_pose == "lie_down":
             self.enable_simulation_preparation()
         command_lower, command_upper = self.command_bounds
