@@ -1,0 +1,13 @@
+# @package _global_
+# Task cyberdog2-walk-flat: skrl.ppo, train_backend=torch delta.
+defaults:
+  - /task/cyberdog2-walk-flat/skrl.ppo@_global_
+  - _self_
+task:
+  train_backend: torch
+algo:
+  agent:
+    rollouts: 24
+    learning_rate: 0.0003
+    learning_rate_scheduler_kwargs:
+      kl_threshold: 0.01

@@ -1,0 +1,23 @@
+# @package _global_
+# Task cyberdog2-walk-flat: motrix.fastsac shared training recipe.
+defaults:
+  - /algo_base@algo: motrix.fastsac
+  - _self_
+task:
+  env: cyberdog2-walk-flat
+  rllib: motrix
+  algo: fastsac
+num_envs: 1024
+play_num_envs: 16
+seed: 1
+checkpoint:
+  interval: 1000
+algo:
+  agent:
+    actor_hidden_dim: 512
+    critic_hidden_dim: 512
+    num_atoms: 101
+    v_min: -30.0
+    v_max: 30.0
+    num_updates: 2
+    buffer_size: 512

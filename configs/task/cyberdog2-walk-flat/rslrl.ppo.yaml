@@ -1,0 +1,36 @@
+# @package _global_
+# Task cyberdog2-walk-flat: rslrl.ppo shared training recipe.
+defaults:
+  - /algo_base@algo: rslrl.ppo
+  - _self_
+task:
+  env: cyberdog2-walk-flat
+  rllib: rslrl
+  algo: ppo
+  train_backend: null
+num_envs: 49152
+play_num_envs: 16
+seed: 1
+checkpoint:
+  interval: 100
+algo:
+  max_iterations: 3000
+  obs_groups:
+    actor:
+      - policy
+    critic:
+      - value
+  actor:
+    hidden_dims:
+      - 512
+      - 256
+      - 128
+    init_noise_std: 0.5
+  critic:
+    hidden_dims:
+      - 512
+      - 256
+      - 128
+  algorithm:
+    desired_kl: 0.01
+    entropy_coef: 0.001

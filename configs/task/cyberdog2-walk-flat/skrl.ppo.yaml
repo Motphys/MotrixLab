@@ -1,0 +1,40 @@
+# @package _global_
+# Task cyberdog2-walk-flat: skrl.ppo shared training recipe.
+defaults:
+  - /algo_base@algo: skrl.ppo
+  - _self_
+task:
+  env: cyberdog2-walk-flat
+  rllib: skrl
+  algo: ppo
+  train_backend: null
+num_envs: 1024
+play_num_envs: 16
+seed: 1
+checkpoint:
+  interval: 100
+algo:
+  models:
+    value:
+      hiddens:
+        - 512
+        - 256
+        - 128
+    policy:
+      initial_log_std: -0.6931471805599453
+      hiddens:
+        - 512
+        - 256
+        - 128
+    separate: true
+  agent:
+    rollouts: 24
+    mini_batches: 4
+    learning_epochs: 5
+    learning_rate: 0.0003
+    learning_rate_scheduler_kwargs:
+      kl_threshold: 0.01
+    entropy_loss_scale: 0.001
+    value_loss_scale: 1.0
+  trainer:
+    timesteps: 12000

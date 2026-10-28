@@ -1,0 +1,15 @@
+# @package _global_
+# Task cyberdog2-walk-flat: skrl.ppo, train_backend=jax delta.
+defaults:
+  - /task/cyberdog2-walk-flat/skrl.ppo@_global_
+  - _self_
+task:
+  train_backend: jax
+algo:
+  agent:
+    rollouts: 12
+    learning_rate: 0.0008
+    learning_rate_scheduler_kwargs:
+      kl_threshold: 0.03
+    grad_norm_clip: 0.75
+    kl_threshold: 0.07

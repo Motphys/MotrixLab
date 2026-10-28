@@ -10,6 +10,7 @@ Importing this module only loads model classes. The core registry invokes
 from motrix_env_core import registry
 from motrix_robots.anymal import AnymalC
 from motrix_robots.booster import BoosterK1
+from motrix_robots.cyberdog2 import Cyberdog2Robot
 from motrix_robots.dex_evt import DexEvt
 from motrix_robots.microduck import Microduck
 from motrix_robots.unitree import (
@@ -28,3 +29,4 @@ def register() -> None:
     registry.register_robot_config("go2", UnitreeGo2Robot)
     registry.register_robot_config("k1", BoosterK1)
     registry.register_robot_config("microduck", Microduck)
+    registry.register_robot_config("cyberdog2", Cyberdog2Robot)

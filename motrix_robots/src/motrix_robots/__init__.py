@@ -10,6 +10,7 @@ robot plugin entry point. Scene placement remains application-owned.
 
 from motrix_robots.anymal import AnymalC
 from motrix_robots.booster import BoosterK1
+from motrix_robots.cyberdog2 import Cyberdog2Robot
 from motrix_robots.dex_evt import DexEvt
 from motrix_robots.humanoid import HumanoidRobotCfg
 from motrix_robots.microduck import Microduck
@@ -28,4 +29,5 @@ __all__ = [
     "UnitreeG129Dof",
     "UnitreeGo1Robot",
     "UnitreeGo2Robot",
+    "Cyberdog2Robot",
 ]

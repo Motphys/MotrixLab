@@ -1,0 +1,241 @@
+<mujoco model="cyberdog2">
+  <compiler angle="radian" meshdir="assets" autolimits="true" />
+  <default>
+    <default class="cyberdog2">
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" density="0" group="2"/>
+      </default>
+      <default class="collision">
+        <geom priority="1" condim="6" group="3"/>
+      </default>
+      <site rgba="1 0 0 1" group="5"/>
+      <!-- Joint/actuator defaults use the CyberDog2 hardware values rather than
+           the Go2 ones (cf. go2_mjx.xml, class "go2"):
+             - joint damping 0.01 N*m*s/rad: <dynamics damping="0.01"/> in
+               cyberdog2.urdf (const.xacro abad/hip/knee_damping).
+             - armature = rotor inertia reflected through the 7.75:1 gearbox:
+               4.78e-5 kg*m^2 * 7.75^2 = 2.87e-3 kg*m^2 (rotor_izz in const.xacro).
+             - kp=20, kv=0.5: RL velocity-controller PD gains from
+               fsm_state_rl_velocity.cpp (kp_mat_/kd_mat_).
+             - forcerange 12.0001 N*m: joint torque limit from
+               cyberdog2-description.yaml (*_torque_max); equals the 1.5484 N*m
+               motor torque * 7.75 gear ratio from const.xacro. -->
+      <joint damping="0.01" armature="0.00287"/>
+      <position kp="20" kv="0.5" forcerange="-12.0001 12.0001"/>
+      <!-- Go2 gives each joint group its own ctrlrange default. CyberDog2's
+           front and rear hip joints have different ranges, so they are split. -->
+      <default class="abad">
+        <position ctrlrange="-0.5807 0.5807"/>
+      </default>
+      <default class="hip_front">
+        <position ctrlrange="-1.2265 2.6925"/>
+      </default>
+      <default class="hip_rear">
+        <position ctrlrange="-0.8774 3.0416"/>
+      </default>
+      <default class="knee">
+        <position ctrlrange="-2.4307 -0.6236"/>
+      </default>
+    </default>
+  </default>
+  <asset>
+    <material name="metal" rgba="0.7 0.75 0.8 1"/>
+    <material name="black" rgba="0.7 0.75 0.8 1"/>
+    <material name="gray" rgba="0.7 0.75 0.8 1"/>
+    <mesh file="body.obj" />
+    <mesh file="abad.obj" />
+    <mesh file="hip.obj" />
+    <mesh file="hip_mirror.obj" />
+    <mesh file="knee.obj" />
+  </asset>
+  <worldbody>
+    <body name="body" pos="0 0 0.24" childclass="cyberdog2">
+      <inertial pos="0.027300 -0.000242 0.014300" mass="4.03" quat="0.664491 0.732184 -0.0986875 0.112334" diaginertia="0.0153423 0.0514545 0.0517032" />
+      <freejoint name="floating_base_joint"/>
+      <geom mesh="body" material="black" class="visual" />
+      <geom name="body_collision" size="0.1180 0.0950 0.0545" type="box" class="collision" />
+      <site name="imu" pos="0.03340 -0.0172765 0.0510469" group="5"/>
+      <!-- Centre of the D430 depth camera's ground footprint (body x 0.39-1.56 m),
+           used as the terrain_scan raycast frame. See elevation_mapping_sim.md 1.1. -->
+      <site name="terrain_scan" pos="0.975 0 0" group="5"/>
+      <body name="head" pos="0 0 0">
+        <geom name="head1_collision" pos="0.256 0 0.120" size="0.038 0.030 0.020" type="box" class="collision"/>
+        <geom name="head2_collision" pos="0.225 0 0.150" size="0.010 0.040 0.050" type="box" class="collision"/>
+      </body>
+      <body name="FR_abad" pos="0.1640 -0.0420 0">
+        <inertial pos="0.003920 -0.015000 -0.000306" mass="0.354" quat="-0.686694 0.713384 -0.102127 0.0954196" diaginertia="0.000182225 0.000232925 0.00028385" />
+        <joint name="FR_abad_joint" axis="1 0 0" range="-0.6807 0.6807"/>
+        <geom mesh="abad" material="metal" class="visual" quat="6.12323e-17 1 0 0" />
+        <geom name="FR_abad_collision" size="0.039 0.0175" pos="0 0 0" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+        <body name="FR_abad_rotor" pos="-0.0642 0 0">
+          <inertial pos="0 0 0" mass="0.0567" quat="0.707107 0.707107 0 0" diaginertia="2.53e-05 2.53e-05 4.78e-05" />
+        </body>
+        <body name="FR_hip_shoulder" pos="0 -0.0590 0">
+          <geom name="FR_hip_shoulder_collision" size="0.039 0.0175" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+        </body>
+        <body name="FR_hip" pos="0 -0.0940 0">
+          <inertial pos="-0.002120 0.021200 -0.018400" mass="0.482" quat="0.608514 0.316068 0.527848 -0.501187" diaginertia="0.000287289 0.00100885 0.00104386" />
+          <joint name="FR_hip_joint" axis="0 1 0" range="-1.3265 2.7925"/>
+          <geom mesh="hip_mirror" material="metal" class="visual" />
+          <geom name="FR_hip_collision" size="0.0600 0.0125 0.0170" pos="0 0 -0.0600" quat="0.707107 0 0.707107 0" type="box" class="collision" />
+          <body name="FR_hip_rotor" pos="0 0.0758 0">
+            <inertial pos="0 0 0" mass="0.0567" quat="0.707107 0.707107 0 0" diaginertia="2.53e-05 2.53e-05 4.78e-05" />
+          </body>
+          <body name="FR_knee_rotor" pos="0 0.0342 0">
+            <inertial pos="0 0 0" mass="0.0567" quat="0.707107 0.707107 0 0" diaginertia="2.53e-05 2.53e-05 4.78e-05" />
+          </body>
+          <body name="FR_knee" pos="0 0 -0.1200">
+            <inertial pos="0.000600 -0.000047 -0.089300" mass="0.116" quat="-0.4899 0.491808 0.507524 0.510433" diaginertia="1.45399e-05 0.000668859 0.000674001" />
+            <joint name="FR_knee_joint" axis="0 1 0" range="-2.5307 -0.5236"/>
+            <geom mesh="knee" material="metal" class="visual" />
+            <geom name="FR_knee_collision" size="0.0080 0.0080 0.0917" pos="0 0 -0.0917" quat="6.12323e-17 0 1 0" type="box" class="collision" />
+            <geom name="FR_knee_rubber" size="0.016" pos="-0.0080 0 -0.007" type="sphere" class="collision" />
+            <body name="FR_foot" pos="0.0055 0 -0.17391">
+              <geom name="FR_foot_collision" pos="0 0 0" type="sphere" size="0.019" class="collision"/>
+              <geom pos="0 0 0" type="sphere" size="0.009" class="visual" material="black"/>
+              <site name="FR" pos="0 0 0" type="sphere" size="0.019"/>
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="FL_abad" pos="0.1640 0.0420 0">
+        <inertial pos="0.003920 0.015000 -0.000306" mass="0.354" quat="0.713384 -0.686694 -0.0954196 0.102127" diaginertia="0.000182225 0.000232925 0.00028385" />
+        <joint name="FL_abad_joint" axis="1 0 0" range="-0.6807 0.6807"/>
+        <geom mesh="abad" material="metal" class="visual" quat="1 0 0 0" />
+        <geom name="FL_abad_collision" size="0.039 0.0175" pos="0 0 0" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+        <body name="FL_abad_rotor" pos="-0.0642 0 0">
+          <inertial pos="0 0 0" mass="0.0567" quat="0.707107 0.707107 0 0" diaginertia="2.53e-05 2.53e-05 4.78e-05" />
+        </body>
+        <body name="FL_hip_shoulder" pos="0 0.0590 0">
+          <geom name="FL_hip_shoulder_collision" size="0.039 0.0175" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+        </body>
+        <body name="FL_hip" pos="0 0.0940 0">
+          <inertial pos="-0.002120 -0.021200 -0.018400" mass="0.482" quat="0.608514 -0.316068 0.527848 0.501187" diaginertia="0.000287289 0.00100885 0.00104386" />
+          <joint name="FL_hip_joint" axis="0 1 0" range="-1.3265 2.7925"/>
+          <geom mesh="hip" material="metal" class="visual" />
+          <geom name="FL_hip_collision" size="0.0600 0.0125 0.0170" pos="0 0 -0.0600" quat="0.707107 0 0.707107 0" type="box" class="collision" />
+          <body name="FL_hip_rotor" pos="0 -0.0758 0">
+            <inertial pos="0 0 0" mass="0.0567" quat="0.707107 0.707107 0 0" diaginertia="2.53e-05 2.53e-05 4.78e-05" />
+          </body>
+          <body name="FL_knee_rotor" pos="0 -0.0342 0">
+            <inertial pos="0 0 0" mass="0.0567" quat="0.707107 0.707107 0 0" diaginertia="2.53e-05 2.53e-05 4.78e-05" />
+          </body>
+          <body name="FL_knee" pos="0 0 -0.1200">
+            <inertial pos="0.000600 -0.000047 -0.089300" mass="0.116" quat="-0.4899 0.491808 0.507524 0.510433" diaginertia="1.45399e-05 0.000668859 0.000674001" />
+            <joint name="FL_knee_joint" axis="0 1 0" range="-2.5307 -0.5236"/>
+            <geom mesh="knee" material="metal" class="visual" />
+            <geom name="FL_knee_collision" size="0.0080 0.0080 0.0917" pos="0 0 -0.0917" quat="6.12323e-17 0 1 0" type="box" class="collision" />
+            <geom name="FL_knee_rubber" size="0.016" pos="-0.0080 0 -0.007" type="sphere" class="collision" />
+            <body name="FL_foot" pos="0.0055 0 -0.17391">
+              <geom name="FL_foot_collision" pos="0 0 0" type="sphere" size="0.019" class="collision"/>
+              <geom pos="0 0 0" type="sphere" size="0.009" class="visual" material="black"/>
+              <site name="FL" pos="0 0 0" type="sphere" size="0.019"/>
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="RR_abad" pos="-0.1640 -0.0420 0">
+        <inertial pos="-0.003920 -0.015000 -0.000306" mass="0.354" quat="-0.686694 0.713384 0.102127 -0.0954196" diaginertia="0.000182225 0.000232925 0.00028385" />
+        <joint name="RR_abad_joint" axis="1 0 0" range="-0.6807 0.6807"/>
+        <geom mesh="abad" material="metal" class="visual" quat="3.7494e-33 6.12323e-17 6.12323e-17 -1" />
+        <geom name="RR_abad_collision" size="0.039 0.0175" pos="0 0 0" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+        <body name="RR_abad_rotor" pos="0.0642 0 0">
+          <inertial pos="0 0 0" mass="0.0567" quat="0.707107 0.707107 0 0" diaginertia="2.53e-05 2.53e-05 4.78e-05" />
+        </body>
+        <body name="RR_hip_shoulder" pos="0 -0.0590 0">
+          <geom name="RR_hip_shoulder_collision" size="0.039 0.0175" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+        </body>
+        <body name="RR_hip" pos="0 -0.0940 0">
+          <inertial pos="-0.002120 0.021200 -0.018400" mass="0.482" quat="0.608514 0.316068 0.527848 -0.501187" diaginertia="0.000287289 0.00100885 0.00104386" />
+          <joint name="RR_hip_joint" axis="0 1 0" range="-0.9774 3.1416"/>
+          <geom mesh="hip_mirror" material="metal" class="visual" />
+          <geom name="RR_hip_collision" size="0.0600 0.0125 0.0170" pos="0 0 -0.0600" quat="0.707107 0 0.707107 0" type="box" class="collision" />
+          <body name="RR_hip_rotor" pos="0 0.0758 0">
+            <inertial pos="0 0 0" mass="0.0567" quat="0.707107 0.707107 0 0" diaginertia="2.53e-05 2.53e-05 4.78e-05" />
+          </body>
+          <body name="RR_knee_rotor" pos="0 0.0342 0">
+            <inertial pos="0 0 0" mass="0.0567" quat="0.707107 0.707107 0 0" diaginertia="2.53e-05 2.53e-05 4.78e-05" />
+          </body>
+          <body name="RR_knee" pos="0 0 -0.1200">
+            <inertial pos="0.000600 -0.000047 -0.089300" mass="0.116" quat="-0.4899 0.491808 0.507524 0.510433" diaginertia="1.45399e-05 0.000668859 0.000674001" />
+            <joint name="RR_knee_joint" axis="0 1 0" range="-2.5307 -0.5236"/>
+            <geom mesh="knee" material="metal" class="visual" />
+            <geom name="RR_knee_collision" size="0.0080 0.0080 0.0917" pos="0 0 -0.0917" quat="6.12323e-17 0 1 0" type="box" class="collision" />
+            <geom name="RR_knee_rubber" size="0.016" pos="-0.0080 0 -0.007" type="sphere" class="collision" />
+            <body name="RR_foot" pos="0.0055 0 -0.17391">
+              <geom name="RR_foot_collision" pos="0 0 0" type="sphere" size="0.019" class="collision"/>
+              <geom pos="0 0 0" type="sphere" size="0.009" class="visual" material="black"/>
+              <site name="RR" pos="0 0 0" type="sphere" size="0.019"/>
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="RL_abad" pos="-0.1640 0.0420 0">
+        <inertial pos="-0.003920 0.015000 -0.000306" mass="0.354" quat="0.713384 -0.686694 0.0954196 -0.102127" diaginertia="0.000182225 0.000232925 0.00028385" />
+        <joint name="RL_abad_joint" axis="1 0 0" range="-0.6807 0.6807"/>
+        <geom mesh="abad" material="metal" class="visual" quat="6.12323e-17 0 1 0" />
+        <geom name="RL_abad_collision" size="0.039 0.0175" pos="0 0 0" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+        <body name="RL_abad_rotor" pos="0.0642 0 0">
+          <inertial pos="0 0 0" mass="0.0567" quat="0.707107 0.707107 0 0" diaginertia="2.53e-05 2.53e-05 4.78e-05" />
+        </body>
+        <body name="RL_hip_shoulder" pos="0 0.0590 0">
+          <geom name="RL_hip_shoulder_collision" size="0.039 0.0175" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+        </body>
+        <body name="RL_hip" pos="0 0.0940 0">
+          <inertial pos="-0.002120 -0.021200 -0.018400" mass="0.482" quat="0.608514 -0.316068 0.527848 0.501187" diaginertia="0.000287289 0.00100885 0.00104386" />
+          <joint name="RL_hip_joint" axis="0 1 0" range="-0.9774 3.1416"/>
+          <geom mesh="hip" material="metal" class="visual" />
+          <geom name="RL_hip_collision" size="0.0600 0.0125 0.0170" pos="0 0 -0.0600" quat="0.707107 0 0.707107 0" type="box" class="collision" />
+          <body name="RL_hip_rotor" pos="0 -0.0758 0">
+            <inertial pos="0 0 0" mass="0.0567" quat="0.707107 0.707107 0 0" diaginertia="2.53e-05 2.53e-05 4.78e-05" />
+          </body>
+          <body name="RL_knee_rotor" pos="0 -0.0342 0">
+            <inertial pos="0 0 0" mass="0.0567" quat="0.707107 0.707107 0 0" diaginertia="2.53e-05 2.53e-05 4.78e-05" />
+          </body>
+          <body name="RL_knee" pos="0 0 -0.1200">
+            <inertial pos="0.000600 -0.000047 -0.089300" mass="0.116" quat="-0.4899 0.491808 0.507524 0.510433" diaginertia="1.45399e-05 0.000668859 0.000674001" />
+            <joint name="RL_knee_joint" axis="0 1 0" range="-2.5307 -0.5236"/>
+            <geom mesh="knee" material="metal" class="visual" />
+            <geom name="RL_knee_collision" size="0.0080 0.0080 0.0917" pos="0 0 -0.0917" quat="6.12323e-17 0 1 0" type="box" class="collision" />
+            <geom name="RL_knee_rubber" size="0.016" pos="-0.0080 0 -0.007" type="sphere" class="collision" />
+            <body name="RL_foot" pos="0.0055 0 -0.17391">
+              <geom name="RL_foot_collision" pos="0 0 0" type="sphere" size="0.019" class="collision"/>
+              <geom pos="0 0 0" type="sphere" size="0.009" class="visual" material="black"/>
+              <site name="RL" pos="0 0 0" type="sphere" size="0.019"/>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <!-- Mirrors the Go2 actuator set (go2_mjx.xml): one position actuator per
+       joint, grouped per leg in the canonical FL, FR, RL, RR order. -->
+  <actuator>
+    <position class="abad" name="FL_abad" joint="FL_abad_joint"/>
+    <position class="hip_front" name="FL_hip" joint="FL_hip_joint"/>
+    <position class="knee" name="FL_knee" joint="FL_knee_joint"/>
+    <position class="abad" name="FR_abad" joint="FR_abad_joint"/>
+    <position class="hip_front" name="FR_hip" joint="FR_hip_joint"/>
+    <position class="knee" name="FR_knee" joint="FR_knee_joint"/>
+    <position class="abad" name="RL_abad" joint="RL_abad_joint"/>
+    <position class="hip_rear" name="RL_hip" joint="RL_hip_joint"/>
+    <position class="knee" name="RL_knee" joint="RL_knee_joint"/>
+    <position class="abad" name="RR_abad" joint="RR_abad_joint"/>
+    <position class="hip_rear" name="RR_hip" joint="RR_hip_joint"/>
+    <position class="knee" name="RR_knee" joint="RR_knee_joint"/>
+  </actuator>
+  <sensor>
+    <gyro name="imu_ang_vel" site="imu"/>
+    <velocimeter name="imu_lin_vel" site="imu"/>
+    <accelerometer name="imu_lin_acc" site="imu"/>
+    <subtreeangmom name="root_angmom" body="body"/>
+    <!-- Required by the quadruped walk task. Names and reference frames mirror
+         go2_mjx.xml; foot positions are body-relative (ref=imu) because the
+         swing reward compares them against body-frame target heights. -->
+    <framezaxis name="upvector" objtype="site" objname="imu"/>
+    <framepos name="FL_pos" objtype="site" objname="FL" reftype="site" refname="imu"/>
+    <framepos name="FR_pos" objtype="site" objname="FR" reftype="site" refname="imu"/>
+    <framepos name="RL_pos" objtype="site" objname="RL" reftype="site" refname="imu"/>
+    <framepos name="RR_pos" objtype="site" objname="RR" reftype="site" refname="imu"/>
+  </sensor>
+</mujoco>

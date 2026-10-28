@@ -157,8 +157,8 @@ class QuadrupedWalkRandomizationCfg:
 
 @configclass
 class VelocityCommandCfg:
-    lower: NDArray[np.float32] = np.array([0.5, 0.0, 0.0], dtype=np.float32)
-    upper: NDArray[np.float32] = np.array([0.5, 0.0, 0.0], dtype=np.float32)
+    lower: NDArray[np.float32] = np.array([1, 0.0, 0.0], dtype=np.float32)
+    upper: NDArray[np.float32] = np.array([1, 0.0, 0.0], dtype=np.float32)
     standing_probability: float = 0.0
     standing_threshold: float = 0.05
     resampling_seconds_range: tuple[float, float] | None = None
@@ -171,7 +171,6 @@ class VelocityCommandCfg:
                     "resampling_seconds_range must be a finite positive ordered range, "
                     f"got {self.resampling_seconds_range}"
                 )
-
 
 @configclass
 class Commands:
