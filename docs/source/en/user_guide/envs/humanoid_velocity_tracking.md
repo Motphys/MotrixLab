@@ -50,6 +50,7 @@ The following videos show Unitree G1 and Booster K1 tracking velocity commands o
 humanoid_velocity_tracking/adding_robot
 humanoid_velocity_tracking/env_design
 humanoid_velocity_tracking/config_tuning
+humanoid_velocity_tracking/FlatWalk_Deploy_detail
 
 ```
 
