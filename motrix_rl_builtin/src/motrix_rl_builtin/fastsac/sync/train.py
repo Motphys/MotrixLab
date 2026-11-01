@@ -13,16 +13,9 @@ from motrix_env_core.array.env import ArrayEnv
 from motrix_env_core.renderer import RenderConfig
 from motrix_env_motrixsim.torch_env import TorchEnv
 from motrix_rl import checkpoints
-from motrix_rl.console import TrainingPanelStats, emit_training_panel, open_training_live
+from motrix_rl.console import EpisodeWindow, PanelSystemSampler, TrainingPanelSession, TrainingPanelStats
 from motrix_rl.contracts import TrainerBase, TrainerContext
 from motrix_rl.device import resolve_default_device
-from motrix_rl.system_metrics import (
-    CpuLoadSampler,
-    GpuMemoryUsageSampler,
-    GpuUtilizationSampler,
-    MemoryUsageSampler,
-    sample_gpu_devices,
-)
 from motrix_rl.training_logger import TrainingLogger
 from motrix_rl_builtin.fastsac.agent import FastSacAgent
 from motrix_rl_builtin.fastsac.config import FastSacCfg
@@ -212,8 +205,7 @@ class Trainer(TrainerBase):
         obs, critic_obs = env.reset()
         ep_return = torch.zeros(agent.num_envs, device=device)
         ep_len = torch.zeros(agent.num_envs, device=device)
-        recent_returns: list[float] = []
-        recent_lengths: list[float] = []
+        episode_window = EpisodeWindow(max_episodes=100)
 
         # window accumulators for the console panel
         start_time = time.time()
@@ -221,24 +213,13 @@ class Trainer(TrainerBase):
         last_log_step = agent.global_step
         term_accum: dict[str, float] = {}
         term_count = 0
-        n_episodes = 0
         # per-iter phase timing accumulators (collector vs learner), reset each log window
         t_collect = 0.0
         t_learn = 0.0
-        cpu_sampler = CpuLoadSampler()
-        gpu_sampler = GpuUtilizationSampler()
-        memory_sampler = MemoryUsageSampler()
-        gpu_memory_sampler = GpuMemoryUsageSampler()
+        system_sampler = PanelSystemSampler()
         last_checkpoint_path: str | None = None
 
-        # optional live console that refreshes one panel in place
-        console, live = open_training_live()
-
-        def emit_msg(msg: str) -> None:
-            if console is not None:
-                console.print(msg)
-            else:
-                print(msg)
+        panel = TrainingPanelSession.open(title=f"{self._env_name}/motrix.fastsac")
 
         # `local` counts steps since this loop started; it gates the
         # warmup / learning_starts so a resumed run (global_step > 0) still
@@ -274,14 +255,9 @@ class Trainer(TrainerBase):
                 if done_idx.numel():
                     # Vectorized: one batched gather + clear instead of
                     # per-episode Python-level scalar indexing.
-                    recent_returns.extend(ep_return[done_idx].tolist())
-                    recent_lengths.extend(ep_len[done_idx].tolist())
+                    episode_window.add(ep_return[done_idx].tolist(), ep_len[done_idx].tolist())
                     ep_return[done_idx] = 0.0
                     ep_len[done_idx] = 0.0
-                    n_episodes += int(done_idx.numel())
-                recent_returns = recent_returns[-100:]
-                recent_lengths = recent_lengths[-100:]
-
                 obs = next_obs
                 critic_obs = next_critic_obs
 
@@ -308,8 +284,9 @@ class Trainer(TrainerBase):
                     # last log window), shared semantics with the async
                     # trainer's payload.
                     metrics_log = agent.window_metrics.stats_and_reset() if not warming else None
-                    mean_ret = sum(recent_returns) / len(recent_returns) if recent_returns else float("nan")
-                    mean_len = sum(recent_lengths) / len(recent_lengths) if recent_lengths else float("nan")
+                    episode_stats = episode_window.snapshot()
+                    mean_ret = episode_stats.mean_return if episode_stats.mean_return is not None else float("nan")
+                    mean_len = episode_stats.mean_length if episode_stats.mean_length is not None else float("nan")
                     term_means = {k: v / max(term_count, 1) for k, v in term_accum.items()}
                     # window-mean per-iter phase timings (ms); ratio shows collector/learner balance
                     n_iter_win = max(agent.global_step - last_log_step, 1)
@@ -322,6 +299,7 @@ class Trainer(TrainerBase):
                     # metrics snapshot into infos["metrics"], so backends log them
                     # without hardcoding any metric name.
                     env_metrics = {k: float(np.mean(v)) for k, v in info.get("metrics", {}).items()}
+                    system = system_sampler.sample()
                     stats = TrainingPanelStats(
                         iteration=agent.global_step,
                         total_iterations=num_iterations,
@@ -329,7 +307,7 @@ class Trainer(TrainerBase):
                         elapsed_seconds=now - start_time,
                         mean_return=mean_ret,
                         mean_episode_length=mean_len,
-                        episodes=n_episodes,
+                        episodes=episode_stats.episodes,
                         buffer_size=agent.rb.num_stored * agent.num_envs,
                         buffer_capacity=agent.rb.buffer_size * agent.num_envs,
                         collect_ms=collect_ms,
@@ -339,14 +317,14 @@ class Trainer(TrainerBase):
                         training_metrics=metrics_log,
                         reward_terms=term_means,
                         env_metrics=env_metrics,
-                        cpu_load=cpu_sampler.sample(),
-                        gpu_utilization_percent=gpu_sampler.sample(),
-                        memory_usage=memory_sampler.sample(),
-                        gpu_memory_usage=gpu_memory_sampler.sample(),
-                        gpu_devices=sample_gpu_devices(gpu_sampler, gpu_memory_sampler),
+                        cpu_load=system.cpu_load,
+                        gpu_utilization_percent=system.gpu_utilization_percent,
+                        memory_usage=system.memory_usage,
+                        gpu_memory_usage=system.gpu_memory_usage,
+                        gpu_devices=system.gpu_devices,
                         checkpoint_path=last_checkpoint_path,
                     )
-                    emit_training_panel(live, stats, title=f"{self._env_name}/motrix.fastsac")
+                    panel.submit(stats)
                     scalars = {
                         "rollout/mean_return": mean_ret,
                         "rollout/mean_ep_len": mean_len,
@@ -367,7 +345,7 @@ class Trainer(TrainerBase):
                         agent.global_step,
                         env_steps=(agent.global_step + 1) * agent.num_envs,
                         live_extra=lambda: system_scalars(stats),
-                        placeholders=() if recent_returns else ROLLOUT_MEANS,
+                        placeholders=() if episode_stats.episodes else ROLLOUT_MEANS,
                     )
                     last_log_time, last_log_step = now, agent.global_step
                     term_accum, term_count = {}, 0
@@ -379,16 +357,13 @@ class Trainer(TrainerBase):
                         torch.save(agent.state_dict(), path)
                         record_checkpoint(path)
                         training_log.event("checkpoint_saved", step=agent.global_step, path=str(path))
-                        if console is not None:
-                            last_checkpoint_path = str(path)
-                        else:
-                            emit_msg(f"saved checkpoint {path}")
+                        last_checkpoint_path = str(path)
+                        panel.checkpoint(str(path))
 
                 local += 1
                 agent.global_step += 1
         finally:
-            if live is not None:
-                live.stop()
+            panel.close()
 
     # ------------------------------------------------------------------ play
     def play(self, policy: str) -> None:

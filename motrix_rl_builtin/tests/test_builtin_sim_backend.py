@@ -226,7 +226,7 @@ def _collect_in_spawn(sim_backend: str, tmp_path) -> tuple[torch.Tensor, ...]:
     weights = WeightChannelShared(_OBS_DIM)
     control = Control()
     ctx = mp.get_context("spawn")
-    stats_queue = ctx.Queue(maxsize=2)
+    collector_data_queue = ctx.Queue(maxsize=2)
     error_queue = ctx.Queue(maxsize=2)
     weight_tx = HostWeightSender(weights, actor_param_numel(cfg, dims, action_scale, action_bias))
     # Ship the real handshake messages: weight slots (publisher learner) and
@@ -249,7 +249,7 @@ def _collect_in_spawn(sim_backend: str, tmp_path) -> tuple[torch.Tensor, ...]:
             "ring": ring,
             "weights": weights,
             "control": control,
-            "stats_queue": stats_queue,
+            "collector_data_queue": collector_data_queue,
             "error_queue": error_queue,
             "num_iterations": 1,
             "logging_interval": 1,
@@ -272,7 +272,7 @@ def _collect_in_spawn(sim_backend: str, tmp_path) -> tuple[torch.Tensor, ...]:
     except Empty:
         child_error = None
     finally:
-        stats_queue.close()
+        collector_data_queue.close()
         error_queue.close()
 
     assert child_error is None

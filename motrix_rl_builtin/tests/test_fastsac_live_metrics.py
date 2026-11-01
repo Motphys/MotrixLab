@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import math
+import queue
 import re
 import threading
 import time
@@ -24,6 +25,7 @@ import pytest
 import torch
 import torch.utils.tensorboard
 from fastsac_async_mocks import ThreadSpawnContext
+from motrix_rl_builtin.fastsac.async_impl.stats import AsyncTrainingStatsAggregator, AsyncTrainingStatsSource
 from motrix_rl_builtin.fastsac.wrap import FastSacStepResult
 
 from motrix_rl import checkpoints
@@ -448,13 +450,22 @@ class _Workers:
     report a traceback and exit with code 1.
     """
 
-    def __init__(self, sink: _RecordingSink, stages, *, crash_collector: int | None = None, live: bool = True) -> None:
+    def __init__(
+        self,
+        sink: _RecordingSink,
+        stages,
+        *,
+        logging_interval: int = 10,
+        crash_collector: int | None = None,
+        live: bool = True,
+    ) -> None:
         from motrix_rl_builtin.fastsac.async_impl.worker import run_collector_process, run_learner_process
 
         self.sink = sink
         self.stages = stages
         self.crash_collector = crash_collector
         self.live = live
+        self.logging_interval = logging_interval
         self.exitcodes: dict[int, int] = {}
         self.ctx = ThreadSpawnContext({run_learner_process: self.learner, run_collector_process: self.collector})
 
@@ -465,56 +476,68 @@ class _Workers:
         handshake.wait_for_start(control)
         collectors = [p.arguments for p in self.ctx.processes if p is not process]
         logged = self.sink.count("scalars")
+        expected_logs = logged
         checkpoint_path = None
         for stage in self.stages:
             for collector_id, target in enumerate(stage.steps):
                 while control.collector_steps_at(collector_id) < target:
                     control.inc_collector_steps(collector_id)
             for collector in collectors:
-                collector["stats_queue"].put(_snapshot(collector["collector_id"], stage))
+                collector["collector_data_queue"].put(_snapshot(collector["collector_id"], stage))
             if stage.payload:
                 payload = _payload(control.collector_steps // NUM_COLLECTORS, checkpoint_path)
                 if stage.updates is not None:
                     payload["updates"] = stage.updates
                     payload["training_started"] = stage.updates > 0
-                args["panel_queue"].put(payload)
+                args["learner_data_queue"].put(payload)
                 if payload["updates"] == 0:
-                    self._wait(lambda: args["panel_queue"].empty() or control.stop)
+                    self._wait_until(lambda: args["learner_data_queue"].empty() or control.stop)
                     continue
-                logged += 1
-                if self.live:
-                    self._wait(lambda: self.sink.count("scalars") >= logged or control.stop)
-                else:  # nothing is logged live; the parent taking the payload is all there is to wait for
-                    self._wait(lambda: args["panel_queue"].empty() or control.stop)
+                if self.live and payload["step"] % self.logging_interval == 0:
+                    expected_logs += 1
+                    self._wait_until(lambda: self.sink.count("scalars") >= expected_logs or control.stop)
+                else:
+                    self._wait_until(lambda: args["learner_data_queue"].empty() or control.stop)
             for step in stage.saves:
                 checkpoint_path = str(Path(args["checkpoint_dir"]) / f"model_{step:07d}.pt")
-                args["panel_queue"].put({"rank": 0, "checkpoint_saved": {"step": step, "path": checkpoint_path}})
+                args["learner_data_queue"].put({"rank": 0, "checkpoint_saved": {"step": step, "path": checkpoint_path}})
         if self.crash_collector is not None:
             args["error_queue"].put((f"collector[{self.crash_collector}]", "Traceback: boom\n"))
             self.exitcodes[self.crash_collector] = 1
-            self._wait(lambda: control.stop)
+            self._wait_until(lambda: control.stop)
             return 0
         final_path = checkpoints.final_checkpoint_path("pt", args["run_dir"])
         final_path.parent.mkdir(parents=True, exist_ok=True)
         final_path.write_bytes(b"")
         return 0
 
+    @staticmethod
+    def _wait_until(predicate, timeout: float = 5.0) -> None:
+        deadline = time.monotonic() + timeout
+        while not predicate():
+            if time.monotonic() >= deadline:
+                raise AssertionError("scripted worker synchronization timed out")
+            time.sleep(0.005)
+
     def collector(self, process) -> int:
         args = process.arguments
         control, handshake, collector_id = args["control"], args["handshake"], args["collector_id"]
         handshake.report_ready("collector", collector_id)
         handshake.wait_for_start(control)
-        self._wait(lambda: control.stop or collector_id in self.exitcodes)
+        self._wait_until(lambda: control.stop or collector_id in self.exitcodes)
         return self.exitcodes.get(collector_id, 0)
 
-    @staticmethod
-    def _wait(predicate, timeout: float = 30.0) -> None:
-        deadline = time.monotonic() + timeout
-        while not predicate() and time.monotonic() < deadline:
-            time.sleep(0.005)
 
-
-def _train_async(tmp_path, monkeypatch, workers: _Workers, *, num_iterations: int, resume_from=None, live=True):
+def _train_async(
+    tmp_path,
+    monkeypatch,
+    workers: _Workers,
+    *,
+    num_iterations: int,
+    logging_interval: int = 10,
+    resume_from=None,
+    live=True,
+):
     from motrix_rl_builtin.fastsac.async_impl import train as async_train
 
     from motrix_rl.topology import AsyncTrainerTopology, ChannelSpec, CollectorInfo, LearnerInfo
@@ -555,7 +578,13 @@ def _train_async(tmp_path, monkeypatch, workers: _Workers, *, num_iterations: in
     )
     metrics = MetricsLogger("unit-run", jsonl=workers.sink) if live else MetricsLogger.disabled()
     context = _context(
-        tmp_path, rl_cfg, metrics, num_envs=NUM_ENVS, logging_interval=10, save_interval=0, resume_from=resume_from
+        tmp_path,
+        rl_cfg,
+        metrics,
+        num_envs=NUM_ENVS,
+        logging_interval=logging_interval,
+        save_interval=0,
+        resume_from=resume_from,
     )
     return async_train.Trainer(context=context), writer
 
@@ -567,7 +596,11 @@ def test_async_panel_waits_for_first_learner_update(tmp_path, monkeypatch):
     workers = _Workers(sink, [_Stage((10, 10), updates=0), _Stage((20, 20))])
     trainer, _ = _train_async(tmp_path, monkeypatch, workers, num_iterations=30)
     panels = []
-    monkeypatch.setattr(async_train, "emit_training_panel", lambda live, stats, **kwargs: panels.append(stats))
+    monkeypatch.setattr(
+        async_train.AsyncPanelRenderer,
+        "render",
+        lambda self, sample, **kwargs: panels.append(sample.stats),
+    )
 
     trainer.train()
 
@@ -585,29 +618,39 @@ def test_async_run_can_finish_without_any_training_update(tmp_path, monkeypatch)
     assert checkpoints.final_checkpoint_path("pt", tmp_path).exists()
 
 
-def test_async_panel_reports_zero_throughput_after_collection_stalls(tmp_path, monkeypatch):
-    from motrix_rl_builtin.fastsac.async_impl import train as async_train
+def test_async_panel_reports_zero_throughput_after_collection_stalls(monkeypatch):
+    from motrix_rl_builtin.fastsac.async_impl import stats as async_stats
 
-    panels = []
+    monkeypatch.setattr(async_stats.time, "time", iter((0.0, 1.0, 2.0, 3.0)).__next__)
+    control = SimpleNamespace(collector_steps=20)
+    collector_queue = queue.Queue()
+    learner_queue = queue.Queue()
+    collector_queue.put(_snapshot(0, _Stage((20, 20))))
+    learner_queue.put(_payload(20, None))
+    source = AsyncTrainingStatsSource(
+        collector_data_queues=[collector_queue],
+        learner_data_queue=learner_queue,
+        control=control,
+        num_envs=1,
+        num_collectors=1,
+        num_learners=1,
+        num_iterations=30,
+        resume_step=0,
+        per_collector_stats={0: None},
+        learner_payloads={0: None},
+    )
+    aggregator = AsyncTrainingStatsAggregator(learning_starts=0, logging_interval=10)
 
-    class StalledWorkers(_Workers):
-        def learner(self, process):
-            result = super().learner(process)
-            # Hold fixed collection progress across two measured windows.
-            self._wait(lambda: len(panels) >= 3 or process.arguments["control"].stop)
-            return result
+    first = aggregator.collect(source)
+    second = aggregator.collect(source)
+    stalled = aggregator.collect(source)
 
-    sink = _RecordingSink(tmp_path / "metrics.jsonl")
-    workers = StalledWorkers(sink, [_Stage((20, 20))])
-    trainer, _ = _train_async(tmp_path, monkeypatch, workers, num_iterations=30)
-    monkeypatch.setattr(async_train, "emit_training_panel", lambda live, stats, **kwargs: panels.append(stats))
-
-    trainer.train()
-
-    assert len(panels) >= 3
-    assert panels[-1].steps_per_second == 0.0
-    assert panels[-1].iterations_per_second == 0.0
-    assert not panels[-1].warming
+    assert first is not None
+    assert second is not None
+    assert stalled is not None
+    assert stalled.stats.steps_per_second == 0.0
+    assert stalled.stats.iterations_per_second == 0.0
+    assert not stalled.stats.warming
 
 
 def test_async_trainer_emits_tensorboard_tags_events_and_collector_env_steps(tmp_path, monkeypatch):
@@ -642,6 +685,44 @@ def test_async_trainer_emits_tensorboard_tags_events_and_collector_env_steps(tmp
     for process in workers.ctx.processes:
         values = (*process.args, *process.kwargs.values())
         assert not any(isinstance(value, (MetricsLogger, TrainerContext)) for value in values), process.name
+
+
+def test_async_weight_publish_rate_uses_logging_window_baseline(monkeypatch):
+    from motrix_rl_builtin.fastsac.async_impl import stats as async_stats
+
+    monkeypatch.setattr(async_stats.time, "time", iter((0.0, 1.0, 2.0, 3.0)).__next__)
+    control = SimpleNamespace(collector_steps=10)
+    collector_queue = queue.Queue()
+    learner_queue = queue.Queue()
+    collector_queue.put(_snapshot(0, _Stage((10, 10))))
+    learner_queue.put(_payload(10, None))
+    source = AsyncTrainingStatsSource(
+        collector_data_queues=[collector_queue],
+        learner_data_queue=learner_queue,
+        control=control,
+        num_envs=1,
+        num_collectors=1,
+        num_learners=1,
+        num_iterations=40,
+        resume_step=0,
+        per_collector_stats={0: None},
+        learner_payloads={0: None},
+    )
+    aggregator = AsyncTrainingStatsAggregator(learning_starts=0, logging_interval=10)
+
+    first = aggregator.collect(source)
+    assert first is not None and first.log_record is not None
+
+    control.collector_steps = 15
+    source.learner_payloads[0] = _payload(15, None)
+    middle = aggregator.collect(source)
+    assert middle is not None and middle.log_record is None
+
+    control.collector_steps = 20
+    source.learner_payloads[0] = _payload(20, None)
+    final = aggregator.collect(source)
+    assert final is not None and final.log_record is not None
+    assert final.log_record.values["async/weight_publishes_per_iter"] == 1.0
 
 
 @pytest.mark.parametrize("live", [True, False])

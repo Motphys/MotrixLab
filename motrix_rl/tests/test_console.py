@@ -9,16 +9,22 @@ from typing import Any
 import pytest
 from rich.console import Console
 
-import motrix_rl.console as console_module
-from motrix_rl.console import (
-    TrainingPanelStats,
-    _compact_metric_value,
-    _format_memory,
-    _format_value,
-    format_training_panel,
-    render_training_panel,
-)
+import motrix_rl.console.panel as console_module
+from motrix_rl.console import TrainingPanelSession, TrainingPanelStats, format_training_panel, render_training_panel
+from motrix_rl.console.panel import _compact_metric_value, _format_memory, _format_value
 from motrix_rl.system_metrics import CpuLoad, MemoryUsage
+
+
+def test_training_panel_session_submits_and_closes(monkeypatch) -> None:
+    rendered = []
+    monkeypatch.setattr(console_module, "open_training_live", lambda: (None, None))
+    monkeypatch.setattr(console_module, "emit_training_panel", lambda live, stats, **kwargs: rendered.append(stats))
+    session = TrainingPanelSession.open(title="test", interval_seconds=60.0)
+    stats = _panel_stats()
+    session.submit(stats)
+    session.close()
+    session.close()
+    assert rendered == [stats, stats]
 
 
 def test_format_value_uses_fixed_notation_for_regular_floats() -> None:
