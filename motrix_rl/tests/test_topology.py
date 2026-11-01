@@ -117,6 +117,7 @@ def test_topology_shares_cpu_domain_between_learners(monkeypatch) -> None:
     monkeypatch.setattr(system_numa, "available_numa_nodes", lambda: [0, 1])
     monkeypatch.setattr(system_numa, "gpu_numa_node", lambda index, runtime: 0)
     monkeypatch.setattr(system_numa, "numa_node_cpus", lambda node: list(range(8)))
+    monkeypatch.setattr("os.sched_getaffinity", lambda pid: set(range(8)))
     monkeypatch.setattr("torch.cuda.device_count", lambda: 2)
 
     topo = resolve_async_trainer_topology(
