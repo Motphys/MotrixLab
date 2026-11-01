@@ -459,7 +459,7 @@ def capture_system_info(topology: Any = None, fallback_device: Any = None) -> di
         for learner in topology.learners:
             _add_device_role(roles, learner.device, "learner")
         for collector in topology.collectors:
-            _add_device_role(roles, collector.device, "collector-inference")
+            _add_device_role(roles, collector.infer_device, "collector-inference")
     elif fallback_device is not None:
         _add_device_role(roles, fallback_device, "trainer")
 
