@@ -5,7 +5,8 @@
 
 The collector process (CPU) runs the env + inference policy and feeds the shared
 transition ring; the learner process (GPU) drains the ring, trains, publishes
-weights, and owns logging + checkpointing. Both are spawned by
+weights, and sends normalized training payloads to the parent. The parent owns
+panel rendering, TensorBoard/live logging, and checkpoint event recording. Both are spawned by
 :class:`~motrix_rl_builtin.fastsac.async_impl.train.Trainer`. Entry functions are module-level
 so ``torch.multiprocessing`` (``spawn``) can pickle them by qualified name.
 
@@ -325,7 +326,7 @@ def run_collector_process(
     ring: SharedTransitionRing | RingCursors,
     weights: WeightChannelShared,
     control: Control,
-    stats_queue: Queue,
+    collector_data_queue: Queue,
     error_queue: Queue,
     num_iterations: int,
     logging_interval: int,
@@ -333,10 +334,10 @@ def run_collector_process(
     seed: int | None,
     run_dir: str,
     handshake: StartupHandshake,
+    collector_device: torch.device,
     collector_id: int = 0,
     numa_node: int | None = None,
     cpus: list[int] | None = None,
-    collector_device: str | None = None,
     final_store: FinalObsStorage | None = None,
 ) -> None:
     role = f"collector[{collector_id}]"
@@ -351,11 +352,6 @@ def run_collector_process(
         apply_binding(role, numa_node, cpus or [])
         set_seed(seed)
         opts = cfg.trainer.async_options
-        # The parent's topology pass resolved every collector's inference
-        # device explicitly (generic "cuda" co-located with the owning
-        # learner's GPU), so no generic spec is re-resolved in-process here.
-        if collector_device is not None:
-            opts.collector_inference_device = collector_device
         _pin_worker_cpus(_resolve_cpu_set(opts.collector_cpu_cores, "collector_cpu_cores"))
         obs_dim, critic_obs_dim, act_dim = dims
         device = torch.device("cpu")
@@ -396,6 +392,7 @@ def run_collector_process(
             ring,
             weight_rx,
             control,
+            collector_device=collector_device,
             is_resume=is_resume,
             collector_id=collector_id,
         )
@@ -432,15 +429,15 @@ def run_collector_process(
             steps = control.collector_steps_at(collector_id)
             if not first_stats_sent and steps >= first_stats_steps:
                 first_stats_sent = True
-                stats_queue.put(collector.snapshot_stats())
+                collector_data_queue.put(collector.snapshot_stats())
             elif steps % max(logging_interval, 1) == 0:
                 # replace any stale snapshot so the learner always sees the latest.
                 try:
                     while True:
-                        stats_queue.get_nowait()
+                        collector_data_queue.get_nowait()
                 except Empty:
                     pass
-                stats_queue.put(collector.snapshot_stats())
+                collector_data_queue.put(collector.snapshot_stats())
     except BaseException:
         if not isinstance(sys.exc_info()[1], (KeyboardInterrupt, SystemExit)):
             # Ctrl+C is an operator action, not a defect: the stop flag is
@@ -474,7 +471,7 @@ def run_learner_process(
     all_rings: list[SharedTransitionRing],
     weight_ipc: list[bool],
     collector_ids: list[int],
-    panel_queue: Queue,
+    learner_data_queue: Queue,
     learner_cpus: list[int] | None = None,
     learner_numa_node: int | None = None,
     rank: int = 0,
@@ -769,7 +766,7 @@ def run_learner_process(
                 # drop the window's payload if the queue is full (the next
                 # window's numbers supersede it anyway).
                 try:
-                    panel_queue.put_nowait(payload)
+                    learner_data_queue.put_nowait(payload)
                 except Full:
                     pass
                 last_log_time, last_log_step = now, step
@@ -803,9 +800,11 @@ def run_learner_process(
                 # Never blocks the learner, like the log payloads.
                 if notify_checkpoints:
                     try:
-                        panel_queue.put_nowait({"rank": rank, "checkpoint_saved": {"step": step, "path": str(path)}})
+                        learner_data_queue.put_nowait(
+                            {"rank": rank, "checkpoint_saved": {"step": step, "path": str(path)}}
+                        )
                     except Full:
-                        logger.warning("panel queue full; checkpoint notice for %s dropped", path)
+                        logger.warning("learner data queue full; checkpoint notice for %s dropped", path)
                 next_save += save_interval
 
         if num_learners > 1:
