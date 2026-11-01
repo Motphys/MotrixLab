@@ -194,8 +194,7 @@ class Learner:
         self.weights = [collector.weight_sender for collector in collectors]
         self.control = control
         self._pending = GenerationAssembler(num_rings=len(self.rings))
-        # Ring transport per LEARNER RANK is all-or-nothing (topology), so
-        # each rank gets its own ingest path: a PURE-HOST rank on CUDA runs
+        # Each rank gets its own ingest path: a PURE-HOST rank on CUDA runs
         # the staged async H2D pipeline (DrainStaging); pure-IPC and MIXED
         # ranks lift host shards at assembly and consume everything D2D
         # (see _drain_rings), so staging would be dead weight there.
@@ -204,15 +203,8 @@ class Learner:
         self._staging: DrainStaging | None = None
         if agent.device.type == "cuda" and has_host and not has_ipc:
             self._staging = DrainStaging(agent.rb, max(self.async_options.max_ingest_per_iter, 1), agent.device)
-        # This rank owns and publishes to its own collectors only: the slice
-        # must cover exactly this rank's share of the global collector count
-        # (the total lives in the shared control block).
-        per_learner = control.num_collectors // agent.world_size
-        if len(collectors) != per_learner:
-            raise ValueError(
-                f"{len(collectors)} collector endpoints must cover this rank's slice of "
-                f"{per_learner} collectors ({control.num_collectors} total)"
-            )
+        # This rank owns and publishes to its own collectors only; the parent
+        # passes exactly the endpoints selected by the channel topology.
         # DDP replica id (multi-learner); None keeps the single-learner path.
         self.ddp_rank = ddp_rank
         self._learning_starts = agent.cfg.learning_starts

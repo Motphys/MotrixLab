@@ -46,7 +46,7 @@ from motrix_rl.training_logger import TrainingLogger
 from motrix_rl_builtin.fastsac.agent import FastSacAgent
 from motrix_rl_builtin.fastsac.async_impl.panels import BootPanel
 from motrix_rl_builtin.fastsac.async_impl.stats import aggregate_collector_stats, nest_timing_path, timing_mean
-from motrix_rl_builtin.fastsac.async_impl.topology import resolve_trainer_topology
+from motrix_rl_builtin.fastsac.async_impl.topology import resolve_fastsac_topology
 from motrix_rl_builtin.fastsac.async_impl.transport import (
     Control,
     RingCursors,
@@ -202,7 +202,7 @@ class Trainer(TrainerBase):
         # workers read their explicit devices from the topology and never
         # re-resolve a generic spec in-process.
         param_numel = actor_param_numel(cfg, dims, action_scale, action_bias)
-        topology = resolve_trainer_topology(
+        topology = resolve_fastsac_topology(
             num_envs,
             num_collectors,
             num_learners,
@@ -214,11 +214,14 @@ class Trainer(TrainerBase):
             cpus_per_collector=cpus_per_collector,
         )
         learner_devices = [learner.device for learner in topology.learners]
-        collector_devices = [collector.device for collector in topology.collectors]
+        collector_devices = [collector.infer_device for collector in topology.collectors]
         numa_nodes = [collector.numa_node for collector in topology.collectors]
         learner_numa_nodes = [learner.numa_node for learner in topology.learners]
         env_shards = topology.env_shards
-        ring_ipc = [collector.ring_ipc for collector in topology.collectors]
+        transition_channels = topology.transition_channels
+        weight_channels = topology.weight_channels
+        ring_ipc = [channel.use_cuda_ipc for channel in transition_channels]
+        weight_ipc = [channel.use_cuda_ipc for channel in weight_channels]
         # Provenance for performance snapshots: record the devices this run
         # actually uses (topology is the single source of truth), not the
         # host inventory.
@@ -320,7 +323,6 @@ class Trainer(TrainerBase):
             rendezvous_path.parent.mkdir(parents=True, exist_ok=True)
             rendezvous_path.unlink(missing_ok=True)  # the file store requires a fresh file
             rendezvous_file = str(rendezvous_path)
-        per_learner = num_collectors // num_learners
         p_learners = [
             ctx.Process(
                 target=run_learner_process,
@@ -330,10 +332,14 @@ class Trainer(TrainerBase):
                     dims,
                     action_scale,
                     action_bias,
-                    topology.ring_slice_for_rank(rings, rank),
+                    [
+                        rings[index]
+                        for index in range(num_collectors)
+                        if topology.transition_channels[index].consumer_id == rank
+                    ],
                     # every rank publishes to its OWN collectors; rank 0 is
                     # additionally the logger / checkpointer.
-                    weights[rank * per_learner : (rank + 1) * per_learner],
+                    [weights[index] for index in range(num_collectors) if weight_channels[index].producer_id == rank],
                     control,
                     error_queue,
                     num_iterations,
@@ -355,12 +361,23 @@ class Trainer(TrainerBase):
                     "notify_checkpoints": training_log.live.enabled,
                     "all_rings": rings,
                     "weight_ipc": [
-                        c.weight_ipc for c in topology.collectors[rank * per_learner : (rank + 1) * per_learner]
+                        weight_ipc[index]
+                        for index in range(num_collectors)
+                        if weight_channels[index].producer_id == rank
+                    ],
+                    "collector_ids": [
+                        topology.transition_channels[index].channel_id
+                        for index in range(num_collectors)
+                        if topology.transition_channels[index].consumer_id == rank
                     ],
                     "learner_cpus": topology.learners[rank].cpus if learner_numa_nodes else None,
                     "learner_numa_node": learner_numa_nodes[rank] if learner_numa_nodes else None,
                     "final_stores": (
-                        final_stores[rank * per_learner : (rank + 1) * per_learner]
+                        [
+                            final_stores[index]
+                            for index in range(num_collectors)
+                            if topology.transition_channels[index].consumer_id == rank
+                        ]
                         if final_stores is not None
                         else None
                     ),
@@ -391,7 +408,7 @@ class Trainer(TrainerBase):
                     "collector_id": i,
                     "numa_node": numa_nodes[i],
                     "cpus": topology.collectors[i].cpus,
-                    "collector_device": str(topology.collectors[i].device),
+                    "collector_device": str(topology.collectors[i].infer_device),
                     "run_dir": str(self._context.run_dir),
                     "handshake": handshake,
                     "final_store": final_stores[i] if final_stores is not None else None,
