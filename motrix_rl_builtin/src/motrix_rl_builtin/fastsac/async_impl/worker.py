@@ -473,6 +473,7 @@ def run_learner_process(
     handshake: StartupHandshake,
     all_rings: list[SharedTransitionRing],
     weight_ipc: list[bool],
+    collector_ids: list[int],
     panel_queue: Queue,
     learner_cpus: list[int] | None = None,
     learner_numa_node: int | None = None,
@@ -488,6 +489,8 @@ def run_learner_process(
 
     ``final_stores`` is either absent for all owned collectors or contains one
     store per owned ring; final-observation support is uniform across collectors.
+    ``collector_ids`` gives the global collector ID for each local ring/weight
+    endpoint, preserving channel identity when ownership is non-contiguous.
 
     Multi-learner (DDP) specifics: ``rings`` is this rank's slice (the parent
     partitions by collector ownership) while ``all_rings`` is the full list
@@ -561,22 +564,21 @@ def run_learner_process(
 
         resume_step = control.collector_steps // num_collectors  # full-batch equivalents
         per_collector_envs = num_envs // num_collectors
-        per_learner = num_collectors // num_learners
-        # Build one sender endpoint per collector OWNED by this rank (collector
-        # i belongs to rank i // per_learner) and ship the slot tensors BEFORE
+        # Build one sender endpoint per collector owned by this rank and ship
+        # the slot tensors BEFORE
         # the first publish so each collector (blocking on its handshake queue)
         # builds the matching receiver from step one. The IPC transition-ring
         # slots ship in the same one-shot message: this process is the owner
         # (it allocated the device tensor and must keep it alive), the
         # collector maps it through the queue's CUDA-IPC reducers.
         # Transport per channel was decided by the parent topology pass
-        # (TrainerTopology.weight_ipc, indexed per collector); this process
+        # (weight_channels, indexed per collector); this process
         # only constructs the endpoints. One throwaway CPU actor counts the
         # parameters that size both transports' buffers.
         param_numel = actor_param_numel(cfg, dims, action_scale, action_bias)
         weight_txs = []
         for j, shared in enumerate(weights):
-            channel = rank * per_learner + j
+            channel = collector_ids[j]
             # CUDA-IPC device slots when the topology resolved IPC for this
             # channel (the collector infers on this rank's GPU), host
             # shared-memory slots otherwise; this rank is the exporter (its
@@ -592,6 +594,7 @@ def run_learner_process(
         # and shipping them to the collector) BEFORE building the endpoints —
         # the endpoints must hold the FINAL ring objects the drain path uses.
         for j, ring in enumerate(rings):
+            collector_id = collector_ids[j]
             ring_slots = None
             if isinstance(ring, RingCursors):
                 if device.type != "cuda":
@@ -611,7 +614,7 @@ def run_learner_process(
                     act_dim,
                     final_obs_store=final_stores[j] if final_stores is not None else None,
                 )
-            handshake.ship_ring_slots(rank * per_learner + j, ring_slots)
+            handshake.ship_ring_slots(collector_id, ring_slots)
 
         endpoints = [CollectorEndpoint(ring=rings[j], weight_sender=weight_txs[j]) for j in range(len(weight_txs))]
 

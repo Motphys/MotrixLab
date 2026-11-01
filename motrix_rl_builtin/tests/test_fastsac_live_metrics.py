@@ -516,21 +516,21 @@ class _Workers:
 
 def _train_async(tmp_path, monkeypatch, workers: _Workers, *, num_iterations: int, resume_from=None, live=True):
     from motrix_rl_builtin.fastsac.async_impl import train as async_train
-    from motrix_rl_builtin.fastsac.async_impl.topology import CollectorInfo, LearnerInfo, TrainerTopology
+
+    from motrix_rl.topology import AsyncTrainerTopology, ChannelSpec, CollectorInfo, LearnerInfo
 
     cpu = torch.device("cpu")
-    topology = TrainerTopology(
-        learners=[LearnerInfo(rank=0, device=cpu, numa_node=None, cpus=[])],
-        collectors=[
-            CollectorInfo(i, 0, NUM_ENVS // NUM_COLLECTORS, cpu, None, [], ring_ipc=False, weight_ipc=False)
-            for i in range(NUM_COLLECTORS)
-        ],
+    topology = AsyncTrainerTopology(
+        learners=(LearnerInfo(rank=0, device=cpu, numa_node=None, cpus=()),),
+        collectors=tuple(CollectorInfo(i, NUM_ENVS // NUM_COLLECTORS, cpu, None, ()) for i in range(NUM_COLLECTORS)),
+        transition_channels=tuple(ChannelSpec(i, i, 0) for i in range(NUM_COLLECTORS)),
+        weight_channels=tuple(ChannelSpec(i, 0, i) for i in range(NUM_COLLECTORS)),
     )
     writer = _RecordingWriter()
     monkeypatch.setattr(torch.utils.tensorboard, "SummaryWriter", lambda **kwargs: writer)
     monkeypatch.setattr(async_train, "time", _FastTime(10.0))
     monkeypatch.setattr(async_train, "mp", SimpleNamespace(get_context=lambda method: workers.ctx))
-    monkeypatch.setattr(async_train, "resolve_trainer_topology", lambda *args, **kwargs: topology)
+    monkeypatch.setattr(async_train, "resolve_fastsac_topology", lambda *args, **kwargs: topology)
     monkeypatch.setattr(async_train, "actor_param_numel", lambda *args: 0)
     monkeypatch.setattr(async_train, "capture_system_info", lambda **kwargs: {})
     monkeypatch.setattr(async_train, "spawn_placement", lambda *args: contextlib.nullcontext())
