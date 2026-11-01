@@ -10,7 +10,7 @@ from motrix_rl.topology import (
     AsyncTrainerTopology,
     CollectorInfo,
     LearnerInfo,
-    _select_worker_cpus,
+    _allocate_worker_cpus,
     resolve_async_trainer_topology,
     resolve_collector_inference_devices,
     resolve_learner_devices,
@@ -28,19 +28,25 @@ def test_split_num_envs_requires_even_division() -> None:
         split_num_envs(2048, 0)
 
 
-def test_select_worker_cpus_chunks_and_shares() -> None:
-    base = [0, 1, 2, 3, 4, 5]
+def test_allocate_worker_cpus_consumes_shared_domain() -> None:
+    available = [0, 1, 2, 3, 4, 5]
 
-    assert _select_worker_cpus(base, 0, None) == base
-    assert _select_worker_cpus(base, 1, None) == base
-    assert _select_worker_cpus(base, 0, 3) == [0, 1, 2]
-    assert _select_worker_cpus(base, 1, 3) == [3, 4, 5]
-    with pytest.raises(ValueError, match="no CPUs"):
-        _select_worker_cpus(base, 2, 4)
-    with pytest.raises(ValueError, match="positive"):
-        _select_worker_cpus(base, 0, 0)
+    assert _allocate_worker_cpus(available, 3) == (0, 1, 2)
+    assert available == [3, 4, 5]
+    assert _allocate_worker_cpus(available, 3) == (3, 4, 5)
+    assert available == []
     with pytest.raises(ValueError, match="empty"):
-        _select_worker_cpus([], 0, None)
+        _allocate_worker_cpus(available, 1)
+    with pytest.raises(ValueError, match="positive"):
+        _allocate_worker_cpus([0], 0)
+    with pytest.raises(ValueError, match="empty"):
+        _allocate_worker_cpus([], None)
+
+
+def test_allocate_worker_cpus_shares_domain_when_unlimited() -> None:
+    available = [0, 1, 2]
+    assert _allocate_worker_cpus(available, None) == (0, 1, 2)
+    assert available == [0, 1, 2]
 
 
 def test_topology_connects_collectors_to_local_learners(monkeypatch) -> None:
@@ -81,7 +87,7 @@ def test_topology_connects_collectors_to_local_learners(monkeypatch) -> None:
     assert [collector.numa_node for collector in topo.collectors] == [1, 1, 1, 1]
 
 
-def test_topology_chunks_cpus_by_node_local_ordinal(monkeypatch) -> None:
+def test_topology_allocates_unique_cpus_across_learners_sharing_domain(monkeypatch) -> None:
     node_cpus = {0: list(range(8)), 1: list(range(100, 108))}
     monkeypatch.setattr(system_numa, "available_numa_nodes", lambda: [0, 1])
     monkeypatch.setattr(system_numa, "gpu_numa_node", lambda index, runtime: {0: 0, 1: 1}.get(index))
@@ -104,6 +110,32 @@ def test_topology_chunks_cpus_by_node_local_ordinal(monkeypatch) -> None:
         (100, 101, 102, 103),
         (104, 105, 106, 107),
     ]
+
+
+def test_topology_shares_cpu_domain_between_learners(monkeypatch) -> None:
+    monkeypatch.setattr(system_numa, "available_numa_nodes", lambda: [0, 1])
+    monkeypatch.setattr(system_numa, "gpu_numa_node", lambda index, runtime: 0)
+    monkeypatch.setattr(system_numa, "numa_node_cpus", lambda node: list(range(8)))
+    monkeypatch.setattr("torch.cuda.device_count", lambda: 2)
+
+    topo = resolve_async_trainer_topology(
+        8,
+        4,
+        2,
+        ["cuda:0", "cuda:1"],
+        "cpu",
+        torch.device("cuda:0"),
+        cpus_per_collector=2,
+    )
+
+    assert [collector.cpus for collector in topo.collectors] == [
+        (0, 1),
+        (2, 3),
+        (4, 5),
+        (6, 7),
+    ]
+    assert [channel.consumer_id for channel in topo.transition_channels].count(0) == 2
+    assert [channel.consumer_id for channel in topo.transition_channels].count(1) == 2
 
 
 def test_topology_unbound_without_gpu_locality(monkeypatch) -> None:

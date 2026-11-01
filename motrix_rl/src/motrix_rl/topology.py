@@ -313,38 +313,30 @@ def _select_collector_learner(
     return min(candidates, key=lambda rank: (assigned_counts[rank], rank))
 
 
-def _select_worker_cpus(
-    base: list[int],
-    worker_id: int,
+def _allocate_worker_cpus(
+    available: list[int],
     cpus_per_worker: int | None,
-) -> list[int]:
-    """Select a worker's CPU slice within a placement domain.
+) -> tuple[int, ...]:
+    """Allocate logical CPU IDs from one shared placement domain.
 
-    Args:
-        base: Available CPU IDs. The list must not be empty.
-        worker_id: Zero-based worker ordinal within ``base``.
-        cpus_per_worker: CPUs assigned to each worker, or ``None`` to share
-            the complete base set.
-
-    Returns:
-        The CPU IDs assigned to the worker.
-
-    Raises:
-        ValueError: If the CPU set or requested slice is invalid.
+    ``available`` is consumed in place when a fixed CPU count is requested.
+    With ``None``, the complete domain is shared by the worker and remains
+    available to other workers.
     """
-    if not base:
+    if not available:
         raise ValueError("empty CPU set for worker binding")
     if cpus_per_worker is None:
-        return list(base)
+        return tuple(available)
     if cpus_per_worker <= 0:
         raise ValueError(f"cpus_per_worker must be positive, got {cpus_per_worker}")
-    start = worker_id * cpus_per_worker
-    end = min(start + cpus_per_worker, len(base))
-    if start >= end:
+    if len(available) < cpus_per_worker:
         raise ValueError(
-            f"cpus_per_worker={cpus_per_worker} leaves no CPUs for worker {worker_id} (base set has {len(base)} CPUs)"
+            f"cpus_per_collector={cpus_per_worker} requires {cpus_per_worker} available CPUs, "
+            f"but only {len(available)} remain"
         )
-    return base[start:end]
+    allocated = tuple(available[:cpus_per_worker])
+    del available[:cpus_per_worker]
+    return allocated
 
 
 def resolve_async_trainer_topology(
@@ -402,10 +394,14 @@ def resolve_async_trainer_topology(
         index = device.index if device.index is not None else 0
         return system_numa.gpu_numa_node(index, runtime="hip" if torch.version.hip else "cuda")
 
-    def chunk_cpus(base: list[int], worker_id: int) -> list[int]:
-        if not base:
-            return []
-        return _select_worker_cpus(base, worker_id, cpus_per_collector)
+    cpu_domains: dict[tuple[int, ...], list[int]] = {}
+
+    def allocate_collector_cpus(node: int | None) -> tuple[int, ...]:
+        domain = tuple(base_cpus(node))
+        if not domain:
+            return ()
+        available = cpu_domains.setdefault(domain, list(domain))
+        return _allocate_worker_cpus(available, cpus_per_collector)
 
     def rank_device(rank: int) -> torch.device:
         return learner_devices[rank] if learner_devices else default_device
@@ -431,14 +427,13 @@ def resolve_async_trainer_topology(
         assigned_counts[learner_rank] += 1
         collector_learner_ranks.append(learner_rank)
         owner_node = learners[learner_rank].numa_node
-        local_ordinal = assigned_counts[learner_rank] - 1
         collectors.append(
             CollectorInfo(
                 collector_id=collector_id,
                 num_envs=num_envs_i,
                 infer_device=collector_device,
                 numa_node=owner_node,
-                cpus=tuple(chunk_cpus(base_cpus(owner_node), local_ordinal)),
+                cpus=allocate_collector_cpus(owner_node),
             )
         )
 
