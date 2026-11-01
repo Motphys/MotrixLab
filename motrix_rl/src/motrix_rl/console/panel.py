@@ -10,8 +10,9 @@ import os
 import re
 import shutil
 import sys
+import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from motrix_rl.system_metrics import CpuLoad, GpuDeviceUsage, MemoryUsage
@@ -134,6 +135,76 @@ def open_training_live():
     live = (_InputLive if _POSIX_TTY else Live)(console=console, auto_refresh=False, vertical_overflow="visible")
     live.start()
     return console, live
+
+
+class TrainingPanelSession:
+    """Own one training panel's terminal lifecycle and latest snapshot.
+
+    Providers only submit already-aggregated :class:`TrainingPanelStats` values;
+    this object owns Rich/TTY resources, refresh cadence, view input and cleanup.
+    """
+
+    def __init__(self, *, title: str = "rl", interval_seconds: float = 1.0) -> None:
+        self.title = title
+        self.interval_seconds = interval_seconds
+        self.console = None
+        self.live = None
+        self._latest: TrainingPanelStats | None = None
+        self._last_refresh = 0.0
+        self._last_checkpoint: str | None = None
+        self._closed = False
+
+    @classmethod
+    def open(cls, *, title: str = "rl", interval_seconds: float = 1.0) -> TrainingPanelSession:
+        session = cls(title=title, interval_seconds=interval_seconds)
+        session.console, session.live = open_training_live()
+        return session
+
+    def __enter__(self) -> TrainingPanelSession:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def submit(self, stats: TrainingPanelStats, *, force: bool = False) -> None:
+        """Store the latest stats and refresh when the session cadence allows."""
+        if self._closed:
+            return
+        if self._last_checkpoint is not None and stats.checkpoint_path != self._last_checkpoint:
+            stats = replace(stats, checkpoint_path=self._last_checkpoint)
+        self._latest = stats
+        now = time.monotonic()
+        if force or self._last_refresh == 0.0 or now - self._last_refresh >= self.interval_seconds:
+            self.refresh(force=True)
+
+    def checkpoint(self, path: str) -> None:
+        """Show a successfully saved checkpoint on the next panel frame."""
+        self._last_checkpoint = path
+        if self._latest is not None:
+            self._latest = replace(self._latest, checkpoint_path=path)
+            self.refresh(force=True)
+        elif self.console is None:
+            print(f"saved checkpoint {path}")
+
+    def refresh(self, *, force: bool = False) -> None:
+        if self._closed or self._latest is None:
+            return
+        now = time.monotonic()
+        if not force and self._last_refresh and now - self._last_refresh < self.interval_seconds:
+            return
+        emit_training_panel(self.live, self._latest, title=self.title)
+        self._last_refresh = now
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        try:
+            self.refresh(force=True)
+        finally:
+            self._closed = True
+            if self.live is not None:
+                self.live.stop()
+                self.live = None
 
 
 def emit_training_panel(live, stats: TrainingPanelStats, *, title: str = "rl") -> None:

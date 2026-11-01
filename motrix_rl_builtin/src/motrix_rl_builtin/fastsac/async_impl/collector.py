@@ -34,28 +34,6 @@ from motrix_rl_builtin.fastsac.networks import Actor
 from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap
 
 
-def resolve_collector_inference_device(device_spec: str) -> torch.device:
-    """Resolve an explicit collector inference device without CPU fallback."""
-    device = torch.device(device_spec)
-    if device.type == "cpu":
-        return device
-    if device.type == "mps":
-        if not torch.backends.mps.is_available():
-            raise RuntimeError(f"collector_inference_device='{device_spec}' requested MPS, but MPS is unavailable")
-        return device
-    if device.type != "cuda":
-        raise ValueError(f"collector_inference_device must be cpu, cuda or mps, got '{device_spec}'")
-    if not torch.cuda.is_available():
-        raise RuntimeError(f"collector_inference_device='{device_spec}' requested CUDA, but CUDA is unavailable")
-    index = torch.cuda.current_device() if device.index is None else device.index
-    if index >= torch.cuda.device_count():
-        raise RuntimeError(
-            f"collector_inference_device='{device_spec}' selects CUDA device {index}, "
-            f"but only {torch.cuda.device_count()} device(s) are available"
-        )
-    return torch.device("cuda", index)
-
-
 class _CollectorPolicy(nn.Module):
     """Read-only normalizer + stochastic actor callable compiled as one graph."""
 
@@ -88,6 +66,7 @@ class Collector:
         ring: SharedTransitionRing | IpcTransitionRing,
         weights: WeightReceiver,
         control: Control,
+        collector_device: torch.device,
         is_resume: bool = False,
         collector_id: int = 0,
     ):
@@ -95,7 +74,7 @@ class Collector:
         self.cfg = cfg
         self.async_options = cfg.trainer.async_options
         acfg: FastSacAgentCfg = cfg.agent
-        self.device = resolve_collector_inference_device(self.async_options.collector_inference_device)
+        self.device = collector_device
         if self.device.type == "cuda":
             torch.cuda.set_device(self.device)
         self.env_device = torch.device("cpu")

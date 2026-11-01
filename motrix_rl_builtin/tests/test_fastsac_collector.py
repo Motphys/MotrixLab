@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
-from motrix_rl_builtin.fastsac.async_impl.collector import Collector, resolve_collector_inference_device
+from motrix_rl_builtin.fastsac.async_impl.collector import Collector
 from motrix_rl_builtin.fastsac.async_impl.transport import Control, SharedTransitionRing
 from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsStorage
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import (
@@ -131,6 +131,9 @@ def _collector(device: str, *, compile: bool = False, amp: bool = False):
     weight_tx = HostWeightSender(shared, sum(p.numel() for p in source_actor.parameters()))
     weight_rx = HostWeightReceiver(shared, weight_tx.params)
     weight_tx.publish(source_actor, source_normalizer)
+    resolved_device = torch.device(device)
+    if resolved_device.type == "cuda" and resolved_device.index is None:
+        resolved_device = torch.device("cuda", torch.cuda.current_device())
     collector = Collector(
         env,
         cfg,
@@ -141,6 +144,7 @@ def _collector(device: str, *, compile: bool = False, amp: bool = False):
         ring,
         weight_rx,
         Control(),
+        collector_device=resolved_device,
     )
     collector.reset()
     collector.sync_weights()
@@ -242,6 +246,7 @@ def test_collector_reports_env_step_substage_timing() -> None:
         ring,
         weight_rx,
         Control(),
+        collector_device=torch.device("cpu"),
     )
     collector.reset()
     collector.sync_weights()
@@ -260,24 +265,23 @@ def test_collector_reports_env_step_substage_timing() -> None:
     assert env.perf.snapshot() == ()
 
 
-def test_collector_cuda_request_fails_without_cuda(monkeypatch) -> None:
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-
-    with pytest.raises(RuntimeError, match="requested CUDA, but CUDA is unavailable"):
-        resolve_collector_inference_device("cuda")
-
-
-def test_collector_rejects_unsupported_device() -> None:
-    with pytest.raises(ValueError, match="must be cpu, cuda or mps"):
-        resolve_collector_inference_device("meta")
-
-
-def test_collector_rejects_unavailable_cuda_index(monkeypatch) -> None:
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
-    invalid_device = "cuda:1"
-    with pytest.raises(RuntimeError, match="but only"):
-        resolve_collector_inference_device(invalid_device)
+def test_collector_uses_resolved_device_without_config_re_resolution() -> None:
+    env = _CpuEnv()
+    cfg = _cfg("meta")
+    ring = SharedTransitionRing(2, _NUM_ENVS, _OBS_DIM, _CRITIC_OBS_DIM, _ACT_DIM)
+    collector = Collector(
+        env,
+        cfg,
+        _OBS_DIM,
+        _ACT_DIM,
+        torch.ones(_ACT_DIM),
+        torch.zeros(_ACT_DIM),
+        ring,
+        None,
+        Control(),
+        collector_device=torch.device("cpu"),
+    )
+    assert collector.device == torch.device("cpu")
 
 
 @pytest.mark.integration
@@ -422,7 +426,18 @@ def _backpressure_collector(*, capacity=16):
     env, control = _BackpressureEnv(), Control()
     store = FinalObsStorage(capacity, env.num_envs, 3, 3)
     ring = SharedTransitionRing(capacity, env.num_envs, 3, 3, 1, final_obs_store=store)
-    collector = Collector(env, cfg, 3, 1, torch.ones(1), torch.zeros(1), ring, None, control)
+    collector = Collector(
+        env,
+        cfg,
+        3,
+        1,
+        torch.ones(1),
+        torch.zeros(1),
+        ring,
+        None,
+        control,
+        collector_device=torch.device("cpu"),
+    )
     collector.reset()
     actions = torch.full((2, 1), 0.25)
     calls = []
