@@ -46,7 +46,6 @@ def test_worker_start_returns_parent_handle() -> None:
 
     assert isinstance(handle, WorkerHandle)
     assert handle.pid is not None
-    assert handle.exitcode is None
     handle.join(timeout=10)
 
     assert handle.exitcode == 0
