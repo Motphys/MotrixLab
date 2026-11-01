@@ -143,10 +143,23 @@ class Worker(ABC):
 
     def __getstate__(self) -> dict[str, Any]:
         """Exclude parent-only lifecycle state during child serialization."""
-        state = self.__dict__.copy()
+        state: dict[str, Any] = {}
+        if hasattr(self, "__dict__"):
+            state.update(self.__dict__)
+        for cls in type(self).__mro__:
+            for slot in getattr(cls, "__slots__", ()):
+                if slot in ("__dict__", "__weakref__"):
+                    continue
+                if hasattr(self, slot):
+                    state[slot] = getattr(self, slot)
         state["_process"] = None
         state["_started"] = False
         return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore both dictionary and slotted subclass state after spawn."""
+        for key, value in state.items():
+            setattr(self, key, value)
 
     def _require_process(self) -> mp.Process:
         if self._process is None:

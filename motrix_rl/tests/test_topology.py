@@ -92,6 +92,7 @@ def test_topology_allocates_unique_cpus_across_learners_sharing_domain(monkeypat
     monkeypatch.setattr(system_numa, "available_numa_nodes", lambda: [0, 1])
     monkeypatch.setattr(system_numa, "gpu_numa_node", lambda index, runtime: {0: 0, 1: 1}.get(index))
     monkeypatch.setattr(system_numa, "numa_node_cpus", lambda node: node_cpus[node])
+    monkeypatch.setattr("os.sched_getaffinity", lambda pid: set(range(8)) | set(range(100, 108)))
     monkeypatch.setattr("torch.cuda.device_count", lambda: 2)
     cuda = lambda n: torch.device("cuda", n)  # noqa: E731
 
@@ -136,6 +137,26 @@ def test_topology_shares_cpu_domain_between_learners(monkeypatch) -> None:
     ]
     assert [channel.consumer_id for channel in topo.transition_channels].count(0) == 2
     assert [channel.consumer_id for channel in topo.transition_channels].count(1) == 2
+
+
+def test_topology_intersects_numa_cpus_with_inherited_affinity(monkeypatch) -> None:
+    monkeypatch.setattr(system_numa, "available_numa_nodes", lambda: [0, 1])
+    monkeypatch.setattr(system_numa, "gpu_numa_node", lambda index, runtime: 0)
+    monkeypatch.setattr(system_numa, "numa_node_cpus", lambda node: list(range(8)))
+    monkeypatch.setattr("torch.cuda.device_count", lambda: 2)
+    monkeypatch.setattr("os.sched_getaffinity", lambda pid: {0, 1, 4, 5})
+
+    topology = resolve_async_trainer_topology(
+        4,
+        2,
+        1,
+        None,
+        "cuda",
+        torch.device("cuda:0"),
+        cpus_per_collector=2,
+    )
+
+    assert [collector.cpus for collector in topology.collectors] == [(0, 1), (4, 5)]
 
 
 def test_topology_unbound_without_gpu_locality(monkeypatch) -> None:

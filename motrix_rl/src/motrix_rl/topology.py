@@ -378,15 +378,18 @@ def resolve_async_trainer_topology(
     env_shards = split_num_envs(num_envs, num_collectors)
     multi_node = len(system_numa.available_numa_nodes()) >= 2
 
+    inherited_cpus = set(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
+
     def base_cpus(node: int | None) -> list[int]:
         if node is None:
-            if not hasattr(os, "sched_getaffinity"):
-                return []
-            return sorted(os.sched_getaffinity(0))
+            return sorted(inherited_cpus) if inherited_cpus is not None else []
         try:
-            return system_numa.numa_node_cpus(node)
+            cpus = set(system_numa.numa_node_cpus(node))
         except ValueError:
             return []
+        if inherited_cpus is not None:
+            cpus &= inherited_cpus
+        return sorted(cpus)
 
     def learner_node(device: torch.device) -> int | None:
         if not multi_node or device.type != "cuda":
@@ -394,14 +397,18 @@ def resolve_async_trainer_topology(
         index = device.index if device.index is not None else 0
         return system_numa.gpu_numa_node(index, runtime="hip" if torch.version.hip else "cuda")
 
-    cpu_domains: dict[tuple[int, ...], list[int]] = {}
+    reserved_cpus: set[int] = set()
 
     def allocate_collector_cpus(node: int | None) -> tuple[int, ...]:
-        domain = tuple(base_cpus(node))
+        domain = base_cpus(node)
         if not domain:
             return ()
-        available = cpu_domains.setdefault(domain, list(domain))
-        return _allocate_worker_cpus(available, cpus_per_collector)
+        if cpus_per_collector is None:
+            return tuple(domain)
+        available = [cpu for cpu in domain if cpu not in reserved_cpus]
+        allocated = _allocate_worker_cpus(available, cpus_per_collector)
+        reserved_cpus.update(allocated)
+        return allocated
 
     def rank_device(rank: int) -> torch.device:
         return learner_devices[rank] if learner_devices else default_device

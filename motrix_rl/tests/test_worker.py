@@ -17,6 +17,18 @@ class _WorkerConfig:
     value: int
 
 
+class _SlottedWorker(Worker):
+    __slots__ = ("result_queue", "value")
+
+    def __init__(self, result_queue, value: int, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.result_queue = result_queue
+        self.value = value
+
+    def run(self) -> None:
+        self.result_queue.put((self.name, self.value))
+
+
 class _ExampleWorker(Worker):
     def __init__(self, result_queue, config: _WorkerConfig, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -63,6 +75,18 @@ def test_worker_spawn_runs_subclass_method_and_exposes_lifecycle() -> None:
 
     with pytest.raises(RuntimeError, match="already started"):
         worker.start(ctx)
+
+
+def test_slotted_worker_spawn_preserves_state() -> None:
+    ctx = mp.get_context("spawn")
+    result_queue = ctx.Queue()
+    worker = _SlottedWorker(result_queue, 42, name="slotted-worker")
+
+    worker.start(ctx)
+    worker.join(timeout=10)
+
+    assert worker.exitcode == 0
+    assert result_queue.get(timeout=2) == ("slotted-worker", 42)
 
 
 def test_worker_state_excludes_parent_process() -> None:
