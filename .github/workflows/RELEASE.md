@@ -10,7 +10,7 @@ wheels. Docker publishing remains a separate manual operation.
 | --- | --- | --- |
 | `release.yml` | Bump workspace versions, open release PRs, tag `stable`, create GitHub Releases, and open stable-patch back-merge PRs | Manual dispatch and pushes to `main`/`stable` |
 | `pypi-publish.yml` | Build and publish wheels for `motrix-env-core`, `motrix-deploy`, `motrix-rl`, `motrix-rl-builtin`, `motrix-env-motrixsim`, and `motrixlab` | GitHub Release publication or manual dispatch |
-| `docker-build.yml` | Build and push the Docker image | Manual dispatch from `stable` |
+| `docker-build.yml` | Build and push Docker runtime-profile images | Manual dispatch from `stable` |
 
 **Stable branch patch release** is the preferred name for a patch cut from
 `stable`. Its branch prefix remains `hotfix/*`; the prefix is a Git convention,
@@ -181,7 +181,7 @@ flowchart TD
    `stable`.
 7. The stable push validates all workspace versions and release contracts,
    creates the tag and GitHub Release, and starts wheel publishing.
-8. Optionally run **Build and Push Docker Image** from `stable`.
+8. Optionally run **Build and Push Docker Images** from `stable`.
 
 If the automatic `main → stable` PR was not created—for example, because the
 version-bump PR was merged with an unexpected strategy—run `release.yml` on
