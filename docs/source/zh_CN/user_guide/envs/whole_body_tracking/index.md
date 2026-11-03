@@ -85,6 +85,7 @@
 env_design
 motion_format
 adding_wbt_task
+WBT_Deploy_detail
 
 ```
 

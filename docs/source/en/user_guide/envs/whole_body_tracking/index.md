@@ -86,6 +86,7 @@ The following videos show Dex-EVT and Unitree G1 tracking dance motions, Unitree
 env_design
 motion_format
 adding_wbt_task
+WBT_Deploy_detail
 
 ```
 
