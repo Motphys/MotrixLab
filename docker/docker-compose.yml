@@ -4,10 +4,14 @@ volumes:
 
 services:
   motrixlab-training:
-    image: motphys/motrixlab:latest
+    image: ${MOTRIXLAB_IMAGE:-motphys/motrixlab:cuda}
     container_name: motrixlab-training
+    environment:
+      PYTHONUNBUFFERED: "1"
     volumes:
-      - motrixlab-data:/root/motrixlab/runs
+      - motrixlab-data:/workspace/runs
+    working_dir: /workspace
+    shm_size: 1g
     deploy:
       resources:
         reservations:
@@ -16,22 +20,21 @@ services:
               count: all
               capabilities: [gpu]
     command:
-      - mxlab
       - train
-      - task=${MOTRIX_ENV:-cartpole}/skrl.ppo
-      - task.train_backend=${MOTRIX_TRAIN_BACKEND:-jax}
+      - task=${MOTRIX_TASK:-cartpole/skrl.ppo}
       - num_envs=${MOTRIX_NUM_ENVS:-2048}
-    restart: no
+    restart: "no"
 
   motrixlab-tensorboard:
-    image: motphys/motrixlab:latest
+    image: ${MOTRIXLAB_IMAGE:-motphys/motrixlab:cuda}
     container_name: motrixlab-tensorboard
     ports:
-      - "6006:6006"
+      - "${MOTRIX_TENSORBOARD_PORT:-6006}:6006"
     volumes:
-      - motrixlab-data:/root/motrixlab/runs:ro
+      - motrixlab-data:/workspace/runs:ro
+    working_dir: /workspace
+    entrypoint: /app/.venv/bin/tensorboard
     command:
-      - tensorboard
       - --host
       - 0.0.0.0
       - --logdir
