@@ -87,6 +87,7 @@ members = [
 environments = ["sys_platform == 'darwin'", "sys_platform != 'darwin'"]
 package = false
 prerelease = "if-necessary-or-explicit"
+constraint-dependencies = ["motrixsim-core===0.10.2.dev132873"]
 # The forwarding extras are mutually exclusive. uv also collects motrix-rl's
 # member-local conflicts when resolving this workspace.
 conflicts = [[{ extra = "cuda" }, { extra = "rocm" }]]
@@ -95,7 +96,16 @@ conflicts = [[{ extra = "cuda" }, { extra = "rocm" }]]
 name = "pypi"
 url = "https://pypi.org/simple"
 
+# Development builds are published separately from public PyPI. Restrict this
+# index to MotrixSim so unrelated dependencies retain their existing sources.
+[[tool.uv.index]]
+name = "motphys"
+url = "https://pypi.motphys.com/simple"
+explicit = true
+
 [tool.uv.sources]
+motrixsim = { index = "motphys" }
+motrixsim-core = { index = "motphys" }
 motrixlab = { workspace = true }
 motrix-robots = { workspace = true }
 motrix-env-core = { workspace = true }

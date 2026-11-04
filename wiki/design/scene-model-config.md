@@ -4,6 +4,23 @@
 
 本文定义 MotrixLab 的场景配置模型。`SceneCfg` 统一保存基础模型文件、asset registry、scene-level visual、system camera 和 object registry：asset 通过 `SceneAssetsCfg` 的字段名获得稳定名称，scene object 通过 `SceneObjsCfg` 的字段名获得稳定名称与组装顺序，全局视觉环境通过 `SceneVisualCfg` 配置，interactive viewer 与视频录制的默认视角通过 `SystemCameraCfg` 配置。`StandardSceneCfg` 在通用 `SceneCfg` 之上提供标准渐变天空、地面、材质、贴图、haze 与方向光，并允许用户通过 configclass 继承覆写。场景最终通过 MotrixSim MSD API 直接组装为 `World`，不通过字符串或临时 MJCF 文件拼接。
 
+## 感知相机与挂载
+
+`SceneCfg.sensors` 使用 `SceneSensorsCfg` 字段名作为传感器名。`RaycastCameraSensorCfg` 描述物理深度相机，不是 `SystemCameraCfg` 渲染视角；配置定义在 core 的 `config.scene.sensor`，不暴露原生 simulator 类型。
+
+- `site` 引用完整组装后场景中的 optical site。统一的 `SiteCfg` 是 scene object，`parent_link_name` 使用导入模型中的逻辑 link 名；编译器根据所属 `BodyCfg` 的 prefix/suffix 解析最终 link，并在所有 body 附加后挂载，因此不依赖字段声明顺序。URDF 文件内的 `sites` 也使用同一配置类型并显式提供 `name`。
+- `PinholeCameraCfg` 使用像素单位的 `(fx,fy,cx,cy)`，`from_fov` 接受角度制 FOV；`OrthographicCameraCfg` 使用两个方向的像素间距。光学轴为 +X 右、+Y 下、+Z 前，像素中心为 `(u+.5,v+.5)`。
+- 原始测量与图像预处理分离。`outputs` 启用光轴深度、射线距离、世界坐标命中点/法线；至少启用一个距离字段。near/far 限制光轴深度，近处遮挡物不会被穿透跳过。
+- 自身排除与几何白名单独立于接触响应；具体后端不支持配置时显式报错。MuJoCo compiler 支持 link site，但不支持该原生相机。
+
+`RaycastCameraImageQuery(sensor=...,field=...)` 从一次原生像素交错读取建立只读视图：距离为 `(N,H,W)`，点/法线为 `(N,H,W,3)`。同一相机多个字段共享原生读取；既有 `SensorValuesQuery` 继续提供扁平布局。距离单位米，miss 为 -1，miss 点/法线为零；validity 可由距离非负得到，但不能据此判定是否已经采样。相机的宽高和投影参数直接由场景配置提供，不额外建立未被读取路径使用的 spec 对象。
+
+### 当前原生生命周期边界
+
+MotrixSim `0.10.2.dev132022` 在 physics step 的积分前状态采样，`update_period=0` 每物理步更新，其余周期由原生调度。读取不推进物理、不强制采样。`SceneData.reset(..., forward_kinematic=True)` 会在 reset 状态刷新 raycast camera 图像；写入关节/浮动基状态并执行带 `forward_kinematic=True` 的 write program 也会刷新图像。普通 `reset`（不请求 FK）仍保留缓存图像，直接修改 DoF 后单独调用 FK 也不会使已有 camera 帧失效或重新采样。
+
+当前版本仍不提供 camera ready、帧序号、采样时间、采样位姿，也没有独立的无时间推进 refresh/invalidate API。因而 query 仍是原生缓存读取接口，不能从 `-1` 区分未就绪与全 miss，也不能把当前 site pose 当作缓存图像的采样外参。不通过图像差分或周期推算伪造帧元数据；完整的有效性和采样元数据契约仍需上游接口支持。
+
 ## 目标
 
 - `SceneCfg` 能完整声明程序化场景所需的 asset 与 object。

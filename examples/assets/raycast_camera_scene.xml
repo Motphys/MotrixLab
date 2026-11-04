@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright Motphys Technology Co., Ltd. 2025, 2026
+     SPDX-License-Identifier: Apache-2.0 -->
+<mujoco>
+  <option gravity="0 0 -9.81"/>
+  <worldbody>
+    <geom name="floor" type="plane" size="10 10 0.1"/>
+    <geom name="back_wall" type="box" pos="0 5.5 2.5" size="4.5 0.15 2.5"/>
+    <geom name="left_wall" type="box" pos="-4.5 1.5 2.5" size="0.15 4.0 2.5"/>
+    <geom name="right_wall" type="box" pos="4.5 1.5 2.5" size="0.15 4.0 2.5"/>
+    <geom name="tower_left" type="box" pos="-2.0 2.0 1.4" size="0.65 0.65 1.4"/>
+    <geom name="tower_center" type="box" pos="0.0 3.2 0.8" size="0.55 0.55 0.8"/>
+    <geom name="tower_right" type="box" pos="2.0 2.4 2.0" size="0.75 0.75 2.0"/>
+    <geom name="sphere" type="sphere" pos="-0.9 1.5 1.0" size="0.75"/>
+    <geom name="cylinder" type="cylinder" pos="1.0 1.7 0.65" size="0.55 0.65"/>
+    <geom name="ramp" type="box" pos="0.0 4.3 0.35" size="1.8 0.7 0.35" euler="0 18 0"/>
+    <body name="camera_mount" pos="0 -4.0 1.6"/>
+  </worldbody>
+</mujoco>

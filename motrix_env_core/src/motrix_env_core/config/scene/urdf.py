@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from motrix_env_core.config import configclass
-from motrix_env_core.config.scene._utils import Vec3, Vec4, optional_vec, resolve_path
+from motrix_env_core.config.scene._utils import Vec3, optional_vec, resolve_path
 from motrix_env_core.config.scene.base import ModelFileCfg
+from motrix_env_core.config.scene.site import SiteCfg
 
 
 @configclass(kw_only=True)
@@ -42,24 +43,6 @@ class UrdfGeomCfg:
             raise ValueError(f"UrdfGeomCfg.condim must be one of 1, 3, 4, or 6, got {self.condim}")
         if self.priority is not None and self.priority < 0:
             raise ValueError(f"UrdfGeomCfg.priority must be non-negative, got {self.priority}")
-
-
-@configclass(kw_only=True)
-class SiteCfg:
-    """A simulation-only reference site attached to an imported URDF link."""
-
-    name: str
-    parent_link_name: str
-    position: Vec3 = (0.0, 0.0, 0.0)
-    rotation: Vec4 = (0.0, 0.0, 0.0, 1.0)
-
-    def validate(self) -> None:
-        if not self.name:
-            raise ValueError("SiteCfg.name must not be empty")
-        if not self.parent_link_name:
-            raise ValueError("SiteCfg.parent_link_name must not be empty")
-        optional_vec("SiteCfg.position", self.position, 3)
-        optional_vec("SiteCfg.rotation", self.rotation, 4)
 
 
 @configclass(kw_only=True)
