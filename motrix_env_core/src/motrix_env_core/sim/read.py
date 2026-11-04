@@ -159,6 +159,25 @@ class SensorValuesQuery(SimDataQuery):
 
 
 @dataclass(frozen=True, kw_only=True)
+class RaycastCameraImageQuery(SimDataQuery):
+    """One camera output: scalar ``(N,H,W)`` or world vector ``(N,H,W,3)``.
+
+    Distances are in metres, misses are -1. Points and normals are world-space
+    and zero on misses. Pixels are row-major in the optical frame (+X right,
+    +Y down, +Z forward). Read-only views are updated by program execution;
+    querying never advances physics or forces sensor sampling. This reads the
+    backend cache: without native refresh/status support it may still contain
+    pre-reset measurements, and -1 cannot distinguish unready from all misses.
+    """
+
+    sensor: str
+    field: str = "depth"
+
+    def compile_with(self, compiler: SimDataQueryCompiler, *, key: str) -> None:
+        compiler.compile_raycast_camera_image(key, self.sensor, self.field)
+
+
+@dataclass(frozen=True, kw_only=True)
 class SitePositionQuery(SimDataQuery):
     """World position of one named site, shape ``(rows, 3)``."""
 
@@ -380,6 +399,10 @@ class SimDataQueryCompiler(abc.ABC):
             key: Logical name under which the read is exposed.
             sensors: Ordered sensor names to read.
         """
+
+    def compile_raycast_camera_image(self, key: str, sensor: str, field: str) -> None:
+        """Compile a camera image field; unsupported backends fail explicitly."""
+        raise NotImplementedError(f"{type(self).__name__} does not support raycast camera images")
 
     @abc.abstractmethod
     def compile_site_position(self, key: str, site: str) -> None:

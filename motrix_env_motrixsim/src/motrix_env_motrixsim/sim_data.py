@@ -67,6 +67,13 @@ class _MotrixSimDataQueryCompiler(SimDataQueryCompiler):
         declared: Mapping[str, SimDataQuery],
         canonical_keys: Mapping[str, str],
     ) -> None:
+        self._cameras = {
+            name: model.sensors[index]
+            for index, name in enumerate(model.sensors.names)
+            if isinstance(model.sensors[index], mtx.RaycastCameraSensor)
+        }
+        self._camera_sources: dict[str, str] = {}
+        self._image_views: dict[str, tuple[str, int, int, int, int, int]] = {}
         self._model = model
         self._source = source
         self._declared = declared
@@ -75,6 +82,8 @@ class _MotrixSimDataQueryCompiler(SimDataQueryCompiler):
 
     def _begin_compile(self) -> None:
         self._resolved = {}
+        self._camera_sources = {}
+        self._image_views = {}
 
     def _build_program(self) -> PhysicsReadProgram:
         native = tuple(self._resolved.values())
@@ -88,6 +97,7 @@ class _MotrixSimDataQueryCompiler(SimDataQueryCompiler):
             self._source,
             declared=self._declared,
             canonical_keys=self._canonical_keys,
+            image_views=self._image_views,
         )
 
     def _record(
@@ -157,6 +167,32 @@ class _MotrixSimDataQueryCompiler(SimDataQueryCompiler):
     def compile_sensor_values(self, key: str, sensors: tuple[str, ...]) -> None:
         sensor_names = self._validate_names(sensors, key, "sensors")
         self._record(key, mtx.query.SensorValues(sensor_names), None)
+
+    def compile_raycast_camera_image(self, key: str, sensor: str, field: str) -> None:
+        self._validate_name(sensor, key)
+        camera = self._cameras.get(sensor)
+        if camera is None:
+            raise KeyError(f"Query {key!r} requires a compiled raycast camera sensor named {sensor!r}.")
+        if field not in ("depth", "distance", "point", "normal"):
+            raise ValueError(f"Query {key!r} requests unknown camera output {field!r}.")
+        if not getattr(camera.returns, field):
+            raise ValueError(f"Camera {sensor!r} does not enable output {field!r}.")
+        offset = 0
+        field_offset = 0
+        channels = 0
+        for output in ("depth", "distance", "point", "normal"):
+            if not getattr(camera.returns, output):
+                continue
+            width = 3 if output in ("point", "normal") else 1
+            if output == field:
+                field_offset, channels = offset, width
+            offset += width
+        source_key = self._camera_sources.get(sensor)
+        if source_key is None:
+            source_key = key
+            self._camera_sources[sensor] = key
+            self._record(key, mtx.query.SensorValues((sensor,)))
+        self._image_views[key] = (source_key, camera.height, camera.width, offset, field_offset, channels)
 
     def compile_dof_position(self, key: str) -> None:
         self._record(key, mtx.query.DofPosition())
@@ -320,6 +356,7 @@ class _MotrixSimReadProgram(PhysicsReadProgram):
         source: mtx.SceneData,
         declared: Mapping[str, SimDataQuery],
         canonical_keys: Mapping[str, str],
+        image_views: Mapping[str, tuple[str, int, int, int, int, int]],
     ) -> None:
         self._read = read
         self._source = source
@@ -340,6 +377,13 @@ class _MotrixSimReadProgram(PhysicsReadProgram):
                 field.offset,
                 shape,
             )
+        # Camera fields alias a single native pixel-major sensor read. Slice
+        # before squeezing so vector/scalar views retain the native row stride.
+        raw_views = dict(self._views)
+        for key, (source_key, height, width, stride, offset, channels) in image_views.items():
+            pixels = raw_views[source_key].reshape(num_envs, height, width, stride)
+            view = pixels[..., offset : offset + channels]
+            self._views[key] = view[..., 0] if channels == 1 else view
         # Duplicate declarations alias the canonical region: one physical read.
         for alias, canonical in canonical_keys.items():
             if alias != canonical:

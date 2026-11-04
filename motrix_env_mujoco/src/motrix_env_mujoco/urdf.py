@@ -3,6 +3,7 @@
 
 import mujoco as mj
 
+from motrix_env_core.config.scene.site import SiteCfg
 from motrix_env_core.config.scene.urdf import UrdfFileCfg
 
 
@@ -10,6 +11,38 @@ def _mujoco_quat(rotation: tuple[float, float, float, float]) -> list[float]:
     """Convert the config's xyzw quaternion to MuJoCo's wxyz order."""
     x, y, z, w = rotation
     return [w, x, y, z]
+
+
+def apply_spec_sites(spec: mj.MjSpec, sites: list[tuple[str, SiteCfg]]) -> None:
+    """Mount configured sites onto a MuJoCo specification using literal parent link names."""
+    for name, site in sites:
+        if not name:
+            raise ValueError("Configured model file site entries require a site name")
+        if site.name is not None and site.name != name:
+            raise ValueError(f"SiteCfg.name {site.name!r} does not match the configured site name {name!r}")
+    cfg_by_site = {name: site for name, site in sites}
+    if len(cfg_by_site) != len(sites):
+        raise ValueError("Duplicate configured site name")
+
+    existing_site_names = {site.name for site in spec.sites}
+    duplicate_site_names = sorted(existing_site_names.intersection(cfg_by_site))
+    if duplicate_site_names:
+        raise ValueError(f"Configured site names already exist in model: {duplicate_site_names}")
+
+    existing_body_names = {body.name for body in spec.bodies}
+    parent_link_names = {site.parent_link_name for _, site in sites}
+    unknown_site_links = sorted(parent_link_names.difference(existing_body_names))
+    if unknown_site_links:
+        raise ValueError(f"Configured site parent links do not exist in model: {unknown_site_links}")
+
+    for name, site_cfg in sites:
+        parent = spec.body(site_cfg.parent_link_name)
+        assert parent is not None
+        parent.add_site(
+            name=name,
+            pos=site_cfg.position,
+            quat=_mujoco_quat(site_cfg.rotation),
+        )
 
 
 def apply_urdf_cfgs(spec: mj.MjSpec, cfg: UrdfFileCfg) -> None:
@@ -22,10 +55,6 @@ def apply_urdf_cfgs(spec: mj.MjSpec, cfg: UrdfFileCfg) -> None:
     if len(cfg_by_joint) != len(cfg.joints):
         raise ValueError("Multiple joint configs target the same joint")
 
-    cfg_by_site = {site.name: site for site in cfg.sites}
-    if len(cfg_by_site) != len(cfg.sites):
-        raise ValueError("Duplicate configured site name")
-
     existing_geom_names = {geom.name for geom in spec.geoms}
     unknown_geoms = sorted(set(cfg_by_geom).difference(existing_geom_names))
     if unknown_geoms:
@@ -35,17 +64,6 @@ def apply_urdf_cfgs(spec: mj.MjSpec, cfg: UrdfFileCfg) -> None:
     unknown_joints = sorted(set(cfg_by_joint).difference(existing_joint_names))
     if unknown_joints:
         raise ValueError(f"Configured joints do not exist in model: {unknown_joints}")
-
-    existing_site_names = {site.name for site in spec.sites}
-    duplicate_site_names = sorted(existing_site_names.intersection(cfg_by_site))
-    if duplicate_site_names:
-        raise ValueError(f"Configured site names already exist in model: {duplicate_site_names}")
-
-    existing_body_names = {body.name for body in spec.bodies}
-    parent_link_names = {site.parent_link_name for site in cfg.sites}
-    unknown_site_links = sorted(parent_link_names.difference(existing_body_names))
-    if unknown_site_links:
-        raise ValueError(f"Configured site parent links do not exist in model: {unknown_site_links}")
 
     for name, geom_cfg in cfg_by_geom.items():
         geom = spec.geom(name)
@@ -65,11 +83,4 @@ def apply_urdf_cfgs(spec: mj.MjSpec, cfg: UrdfFileCfg) -> None:
         if joint_cfg.friction_loss is not None:
             joint.frictionloss = joint_cfg.friction_loss
 
-    for site_cfg in cfg.sites:
-        parent = spec.body(site_cfg.parent_link_name)
-        assert parent is not None
-        parent.add_site(
-            name=site_cfg.name,
-            pos=site_cfg.position,
-            quat=_mujoco_quat(site_cfg.rotation),
-        )
+    apply_spec_sites(spec, [(site.name, site) for site in cfg.sites])

@@ -33,12 +33,16 @@ from motrix_env_core.config.scene.sensor import (
     FrameRefKind,
     FrameSensorCfg,
     FrameSensorType,
+    OrthographicCameraCfg,
+    PinholeCameraCfg,
+    RaycastCameraSensorCfg,
 )
+from motrix_env_core.config.scene.site import SiteCfg
 from motrix_env_core.config.scene.urdf import UrdfFileCfg
 from motrix_env_core.config.scene.validation import validate_scene_cfg
 from motrix_env_core.config.sim import SimCfg
 from motrix_env_motrixsim.actuators import apply_actuator_cfgs
-from motrix_env_motrixsim.urdf import apply_urdf_cfgs
+from motrix_env_motrixsim.urdf import _iter_links, apply_link_sites, apply_urdf_cfgs
 
 _CONTACT_REDUCE = {
     ContactSensorReduce.none: mtx.msd.ContactSensorReduce.None_,
@@ -75,8 +79,16 @@ class MotrixSimSceneCompiler(SceneCompiler[mtx.SceneModel]):
         for name, asset in scene.iter_assets():
             self._add_asset(world, name, asset)
         self._apply_visual(world, scene.visual)
+        sites = [(name, obj) for name, obj in scene.iter_objs() if isinstance(obj, SiteCfg)]
+        claimed: dict[str, str] = {}
         for name, obj in scene.iter_objs():
-            self._append_obj(world, name, obj)
+            if isinstance(obj, SiteCfg):
+                continue
+            if isinstance(obj, BodyCfg):
+                self._attach_body(world, obj, name, sites, claimed)
+            else:
+                self._append_obj(world, name, obj)
+        apply_link_sites(world, [(name, site) for name, site in sites if name not in claimed])
         for name, sensor in scene.iter_sensors():
             self._append_sensor(world, name, sensor)
         return world
@@ -98,13 +110,22 @@ class MotrixSimSceneCompiler(SceneCompiler[mtx.SceneModel]):
 
     def _load_model_world(self, model: ModelFileCfg) -> mtx.msd.World:
         if isinstance(model, MjcfFileCfg):
-            return mtx.msd.from_file(str(resolve_path(model.file)))
+            world = mtx.msd.from_file(str(resolve_path(model.file)))
+            self._apply_model_sites(world, model.sites)
+            return world
         if isinstance(model, UrdfFileCfg):
             path = resolve_path(model.file)
             world = mtx.msd.from_str(path.read_text(), format="urdf", file_path=str(path))
             apply_urdf_cfgs(world, model)
             return world
         raise TypeError(f"MotrixSim does not support model file config {type(model).__name__}")
+
+    @staticmethod
+    def _apply_model_sites(world: mtx.msd.World, sites: list[SiteCfg]) -> None:
+        for site in sites:
+            if site.name is None:
+                raise ValueError("Model file site entries require SiteCfg.name")
+        apply_link_sites(world, [(site.name, site) for site in sites])
 
     def _add_asset(self, world: mtx.msd.World, name: str, cfg: SceneAssetCfg) -> None:
         if isinstance(cfg, TextureCfg):
@@ -197,6 +218,41 @@ class MotrixSimSceneCompiler(SceneCompiler[mtx.SceneModel]):
         if cfg.material is not None:
             geom.visual.material = cfg.material
 
+    def _attach_body(
+        self,
+        world: mtx.msd.World,
+        cfg: BodyCfg,
+        body_name: str,
+        sites: list[tuple[str, SiteCfg]],
+        claimed: dict[str, str],
+    ) -> None:
+        model_world = self._load_model_world(cfg.model)
+        apply_actuator_cfgs(model_world, cfg.actuators)
+        # Sites whose parent link belongs to this model mount before attach so
+        # both the site name and its parent follow this body's decoration.
+        model_links = {link.name for body in model_world.hierarchy.bodies for link in _iter_links(body.link)}
+        owned = []
+        for name, site in sites:
+            if site.parent_link_name not in model_links:
+                continue
+            if name in claimed:
+                raise ValueError(
+                    f"Scene site {name!r} parent link {site.parent_link_name!r} exists in multiple "
+                    f"attached bodies ({claimed[name]!r} and {body_name!r}). Use the decorated parent "
+                    "link name or declare the site in the body's model file config."
+                )
+            claimed[name] = body_name
+            owned.append((name, site))
+        apply_link_sites(model_world, owned)
+        world.attach(
+            model_world,
+            other_link_name=cfg.base_link_name,
+            other_translation=cfg.translation,
+            other_rotation=cfg.rotation,
+            other_prefix=cfg.prefix,
+            other_suffix=cfg.suffix,
+        )
+
     def _append_obj(self, world: mtx.msd.World, name: str, cfg: SceneObjCfg) -> None:
         if isinstance(cfg, FlatTerrainCfg):
             geom = mtx.msd.Geometry()
@@ -226,18 +282,6 @@ class MotrixSimSceneCompiler(SceneCompiler[mtx.SceneModel]):
             light.color = list(cfg.color)
             light.cast_shadows = cfg.cast_shadows
             world.hierarchy.lights.append(light)
-            return
-        if isinstance(cfg, BodyCfg):
-            model_world = self._load_model_world(cfg.model)
-            apply_actuator_cfgs(model_world, cfg.actuators)
-            world.attach(
-                model_world,
-                other_link_name=cfg.base_link_name,
-                other_translation=cfg.translation,
-                other_rotation=cfg.rotation,
-                other_prefix=cfg.prefix,
-                other_suffix=cfg.suffix,
-            )
             return
         raise TypeError(f"MotrixSim does not support scene object config {type(cfg).__name__}")
 
@@ -273,6 +317,41 @@ class MotrixSimSceneCompiler(SceneCompiler[mtx.SceneModel]):
             sensor.sensor_type = _FRAME_SENSOR_TYPE[cfg.sensor_type]
             sensor.ref_frame = self._frame_ref(cfg)
             world.sensors.frame.append(sensor)
+            return
+        if isinstance(cfg, RaycastCameraSensorCfg):
+            sensor = mtx.msd.RaycastCameraSensor()
+            sensor.name = name
+            sensor.site = cfg.site
+            sensor.width = cfg.width
+            sensor.height = cfg.height
+            if isinstance(cfg.projection, PinholeCameraCfg):
+                p = cfg.projection
+                sensor.projection = mtx.msd.CameraProjection.pinhole([p.fx, p.fy, p.cx, p.cy])
+            elif isinstance(cfg.projection, OrthographicCameraCfg):
+                p = cfg.projection
+                sensor.projection = mtx.msd.CameraProjection.orthographic([p.pixel_size_x, p.pixel_size_y])
+            sensor.near = cfg.near
+            sensor.far = cfg.far
+            sensor.update_period = cfg.update_period
+            sensor.exclude = {
+                "none": mtx.msd.LidarExclude.None_,
+                "parent_body": mtx.msd.LidarExclude.ParentBody,
+                "parent_subtree": mtx.msd.LidarExclude.ParentSubtree,
+            }[cfg.exclude]
+            sensor.include_geom_groups = (
+                None if cfg.include_geom_groups is None else np.asarray(cfg.include_geom_groups, dtype=np.uint32)
+            )
+            outputs = mtx.msd.RaycastCameraOutputFields()
+            native_fields = {
+                "depth": "depth",
+                "distance": "distance",
+                "point": "point",
+                "normal": "normal",
+            }
+            for field, native_field in native_fields.items():
+                setattr(outputs, native_field, field in cfg.outputs)
+            sensor.returns = outputs
+            world.sensors.raycast_camera.append(sensor)
             return
         raise TypeError(f"MotrixSim does not support scene sensor config {type(cfg).__name__}")
 

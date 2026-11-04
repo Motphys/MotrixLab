@@ -6,9 +6,9 @@ from typing import Any
 
 import motrixsim as mtx
 
+from motrix_env_core.config.scene.site import SiteCfg
 from motrix_env_core.config.scene.urdf import (
     JointCfg,
-    SiteCfg,
     UrdfFileCfg,
     UrdfGeomCfg,
 )
@@ -36,12 +36,32 @@ def _apply_geom_cfg(cfg: UrdfGeomCfg, geom: Any) -> None:
         geom.priority = cfg.priority
 
 
-def _build_site(cfg: SiteCfg) -> mtx.msd.Site:
+def _build_site(name: str, cfg: SiteCfg) -> mtx.msd.Site:
     site = mtx.msd.Site()
-    site.name = cfg.name
+    site.name = name
     site.position = cfg.position
     site.orientation = cfg.rotation
     return site
+
+
+def apply_link_sites(
+    world: mtx.msd.World,
+    sites: list[tuple[str, SiteCfg]],
+) -> None:
+    """Mount named sites without replacing imported sites or duplicating name ownership."""
+    if not sites:
+        return
+    links = {link.name: link for body in world.hierarchy.bodies for link in _iter_links(body.link)}
+    existing = {site.name for site in world.hierarchy.sites}
+    existing.update(site.name for link in links.values() for site in link.sites)
+    for name, cfg in sites:
+        if name in existing:
+            raise ValueError(f"Configured site name already exists in model: {name!r}")
+        if cfg.parent_link_name not in links:
+            raise ValueError(f"Configured site parent link does not exist in model: {cfg.parent_link_name!r}")
+        existing.add(name)
+    for name, cfg in sites:
+        links[cfg.parent_link_name].sites.append(_build_site(name, cfg))
 
 
 def apply_urdf_cfgs(world: mtx.msd.World, cfg: UrdfFileCfg) -> None:
@@ -55,7 +75,9 @@ def apply_urdf_cfgs(world: mtx.msd.World, cfg: UrdfFileCfg) -> None:
 
     cfg_by_site: dict[str, SiteCfg] = {}
     for site_cfg in cfg.sites:
-        site_cfg.validate()
+        site_cfg.validate(site_cfg.name)
+        if site_cfg.name is None:
+            raise ValueError("UrdfFileCfg.sites entries require SiteCfg.name")
         if site_cfg.name in cfg_by_site:
             raise ValueError(f"Duplicate configured site name {site_cfg.name!r}")
         cfg_by_site[site_cfg.name] = site_cfg
@@ -111,5 +133,4 @@ def apply_urdf_cfgs(world: mtx.msd.World, cfg: UrdfFileCfg) -> None:
     if unknown_site_links:
         raise ValueError(f"Configured site parent links do not exist in model: {unknown_site_links}")
 
-    for site_cfg in cfg.sites:
-        links_by_name[site_cfg.parent_link_name].sites.append(_build_site(site_cfg))
+    apply_link_sites(world, [(site.name, site) for site in cfg.sites])

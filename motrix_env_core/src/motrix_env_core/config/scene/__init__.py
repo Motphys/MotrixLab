@@ -40,6 +40,7 @@ from motrix_env_core.config.scene.sensor import (
     FrameSensorCfg,
     FrameSensorType,
 )
+from motrix_env_core.config.scene.site import SiteCfg
 from motrix_env_core.config.scene.terrain import (
     CompositeTerrainGeneratorCfg,
     DiscreteObstaclesTerrainGeneratorCfg,
@@ -52,7 +53,6 @@ from motrix_env_core.config.scene.terrain import (
 )
 from motrix_env_core.config.scene.urdf import (
     JointCfg,
-    SiteCfg,
     UrdfFileCfg,
     UrdfGeomCfg,
 )

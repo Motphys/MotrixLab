@@ -40,12 +40,14 @@ from motrix_env_core.config.scene.sensor import (
     FrameRefKind,
     FrameSensorCfg,
     FrameSensorType,
+    RaycastCameraSensorCfg,
 )
+from motrix_env_core.config.scene.site import SiteCfg
 from motrix_env_core.config.scene.urdf import UrdfFileCfg
 from motrix_env_core.config.scene.validation import validate_scene_cfg
 from motrix_env_core.config.sim import SimCfg
 from motrix_env_mujoco.actuators import apply_actuator_cfgs
-from motrix_env_mujoco.urdf import apply_urdf_cfgs
+from motrix_env_mujoco.urdf import apply_spec_sites, apply_urdf_cfgs
 
 _CONTACT_DATA_BITS = {
     ContactReportField.found: 1,
@@ -101,8 +103,16 @@ class MuJoCoSceneCompiler(SceneCompiler[mj.MjModel]):
         for name, asset in scene.iter_assets():
             self._add_asset(spec, name, asset)
         self._apply_visual(spec, scene.visual)
+        sites = [(name, obj) for name, obj in scene.iter_objs() if isinstance(obj, SiteCfg)]
+        claimed: dict[str, str] = {}
         for name, obj in scene.iter_objs():
-            self._append_obj(spec, name, obj)
+            if isinstance(obj, SiteCfg):
+                continue
+            if isinstance(obj, BodyCfg):
+                self._attach_body(spec, obj, name, sites, claimed)
+            else:
+                self._append_obj(spec, name, obj)
+        apply_spec_sites(spec, [(name, site) for name, site in sites if name not in claimed])
         for name, sensor in scene.iter_sensors():
             self._append_sensor(spec, name, sensor)
         return spec
@@ -128,7 +138,9 @@ class MuJoCoSceneCompiler(SceneCompiler[mj.MjModel]):
 
     def _load_model_spec(self, model: ModelFileCfg) -> mj.MjSpec:
         if isinstance(model, MjcfFileCfg):
-            return mj.MjSpec.from_file(str(resolve_path(model.file)))
+            spec = mj.MjSpec.from_file(str(resolve_path(model.file)))
+            apply_spec_sites(spec, [(site.name, site) for site in model.sites])
+            return spec
         if isinstance(model, UrdfFileCfg):
             spec = mj.MjSpec.from_file(str(resolve_path(model.file)))
             apply_urdf_cfgs(spec, model)
@@ -231,6 +243,46 @@ class MuJoCoSceneCompiler(SceneCompiler[mj.MjModel]):
             "priority": cfg.priority,
         }
 
+    def _attach_body(
+        self,
+        spec: mj.MjSpec,
+        cfg: BodyCfg,
+        body_name: str,
+        sites: list[tuple[str, SiteCfg]],
+        claimed: dict[str, str],
+    ) -> None:
+        robot_spec = self._load_model_spec(cfg.model)
+        apply_actuator_cfgs(robot_spec, cfg.actuators)
+        base_link = robot_spec.body(cfg.base_link_name)
+        if base_link is None:
+            raise ValueError(f"Attached body base link {cfg.base_link_name!r} does not exist in model")
+        if base_link.parent is not robot_spec.worldbody:
+            raise ValueError(f"MuJoCo requires BodyCfg.base_link_name {cfg.base_link_name!r} to be a root body")
+        first_root = robot_spec.worldbody.first_body()
+        if first_root is None or first_root.name != cfg.base_link_name:
+            raise ValueError(f"MuJoCo requires BodyCfg.base_link_name {cfg.base_link_name!r} to be the first root body")
+        # Sites whose parent link belongs to this model mount before attach so
+        # both the site name and its parent follow this body's decoration.
+        model_bodies = {body.name for body in robot_spec.bodies}
+        owned = []
+        for name, site in sites:
+            if site.parent_link_name not in model_bodies:
+                continue
+            if name in claimed:
+                raise ValueError(
+                    f"Scene site {name!r} parent link {site.parent_link_name!r} exists in multiple "
+                    f"attached bodies ({claimed[name]!r} and {body_name!r}). Use the decorated parent "
+                    "link name or declare the site in the body's model file config."
+                )
+            claimed[name] = body_name
+            owned.append((name, site))
+        apply_spec_sites(robot_spec, owned)
+        placement = spec.worldbody.add_frame(
+            pos=cfg.translation,
+            quat=_mujoco_quat(cfg.rotation),
+        )
+        spec.attach(robot_spec, prefix=cfg.prefix or "", suffix=cfg.suffix or "", frame=placement)
+
     def _append_obj(self, spec: mj.MjSpec, name: str, cfg: SceneObjCfg) -> None:
         if isinstance(cfg, FlatTerrainCfg):
             spec.worldbody.add_geom(
@@ -260,28 +312,11 @@ class MuJoCoSceneCompiler(SceneCompiler[mj.MjModel]):
                 castshadow=cfg.cast_shadows,
             )
             return
-        if isinstance(cfg, BodyCfg):
-            robot_spec = self._load_model_spec(cfg.model)
-            apply_actuator_cfgs(robot_spec, cfg.actuators)
-            base_link = robot_spec.body(cfg.base_link_name)
-            if base_link is None:
-                raise ValueError(f"Attached body base link {cfg.base_link_name!r} does not exist in model")
-            if base_link.parent is not robot_spec.worldbody:
-                raise ValueError(f"MuJoCo requires BodyCfg.base_link_name {cfg.base_link_name!r} to be a root body")
-            first_root = robot_spec.worldbody.first_body()
-            if first_root is None or first_root.name != cfg.base_link_name:
-                raise ValueError(
-                    f"MuJoCo requires BodyCfg.base_link_name {cfg.base_link_name!r} to be the first root body"
-                )
-            placement = spec.worldbody.add_frame(
-                pos=cfg.translation,
-                quat=_mujoco_quat(cfg.rotation),
-            )
-            spec.attach(robot_spec, prefix=cfg.prefix or "", suffix=cfg.suffix or "", frame=placement)
-            return
         raise TypeError(f"MuJoCo does not support scene object config {type(cfg).__name__}")
 
     def _append_sensor(self, spec: mj.MjSpec, name: str, cfg: SceneSensorCfg) -> None:
+        if isinstance(cfg, RaycastCameraSensorCfg):
+            raise NotImplementedError(f"MuJoCo does not support RaycastCameraSensorCfg sensor {name!r}")
         if isinstance(cfg, ContactSensorCfg):
             data_mask = sum(_CONTACT_DATA_BITS[field] for field in cfg.data)
             spec.add_sensor(
