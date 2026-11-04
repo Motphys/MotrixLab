@@ -102,7 +102,9 @@ protected branches.
 
 ### File: `docker-build.yml`
 
-Manually builds and pushes Docker images to Docker Hub after a release.
+Manually builds and pushes runtime-profile Docker images to Docker Hub after a
+release. The workflow uses one multi-target Dockerfile and builds each profile
+in an independent matrix job.
 
 #### Trigger Conditions
 
@@ -116,13 +118,13 @@ step and are not published.
 
 #### What It Does
 
-1. **Extracts Version**: Reads the version from `pyproject.toml` (currently `0.3.0`)
-2. **Builds Docker Image**: Uses the Dockerfile in `docker/Dockerfile`
-3. **Pushes Multiple Tags**:
-   - `motphys/motrixlab:v0.3.0` (version tag)
-   - `motphys/motrixlab:v0.3` (major.minor version tag)
-   - `motphys/motrixlab:0.3.0` (version from `pyproject.toml`)
-   - `motphys/motrixlab:latest` (always points to the latest version)
+1. **Extracts Version**: Reads the version from `pyproject.toml`
+2. **Fetches LFS assets**: Robot meshes and motion data are required by the images
+3. **Builds Runtime Profiles**: Builds `train-cuda`, `train-cuda-jax`,
+   `train-rocm`, and `deploy`
+4. **Pushes Profile Tags**: Each profile receives versioned tags
+5. **Updates Default Aliases**: The CUDA training profile also receives the
+   unqualified version, major.minor, and `latest` tags
 
 #### Required Secrets
 
@@ -141,52 +143,66 @@ To add secrets:
 #### Usage Example
 
 1. Complete the release pipeline and wait for the GitHub Release.
-2. Open **Actions → Build and Push Docker Image → Run workflow**.
+2. Open **Actions → Build and Push Docker Images → Run workflow**.
 3. Select the `stable` branch and run the workflow.
 4. Monitor the run at <https://github.com/Motphys/MotrixLab/actions>.
 
 #### Built Image Tags
 
-After the workflow completes, the following Docker images will be available:
+After the workflow completes, the following runtime profiles will be available.
+The examples use version `0.4.0`; replace it with the released version.
 
 ```bash
-# Pull the latest version
+# Default CUDA training profile; `cuda` tracks the latest CUDA release
+docker pull motphys/motrixlab:0.4.0-cuda
+docker pull motphys/motrixlab:cuda
+
+# CUDA training profile with the SKRL JAX runtime; `cuda-jax` tracks its latest release
+docker pull motphys/motrixlab:0.4.0-cuda-jax
+docker pull motphys/motrixlab:cuda-jax
+
+# ROCm training profile; `rocm` tracks the latest ROCm release
+docker pull motphys/motrixlab:0.4.0-rocm
+docker pull motphys/motrixlab:rocm
+
+# ONNX policy deployment profile; `deploy` tracks the latest deployment release
+docker pull motphys/motrixlab:0.4.0-deploy
+docker pull motphys/motrixlab:deploy
+
+# Short alias for the default CUDA profile
 docker pull motphys/motrixlab:latest
-
-# Pull a specific version
-docker pull motphys/motrixlab:0.3.0
-
-# Pull the major.minor version tag
-docker pull motphys/motrixlab:v0.3
 ```
 
 #### Workflow Features
 
-- ✅ **Optimized Caching**: Uses GitHub Actions cache to speed up builds
-- ✅ **Multi-tag Support**: Automatically tags with version, major.minor, and latest
+- ✅ **Optimized Caching**: Uses a GitHub Actions cache scope for each profile
+- ✅ **Multi-profile Support**: Publishes CUDA, CUDA+JAX, ROCm, and deployment images
 - ✅ **Version Extraction**: Automatically reads version from pyproject.toml
-- ✅ **Docker Layer Caching**: Uses UV cache mounts for faster dependency installation
+- ✅ **Dependency Layer Caching**: Installs locked dependencies before workspace source
+- ✅ **Git LFS Checkout**: Fetches robot meshes and motion data before building
 - ✅ **Manual Trigger**: Does not run automatically when a release tag is pushed
 
 #### Docker Image Contents
 
-The resulting Docker image includes:
+| Profile | Contents |
+| --- | --- |
+| `train-cuda` | CUDA Torch, SKRL, RSLRL, FastSAC, MotrixSim, and TensorBoard |
+| `train-cuda-jax` | CUDA training profile plus the SKRL JAX runtime |
+| `train-rocm` | ROCm Torch training profile |
+| `deploy` | ONNX Runtime deployment profile with MotrixSim and MuJoCo backends |
 
-- Base: NVIDIA CUDA 12.8.1 Runtime + Ubuntu 24.04
-- UV package manager
-- MotrixLab workspace packages
-- SKRL dependencies for both JAX and PyTorch backends
-- TensorBoard
-- MotrixSim physics engine
+The `unitree` target is intentionally not published by this workflow because
+the default build does not contain the proprietary SDK2 native libraries.
 
 #### Testing the Docker Image Locally
 
 Before tagging a release, you can test the Docker build locally:
 
 ```bash
-cd docker
-docker build -t motphys/motrixlab:test .
-docker run --gpus all motphys/motrixlab:test scripts/view.py env=cartpole
+git lfs pull
+docker build -f docker/Dockerfile --target train-cuda \
+  -t motphys/motrixlab:test-cuda .
+docker run --rm --gpus all motphys/motrixlab:test-cuda --version
 ```
 
 #### Troubleshooting

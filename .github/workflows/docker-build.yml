@@ -1,11 +1,11 @@
-name: Build and Push Docker Image
+name: Build and Push Docker Images
 
 on:
   workflow_dispatch:
 
 env:
   DOCKER_IMAGE: motphys/motrixlab
-  DOCKERFILE_PATH: docker
+  DOCKERFILE: docker/Dockerfile
 
 jobs:
   build-and-push:
@@ -14,6 +14,22 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: train-cuda
+            suffix: cuda
+            default: "true"
+          - target: train-cuda-jax
+            suffix: cuda-jax
+            default: "false"
+          - target: train-rocm
+            suffix: rocm
+            default: "false"
+          - target: deploy
+            suffix: deploy
+            default: "false"
 
     steps:
       - name: Free up disk space
@@ -45,6 +61,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          lfs: true
 
       - name: Verify release tag is on stable
         run: |
@@ -62,6 +79,28 @@ jobs:
           echo "Extracted version: ${VERSION}"
           echo "Extracted major.minor version: ${MAJOR_MINOR}"
 
+      - name: Prepare image tags
+        id: tags
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          MAJOR_MINOR: ${{ steps.version.outputs.major_minor }}
+          SUFFIX: ${{ matrix.suffix }}
+          DEFAULT: ${{ matrix.default }}
+        run: |
+          tags="${DOCKER_IMAGE}:${VERSION}-${SUFFIX}"
+          tags="${tags}"$'\n'"${DOCKER_IMAGE}:${MAJOR_MINOR}-${SUFFIX}"
+          tags="${tags}"$'\n'"${DOCKER_IMAGE}:${SUFFIX}"
+          if [[ "$DEFAULT" == "true" ]]; then
+            tags="${tags}"$'\n'"${DOCKER_IMAGE}:${VERSION}"
+            tags="${tags}"$'\n'"${DOCKER_IMAGE}:${MAJOR_MINOR}"
+            tags="${tags}"$'\n'"${DOCKER_IMAGE}:latest"
+          fi
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "$tags"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
@@ -71,25 +110,16 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
-        with:
-          images: ${{ env.DOCKER_IMAGE }}
-          tags: |
-            type=raw,value=v${{ steps.version.outputs.version }}
-            type=raw,value=v${{ steps.version.outputs.major_minor }}
-            type=raw,value=${{ steps.version.outputs.version }}
-            type=raw,value=latest
-
-      - name: Build and push Docker image
+      - name: Build and push image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          file: ${{ env.DOCKERFILE_PATH }}/Dockerfile
+          file: ${{ env.DOCKERFILE }}
+          target: ${{ matrix.target }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=min
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            MOTRIXLAB_VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha,scope=motrixlab-${{ matrix.target }}
+          cache-to: type=gha,scope=motrixlab-${{ matrix.target }},mode=min
           provenance: false

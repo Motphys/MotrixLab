@@ -1,10 +1,58 @@
-# Exclude all files and directories.
+# Runtime images need the locked workspace and package assets only. Run
+# `git lfs pull` before building so copied assets contain real data.
 *
 
-# Unexclude specified files/directories.
-!motrix_envs/**/*
-!motrix_rl/**/*
-!scripts/**/*
-!pyproject.toml
-!uv.lock
-!uv.toml
+!/.dockerignore
+!/pyproject.toml
+!/uv.lock
+!/docker/
+!/docker/Dockerfile
+!/configs/
+!/configs/**
+
+!/motrixlab/
+!/motrixlab/**
+!/motrix_robots/
+!/motrix_robots/**
+!/motrix_deploy/
+!/motrix_deploy/**
+!/motrix_deploy_mujoco/
+!/motrix_deploy_mujoco/**
+!/motrix_deploy_motrixsim/
+!/motrix_deploy_motrixsim/**
+!/motrix_deploy_unitree/
+!/motrix_deploy_unitree/**
+!/motrix_unitree_native/
+!/motrix_unitree_native/**
+!/motrix_deploy_tasks/
+!/motrix_deploy_tasks/**
+!/motrix_env_core/
+!/motrix_env_core/**
+!/motrix_env_motrixsim/
+!/motrix_env_motrixsim/**
+!/motrix_env_mujoco/
+!/motrix_env_mujoco/**
+!/motrix_envs/
+!/motrix_envs/**
+!/motrix_rl/
+!/motrix_rl/**
+!/motrix_rl_builtin/
+!/motrix_rl_builtin/**
+!/motrix_rl_skrl/
+!/motrix_rl_skrl/**
+!/motrix_rl_rslrl/
+!/motrix_rl_rslrl/**
+
+# Package tests and local build artifacts are not part of runtime installs.
+**/.cache/
+**/.hypothesis/
+**/.mypy_cache/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/build/
+**/dist/
+**/tests/
+runs/
