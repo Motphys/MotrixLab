@@ -253,6 +253,7 @@ class _Model:
         self.links = (_Link(2, "root"), _Link(7, "foot"))
         self._links = {link.name: link for link in self.links}
         self.reports = SimpleNamespace(contact_forces=False)
+        self.sensors = SimpleNamespace(names=())
         self.plans: list[_QueryPlan] = []
         self.calls: list[str] = []
         self.sites = (_PoseObject(1, "tip", 40.0, self.calls, "site"),)

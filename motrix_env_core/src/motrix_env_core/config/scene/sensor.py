@@ -1,10 +1,126 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+import math
 from enum import Enum
+from typing import Literal, TypeAlias
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene.base import SceneSensorCfg
+
+RaycastCameraOutput: TypeAlias = Literal[
+    "depth",
+    "distance",
+    "point",
+    "normal",
+]
+RaycastCameraExclude: TypeAlias = Literal["none", "parent_body", "parent_subtree"]
+_RAYCAST_CAMERA_OUTPUTS: tuple[RaycastCameraOutput, ...] = (
+    "depth",
+    "distance",
+    "point",
+    "normal",
+)
+
+
+@configclass(kw_only=True)
+class PinholeCameraCfg:
+    """Pixel intrinsics for +X right, +Y down, +Z forward optical coordinates.
+
+    Rays pass through pixel centers ``(u + 0.5, v + 0.5)``. Principal points
+    outside the image are supported; only focal lengths must be positive.
+    """
+
+    fx: float
+    fy: float
+    cx: float
+    cy: float
+
+    def validate(self) -> None:
+        if not all(math.isfinite(value) for value in (self.fx, self.fy, self.cx, self.cy)):
+            raise ValueError("PinholeCameraCfg intrinsics must be finite")
+        if self.fx <= 0 or self.fy <= 0:
+            raise ValueError("PinholeCameraCfg focal lengths must be positive")
+
+    @classmethod
+    def from_fov(
+        cls, *, width: int, height: int, horizontal_fov: float, vertical_fov: float | None = None
+    ) -> "PinholeCameraCfg":
+        """Create centered intrinsics from FOV angles in degrees.
+
+        Omitting vertical FOV uses square pixels (``fy == fx``), deriving the
+        vertical field of view from the image aspect ratio.
+        """
+        if type(width) is not int or type(height) is not int or width <= 0 or height <= 0:
+            raise ValueError("Camera width and height must be positive integers")
+        for angle in (horizontal_fov, vertical_fov):
+            if angle is not None and (not math.isfinite(angle) or not 0 < angle < 180):
+                raise ValueError("Camera FOV must be finite and strictly between 0 and 180 degrees")
+        fx = width / (2 * math.tan(math.radians(horizontal_fov) / 2))
+        fy = fx if vertical_fov is None else height / (2 * math.tan(math.radians(vertical_fov) / 2))
+        return cls(fx=fx, fy=fy, cx=width / 2, cy=height / 2)
+
+
+@configclass(kw_only=True)
+class OrthographicCameraCfg:
+    """Spacing in meters between parallel +Z rays on a centered pixel grid."""
+
+    pixel_size_x: float
+    pixel_size_y: float
+
+    def validate(self) -> None:
+        if any(not math.isfinite(value) or value <= 0 for value in (self.pixel_size_x, self.pixel_size_y)):
+            raise ValueError("OrthographicCameraCfg pixel sizes must be finite and positive")
+
+
+@configclass(kw_only=True)
+class RaycastCameraSensorCfg(SceneSensorCfg):
+    """Physics raycast camera mounted on a named site in the assembled scene.
+
+    Near/far are inclusive optical-axis depths, not distances along oblique rays.
+    Filtering occurs before closest-hit selection; range rejection occurs after it,
+    so a surface closer than near still occludes farther surfaces. A zero-distance
+    nearest hit invalidates the pixel. ``update_period=0`` samples every physics
+    step; other values are seconds. Group IDs are collision geometry groups (0..255),
+    not collision masks: None includes all groups and [] includes none.
+    """
+
+    site: str
+    width: int
+    height: int
+    projection: PinholeCameraCfg | OrthographicCameraCfg
+    far: float
+    near: float = 0.0
+    update_period: float = 0.0
+    exclude: RaycastCameraExclude = "parent_body"
+    include_geom_groups: list[int] | None = None
+    outputs: tuple[RaycastCameraOutput, ...] = ("depth",)
+
+    def validate(self, name: str) -> None:
+        super().validate(name)
+        if not self.site:
+            raise ValueError("RaycastCameraSensorCfg.site must not be empty")
+        if type(self.width) is not int or type(self.height) is not int or self.width <= 0 or self.height <= 0:
+            raise ValueError("RaycastCameraSensorCfg width and height must be positive integers")
+        if not isinstance(self.projection, (PinholeCameraCfg, OrthographicCameraCfg)):
+            raise TypeError("RaycastCameraSensorCfg.projection must be PinholeCameraCfg or OrthographicCameraCfg")
+        self.projection.validate()
+        if not math.isfinite(self.near) or not math.isfinite(self.far) or not 0 <= self.near < self.far:
+            raise ValueError("RaycastCameraSensorCfg requires finite 0 <= near < far")
+        if not math.isfinite(self.update_period) or self.update_period < 0:
+            raise ValueError("RaycastCameraSensorCfg.update_period must be finite and non-negative")
+        if self.exclude not in {"none", "parent_body", "parent_subtree"}:
+            raise ValueError("RaycastCameraSensorCfg.exclude must be one of: none, parent_body, parent_subtree")
+        if self.include_geom_groups is not None and any(
+            type(group) is not int or not 0 <= group <= 255 for group in self.include_geom_groups
+        ):
+            raise ValueError("RaycastCameraSensorCfg.include_geom_groups must contain integers in 0..255")
+        if not self.outputs or any(field not in _RAYCAST_CAMERA_OUTPUTS for field in self.outputs):
+            raise ValueError(f"RaycastCameraSensorCfg.outputs must contain only {_RAYCAST_CAMERA_OUTPUTS}")
+        if len(set(self.outputs)) != len(self.outputs):
+            raise ValueError("RaycastCameraSensorCfg.outputs must be unique")
+        if not {"depth", "distance"}.intersection(self.outputs):
+            raise ValueError("RaycastCameraSensorCfg.outputs requires at least one distance field")
 
 
 class ContactReportField(str, Enum):
