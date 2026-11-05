@@ -3,17 +3,25 @@
 
 """Shared NumPy/Torch batch quaternion operations, using xyzw convention."""
 
-from motrix_env_core.math.namespace import array_namespace
+import array_api_compat.numpy as _numpy_namespace
+import array_api_compat.torch as _torch_namespace
+import torch as _torch  # noqa: F401  (namespace check only)
+
+
+def _array_namespace(value, *others):
+    # A single isinstance check keeps Dynamo specialization possible inside
+    # compiled graphs; array_api_compat's own dispatcher is too dynamic here.
+    return _torch_namespace if isinstance(value, _torch.Tensor) else _numpy_namespace
 
 
 def inverse(q):
-    xp = array_namespace(q)
+    xp = _array_namespace(q)
     norm = xp.maximum(xp.sum(q * q, axis=-1, keepdims=True), xp.full_like(q[..., :1], 1e-12))
     return xp.concat((-q[..., :3], q[..., 3:]), axis=-1) / norm
 
 
 def mul(lhs, rhs):
-    xp = array_namespace(lhs, rhs)
+    xp = _array_namespace(lhs, rhs)
     x1, y1, z1, w1 = (lhs[..., i] for i in range(4))
     x2, y2, z2, w2 = (rhs[..., i] for i in range(4))
     return xp.stack(
@@ -28,7 +36,7 @@ def mul(lhs, rhs):
 
 
 def rotate_inverse(q, vector):
-    xp = array_namespace(q, vector)
+    xp = _array_namespace(q, vector)
     x, y, z, w = (q[..., i] for i in range(4))
     vx, vy, vz = (vector[..., i] for i in range(3))
     cx = y * vz - z * vy - w * vx
@@ -38,7 +46,7 @@ def rotate_inverse(q, vector):
 
 
 def matrix6d(q):
-    xp = array_namespace(q)
+    xp = _array_namespace(q)
     x, y, z, w = (q[..., i] for i in range(4))
     s = 2 / xp.sum(q * q, axis=-1)
     return xp.stack(
@@ -60,7 +68,7 @@ def relative_orientation(reference, target):
 
 def align_targets(robot_position, robot_quat, reference_position, reference_quat, body_position, body_quat):
     """Yaw-align corpus bodies, anchoring robot XY and corpus reference Z."""
-    xp = array_namespace(robot_position)
+    xp = _array_namespace(robot_position)
     delta = mul(robot_quat, inverse(reference_quat))
     x, y, z, w = (delta[..., i] for i in range(4))
     yaw = xp.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
@@ -75,7 +83,7 @@ def align_targets(robot_position, robot_quat, reference_position, reference_quat
 
 def rotation_distance(lhs, rhs):
     """Geodesic angle between unit quaternions, without normalization."""
-    xp = array_namespace(lhs, rhs)
+    xp = _array_namespace(lhs, rhs)
     x1, y1, z1, w1 = (lhs[..., i] for i in range(4))
     x2, y2, z2, w2 = (rhs[..., i] for i in range(4))
     dx = -w1 * x2 + x1 * w2 - y1 * z2 + z1 * y2
@@ -88,7 +96,7 @@ def rotation_distance(lhs, rhs):
 
 def from_euler(euler):
     """Quaternion (xyzw) from ``(..., 3)`` roll/pitch/yaw angles; trig keeps the input dtype."""
-    xp = array_namespace(euler)
+    xp = _array_namespace(euler)
     roll, pitch, yaw = (euler[..., i] for i in range(3))
     cy = xp.cos(yaw * 0.5)
     sy = xp.sin(yaw * 0.5)
