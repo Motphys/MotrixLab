@@ -21,11 +21,12 @@ RNG draw 顺序与 eager 完全一致；Inductor 重结合仅带来 ≤1e-8 量�
 
 ## 解析与执行的分工
 
-- `ManagerProgramResolver`（backend-neutral）负责输入准备：flatten
-  `@kernel_data` term 与 `ManagerContext`，构建 `ManagerLayout`、
-  `KernelInputSource`/`ReadPlan`、`PreparedInvocation`（每个 term 的
-  dispatcher、参数表达式/值/prepared index），并校验签名注解契约与
-  签名契约。它不做任何代码生成、缓存或 dispatcher 编译。
+- `ManagerProgramResolver`（backend-neutral）负责输入准备：把 `@kernel_data`
+  term 参数与 `ManagerContext` 解析为 path-keyed 的 resolved tree（叶子持有
+  live value 引用与 `PER_ENV`/`SHARED` scope），构建 `ManagerLayout`、
+  `ReadPlan`、`PreparedInvocation`（每个 term 的 dispatcher 与 resolved
+  argument 描述符），并校验签名注解契约与签名契约。它不做任何代码生成、
+  缓存或 dispatcher 编译。
 - `TorchManagerRuntime` 消费这些元数据并执行 term 调度；所有写入落回
   host 持有的 numpy 缓冲（reward terms/masks/obs/command state/metrics），
   `ManagerEnv` 的公共 API 与状态面保持不变。
@@ -36,14 +37,18 @@ RNG draw 顺序与 eager 完全一致；Inductor 重结合仅带来 ≤1e-8 量�
   （raw、`weighted = raw * weight * dt`、Σ）→ terminations（masks、OR）→
   command `advance`（rewards/terminations 读 pre-advance command state）；
   observe 按 group/term 顺序写 obs 切片；reset = command `reset_env`
-  （lane-gathered）→ sim-reset terms 写 compact 行。
+  （masked）→ sim-reset terms 写 compact 行。
 - RNG：per-lane SplitMix64（`torch_manager.rand.draw_uniform`），批量语义为
   term 一次 draw `count=k` 等价于 per-lane 连续调用 k 次。
-- 输入元组持久复用：simulator-backed 数组由 read program 原地重写，
-  `_TensorCache` 在同一输入元组上缓存 tensor 视图。
-- reset 路径对 `PER_ENV` slot 做 lane gather，term 写 gathered 行后 scatter
-  回常驻缓冲；compact sim-reset write 缓冲布局与 `SimResetRuntime.buffers`
-  一致。
+- 解析树持久复用：resolver 产出的 resolved tree 是三个 kernel 共用的持久
+  anchor；simulator-backed 数组叶子由 read program 原地重写，
+  `_TensorCache` 在同一 anchor 上按叶子值身份缓存 tensor 视图，0 维
+  int/float/bool 叶子转为 Python 标量（graph-break-free 编译的关键）。
+- reset 路径是静态全批 masked 设计：选中的 lane 由布尔掩码选择，
+  `PER_ENV` 叶子在 reset term 首次访问时 clone（sim 叶子除外），term 写
+  clone 行后以 `where(mask, clone, original)` 合并回常驻缓冲，未选中 lane
+  （含 RNG 状态）保持不变；compact sim-reset write 缓冲布局与
+  `SimResetRuntime.buffers` 一致。
 
 ## 批量 term 约定
 

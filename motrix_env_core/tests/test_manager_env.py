@@ -16,7 +16,6 @@ import numpy as np
 import pytest
 import torch
 
-import motrix_env_core.manager.env as manager_env_module
 from motrix_env_core.base import EnvCfg  # noqa: E402
 from motrix_env_core.config import configclass  # noqa: E402
 from motrix_env_core.config.scene import SceneCfg  # noqa: E402
@@ -438,7 +437,7 @@ def test_multiple_action_terms_concatenate_spaces_and_receive_ordered_slices() -
     np.testing.assert_array_equal(env.action_terms["test"].state.source, actions[:, :1])
     np.testing.assert_array_equal(env.action_terms["second"].state.source, actions[:, 1:])
     env._refresh_sim_reads()
-    env._execute_observe_kernel(env._kernel_inputs)
+    env._execute_observe_kernel(env._resolved_inputs)
     np.testing.assert_array_equal(state.obs.policy, actions)
     assert [(term.name, term.input_slice) for term in env.manager_layout.actions] == [
         ("test", slice(0, 1)),
@@ -528,10 +527,11 @@ def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> 
     action = env.action_terms["test"]
     assert isinstance(action, ActionTerm)
     command = _counter_command(env)
-    context_sources = [slot for slot in env.manager_layout.inputs if "manager_context" in slot.source]
-    scopes = {slot.source: slot.scope.value for slot in context_sources}
-    assert scopes["manager_context.actions.test.action_queue"] == "per_env"
-    assert scopes["manager_context.actions.test.action_ptr"] == "shared"
+    assert env._compiled_manager_program is not None
+    context_tree = env._compiled_manager_program.prepared_trees[env._compiled_manager_program.context.tree_index]
+    scopes = {path: leaf.scope for path, leaf in context_tree.leaves.items()}
+    assert scopes[("actions", "test", "action_queue")].value == "per_env"
+    assert scopes[("actions", "test", "action_ptr")].value == "shared"
     assert [term.output_slice for term in env.manager_layout.observations["policy"].terms] == [
         slice(0, 2),
         slice(2, 3),
@@ -561,23 +561,21 @@ def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> 
     assert warmup.signatures
 
 
-def test_read_plan_uses_compile_time_flat_inputs_without_runtime_flattening(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_read_plan_refreshes_resolved_leaves_in_place_without_rebuilding() -> None:
     env = _ManagerEnv(num_envs=3)
     env.init_state()
     assert env._compiled_manager_program is not None
-    read_plan = env._compiled_manager_program.read_plan
-    inputs = read_plan.read(env)
+    program = env._compiled_manager_program
+    context_tree = program.prepared_trees[program.context.tree_index]
+    leaves_before = dict(context_tree.leaves)
+    inputs_before = env._resolved_inputs
 
-    def fail_runtime_flatten(value: object) -> tuple[object, ...]:
-        del value
-        raise AssertionError("flatten_kernel_data() must not run after manager compilation")
+    program.read_plan.read(env)
+    program.read_plan.read(env, np.asarray([0, 2], dtype=np.int64))
 
-    monkeypatch.setattr(manager_env_module, "flatten_kernel_data", fail_runtime_flatten)
-
-    assert read_plan.read(env) is inputs
-    assert read_plan.read(env, np.asarray([0, 2], dtype=np.int64)) is inputs
+    assert program.prepared_trees[program.context.tree_index] is context_tree
+    assert env._resolved_inputs is inputs_before
+    assert all(context_tree.leaves[path] is leaf for path, leaf in leaves_before.items())
 
 
 def test_command_evaluation_updates_state_only_in_evaluate_kernel() -> None:
@@ -591,7 +589,7 @@ def test_command_evaluation_updates_state_only_in_evaluate_kernel() -> None:
     derived.fill(-1.0)
 
     env._refresh_sim_reads()
-    inputs = env._kernel_inputs
+    inputs = env._resolved_inputs
     env._execute_observe_kernel(inputs)
     np.testing.assert_array_equal(derived[:, 0], [-1.0, -1.0])
     np.testing.assert_array_equal(state.obs.policy[:, 2], [-1.0, -1.0])
@@ -691,7 +689,7 @@ def test_final_observation_noise_uses_shared_observation_rng() -> None:
     np.testing.assert_array_equal(env._rand.state, rng_before + np.uint64(1))
     saved_final = final.obs.policy.copy()
     np.testing.assert_array_equal(final.obs.policy[:, 0], (rng_before[[0], 0] + np.uint64(1)).astype(np.float32))
-    env._execute_observe_kernel(env._kernel_inputs)
+    env._execute_observe_kernel(env._resolved_inputs)
     np.testing.assert_array_equal(env._rand.state, rng_before + np.uint64(2))
     np.testing.assert_array_equal(final.obs.policy, saved_final)
 
@@ -710,8 +708,8 @@ def test_post_reset_observation_does_not_run_command_evaluation() -> None:
 
     np.testing.assert_array_equal(state.obs.policy[:, 2], 0.0)
     env._refresh_sim_reads()
-    env._execute_evaluate_kernel(env._kernel_inputs)
-    env._execute_observe_kernel(env._kernel_inputs)
+    env._execute_evaluate_kernel(env._resolved_inputs)
+    env._execute_observe_kernel(env._resolved_inputs)
 
     np.testing.assert_allclose(state.obs.policy[:, 2], [0.5, 1.0, 1.5])
 

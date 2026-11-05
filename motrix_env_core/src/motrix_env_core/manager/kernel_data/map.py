@@ -1,15 +1,9 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
-# SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
-import hashlib
-import sys
 from collections.abc import Iterator, Mapping
-from typing import Any, Generic, NamedTuple, TypeVar
-
-_MAP_KEYS = "__motrix_kernel_data_map_keys__"
-_MAP_SCHEMA = "__motrix_kernel_data_map_schema__"
+from typing import Generic, TypeVar
 
 ValueT = TypeVar("ValueT")
 
@@ -43,50 +37,4 @@ class Map(Mapping[str, ValueT], Generic[ValueT]):
         return self._values
 
 
-def map_proxy(
-    namespace: str,
-    keys: tuple[str, ...],
-    *,
-    module_name: str,
-    schema_fingerprint: str = "",
-) -> type[tuple[Any, ...]]:
-    """Return a stable lowered NamedTuple type for one static map schema."""
-    identity = (module_name, namespace, keys, schema_fingerprint)
-    fingerprint = hashlib.sha256(repr(identity).encode()).hexdigest()[:12]
-    sanitized = "_".join(part for part in namespace.replace(".", "_").split("_") if part)
-    name = f"_{sanitized}Map_{fingerprint}"
-    module = sys.modules.get(module_name)
-    if module is None:
-        raise TypeError(f"Map proxy module {module_name!r} is not loaded.")
-    existing = getattr(module, name, None)
-    field_names = tuple(f"value_{index}" for index in range(len(keys)))
-    if existing is not None:
-        if (
-            not isinstance(existing, type)
-            or not issubclass(existing, tuple)
-            or getattr(existing, "_fields", None) != field_names
-            or getattr(existing, _MAP_KEYS, None) != keys
-            or getattr(existing, _MAP_SCHEMA, None) != schema_fingerprint
-        ):
-            raise TypeError(f"Map lowered proxy name collision: {module_name}.{name}.")
-        return existing
-    proxy = NamedTuple(name, [(field_name, Any) for field_name in field_names])  # type: ignore[misc]
-    proxy.__module__ = module_name
-    proxy.__qualname__ = name
-    setattr(proxy, _MAP_KEYS, keys)
-    setattr(proxy, _MAP_SCHEMA, schema_fingerprint)
-    setattr(module, name, proxy)
-    return proxy
-
-
-def map_keys(value_type: type[Any]) -> tuple[str, ...] | None:
-    """Return static map keys for a lowered proxy type."""
-    keys = getattr(value_type, _MAP_KEYS, None)
-    return keys if isinstance(keys, tuple) else None
-
-
-__all__ = [
-    "Map",
-    "map_keys",
-    "map_proxy",
-]
+__all__ = ["Map"]

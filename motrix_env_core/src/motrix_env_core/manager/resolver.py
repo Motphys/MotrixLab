@@ -4,16 +4,18 @@
 """Backend-neutral resolver for manager task programs.
 
 Lowers one constructed manager environment into its execution metadata: the
-simulator read plan, the flat kernel-input layout, prepared term arguments,
-and one invocation per manager term (command hooks, observations, rewards,
-terminations, simulator resets). Numerical executors — currently the Torch
-executor in :mod:`motrix_env_core.torch_manager` — consume this metadata and
-schedule the invocations; no code generation or dispatcher compilation
-happens here.
+simulator read plan, the resolved context/term-argument trees (path-keyed
+leaf descriptors with live value references and data scopes), prepared term
+arguments, and one invocation per manager term (command hooks, observations,
+rewards, terminations, simulator resets). Numerical executors — currently the
+Torch executor in :mod:`motrix_env_core.torch_manager` — consume this
+metadata and schedule the invocations; no code generation or dispatcher
+compilation happens here.
 """
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import logging
 from collections.abc import Mapping
@@ -26,22 +28,17 @@ import numpy as np
 import torch
 
 from motrix_env_core.manager.context import ManagerContext
-from motrix_env_core.manager.env import (
-    KernelInputSource,
-    ManagerEnv,
-    ReadPlan,
-)
+from motrix_env_core.manager.env import ManagerEnv, ReadPlan
 from motrix_env_core.manager.kernel_data import (
     KernelDataLayout,
     KernelDataLowering,
     KernelDataScope,
     Map,
-    SharedArray,
+    ResolvedLeaf,
+    ResolvedTree,
     flatten_kernel_data,
     is_kernel_data,
     iter_layout_leaves,
-    kernel_data,
-    lane_expression,
 )
 from motrix_env_core.manager.observations import ObservationGroupEntry, ObsTerm
 from motrix_env_core.manager.rewards import RewardTerm
@@ -57,15 +54,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class InputSlotLayout:
-    index: int
-    source: str
-    scope: KernelDataScope
-
-
-@dataclass(frozen=True)
 class SimInputLayout:
-    slot: int
     key: str
     shape: tuple[int, ...]
     consumers: tuple[str, ...]
@@ -106,7 +95,6 @@ class MetricFieldLayout:
 
 @dataclass(frozen=True)
 class ManagerLayout:
-    inputs: tuple[InputSlotLayout, ...]
     sim_inputs: tuple[SimInputLayout, ...]
     actions: tuple[ActionTermLayout, ...]
     observations: dict[str, ObservationGroupLayout]
@@ -116,12 +104,10 @@ class ManagerLayout:
 
     def dump(self) -> str:
         lines = [
-            "inputs:",
+            "sim_inputs:",
         ]
-        lines.extend(f"  [{slot.index}] scope={slot.scope.value} source={slot.source}" for slot in self.inputs)
-        lines.append("sim_inputs:")
         lines.extend(
-            f"  [{sim_input.slot}] {sim_input.key}: shape={sim_input.shape} consumers={sim_input.consumers}"
+            f"  {sim_input.key}: shape={sim_input.shape} consumers={sim_input.consumers}"
             for sim_input in self.sim_inputs
         )
         lines.append("actions:")
@@ -144,6 +130,42 @@ class ManagerLayout:
         return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Prepared arguments
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ConstantArg:
+    """Literal term argument passed through unchanged (strings, tensors...)."""
+
+    value: Any
+
+
+@dataclass(frozen=True)
+class TreeArg:
+    """Term argument resolved as a structured kernel-data tree."""
+
+    tree_index: int
+
+
+@dataclass(frozen=True)
+class LeafArg:
+    """Term argument resolved as one leaf value (numeric/ndarray argument)."""
+
+    leaf: ResolvedLeaf
+
+
+@dataclass(frozen=True)
+class SimArg:
+    """Term argument resolving to one sim read-program batched array."""
+
+    key: str
+
+
+PreparedArg = ConstantArg | TreeArg | LeafArg | SimArg
+
+
 @dataclass(frozen=True)
 class PreparedInvocation:
     """Runtime metadata required to execute one manager term."""
@@ -152,16 +174,13 @@ class PreparedInvocation:
     kind: str
     dispatcher: Any
     receiver_key: str | None
-    args_expressions: tuple[str, ...] = ()
-    args_values: tuple[Any, ...] = ()
-    args_prepared_indices: tuple[int | None, ...] = ()
+    args: tuple[PreparedArg, ...] = ()
     output_size: int = 0
 
 
 @dataclass(frozen=True)
 class ResolvedManagerContext:
-    prepared_index: int
-    expression: str
+    tree_index: int
 
 
 @dataclass(frozen=True)
@@ -179,55 +198,35 @@ class ResolvedManagerProgram:
     read_plan: ReadPlan
     layout: ManagerLayout
     invocations: tuple[PreparedInvocation, ...]
-    prepared_terms: tuple[KernelInputSource, ...]
-    input_offsets: tuple[int, ...]
+    prepared_trees: tuple[ResolvedTree, ...]
     context: ResolvedManagerContext
+    fingerprint: str
 
 
 __all__ = [
     "ActionTermLayout",
-    "InputSlotLayout",
+    "ConstantArg",
+    "LeafArg",
     "ManagerLayout",
     "ManagerProgramResolver",
     "MetricFieldLayout",
     "ObservationGroupLayout",
     "ObservationTermLayout",
+    "PreparedArg",
     "PreparedInvocation",
     "ResolvedManagerContext",
     "ResolvedManagerProgram",
     "ResolvedSimReset",
     "ScalarTermLayout",
+    "SimArg",
     "SimInputLayout",
+    "TreeArg",
 ]
 
 
 # ---------------------------------------------------------------------------
-# Term-argument buffer wrappers
+# Resolver
 # ---------------------------------------------------------------------------
-
-
-@kernel_data
-class TermArrayBuffer:
-    """Shared array slot for one ndarray term argument.
-
-    Arrays passed directly as manager term arguments are lowered with shared
-    scope (every execution lane sees the full array): they hold env-invariant
-    reference data such as default poses, weights, or lookup tables.
-    """
-
-    value: SharedArray
-
-
-@kernel_data
-class TermScalarBuffer:
-    """Runtime buffer slot for one numeric term argument.
-
-    Numeric tuning arguments (thresholds, scales, gains, ...) are lowered
-    into a fixed-dtype shared input slot so executors read the value at
-    runtime instead of baking it into a compiled artifact.
-    """
-
-    value: np.float32
 
 
 @dataclass(frozen=True)
@@ -246,9 +245,18 @@ def _manager_sim_inputs(sim_data: PhysicsReadProgram) -> tuple[Mapping[str, Mana
     return MappingProxyType(inputs), fingerprint
 
 
-# ---------------------------------------------------------------------------
-# Resolver
-# ---------------------------------------------------------------------------
+def _tree_leaf_fingerprint(tree: ResolvedTree) -> tuple[Any, ...]:
+    """Per-leaf content fingerprint: scope plus array shape/dtype identity."""
+    return tuple(
+        (
+            path,
+            leaf.scope.value,
+            None
+            if not isinstance(leaf.value, np.ndarray)
+            else (leaf.value.shape, leaf.value.dtype.str, leaf.value.strides),
+        )
+        for path, leaf in tree.leaves.items()
+    )
 
 
 class ManagerProgramResolver:
@@ -258,10 +266,7 @@ class ManagerProgramResolver:
         self._env = env
         self._sim_inputs: Mapping[str, ManagerSimInput]
         self._sim_inputs, sim_input_fingerprint = _manager_sim_inputs(env.sim_data)
-        self._sim_slots_by_key: dict[str, int] = {}
-        self._prepared_terms: list[KernelInputSource] = []
-        self._input_offsets: list[int] = []
-        self._flat_input_count = 0
+        self._prepared_trees: list[ResolvedTree] = []
         self._kernel_data_lowering = KernelDataLowering()
         self._layout_identity: list[Any] = [sim_input_fingerprint]
 
@@ -287,16 +292,14 @@ class ManagerProgramResolver:
         self._validate_observation_spaces(observation_groups)
 
         layout = ManagerLayout(
-            inputs=tuple(
-                InputSlotLayout(
-                    offset + field_index,
-                    f"{prepared.source_name}.{field_name}",
-                    prepared.fields[field_index].scope,
+            sim_inputs=tuple(
+                SimInputLayout(
+                    key=key,
+                    shape=binding.value.shape[1:],
+                    consumers=("ManagerContext.sim",),
                 )
-                for prepared, offset in zip(self._prepared_terms, self._input_offsets, strict=True)
-                for field_index, field_name in enumerate(prepared.field_names)
+                for key, binding in self._sim_inputs.items()
             ),
-            sim_inputs=self._sim_input_layout(),
             actions=tuple(
                 ActionTermLayout(
                     name,
@@ -321,24 +324,22 @@ class ManagerProgramResolver:
             + termination_invocations
             + tuple(reset.invocation for reset in reset_invocations)
         )
+        leaf_count = sum(len(tree.leaves) for tree in self._prepared_trees)
         logger.info(
-            "Manager startup %s: resolve finished in %.3fs (%d invocations, %d inputs)",
+            "Manager startup %s: resolve finished in %.3fs (%d invocations, %d resolved leaves)",
             type(self._env).__name__,
             perf_counter() - build_started,
             len(invocations),
-            self._flat_input_count,
+            leaf_count,
         )
+        context_tree = self._prepared_trees[context.tree_index]
         return ResolvedManagerProgram(
-            read_plan=ReadPlan(
-                self._env.sim_data,
-                tuple(self._prepared_terms),
-                tuple(value for prepared in self._prepared_terms for value in prepared.values),
-            ),
+            read_plan=ReadPlan(self._env.sim_data, context_tree),
             layout=layout,
             invocations=invocations,
-            prepared_terms=tuple(self._prepared_terms),
-            input_offsets=tuple(self._input_offsets),
+            prepared_trees=tuple(self._prepared_trees),
             context=context,
+            fingerprint=hashlib.sha256(repr(tuple(self._layout_identity)).encode()).hexdigest(),
         )
 
     # -- resets -------------------------------------------------------------
@@ -379,42 +380,24 @@ class ManagerProgramResolver:
         if annotations.get(parameters[0].name) is not ManagerContext:
             raise TypeError(
                 f"Manager simulator reset term {name!r} dispatch must annotate its first parameter as "
-                f"ManagerContext (conventionally named ctx)."
+                "ManagerContext (conventionally named ctx)."
             )
         sim_writes_annotation = annotations.get(parameters[1].name)
         if get_origin(sim_writes_annotation) is not Map or get_args(sim_writes_annotation) != (torch.Tensor,):
             raise TypeError(
                 f"Manager simulator reset term {name!r} dispatch must annotate its second parameter as "
-                f"Map[torch.Tensor] (conventionally named sim_writes)."
+                "Map[torch.Tensor] (conventionally named sim_writes)."
             )
         dispatcher = function
-        expressions = []
-        prepared_indices = []
-        for index, value in enumerate(term.args):
-            if is_kernel_data(value):
-                _, tree_def = flatten_kernel_data(value)
-                layout = self._kernel_data_lowering.lower(
-                    tree_def,
-                    context=f"Simulator reset {name} args[{index}]",
-                    force_shared=True,
-                )
-                prepared_index, expression = self._register_prepared(
-                    f"sim_reset.{name}.args[{index}]", value, type(value), layout
-                )
-                prepared_indices.append(prepared_index)
-                expressions.append(expression)
-            else:
-                expression, _, prepared_index = self._resolve_plain_arg(f"sim_reset.{name}.args[{index}]", value)
-                prepared_indices.append(prepared_index)
-                expressions.append(expression)
+        args = tuple(
+            self._resolve_term_arg(f"sim_reset.{name}.args[{index}]", value) for index, value in enumerate(term.args)
+        )
         invocation = PreparedInvocation(
             "sim_reset." + name,
             "reset",
             dispatcher,
             None,
-            args_expressions=tuple(expressions),
-            args_values=term.args,
-            args_prepared_indices=tuple(prepared_indices),
+            args=args,
         )
         return ResolvedSimReset(
             invocation,
@@ -424,18 +407,6 @@ class ManagerProgramResolver:
         )
 
     # -- layouts ------------------------------------------------------------
-
-    def _sim_input_layout(self) -> tuple[SimInputLayout, ...]:
-        slots_by_key = self._sim_slots_by_key
-        return tuple(
-            SimInputLayout(
-                slot=slots_by_key[key],
-                key=key,
-                shape=binding.value.shape[1:],
-                consumers=("ManagerContext.sim",),
-            )
-            for key, binding in self._sim_inputs.items()
-        )
 
     def _resolve_runtime_terms(self) -> None:
         for name, action_term in self._env.action_terms.items():
@@ -488,25 +459,16 @@ class ManagerProgramResolver:
             tree_def,
             context="ManagerContext",
         )
-        prepared_index, expression = self._register_prepared("manager_context", value, ManagerContext, layout)
-        self._layout_identity.append(("manager_context", layout.fingerprint))
+        tree_index = self._register_tree("manager_context", value, layout)
+        tree = self._prepared_trees[tree_index]
+        self._layout_identity.append(("manager_context", layout.fingerprint, _tree_leaf_fingerprint(tree)))
         self._layout_identity.append(
             (
                 "metrics",
                 tuple((name, value.shape, value.dtype.str) for name, value in self._env.metrics.items()),
             )
         )
-        # Map each declared sim key to its global input slot inside the
-        # flattened context, so term args naming a sim key resolve to the
-        # key's batched view instead of crossing the executor as a string.
-        context_source = self._prepared_terms[prepared_index]
-        context_offset = self._input_offsets[prepared_index]
-        self._sim_slots_by_key = {
-            field.path[1]: context_offset + field_index
-            for field_index, field in enumerate(context_source.fields)
-            if len(field.path) == 2 and field.path[0] == "sim"
-        }
-        return ResolvedManagerContext(prepared_index, expression)
+        return ResolvedManagerContext(tree_index)
 
     def _resolve_command_hooks(self, function_name: str) -> tuple[PreparedInvocation, ...]:
         hooks = []
@@ -566,7 +528,8 @@ class ManagerProgramResolver:
         if len(parameters) != 2 + len(term.args):
             raise TypeError(
                 f"Manager observation {group}.{name} dispatch must take a ManagerContext parameter, an "
-                f"torch.Tensor output parameter, and {len(term.args)} positional args; got "
+                "torch.Tensor output parameter, and "
+                f"{len(term.args)} positional args; got "
                 f"{tuple(parameter.name for parameter in parameters)}."
             )
         annotations = get_type_hints(function, include_extras=True)
@@ -576,40 +539,19 @@ class ManagerProgramResolver:
         ):
             raise TypeError(
                 f"Manager observation {group}.{name} dispatch must annotate its first two parameters as "
-                f"ManagerContext and torch.Tensor (conventionally named ctx and out)."
+                "ManagerContext and torch.Tensor (conventionally named ctx and out)."
             )
-        expressions = []
-        prepared_indices = []
-        warmup_values = []
-        for index, value in enumerate(term.args):
-            if is_kernel_data(value):
-                _, tree_def = flatten_kernel_data(value)
-                layout = self._kernel_data_lowering.lower(
-                    tree_def, context=f"Observation {group}.{name} args[{index}]", force_shared=True
-                )
-                prepared_index, expression = self._register_prepared(
-                    f"observation.{group}.{name}.args[{index}]", value, type(value), layout
-                )
-                prepared_indices.append(prepared_index)
-                expressions.append(expression)
-                warmup_values.append(value)
-            else:
-                expression, warmup, prepared_index = self._resolve_plain_arg(
-                    f"observation.{group}.{name}.args[{index}]", value
-                )
-                prepared_indices.append(prepared_index)
-                expressions.append(expression)
-                warmup_values.append(warmup)
-        expressions = tuple(expressions)
+        args = tuple(
+            self._resolve_term_arg(f"observation.{group}.{name}.args[{index}]", value)
+            for index, value in enumerate(term.args)
+        )
         dispatcher = function
         return PreparedInvocation(
             f"{group}.{name}",
             "observation",
             dispatcher,
             None,
-            args_expressions=expressions,
-            args_values=tuple(warmup_values),
-            args_prepared_indices=tuple(prepared_indices),
+            args=args,
             output_size=output_size,
         )
 
@@ -682,35 +624,16 @@ class ManagerProgramResolver:
                 f"Manager {group} {name} dispatch must annotate its first parameter as ManagerContext "
                 f"(conventionally named ctx)."
             )
-        expressions = []
-        prepared_indices = []
-        warmup_values = []
-        for index, value in enumerate(term.args):
-            if is_kernel_data(value):
-                _, tree_def = flatten_kernel_data(value)
-                layout = self._kernel_data_lowering.lower(
-                    tree_def, context=f"{group}.{name} args[{index}]", force_shared=True
-                )
-                prepared_index, expression = self._register_prepared(
-                    f"{group}.{name}.args[{index}]", value, type(value), layout
-                )
-                prepared_indices.append(prepared_index)
-                expressions.append(expression)
-                warmup_values.append(value)
-            else:
-                expression, warmup, prepared_index = self._resolve_plain_arg(f"{group}.{name}.args[{index}]", value)
-                prepared_indices.append(prepared_index)
-                expressions.append(expression)
-                warmup_values.append(warmup)
+        args = tuple(
+            self._resolve_term_arg(f"{group}.{name}.args[{index}]", value) for index, value in enumerate(term.args)
+        )
         dispatcher = function
         return PreparedInvocation(
             f"{group}.{name}",
             group,
             dispatcher,
             None,
-            args_expressions=tuple(expressions),
-            args_values=tuple(warmup_values),
-            args_prepared_indices=tuple(prepared_indices),
+            args=args,
         )
 
     def _resolve_termination(
@@ -751,7 +674,7 @@ class ManagerProgramResolver:
         if annotations.get(parameters[0].name) is not ManagerContext:
             raise TypeError(
                 f"Manager term {group}.{name} {function_name} must annotate its first parameter after the "
-                f"receiver as ManagerContext (conventionally named ctx)."
+                "receiver as ManagerContext (conventionally named ctx)."
             )
         if argument_parameters:
             raise TypeError(
@@ -764,83 +687,62 @@ class ManagerProgramResolver:
         dispatcher = function
         return PreparedInvocation(context, kind, dispatcher, receiver_key, output_size=output_size)
 
-    # -- input preparation ----------------------------------------------------
+    # -- argument resolution ---------------------------------------------------
 
-    def _register_prepared(
-        self,
-        source_name: str,
-        value: Any,
-        value_type: type[Any],
-        layout: KernelDataLayout,
-    ) -> tuple[int, str]:
-        prepared_index = len(self._prepared_terms)
-        input_offset = self._flat_input_count
-        self._prepared_terms.append(KernelInputSource.prepare(source_name, value_type, layout, value))
-        self._input_offsets.append(input_offset)
-        self._flat_input_count += len(iter_layout_leaves(layout))
-        return prepared_index, lane_expression(layout, input_offset)
+    def _resolve_term_arg(self, source_name: str, value: Any) -> PreparedArg:
+        """Resolve one manager term argument into a prepared descriptor.
 
-    def _scalar_buffer_arg(self, source_name: str, value: float) -> tuple[str, np.float32]:
-        """Lower one numeric term argument into a runtime scalar buffer slot.
-
-        Returns the lane argument expression and the normalized warmup value.
-        Only the fixed float32 layout enters the resolved metadata; the value
-        itself is read from the input slot at runtime.
+        KernelData arguments become structured trees; float-like scalars and
+        ndarrays become shared leaf slots read by reference; simulator queries
+        resolve to their read-program batched array; every other value is a
+        literal constant.
         """
-        scalar = np.float32(value)
-        wrapped = TermScalarBuffer(scalar)
-        _, tree_def = flatten_kernel_data(wrapped)
-        layout = self._kernel_data_lowering.lower(
-            tree_def,
-            context=source_name,
-            force_shared=True,
-        )
-        prepared_index, _ = self._register_prepared(source_name, wrapped, TermScalarBuffer, layout)
-        leaf = iter_layout_leaves(layout)[0]
-        return f"input_{self._input_offsets[prepared_index] + leaf.slot_index}", scalar
-
-    def _array_buffer_arg(self, source_name: str, value: np.ndarray) -> tuple[str, np.ndarray]:
-        """Lower one ndarray term argument into a per-environment input slot.
-
-        Returns the lane argument expression (the lane row) and the warmup
-        value.
-        """
-        wrapped = TermArrayBuffer(value=value)
-        _, tree_def = flatten_kernel_data(wrapped)
-        layout = self._kernel_data_lowering.lower(
-            tree_def,
-            context=source_name,
-        )
-        prepared_index, _ = self._register_prepared(source_name, wrapped, TermArrayBuffer, layout)
-        leaf = iter_layout_leaves(layout)[0]
-        return f"input_{self._input_offsets[prepared_index] + leaf.slot_index}", value
-
-    def _resolve_plain_arg(self, source_name: str, value: Any) -> tuple[str | None, Any, int | None]:
-        """Resolve one non-kernel-data term argument.
-
-        Float-like scalars become runtime scalar buffers; every other scalar
-        stays a plain constant. Returns the lane argument expression, the
-        warmup value, and the prepared index (``None`` for both plain scalars
-        and buffers).
-        """
+        if is_kernel_data(value):
+            _, tree_def = flatten_kernel_data(value)
+            layout = self._kernel_data_lowering.lower(
+                tree_def,
+                context=source_name,
+                force_shared=True,
+            )
+            return TreeArg(self._register_tree(source_name, value, layout))
         if isinstance(value, (float, np.floating)):
-            expression, warmup = self._scalar_buffer_arg(source_name, value)
-            return expression, warmup, None
+            return LeafArg(ResolvedLeaf(np.float32(value), KernelDataScope.SHARED))
         if isinstance(value, np.ndarray):
-            expression, warmup = self._array_buffer_arg(source_name, value)
-            return expression, warmup, None
-        if isinstance(value, torch.Tensor):
-            return f"torch.Tensor({value.dtype}{tuple(value.shape)})", value, None
-        if isinstance(value, str):
-            return repr(value), value, None
+            return LeafArg(ResolvedLeaf(value, KernelDataScope.SHARED))
         if isinstance(value, SimDataQuery):
             # A query passed as a term argument resolves to its registered
             # read-program batched view; the dispatch receives the array in
             # the argument's position.
-            key = self._env._term_query_keys[value]
-            slot = self._sim_slots_by_key[key]
-            return f"input_{slot}[env_id]", self._sim_inputs[key].value[0], None
-        return repr(value), value, None
+            return SimArg(self._env._term_query_keys[value])
+        return ConstantArg(value)
+
+    def _register_tree(
+        self,
+        source_name: str,
+        value: Any,
+        layout: KernelDataLayout,
+    ) -> int:
+        """Validate one kernel-data value against its layout and record its tree.
+
+        Leaves are captured by reference: array leaves are refreshed in place
+        by their owning runtime objects and scalar/shared leaves are reused
+        unchanged.
+        """
+        values, tree_def = flatten_kernel_data(value)
+        if tree_def.fingerprint != layout.tree_def.fingerprint:
+            raise TypeError(f"{source_name} value has a different KernelData schema.")
+        leaves: dict[tuple[str, ...], ResolvedLeaf] = {}
+        for prepared_field, field_value in zip(iter_layout_leaves(layout), values, strict=True):
+            if prepared_field.value_type is np.ndarray and not isinstance(field_value, np.ndarray):
+                raise TypeError(f"{source_name} field {'.'.join(prepared_field.path)!r} must be np.ndarray.")
+            if prepared_field.value_type is not np.ndarray and type(field_value) is not prepared_field.value_type:
+                raise TypeError(
+                    f"{source_name} field {'.'.join(prepared_field.path)!r} must return "
+                    f"{prepared_field.value_type.__name__}, got {type(field_value).__name__}."
+                )
+            leaves[prepared_field.path] = ResolvedLeaf(field_value, prepared_field.scope)
+        self._prepared_trees.append(ResolvedTree(value, leaves))
+        return len(self._prepared_trees) - 1
 
     def _validate_observation_spaces(self, groups: dict[str, ObservationGroupEntry]) -> None:
         expected_policy = self._env.policy_observation_space.shape

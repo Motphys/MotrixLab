@@ -14,7 +14,6 @@ from motrix_env_core.manager.kernel_data import (
     flatten_kernel_data,
     iter_layout_leaves,
     kernel_data,
-    rebuild_lowered,
     unflatten_kernel_data,
 )
 
@@ -76,7 +75,7 @@ def test_kernel_data_is_frozen_and_compiles_nested_inherited_leaves() -> None:
     ]
 
 
-def test_kernel_data_flatten_is_zero_copy_and_rebuilds_both_views() -> None:
+def test_kernel_data_flatten_is_zero_copy_and_rebuilds_host_value() -> None:
     velocity = np.asarray([[1.0]], dtype=np.float32)
     position = np.asarray([[2.0]], dtype=np.float32)
     orientation = np.asarray([3.0], dtype=np.float32)
@@ -84,11 +83,10 @@ def test_kernel_data_flatten_is_zero_copy_and_rebuilds_both_views() -> None:
     leaves, tree_def = flatten_kernel_data(value)
     assert leaves[:3] == (velocity, position, orientation)
     rebuilt = unflatten_kernel_data(tree_def, leaves)
-    layout = KernelDataLowering().lower(tree_def, context="test")
-    lowered = rebuild_lowered(layout, leaves)
+    KernelDataLowering().lower(tree_def, context="test")
     assert rebuilt.robot.pose.position is position
-    assert lowered.robot.pose.orientation is orientation
-    assert lowered.phase == np.float32(0.25)
+    assert rebuilt.robot.pose.orientation is orientation
+    assert rebuilt.phase == np.float32(0.25)
 
 
 def test_kernel_data_schema_fingerprint_ignores_values() -> None:
@@ -107,10 +105,10 @@ def test_kernel_data_schema_fingerprint_ignores_values() -> None:
     first_layout = KernelDataLowering().lower(first, context="first")
     second_layout = KernelDataLowering().lower(second, context="second")
     assert first_layout is second_layout
-    assert first_layout.lowered_type.__module__ == _Tracking.__module__
+    assert first_layout.logical_type.__module__ == _Tracking.__module__
 
 
-def test_map_schema_changes_tree_and_proxy_identity() -> None:
+def test_map_schema_changes_tree_and_layout_identity() -> None:
     first = _MappedValues(Map({"value": np.float32(1.0)}))
     second = _MappedValues(Map({"value": np.asarray([[1.0]], dtype=np.float32)}))
     _, first_tree = flatten_kernel_data(first)
@@ -118,8 +116,8 @@ def test_map_schema_changes_tree_and_proxy_identity() -> None:
     first_layout = KernelDataLowering().lower(first_tree, context="first")
     second_layout = KernelDataLowering().lower(second_tree, context="second")
     assert first_tree.fingerprint != second_tree.fingerprint
-    assert first_layout.lowered_type is not second_layout.lowered_type
-    assert first_layout.fields[0].child.lowered_type is not second_layout.fields[0].child.lowered_type
+    assert first_layout.fingerprint != second_layout.fingerprint
+    assert first_layout.fields[0].child.fingerprint != second_layout.fields[0].child.fingerprint
 
 
 def test_kernel_data_rejects_unsupported_leaf() -> None:

@@ -22,15 +22,12 @@ from motrix_env_core.manager.kernel import (
     KernelOutputs,
     ManagerWarmupResult,
     clone_kernel_value,
+    clone_resolved_trees,
     validate_kernel_context,
 )
 from motrix_env_core.manager.kernel_data import (
-    KernelDataLayout,
-    KernelDataScope,
-    KernelLeafLayout,
+    ResolvedTree,
     canonicalize_kernel_data,
-    flatten_kernel_data,
-    iter_layout_leaves,
 )
 
 if TYPE_CHECKING:
@@ -182,78 +179,24 @@ class ManagerBasedEnvCfg(EnvCfg):
 
 @dataclass(frozen=True)
 class ReadPlan:
+    """Simulator read program bound to the resolved context tree.
+
+    ``read`` executes the compiled read program; the simulator-backed ndarray
+    leaves of the resolved context tree are rewritten in place, so every other
+    resolved leaf and the tree objects themselves stay valid without
+    rebuilding.
+    """
+
     sim_data: PhysicsReadProgram
-    sources: tuple[KernelInputSource, ...]
-    flat_inputs: tuple[Any, ...]
+    tree: ResolvedTree
 
     def read(
         self,
         env: ManagerEnv,
         env_ids: np.ndarray | None = None,
-    ) -> tuple[Any, ...]:
+    ) -> None:
         with env.perf.scope("sim_read"):
             self.sim_data.execute(env_ids)
-        return self.flat_inputs
-
-
-@dataclass(frozen=True)
-class KernelInputSource:
-    """Compile-time description of one manager-kernel input source.
-
-    Manager inputs are flattened and validated once while the Numba program is
-    compiled.  ``values`` then keeps those flattened leaves by reference so
-    runtime reads only refresh simulator-backed arrays and can return the same
-    tuple without rebuilding the input tree.  ``source_name`` is a stable,
-    human-readable label used in manager-layout diagnostics and validation
-    errors; it is intentionally independent of a source implementation class.
-
-    Attributes:
-        source_name: Stable semantic label for layout entries and validation
-            messages (for example, ``"manager_context"`` or ``"sim_reset"``).
-        value_type: Original structured input type reconstructed by the kernel
-            compiler when preparing a manager context or reset term.
-        layout: Lowered tree layout describing the order, scope, and types of
-            the flattened input leaves.
-        values: Flattened leaves captured at compile time.  Array leaves are
-            retained by reference and are refreshed in place by their owning
-            runtime objects; scalar/shared leaves are reused unchanged.
-    """
-
-    source_name: str
-    value_type: type[Any]
-    layout: KernelDataLayout
-    values: tuple[Any, ...]
-
-    @property
-    def fields(self) -> tuple[KernelLeafLayout, ...]:
-        return iter_layout_leaves(self.layout)
-
-    @property
-    def field_names(self) -> tuple[str, ...]:
-        return tuple(".".join(field.path) or "data" for field in self.fields)
-
-    @classmethod
-    def prepare(
-        cls,
-        source_name: str,
-        value_type: type[Any],
-        layout: KernelDataLayout,
-        value: Any,
-    ) -> KernelInputSource:
-        """Flatten and validate one static manager-kernel input at compile time."""
-        values, tree_def = flatten_kernel_data(value)
-        if tree_def.fingerprint != layout.tree_def.fingerprint:
-            raise TypeError(f"{source_name} value has a different KernelData schema.")
-        fields = iter_layout_leaves(layout)
-        for prepared_field, field_value in zip(fields, values, strict=True):
-            if prepared_field.value_type is np.ndarray and not isinstance(field_value, np.ndarray):
-                raise TypeError(f"{source_name} field {'.'.join(prepared_field.path)!r} must be np.ndarray.")
-            if prepared_field.value_type is not np.ndarray and type(field_value) is not prepared_field.value_type:
-                raise TypeError(
-                    f"{source_name} field {'.'.join(prepared_field.path)!r} must return "
-                    f"{prepared_field.value_type.__name__}, got {type(field_value).__name__}."
-                )
-        return cls(source_name, value_type, layout, values)
 
 
 @dataclass(frozen=True)
@@ -492,7 +435,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         final_obs = self._zeros_obs(self.observation_space)
         self._final_obs_slot = _ObsBufferSlot.bind(final_obs, state.reward, state.terminated)
         self._refresh_sim_reads()
-        inputs = self._kernel_inputs
+        inputs = self._resolved_inputs
         self._validate_kernel_context(inputs)
         warmup_started = perf_counter()
         self._execute_observe_kernel(inputs)
@@ -511,7 +454,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         obs, self._kernel_outputs = self._observation_buffer.swap()
         self._state = self._state.replace(obs=obs)
 
-    def _execute_evaluate_kernel(self, inputs: tuple[Any, ...]) -> None:
+    def _execute_evaluate_kernel(self, inputs: tuple[ResolvedTree, ...]) -> None:
         """Evaluate rewards and terminations against the current command."""
         assert self._task_program is not None
         assert self._kernel_buffers is not None
@@ -523,7 +466,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
             self._kernel_outputs,
         )
 
-    def _execute_observe_kernel(self, inputs: tuple[Any, ...]) -> None:
+    def _execute_observe_kernel(self, inputs: tuple[ResolvedTree, ...]) -> None:
         """Evaluate observations against the command for the next action."""
         assert self._task_program is not None
         assert self._kernel_outputs is not None
@@ -538,7 +481,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         assert self._task_program is not None
         assert self._final_obs_slot is not None
         slot = self._final_obs_slot
-        self._task_program.observe_kernel(self._kernel_inputs, slot.kernel_outputs)
+        self._task_program.observe_kernel(self._resolved_inputs, slot.kernel_outputs)
         obs = slot.observation
         return FinalObs(
             env_ids=env_ids,
@@ -649,7 +592,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         self._action_writes.execute()
         return state
 
-    def _reset_sim_rows(self, env_ids: np.ndarray, inputs: tuple[Any, ...]) -> None:
+    def _reset_sim_rows(self, env_ids: np.ndarray, inputs: tuple[ResolvedTree, ...]) -> None:
         """Run the simulator-only stages of the reset pipeline for selected rows.
 
         Clears frontend ctrl targets to mirror the backend's reset-row ctrl
@@ -721,7 +664,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         if sim_reset_ids is not None and sim_reset_ids.size:
             env_ids = np.concatenate([env_ids, sim_reset_ids])
         if env_ids.size:
-            self._reset_sim_rows(env_ids, self._kernel_inputs)
+            self._reset_sim_rows(env_ids, self._resolved_inputs)
 
     def _make_metrics_view(self) -> dict[str, Any]:
         """Assemble the persistent live metrics view for the current state.
@@ -751,7 +694,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         with self.perf.scope("read_inputs"):
             self._refresh_sim_reads()
         with self.perf.scope("evaluate"):
-            self._execute_evaluate_kernel(self._kernel_inputs)
+            self._execute_evaluate_kernel(self._resolved_inputs)
         with self.perf.scope("command_on_transition"):
             for command_term in self._command_terms.values():
                 command_term.on_transition()
@@ -764,7 +707,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         if self._kernel_outputs is None:
             return state
         with self.perf.scope("observe"):
-            self._execute_observe_kernel(self._kernel_inputs)
+            self._execute_observe_kernel(self._resolved_inputs)
         return state
 
     @property
@@ -810,15 +753,15 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         return buffers
 
     @property
-    def _kernel_inputs(self) -> tuple[Any, ...]:
-        """Persistent flat kernel-input bundle shared by all three kernels.
+    def _resolved_inputs(self) -> tuple[ResolvedTree, ...]:
+        """Persistent resolved-input trees shared by all three kernels.
 
-        The tuple is built once by the read plan. Simulator-backed arrays are
-        rewritten in place by :meth:`_refresh_sim_reads`; every other entry
-        aliases host state, so the bundle is never rebuilt.
+        The trees are built once by the resolver. Simulator-backed array
+        leaves are rewritten in place by :meth:`_refresh_sim_reads`; every
+        other leaf aliases host state, so the trees are never rebuilt.
         """
         assert self._compiled_manager_program is not None
-        return self._compiled_manager_program.read_plan.flat_inputs
+        return self._compiled_manager_program.prepared_trees
 
     def _refresh_sim_reads(self, env_ids: np.ndarray | None = None) -> None:
         """Refresh the simulator-backed kernel inputs in place.
@@ -829,7 +772,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         assert self._compiled_manager_program is not None
         self._compiled_manager_program.read_plan.read(self, env_ids)
 
-    def _validate_kernel_context(self, inputs: tuple[Any, ...]) -> None:
+    def _validate_kernel_context(self, inputs: tuple[ResolvedTree, ...]) -> None:
         assert self._task_program is not None
         assert self._kernel_buffers is not None
         assert self._kernel_outputs is not None
@@ -840,19 +783,10 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
                 self._kernel_buffers,
                 self._kernel_outputs,
                 self.num_envs,
-                self._kernel_input_batch_axes(),
             )
         except (TypeError, ValueError) as error:
             message = f"Invalid kernel context for {type(self).__name__} task kernel: {error}"
             raise type(error)(message) from error
-
-    def _kernel_input_batch_axes(self) -> tuple[bool, ...]:
-        assert self._compiled_manager_program is not None
-        return tuple(
-            field.scope is KernelDataScope.PER_ENV
-            for source in self._compiled_manager_program.read_plan.sources
-            for field in source.fields
-        )
 
     def warmup(self) -> ManagerWarmupResult:
         """Run one isolated evaluate/observe pass to exercise the executor graphs.
@@ -870,18 +804,19 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         assert self._kernel_outputs is not None
 
         self._refresh_sim_reads()
-        inputs = self._kernel_inputs
+        inputs = self._resolved_inputs
         self._validate_kernel_context(inputs)
         import torch
 
         started = perf_counter()
+        warmup_inputs = clone_resolved_trees(inputs)
         self._task_program.evaluate_kernel(
-            clone_kernel_value(inputs),
+            warmup_inputs,
             self._task_program.reward_weights,
             clone_kernel_value(self._kernel_buffers),
             clone_kernel_value(self._kernel_outputs),
         )
-        self._task_program.observe_kernel(clone_kernel_value(inputs), clone_kernel_value(self._kernel_outputs))
+        self._task_program.observe_kernel(warmup_inputs, clone_kernel_value(self._kernel_outputs))
         return ManagerWarmupResult(
             compile_seconds=0.0,
             signatures=("torch eager",),

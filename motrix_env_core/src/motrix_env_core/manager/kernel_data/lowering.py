@@ -4,19 +4,17 @@
 from __future__ import annotations
 
 import hashlib
-import sys
 from dataclasses import dataclass
 from enum import Enum
-from typing import Annotated, Any, NamedTuple, TypeAlias, get_args, get_origin
+from typing import Annotated, Any, TypeAlias, get_args, get_origin
 
 import numpy as np
 
 from motrix_env_core.manager.fingerprint import function_fingerprint
-from motrix_env_core.manager.kernel_data.map import map_proxy
 from motrix_env_core.manager.kernel_data.methods import dispatch_methods
 from motrix_env_core.manager.kernel_data.tree import KernelMapDef, LeafDef, TreeClassDef
 
-_LOWERING_SCHEMA_VERSION = 2
+_LOWERING_SCHEMA_VERSION = 3
 _LAYOUT_CACHE: dict[
     tuple[str, bool],
     KernelRecordLayout,
@@ -24,11 +22,12 @@ _LAYOUT_CACHE: dict[
 
 
 class KernelDataScope(str, Enum):
-    """How one flattened KernelData leaf is exposed to a Numba execution lane.
+    """How one resolved KernelData leaf is exposed to execution.
 
     Attributes:
-        PER_ENV: Select ``leaf[env_id]`` while reconstructing each execution lane.
-        SHARED: Pass the complete leaf unchanged to every execution lane.
+        PER_ENV: Leaf is an ``(N, ...)`` array covering the whole batch; the
+            reset schedule clones it for selected lanes.
+        SHARED: Pass the complete leaf unchanged to every environment lane.
     """
 
     PER_ENV = "per_env"
@@ -45,9 +44,9 @@ class KernelLeafLayout:
 
     Attributes:
         tree_def: Logical leaf definition that owns the path and annotation.
-        value_type: Concrete Python/NumPy type accepted by the kernel input slot.
-        scope: Whether lane reconstruction indexes by environment or shares the leaf.
-        slot_index: Zero-based slot relative to the root layout's flattened inputs.
+        value_type: Concrete Python/NumPy type accepted for the leaf value.
+        scope: Whether the leaf is per-environment batched or shared.
+        slot_index: Zero-based declaration index relative to the root layout.
     """
 
     tree_def: LeafDef
@@ -93,13 +92,11 @@ class KernelMapLayout:
 
     Attributes:
         tree_def: Value-derived logical map definition.
-        lowered_type: Schema-specific NamedTuple proxy constructed in Numba lanes.
         entries: Lowered children in the same order as the logical map entries.
-        fingerprint: Deterministic identity including child types, scopes, and slots.
+        fingerprint: Deterministic identity including keys and child schemas.
     """
 
     tree_def: KernelMapDef
-    lowered_type: type[tuple[Any, ...]]
     entries: tuple[KernelMapEntryLayout, ...]
     fingerprint: str
 
@@ -110,13 +107,12 @@ class KernelRecordLayout:
 
     Attributes:
         tree_def: Logical record definition being lowered.
-        lowered_type: Schema-specific NamedTuple proxy constructed in Numba lanes.
         fields: Lowered children in logical dataclass declaration order.
-        fingerprint: Deterministic identity including child types, scopes, and slots.
+        fingerprint: Deterministic identity including child types, scopes,
+            and dispatch-method code fingerprints.
     """
 
     tree_def: TreeClassDef
-    lowered_type: type[tuple[Any, ...]]
     fields: tuple[KernelFieldLayout, ...]
     fingerprint: str
 
@@ -139,60 +135,6 @@ def iter_layout_leaves(layout: KernelDataLayout) -> tuple[KernelLeafLayout, ...]
     return tuple(leaf for field in layout.fields for leaf in iter_layout_leaves(field.child))
 
 
-def rebuild_lowered(layout: KernelDataLayout, leaves: tuple[Any, ...]) -> Any:
-    """Rebuild compiler-owned lowered proxies from ordered leaves."""
-    value, next_index = _rebuild_lowered(layout, leaves, 0)
-    if next_index != len(leaves):
-        raise ValueError("KernelData lowered rebuild received extra leaves.")
-    return value
-
-
-def _rebuild_lowered(layout: KernelDataLayout, leaves: tuple[Any, ...], index: int) -> tuple[Any, int]:
-    if isinstance(layout, KernelLeafLayout):
-        if index >= len(leaves):
-            raise ValueError("KernelData lowered rebuild received too few leaves.")
-        return leaves[index], index + 1
-    if isinstance(layout, KernelMapLayout):
-        values = []
-        for entry in layout.entries:
-            value, index = _rebuild_lowered(entry.child, leaves, index)
-            values.append(value)
-        return layout.lowered_type(*values), index
-    assert isinstance(layout, KernelRecordLayout)
-    values = []
-    for field in layout.fields:
-        value, index = _rebuild_lowered(field.child, leaves, index)
-        values.append(value)
-    return layout.lowered_type(*values), index
-
-
-def lane_expression(layout: KernelDataLayout, input_offset: int, env_symbol: str = "env_id") -> str:
-    """Generate a bottom-up lane-local reconstruction expression."""
-    if isinstance(layout, KernelLeafLayout):
-        input_symbol = f"input_{input_offset + layout.slot_index}"
-        return f"{input_symbol}[{env_symbol}]" if layout.scope is KernelDataScope.PER_ENV else input_symbol
-    if isinstance(layout, KernelMapLayout):
-        arguments = ", ".join(lane_expression(entry.child, input_offset, env_symbol) for entry in layout.entries)
-        return f"{proxy_symbol(layout.lowered_type)}({arguments})"
-    assert isinstance(layout, KernelRecordLayout)
-    arguments = ", ".join(lane_expression(field.child, input_offset, env_symbol) for field in layout.fields)
-    return f"{proxy_symbol(layout.lowered_type)}({arguments})"
-
-
-def proxy_types(layout: KernelDataLayout) -> tuple[type[tuple[Any, ...]], ...]:
-    """Return all lowered record proxy types in child-first order."""
-    if isinstance(layout, KernelLeafLayout):
-        return ()
-    if isinstance(layout, KernelMapLayout):
-        return tuple(proxy for entry in layout.entries for proxy in proxy_types(entry.child)) + (layout.lowered_type,)
-    assert isinstance(layout, KernelRecordLayout)
-    return tuple(proxy for field in layout.fields for proxy in proxy_types(field.child)) + (layout.lowered_type,)
-
-
-def proxy_symbol(proxy: type[tuple[Any, ...]]) -> str:
-    return proxy.__name__
-
-
 def _tree_method_fingerprint(tree_def: TreeClassDef | KernelMapDef | LeafDef) -> Any:
     """Include nested records and map values before consulting the layout cache."""
     if isinstance(tree_def, LeafDef):
@@ -209,7 +151,13 @@ def _tree_method_fingerprint(tree_def: TreeClassDef | KernelMapDef | LeafDef) ->
 
 
 class KernelDataLowering:
-    """Lower one logical ``TreeClassDef`` into a fixed flat Numba ABI layout."""
+    """Validate one logical ``TreeClassDef`` and derive its leaf layout.
+
+    The lowering checks that every leaf annotation is a supported
+    ndarray/scalar type, assigns each leaf its data scope, and produces a
+    deterministic structural fingerprint (field names, types, scopes, and
+    dispatch-method code) used for resolved-program invalidation.
+    """
 
     def lower(
         self,
@@ -217,7 +165,7 @@ class KernelDataLowering:
         *,
         context: str,
         force_shared: bool = False,
-    ) -> KernelDataLayout:
+    ) -> KernelRecordLayout:
         method_key = hashlib.sha256(repr(_tree_method_fingerprint(tree_def)).encode()).hexdigest()
         cache_key = (f"{tree_def.fingerprint}:{method_key}", force_shared)
         cached = _LAYOUT_CACHE.get(cache_key)
@@ -251,7 +199,6 @@ class KernelDataLowering:
                     slot_index,
                     force_shared,
                     context,
-                    tree_def.logical_type.__module__,
                 )
             else:
                 assert isinstance(field.tree_def, LeafDef)
@@ -259,7 +206,6 @@ class KernelDataLowering:
                     field.tree_def.annotation,
                     context=f"{context} KernelData {tree_def.logical_type.__name__}.{'.'.join(field.tree_def.path)}",
                     force_shared=force_shared,
-                    force_per_env=False,
                 )
                 if value_type is None:
                     raise TypeError(
@@ -280,12 +226,7 @@ class KernelDataLowering:
             (_LOWERING_SCHEMA_VERSION, tree_def.fingerprint, identity, tuple(fingerprint_fields), method_fingerprints)
         )
         fingerprint = hashlib.sha256(raw_fingerprint.encode()).hexdigest()
-        lowered_type = self._lowered_proxy(
-            tree_def.logical_type,
-            tuple(field.name for field in field_layouts),
-            fingerprint,
-        )
-        return KernelRecordLayout(tree_def, lowered_type, tuple(field_layouts), fingerprint), slot_index
+        return KernelRecordLayout(tree_def, tuple(field_layouts), fingerprint), slot_index
 
     def _lower_map(
         self,
@@ -293,7 +234,6 @@ class KernelDataLowering:
         slot_index: int,
         force_shared: bool,
         context: str,
-        module_name: str,
     ) -> tuple[KernelMapLayout, int]:
         entry_layouts: list[KernelMapEntryLayout] = []
         fingerprint_entries: list[Any] = []
@@ -311,7 +251,6 @@ class KernelDataLowering:
                     slot_index,
                     force_shared,
                     context,
-                    module_name,
                 )
             else:
                 assert isinstance(entry.tree_def, LeafDef)
@@ -319,7 +258,6 @@ class KernelDataLowering:
                     entry.tree_def.annotation,
                     context=f"{context} Map {'.'.join(entry.tree_def.path)}",
                     force_shared=force_shared,
-                    force_per_env=False,
                 )
                 if value_type is None:
                     raise TypeError(
@@ -332,14 +270,7 @@ class KernelDataLowering:
             fingerprint_entries.append((entry.key, self._fingerprint_part(child)))
         raw_fingerprint = repr((_LOWERING_SCHEMA_VERSION, tree_def.fingerprint, tuple(fingerprint_entries)))
         fingerprint = hashlib.sha256(raw_fingerprint.encode()).hexdigest()
-        namespace = ".".join(tree_def.path) or "root"
-        lowered_type = map_proxy(
-            namespace,
-            tuple(entry.key for entry in entry_layouts),
-            module_name=module_name,
-            schema_fingerprint=fingerprint,
-        )
-        return KernelMapLayout(tree_def, lowered_type, tuple(entry_layouts), fingerprint), slot_index
+        return KernelMapLayout(tree_def, tuple(entry_layouts), fingerprint), slot_index
 
     @staticmethod
     def _fingerprint_part(layout: KernelDataLayout) -> Any:
@@ -367,40 +298,11 @@ class KernelDataLowering:
         )
 
     @staticmethod
-    def _lowered_proxy(
-        logical_type: type,
-        field_names: tuple[str, ...],
-        fingerprint: str,
-    ) -> type[tuple[Any, ...]]:
-        sanitized = "_".join(
-            part for part in logical_type.__qualname__.replace("<locals>", "locals").split(".") if part
-        )
-        name = f"_{sanitized}KernelData_{fingerprint[:12]}"
-        module = sys.modules.get(logical_type.__module__)
-        if module is None:
-            raise TypeError(f"KernelData module {logical_type.__module__!r} is not loaded.")
-        existing = getattr(module, name, None)
-        if existing is not None:
-            if (
-                not isinstance(existing, type)
-                or not issubclass(existing, tuple)
-                or getattr(existing, "_fields", None) != field_names
-            ):
-                raise TypeError(f"KernelData lowered proxy name collision: {logical_type.__module__}.{name}.")
-            return existing
-        lowered = NamedTuple(name, [(field_name, Any) for field_name in field_names])  # type: ignore[misc]
-        lowered.__module__ = logical_type.__module__
-        lowered.__qualname__ = name
-        setattr(module, name, lowered)
-        return lowered
-
-    @staticmethod
     def _leaf_type(
         annotation: Any,
         *,
         context: str,
         force_shared: bool,
-        force_per_env: bool = False,
     ) -> tuple[type[Any] | None, KernelDataScope]:
         metadata: tuple[Any, ...] = ()
         if get_origin(annotation) is Annotated:
@@ -409,13 +311,7 @@ class KernelDataLowering:
         if metadata and metadata != (KernelDataScope.SHARED,):
             raise TypeError(f"{context} has unsupported or conflicting metadata {metadata!r}.")
         if annotation is np.ndarray:
-            if metadata and force_per_env:
-                raise TypeError(f"{context} cannot be both SharedArray and explicitly per-environment.")
-            scope = (
-                KernelDataScope.PER_ENV
-                if force_per_env
-                else (KernelDataScope.SHARED if metadata or force_shared else KernelDataScope.PER_ENV)
-            )
+            scope = KernelDataScope.SHARED if metadata or force_shared else KernelDataScope.PER_ENV
             return annotation, scope
         if metadata:
             raise TypeError(f"{context} scope metadata is only valid on np.ndarray leaves.")

@@ -6,6 +6,9 @@ from typing import Any, NamedTuple, TypeVar, cast
 
 import numpy as np
 
+from motrix_env_core.manager.kernel_data.lowering import KernelDataScope
+from motrix_env_core.manager.kernel_data.resolved import ResolvedLeaf, ResolvedTree
+
 T = TypeVar("T")
 
 
@@ -32,26 +35,49 @@ class ManagerWarmupResult:
 
 
 def validate_kernel_context(
-    inputs: Any,
+    trees: Any,
     reward_weights: np.ndarray,
     buffers: Any,
     outputs: KernelOutputs,
     num_envs: int,
-    input_batch_axes: tuple[bool, ...] | None = None,
 ) -> None:
-    """Validate the numeric kernel contract once when a context is bound."""
-    if input_batch_axes is None:
-        _validate_value(inputs, "inputs", num_envs=num_envs, batched=True, writable=False)
-    else:
-        if not isinstance(inputs, tuple):
-            raise TypeError(f"inputs must be tuple, got {type(inputs).__name__}.")
-        if len(inputs) != len(input_batch_axes):
-            raise ValueError(f"inputs must contain {len(input_batch_axes)} values, got {len(inputs)}.")
-        for index, (value, batched) in enumerate(zip(inputs, input_batch_axes, strict=True)):
-            _validate_value(value, f"inputs.{index}", num_envs=num_envs, batched=batched, writable=False)
+    """Validate the numeric kernel contract once when a context is bound.
+
+    ``trees`` is the resolved program input: one :class:`ResolvedTree` per
+    prepared kernel-data source. Each leaf is validated against its declared
+    scope (``PER_ENV`` leaves must lead with the batch dimension).
+    """
+    if not isinstance(trees, tuple):
+        raise TypeError(f"inputs must be a tuple of resolved trees, got {type(trees).__name__}.")
+    for tree in trees:
+        for path, leaf in tree.leaves.items():
+            _validate_value(
+                leaf.value,
+                f"inputs.{'.'.join(path)}",
+                num_envs=num_envs,
+                batched=leaf.scope is KernelDataScope.PER_ENV,
+                writable=False,
+            )
     _validate_value(reward_weights, "reward_weights", num_envs=num_envs, batched=False, writable=False)
     _validate_value(buffers, "buffers", num_envs=num_envs, batched=True, writable=True)
     _validate_outputs(outputs, num_envs)
+
+
+def clone_resolved_trees(trees: tuple[ResolvedTree, ...]) -> tuple[ResolvedTree, ...]:
+    """Clone every leaf of the resolved trees for isolated warmup execution.
+
+    Leaves are cloned with :func:`clone_kernel_value` semantics (dtype,
+    strides, and read-only flag preserved); the host root objects stay shared
+    exactly as in real execution, where namespace fallback reads immutable
+    config attributes from the original records.
+    """
+    return tuple(
+        ResolvedTree(
+            tree.value,
+            {path: ResolvedLeaf(clone_kernel_value(leaf.value), leaf.scope) for path, leaf in tree.leaves.items()},
+        )
+        for tree in trees
+    )
 
 
 def clone_kernel_value(value: T) -> T:
