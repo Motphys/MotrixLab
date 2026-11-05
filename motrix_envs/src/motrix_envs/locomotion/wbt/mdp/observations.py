@@ -14,7 +14,6 @@ from motrix_env_core.manager import (
     ObsTerm,
     kernel_data,
 )
-from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.manager.kernel_data import SharedArray
 from motrix_env_core.math import quaternion_array as batch_math
 from motrix_env_core.math.quaternion_array import relative_orientation, rotate_inverse
@@ -25,7 +24,6 @@ from motrix_env_core.mdp.observations import (
 from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommand
 
 
-@dispatch
 def motion_joint_obs(ctx: ManagerContext, out: torch.Tensor) -> None:
     motion = ctx.commands["motion"]
     steps = motion.steps[:, 0]
@@ -43,7 +41,6 @@ class MotionJointObsCfg(ObservationTermCfg):
         return ObsTerm(2 * motion.clip.joint_pos.shape[1], motion_joint_obs)
 
 
-@dispatch
 def motion_reference_position_obs(ctx: ManagerContext, out: torch.Tensor) -> None:
     motion = ctx.commands["motion"]
     reference_index = motion.reference_index
@@ -62,7 +59,6 @@ class MotionReferencePositionObsCfg(ObservationTermCfg):
         return ObsTerm(3, motion_reference_position_obs)
 
 
-@dispatch
 def motion_reference_orientation_obs(
     ctx: ManagerContext,
     out: torch.Tensor,
@@ -83,7 +79,6 @@ class MotionReferenceOrientationObsCfg(ObservationTermCfg):
         return ObsTerm(6, motion_reference_orientation_obs, np.float32(self.noise.amplitude))
 
 
-@dispatch
 def robot_body_position_in_reference_frame_obs(ctx: ManagerContext, out: torch.Tensor) -> None:
     motion = ctx.commands["motion"]
     reference_index = motion.reference_index
@@ -102,7 +97,6 @@ class RobotBodyPositionInReferenceFrameObsCfg(ObservationTermCfg):
         return ObsTerm(3 * num_tracked, robot_body_position_in_reference_frame_obs)
 
 
-@dispatch
 def robot_body_orientation_obs(ctx: ManagerContext, out: torch.Tensor) -> None:
     # Bug-compatible with the historical per-lane oracle: body zero writes its
     # 6D matrix over the shared out[:4] inverse-quaternion scratch, and every
@@ -129,7 +123,6 @@ class RelativePositionParams:
     noise_amplitude: np.float32
 
 
-@dispatch
 def dof_pos_rel_obs(ctx: ManagerContext, out: torch.Tensor, params: RelativePositionParams) -> None:
     out.copy_(ctx.sim["robot_dof_pos"] - params.reference)
     add_uniform_noise(ctx, out, params.noise_amplitude)
@@ -172,7 +165,6 @@ class DofPosRelObsCfg(ObservationTermCfg):
         return ObsTerm(reference.shape[0], dof_pos_rel_obs, params)
 
 
-@dispatch
 def dof_vel_obs(ctx: ManagerContext, out: torch.Tensor, noise_amplitude: float) -> None:
     out.copy_(ctx.sim["robot_dof_vel"])
     add_uniform_noise(ctx, out, noise_amplitude)

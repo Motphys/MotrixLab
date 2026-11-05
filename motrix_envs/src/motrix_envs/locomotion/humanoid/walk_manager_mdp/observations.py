@@ -8,11 +8,9 @@ import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager.context import BuildContext, ManagerContext
-from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.manager.observations import ObservationTermCfg, ObsTerm
 
 
-@dispatch
 def gait_phase_obs(ctx: ManagerContext, out: torch.Tensor, offset: np.int64, size: np.int64) -> None:
     walk = ctx.commands["walk"]
     out.copy_(walk.sin_cos[:, offset : offset + size])

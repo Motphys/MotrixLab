@@ -47,8 +47,6 @@ from motrix_env_core.manager import (  # noqa: E402
 )
 from motrix_env_core.manager.dispatch import dispatch  # noqa: E402
 from motrix_env_core.manager.observations import create_observation_groups
-from motrix_env_core.manager.rewards import create_reward_terms
-from motrix_env_core.manager.terminations import TerminationManager
 
 
 @kernel_data
@@ -104,7 +102,6 @@ class _ObservationParams:
     scale: np.float32
 
 
-@dispatch
 def _injected_observation(ctx: ManagerContext, out: torch.Tensor, params: _ObservationParams) -> None:
     action = ctx.actions["test"]
     out[:, 0] = action.source[:, 0] * params.scale + params.offset[0]
@@ -124,7 +121,6 @@ class _InjectedObservationCfg(ObservationTermCfg):
         )
 
 
-@dispatch
 def _derived_observation(ctx: ManagerContext, out: torch.Tensor) -> None:
     out[:, 0] = ctx.commands["counter"].double[:, 0]
 
@@ -140,7 +136,6 @@ class _DerivedObservationCfg(ObservationTermCfg):
         return ObsTerm(1, _derived_observation)
 
 
-@dispatch
 def _lane_observation(ctx: ManagerContext, out: torch.Tensor) -> None:
     out[:, 0] = ctx.env_id
 
@@ -166,7 +161,6 @@ class _LaneObservationsCfg(ManagerObservationsCfg):
     policy: _LanePolicyObsCfg = _LanePolicyObsCfg()
 
 
-@dispatch
 def _injected_reward(ctx: ManagerContext):
     return ctx.actions["test"].source[:, 0]
 
@@ -178,7 +172,6 @@ class _InjectedRewardCfg(RewardTermCfg):
         return RewardTerm(_injected_reward)
 
 
-@dispatch
 def _injected_termination(ctx: ManagerContext, threshold) -> bool:
     value = ctx.actions["test"].source[:, 0]
     ctx.metrics["source_at_termination"][:, 0] = value
@@ -798,34 +791,6 @@ def test_observation_term_must_be_kernel_data_with_instance_compute() -> None:
     assert static_groups["policy"].terms[0].term.dispatch is _static_observation
 
 
-def test_reward_term_requires_dispatch_descriptor() -> None:
-    class _InvalidReward:
-        pass
-
-    @configclass(kw_only=True)
-    class _InvalidRewardCfg(RewardTermCfg):
-        def __call__(self, env: ManagerEnv) -> RewardTerm:
-            del env
-            return _InvalidReward()
-
-    env = _ManagerEnv(num_envs=1)
-    with pytest.raises(TypeError, match="must return RewardTerm"):
-        create_reward_terms({"invalid": _InvalidRewardCfg(weight=1.0)}, env)
-
-    def _undecorated_reward(ctx: ManagerContext) -> float:
-        del ctx
-        return 1.0
-
-    @configclass(kw_only=True)
-    class _UndecoratedRewardCfg(RewardTermCfg):
-        def __call__(self, env: ManagerEnv) -> RewardTerm:
-            del env
-            return RewardTerm(_undecorated_reward)
-
-    with pytest.raises(TypeError, match="must be decorated with @dispatch"):
-        create_reward_terms({"undecorated": _UndecoratedRewardCfg(weight=1.0)}, env)
-
-
 def test_dispatch_term_parameter_names_are_not_constrained() -> None:
     @dispatch
     def _renamed_reward(context: ManagerContext):
@@ -848,31 +813,3 @@ def test_dispatch_term_parameter_names_are_not_constrained() -> None:
     env.compute_transition(state)
 
     np.testing.assert_allclose(state.reward, 2.0 * 0.5 * env.cfg.ctrl_dt)
-
-
-def test_termination_term_requires_dispatch_descriptor() -> None:
-    class _InvalidTermination:
-        pass
-
-    @configclass(kw_only=True)
-    class _InvalidTerminationCfg(TerminationTermCfg):
-        def __call__(self, env: ManagerEnv) -> TerminationTerm:
-            del env
-            return _InvalidTermination()
-
-    env = _ManagerEnv(num_envs=1)
-    with pytest.raises(TypeError, match="must return TerminationTerm"):
-        TerminationManager({"invalid": _InvalidTerminationCfg()}, env)
-
-    def _undecorated_termination(ctx: ManagerContext) -> bool:
-        del ctx
-        return False
-
-    @configclass(kw_only=True)
-    class _UndecoratedTerminationCfg(TerminationTermCfg):
-        def __call__(self, env: ManagerEnv) -> TerminationTerm:
-            del env
-            return TerminationTerm(_undecorated_termination)
-
-    with pytest.raises(TypeError, match="must be decorated with @dispatch"):
-        TerminationManager({"undecorated": _UndecoratedTerminationCfg()}, env)

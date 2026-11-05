@@ -78,10 +78,12 @@ README 或教程；插件与任务 package 的 README 不重复这些内容，�
 
 ### Manager term 入口方法
 
-Manager 数值 term 入口方法必须用 `@dispatch` 装饰。`@dispatch` 是透明的标记装饰器：resolver 只做签名/标注
-校验，数值执行由 Torch 执行器按整批张量调度，不存在 Numba 编译路径。Command hooks（`update`/`advance`/
-`reset_env`）是类上的 `@staticmethod` + `@dispatch` 函数，签名为 `(receiver, ctx)`。哪些方法是 term 入口、
-哪些是普通 Python 方法，由 manager 运行时契约定义（`wiki/design/manager/runtime.md`）。
+Manager 数值 term 是普通 Python 函数，契约由签名注解表达并由 resolver 校验（首参数注解
+`ManagerContext`，observation 的 `out` 注解 `torch.Tensor`，reset 的 `sim_writes` 注解
+`Map[torch.Tensor]`）；数值执行由 Torch 执行器按整批张量调度。`@dispatch` 仅用于标记 kernel_data
+类上需要进入布局方法代理表的方法（如 `ActionState.current/previous`、CommandTerm 的
+`update`/`advance`/`reset_env` hooks，后者为 `@staticmethod`，签名为 `(receiver, ctx)`）。运行时
+契约见 `wiki/design/manager/runtime.md`。
 
 ### 环境配置与注册规范
 

@@ -15,7 +15,6 @@ from motrix_env_core.manager import (
     RewardTermCfg,
 )
 from motrix_env_core.manager.context import BuildContext
-from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.math.quaternion_array import rotate_inverse_components
 from motrix_env_core.mdp.terrain import HeightFieldGrid, heightfield_lookup
 from motrix_env_core.sim import (
@@ -39,7 +38,6 @@ def _expected_foot_height(phi: torch.Tensor, swing_height: float) -> torch.Tenso
     return y_start + (y_end - y_start) * (t**3 + 3.0 * (t**2 * (1.0 - t)))
 
 
-@dispatch
 def penalty_ang_vel_xy_reward(ctx: ManagerContext, base_quat: torch.Tensor, base_ang_vel: torch.Tensor) -> torch.Tensor:
     vx, vy, _ = rotate_inverse_components(base_quat, base_ang_vel)
     walk = ctx.commands["walk"]
@@ -57,7 +55,6 @@ class PenaltyAngVelXyRewardCfg(RewardTermCfg):
         )
 
 
-@dispatch
 def penalty_orientation_reward(ctx: ManagerContext, base_quat: torch.Tensor) -> torch.Tensor:
     gravity = base_quat.new_zeros(base_quat.shape[0], 3)
     gravity[:, 2] = -1.0
@@ -76,7 +73,6 @@ class PenaltyOrientationRewardCfg(RewardTermCfg):
         )
 
 
-@dispatch
 def penalty_action_rate_reward(ctx: ManagerContext) -> torch.Tensor:
     action = ctx.actions["joint_position"]
     delta = action.current() - action.previous()
@@ -90,7 +86,6 @@ class PenaltyActionRateRewardCfg(RewardTermCfg):
         return RewardTerm(penalty_action_rate_reward)
 
 
-@dispatch
 def feet_phase_reward(
     ctx: ManagerContext,
     swing_height: float,
@@ -138,7 +133,6 @@ class FeetPhaseRewardCfg(RewardTermCfg):
         )
 
 
-@dispatch
 def pose_reward(
     ctx: ManagerContext, default_joint_angles: torch.Tensor, pose_weights: torch.Tensor, joint_pos: torch.Tensor
 ) -> torch.Tensor:
@@ -175,7 +169,6 @@ class PoseRewardCfg(RewardTermCfg):
         )
 
 
-@dispatch
 def penalty_close_feet_xy_reward(
     ctx: ManagerContext, close_feet_threshold: float, base_quat: torch.Tensor, foot_pos: torch.Tensor
 ) -> torch.Tensor:
@@ -208,7 +201,6 @@ class PenaltyCloseFeetXyRewardCfg(RewardTermCfg):
         )
 
 
-@dispatch
 def penalty_feet_ori_reward(
     ctx: ManagerContext, default_foot_gravity: torch.Tensor, foot_quat: torch.Tensor
 ) -> torch.Tensor:

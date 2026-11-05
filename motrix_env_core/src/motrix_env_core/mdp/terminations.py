@@ -9,16 +9,13 @@ import torch
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, TerminationTerm, TerminationTermCfg
 from motrix_env_core.manager.context import BuildContext
-from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.sim import BodyJointVelocityQuery, GeomPairCollidingQuery
 
 
-@dispatch
 def colliding_termination(ctx: ManagerContext, colliding: torch.Tensor) -> torch.Tensor:
     return colliding.any(dim=1)
 
 
-@dispatch
 def bad_dof_velocity_termination(ctx: ManagerContext, dof_vel: torch.Tensor, threshold: float) -> torch.Tensor:
     # Non-finite components count as +inf, so the max over the masked
     # absolute velocities terminates lanes with non-finite joint speeds

@@ -63,8 +63,6 @@ class BaseTerm:
     def __post_init__(self) -> None:
         if not inspect.isfunction(self.dispatch):
             raise TypeError(f"Term dispatch must be a Python function, got {type(self.dispatch).__name__}.")
-        if not getattr(self.dispatch, "__motrix_manager_dispatch__", False):
-            raise TypeError(f"Term dispatch {self.dispatch.__qualname__!r} must be decorated with @dispatch.")
         if not isinstance(self.args, tuple):
             raise TypeError("Term invocation args must be a tuple.")
 

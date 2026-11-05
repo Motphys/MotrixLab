@@ -26,7 +26,6 @@ import numpy as np
 import torch
 
 from motrix_env_core.manager.context import ManagerContext
-from motrix_env_core.manager.dispatch import is_dispatched
 from motrix_env_core.manager.env import (
     KernelInputSource,
     ManagerEnv,
@@ -388,7 +387,7 @@ class ManagerProgramResolver:
                 f"Manager simulator reset term {name!r} dispatch must annotate its second parameter as "
                 f"Map[torch.Tensor] (conventionally named sim_writes)."
             )
-        dispatcher = self._term_entry(function)
+        dispatcher = function
         expressions = []
         prepared_indices = []
         for index, value in enumerate(term.args):
@@ -602,7 +601,7 @@ class ManagerProgramResolver:
                 expressions.append(expression)
                 warmup_values.append(warmup)
         expressions = tuple(expressions)
-        dispatcher = self._term_entry(function)
+        dispatcher = function
         return PreparedInvocation(
             f"{group}.{name}",
             "observation",
@@ -703,7 +702,7 @@ class ManagerProgramResolver:
                 prepared_indices.append(prepared_index)
                 expressions.append(expression)
                 warmup_values.append(warmup)
-        dispatcher = self._term_entry(function)
+        dispatcher = function
         return PreparedInvocation(
             f"{group}.{name}",
             group,
@@ -762,7 +761,7 @@ class ManagerProgramResolver:
             )
         kind = f"command_{function_name}" if group == "command" else group
         context = f"{group}.{name} ({function.__module__}.{function.__qualname__})"
-        dispatcher = self._term_entry(function)
+        dispatcher = function
         return PreparedInvocation(context, kind, dispatcher, receiver_key, output_size=output_size)
 
     # -- input preparation ----------------------------------------------------
@@ -863,9 +862,3 @@ class ManagerProgramResolver:
                 raise TypeError("Manager value observation space must use float32 dtype.")
         elif self._env.has_value_observation:
             raise ValueError("Environment declares a value observation space but manager config has no 'value' group.")
-
-    def _term_entry(self, function: Any) -> Any:
-        """Validate one dispatch entry and keep it as the Python callable."""
-        if not is_dispatched(function):
-            raise TypeError(f"Manager kernel entry {function.__qualname__!r} must be decorated with @dispatch.")
-        return function

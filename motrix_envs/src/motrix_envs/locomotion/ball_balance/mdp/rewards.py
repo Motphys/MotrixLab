@@ -8,12 +8,10 @@ import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, RewardTerm, RewardTermCfg
-from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.manager.kernel_data import SharedArray, kernel_data
 from motrix_env_core.math.quaternion_array import rotate_inverse as rotate_inverse_batch
 
 
-@dispatch
 def upright_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
     base_quat = ctx.sim["robot_base_quat"]
     gravity = base_quat.new_zeros(base_quat.shape[0], 3)
@@ -35,7 +33,6 @@ class UprightRewardCfg(RewardTermCfg):
         return RewardTerm(upright_reward, np.float32(self.sigma))
 
 
-@dispatch
 def base_height_reward(ctx: ManagerContext, target_z: float, sigma: float) -> torch.Tensor:
     error = ctx.sim["robot_base_pos"][:, 2] - target_z
     return torch.exp(-(error * error) / (sigma * sigma))
@@ -52,7 +49,6 @@ class BaseHeightRewardCfg(RewardTermCfg):
         return RewardTerm(base_height_reward, np.float32(self.target_z), np.float32(self.sigma))
 
 
-@dispatch
 def ball_under_feet_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
     feet_pos = ctx.sim["feet_pos"]
     ball_pos = ctx.sim["ball_pos"]
@@ -80,7 +76,6 @@ class DofDefaultParams:
     sigma: np.float32
 
 
-@dispatch
 def dof_default_reward(ctx: ManagerContext, params: DofDefaultParams) -> torch.Tensor:
     error = ctx.sim["robot_dof_pos"] - params.reference
     error_sq = (error * error).sum(dim=1) / error.shape[1]

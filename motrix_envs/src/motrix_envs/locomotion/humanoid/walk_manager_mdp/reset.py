@@ -15,7 +15,6 @@ from motrix_env_core.manager import (
     kernel_data,
 )
 from motrix_env_core.manager.context import BuildContext
-from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.manager.kernel_data.map import Map
 from motrix_env_core.mdp.terrain import HeightFieldGrid, heightfield_lookup
 from motrix_env_core.sim.write import (
@@ -158,7 +157,6 @@ def _write_spawn_state(
     sim_writes["joints_velocity"][:] = 0.0
 
 
-@dispatch
 def reset_walk_state(ctx: ManagerContext, sim_writes: Map[torch.Tensor], params: WalkResetParams) -> None:
     """Spawn-state-only reset for configs without dynamics randomization."""
     pose = params.init_pose
@@ -168,7 +166,6 @@ def reset_walk_state(ctx: ManagerContext, sim_writes: Map[torch.Tensor], params:
     _write_spawn_state(sim_writes, params, x, y, z)
 
 
-@dispatch
 def reset_walk_state_randomized(ctx: ManagerContext, sim_writes: Map[torch.Tensor], params: WalkResetParams) -> None:
     """Reset plus in-kernel dynamics randomization (kp/damping/friction/mass/com)."""
     pose = params.init_pose

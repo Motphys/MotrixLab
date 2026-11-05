@@ -8,7 +8,6 @@ import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, TerminationTerm, TerminationTermCfg
-from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.math.quaternion_array import rotate_inverse as rotate_inverse_batch
 
 
@@ -17,7 +16,6 @@ class _BallBalanceTerminationCfg(TerminationTermCfg):
     threshold: float
 
 
-@dispatch
 def bad_base_z_termination(ctx: ManagerContext, threshold: float) -> torch.Tensor:
     error = ctx.sim["robot_base_pos"][:, 2]
     ctx.metrics["base_z"][:, 0] = error
@@ -36,7 +34,6 @@ class BadBaseZTerminationCfg(_BallBalanceTerminationCfg):
         )
 
 
-@dispatch
 def bad_orientation_termination(ctx: ManagerContext, threshold: float) -> torch.Tensor:
     base_quat = ctx.sim["robot_base_quat"]
     gravity = base_quat.new_zeros(base_quat.shape[0], 3)
@@ -59,7 +56,6 @@ class BadOrientationTerminationCfg(_BallBalanceTerminationCfg):
         )
 
 
-@dispatch
 def ball_escaped_termination(ctx: ManagerContext, threshold: float) -> torch.Tensor:
     feet_pos = ctx.sim["feet_pos"]
     ball_pos = ctx.sim["ball_pos"]

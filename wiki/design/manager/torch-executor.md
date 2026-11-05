@@ -24,7 +24,7 @@ RNG draw 顺序与 eager 完全一致；Inductor 重结合仅带来 ≤1e-8 量�
 - `ManagerProgramResolver`（backend-neutral）负责输入准备：flatten
   `@kernel_data` term 与 `ManagerContext`，构建 `ManagerLayout`、
   `KernelInputSource`/`ReadPlan`、`PreparedInvocation`（每个 term 的
-  dispatcher、参数表达式/值/prepared index），并校验 `@dispatch` 标记与
+  dispatcher、参数表达式/值/prepared index），并校验签名注解契约与
   签名契约。它不做任何代码生成、缓存或 dispatcher 编译。
 - `TorchManagerRuntime` 消费这些元数据并执行 term 调度；所有写入落回
   host 持有的 numpy 缓冲（reward terms/masks/obs/command state/metrics），

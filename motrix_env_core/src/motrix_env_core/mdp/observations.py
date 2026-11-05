@@ -13,7 +13,6 @@ import torch
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import RobotCfg
 from motrix_env_core.manager.context import BuildContext, ManagerContext
-from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.manager.observations import ObservationTermCfg, ObsTerm
 from motrix_env_core.sim import (
     BodyJointPositionQuery,
@@ -61,7 +60,6 @@ def _rotate_inverse(quaternion: torch.Tensor, vector: torch.Tensor, out: torch.T
     out[:, 2] = vz + 2.0 * (x * cy - y * cx)
 
 
-@dispatch
 def body_joint_vel_obs(
     ctx: ManagerContext, out: torch.Tensor, dof_vel: torch.Tensor, scale: float, noise_amplitude: float
 ) -> None:
@@ -70,7 +68,6 @@ def body_joint_vel_obs(
     add_uniform_noise(ctx, out, noise_amplitude)
 
 
-@dispatch
 def actions_obs(ctx: ManagerContext, out: torch.Tensor, action_name: str) -> None:
     out.copy_(ctx.actions[action_name].current())
 
@@ -86,7 +83,6 @@ class ActionsObsCfg(ObservationTermCfg):
         return ObsTerm(action.action_queue.shape[2], actions_obs, self.action_name)
 
 
-@dispatch
 def command_obs(ctx: ManagerContext, out: torch.Tensor, command_name: str) -> None:
     out.copy_(ctx.commands[command_name].command)
 
@@ -127,7 +123,6 @@ class BodyJointVelObsCfg(ObservationTermCfg):
         )
 
 
-@dispatch
 def body_linear_velocity_obs(
     ctx: ManagerContext,
     out: torch.Tensor,
@@ -161,7 +156,6 @@ class BodyLinearVelocityObsCfg(ObservationTermCfg):
         )
 
 
-@dispatch
 def body_angular_velocity_obs(
     ctx: ManagerContext,
     out: torch.Tensor,
@@ -195,7 +189,6 @@ class BodyAngularVelocityObsCfg(ObservationTermCfg):
         )
 
 
-@dispatch
 def body_projected_gravity_obs(
     ctx: ManagerContext, out: torch.Tensor, base_quat: torch.Tensor, noise_amplitude: float
 ) -> None:
@@ -222,7 +215,6 @@ class BodyProjectedGravityObsCfg(ObservationTermCfg):
         )
 
 
-@dispatch
 def body_joint_pos_rel_obs(
     ctx: ManagerContext,
     out: torch.Tensor,

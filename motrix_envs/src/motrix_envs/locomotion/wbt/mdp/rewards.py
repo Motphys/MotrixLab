@@ -10,13 +10,11 @@ import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, RewardTerm, RewardTermCfg
-from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.manager.kernel_data import SharedArray, kernel_data
 from motrix_env_core.math.quaternion_array import rotation_distance
 from motrix_env_core.mdp.action import JointPositionActionState
 
 
-@dispatch
 def global_ref_position_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
     motion = ctx.commands["motion"]
     steps = motion.steps[:, 0]
@@ -32,7 +30,6 @@ class GlobalRefPositionRewardCfg(RewardTermCfg):
         return RewardTerm(global_ref_position_reward, np.float32(self.sigma))
 
 
-@dispatch
 def global_ref_orientation_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
     motion = ctx.commands["motion"]
     steps = motion.steps[:, 0]
@@ -50,7 +47,6 @@ class GlobalRefOrientationRewardCfg(RewardTermCfg):
         return RewardTerm(global_ref_orientation_reward, np.float32(self.sigma))
 
 
-@dispatch
 def relative_body_position_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
     motion = ctx.commands["motion"]
     diff = motion.target_body_position_relative - ctx.sim["tracked_body_pos"]
@@ -66,7 +62,6 @@ class RelativeBodyPositionRewardCfg(RewardTermCfg):
         return RewardTerm(relative_body_position_reward, np.float32(self.sigma))
 
 
-@dispatch
 def ee_body_pos_reward(ctx: ManagerContext, body_indices: tuple[int, ...], sigma: float) -> torch.Tensor:
     motion = ctx.commands["motion"]
     position = ctx.sim["tracked_body_pos"]
@@ -101,7 +96,6 @@ class EeBodyPosRewardCfg(RewardTermCfg):
         return RewardTerm(ee_body_pos_reward, body_indices, np.float32(self.sigma))
 
 
-@dispatch
 def relative_body_orientation_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
     motion = ctx.commands["motion"]
     quaternion = ctx.sim["tracked_body_quat"]
@@ -118,7 +112,6 @@ class RelativeBodyOrientationRewardCfg(RewardTermCfg):
         return RewardTerm(relative_body_orientation_reward, np.float32(self.sigma))
 
 
-@dispatch
 def global_body_linear_velocity_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
     motion = ctx.commands["motion"]
     steps = motion.steps[:, 0]
@@ -136,7 +129,6 @@ class GlobalBodyLinearVelocityRewardCfg(RewardTermCfg):
         return RewardTerm(global_body_linear_velocity_reward, np.float32(self.sigma))
 
 
-@dispatch
 def global_body_angular_velocity_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
     motion = ctx.commands["motion"]
     steps = motion.steps[:, 0]
@@ -162,7 +154,6 @@ class DofLimitParams:
     cap: np.float32
 
 
-@dispatch
 def dof_limit_reward(ctx: ManagerContext, params: DofLimitParams) -> torch.Tensor:
     dof_position = ctx.sim["robot_dof_pos"]
     violation = torch.abs(dof_position - params.midpoint) - params.half_range * params.soft_limit
@@ -186,7 +177,6 @@ class DofLimitRewardCfg(RewardTermCfg):
         return RewardTerm(dof_limit_reward, params)
 
 
-@dispatch
 def undesired_contacts_reward(ctx: ManagerContext, threshold: float) -> torch.Tensor:
     contact_forces = ctx.sim["undesired_contact_forces"]
     forces = contact_forces[..., :3]

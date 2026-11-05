@@ -8,7 +8,6 @@ import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, TerminationTerm, TerminationTermCfg
-from motrix_env_core.manager.dispatch import dispatch
 
 
 @configclass(kw_only=True)
@@ -16,7 +15,6 @@ class _WbtTerminationCfg(TerminationTermCfg):
     threshold: float
 
 
-@dispatch
 def bad_ref_z_termination(ctx: ManagerContext, threshold: float) -> torch.Tensor:
     motion = ctx.commands["motion"]
     steps = motion.steps[:, 0]
@@ -37,7 +35,6 @@ class BadRefZTerminationCfg(_WbtTerminationCfg):
         )
 
 
-@dispatch
 def bad_ref_orientation_termination(ctx: ManagerContext, threshold: float) -> torch.Tensor:
     motion = ctx.commands["motion"]
     steps = motion.steps[:, 0]
@@ -58,7 +55,6 @@ class BadRefOrientationTerminationCfg(_WbtTerminationCfg):
         )
 
 
-@dispatch
 def bad_motion_body_position_termination(
     ctx: ManagerContext,
     body_indices: tuple[int, ...],
@@ -98,7 +94,6 @@ class BadMotionBodyPositionTerminationCfg(_WbtTerminationCfg):
         )
 
 
-@dispatch
 def bad_body_z_termination(
     ctx: ManagerContext,
     body_indices: tuple[int, ...],
@@ -130,7 +125,6 @@ class BadBodyZTerminationCfg(_WbtTerminationCfg):
         )
 
 
-@dispatch
 def bad_dof_position_termination(ctx: ManagerContext, threshold: float) -> torch.Tensor:
     action = ctx.actions["joint_position"]
     position = ctx.sim["robot_dof_pos"]

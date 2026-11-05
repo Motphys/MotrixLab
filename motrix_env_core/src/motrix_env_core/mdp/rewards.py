@@ -9,7 +9,6 @@ import torch
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import RewardTerm, RewardTermCfg
 from motrix_env_core.manager.context import BuildContext, ManagerContext
-from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.math.quaternion_array import rotate_inverse_components
 from motrix_env_core.sim import (
     LinkAngularVelocityQuery,
@@ -18,7 +17,6 @@ from motrix_env_core.sim import (
 )
 
 
-@dispatch
 def alive_reward(ctx: ManagerContext) -> torch.Tensor:
     return torch.ones_like(ctx.env_id, dtype=torch.float32)
 
@@ -31,7 +29,6 @@ class AliveRewardCfg(RewardTermCfg):
         return RewardTerm(alive_reward)
 
 
-@dispatch
 def action_rate_reward(ctx: ManagerContext, action_name: str) -> torch.Tensor:
     action = ctx.actions[action_name]
     delta = action.current() - action.previous()
@@ -48,7 +45,6 @@ class ActionRateRewardCfg(RewardTermCfg):
         return RewardTerm(action_rate_reward, self.action_name)
 
 
-@dispatch
 def tracking_lin_vel_xy_reward(
     ctx: ManagerContext,
     sigma: float,
@@ -81,7 +77,6 @@ class TrackingLinVelXyRewardCfg(RewardTermCfg):
         )
 
 
-@dispatch
 def tracking_ang_vel_z_reward(
     ctx: ManagerContext,
     sigma: float,

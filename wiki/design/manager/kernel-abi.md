@@ -95,7 +95,7 @@ Term 可以读取其他 term 的数据，但不应调用其他 term 的行为方
 - flatten concrete runtime terms 和 `ManagerContext`；
 - 收集 read program 的 sim input map；
 - 解析 context、term receiver 和 literal Map lookup 的 slot/表达式；
-- 校验 `@dispatch` 标记、方法签名、返回注解和 layout；
+- 校验方法签名、注解契约和 layout；
 - 产出 `ManagerLayout`、`ReadPlan`、`KernelInputSource` 与 `PreparedInvocation`，供 Torch 执行器调度。
 
 构造期 warm-up 以克隆输入执行一次 evaluate/observe，确认输入/输出契约（shape、dtype、batch 维、可写性）；

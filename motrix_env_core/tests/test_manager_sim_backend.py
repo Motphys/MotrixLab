@@ -15,7 +15,6 @@ from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.manager.actions import ActionCfg, ActionState, ActionTerm, ManagerActionsCfg
 from motrix_env_core.manager.context import ManagerContext
-from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
 from motrix_env_core.manager.kernel_data import kernel_data
 from motrix_env_core.manager.observations import (
@@ -237,7 +236,6 @@ class _CtrlActionCfg(ActionCfg):
         )
 
 
-@dispatch
 def _sim_reading_observation(ctx: ManagerContext, out: torch.Tensor) -> None:
     out.copy_(ctx.sim["dof_pos"])
 
@@ -258,7 +256,6 @@ class _FakeObservationsCfg(ManagerObservationsCfg):
     policy: _FakePolicyObsCfg = _FakePolicyObsCfg()
 
 
-@dispatch
 def _unit_reward(ctx: ManagerContext) -> torch.Tensor:
     return torch.ones_like(ctx.env_id, dtype=torch.float32)
 
@@ -276,7 +273,6 @@ class _FakeRewardsCfg(ManagerRewardsCfg):
     unit: _UnitRewardCfg = _UnitRewardCfg()
 
 
-@dispatch
 def _never_termination(ctx: ManagerContext) -> torch.Tensor:
     return torch.zeros_like(ctx.env_id, dtype=torch.bool)
 

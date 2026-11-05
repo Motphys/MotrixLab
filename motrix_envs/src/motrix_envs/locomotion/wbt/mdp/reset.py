@@ -14,7 +14,6 @@ from motrix_env_core.manager import (
     ResetTerm,
     ResetTermCfg,
 )
-from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.math.quaternion_array import mul
 from motrix_env_core.sim import (
@@ -27,7 +26,6 @@ from motrix_env_core.sim import (
 )
 
 
-@dispatch
 def _reset_body_pos(
     ctx: ManagerContext,
     sim_writes: Map[torch.Tensor],
@@ -58,7 +56,6 @@ class BodyPosResetCfg(ResetTermCfg):
         )
 
 
-@dispatch
 def _reset_body_rot(
     ctx: ManagerContext,
     sim_writes: Map[torch.Tensor],
@@ -112,7 +109,6 @@ class BodyRotResetCfg(ResetTermCfg):
         )
 
 
-@dispatch
 def _reset_body_lin_vel(
     ctx: ManagerContext,
     sim_writes: Map[torch.Tensor],
@@ -141,7 +137,6 @@ class BodyLinVelResetCfg(ResetTermCfg):
         )
 
 
-@dispatch
 def _reset_body_rot_vel(
     ctx: ManagerContext,
     sim_writes: Map[torch.Tensor],
@@ -170,7 +165,6 @@ class BodyRotVelResetCfg(ResetTermCfg):
         )
 
 
-@dispatch
 def _reset_body_dof_pos(ctx: ManagerContext, sim_writes: Map[torch.Tensor], noise_scale: float) -> None:
     motion = ctx.commands["motion"]
     steps = motion.steps[:, 0]

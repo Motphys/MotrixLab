@@ -14,7 +14,6 @@ from motrix_env_core.manager import (
     ResetTerm,
     ResetTermCfg,
 )
-from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.manager.kernel_data import Map, SharedArray, kernel_data
 from motrix_env_core.math.quaternion_array import from_euler
 from motrix_env_core.sim import (
@@ -27,7 +26,6 @@ from motrix_env_core.sim import (
 )
 
 
-@dispatch
 def _reset_body_pos(
     ctx: ManagerContext, sim_writes: Map[torch.Tensor], spawn: torch.Tensor, noise_amplitude: torch.Tensor
 ) -> None:
@@ -53,7 +51,6 @@ class BodyPosResetCfg(ResetTermCfg):
         )
 
 
-@dispatch
 def _reset_body_rot(ctx: ManagerContext, sim_writes: Map[torch.Tensor], noise_amplitude: torch.Tensor) -> None:
     # Fixed promotion order: f32 angles, f64 trig, f32 quaternion,
     # sequential f32 sum of squares, sqrt via f64 rounded back to f32, and an
@@ -84,7 +81,6 @@ class BodyRotResetCfg(ResetTermCfg):
         )
 
 
-@dispatch
 def _reset_body_lin_vel(ctx: ManagerContext, sim_writes: Map[torch.Tensor], noise_amplitude: torch.Tensor) -> None:
     noise = ctx.rand.next_uniform(3)
     sim_writes["linear_velocity"][:, 0].copy_(noise * noise_amplitude)
@@ -107,7 +103,6 @@ class BodyLinVelResetCfg(ResetTermCfg):
         )
 
 
-@dispatch
 def _reset_body_rot_vel(ctx: ManagerContext, sim_writes: Map[torch.Tensor], noise_amplitude: torch.Tensor) -> None:
     noise = ctx.rand.next_uniform(3)
     sim_writes["angular_velocity"][:, 0].copy_(noise * noise_amplitude)
@@ -138,7 +133,6 @@ class DofResetParams:
     noise_scale: np.float32
 
 
-@dispatch
 def _reset_body_dof_pos(ctx: ManagerContext, sim_writes: Map[torch.Tensor], params: DofResetParams) -> None:
     noise = ctx.rand.next_uniform(params.default_pos.shape[0])
     value = params.default_pos + noise * params.noise_scale
@@ -183,7 +177,6 @@ class BodyDofPosResetCfg(ResetTermCfg):
         )
 
 
-@dispatch
 def _reset_ball(
     ctx: ManagerContext,
     sim_writes: Map[torch.Tensor],
