@@ -45,8 +45,8 @@ class BodyPosResetCfg(ResetTermCfg):
         body = ctx.cfg.scene.objs.robot.resolved_base_link_name
         return ResetTerm(
             _reset_body_pos,
-            torch.from_numpy(np.ascontiguousarray(self.spawn, dtype=np.float32)),
-            torch.from_numpy(np.ascontiguousarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)),
+            torch.tensor(self.spawn, dtype=torch.float32),
+            torch.tensor(self.noise, dtype=torch.float32) * self.noise_scale,
             writes={"position": BodyPositionWrite((body,))},
         )
 
@@ -73,10 +73,10 @@ class BodyRotResetCfg(ResetTermCfg):
 
     def __call__(self, ctx) -> ResetTerm:
         body = ctx.cfg.scene.objs.robot.resolved_base_link_name
-        amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
+        amplitude = torch.tensor(self.noise, dtype=torch.float32) * self.noise_scale
         return ResetTerm(
             _reset_body_rot,
-            torch.from_numpy(amplitude),
+            amplitude,
             writes={"rotation": BodyRotationWrite((body,))},
         )
 
@@ -95,10 +95,10 @@ class BodyLinVelResetCfg(ResetTermCfg):
 
     def __call__(self, ctx) -> ResetTerm:
         body = ctx.cfg.scene.objs.robot.resolved_base_link_name
-        amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
+        amplitude = torch.tensor(self.noise, dtype=torch.float32) * self.noise_scale
         return ResetTerm(
             _reset_body_lin_vel,
-            torch.from_numpy(amplitude),
+            amplitude,
             writes={"linear_velocity": BodyLinearVelocityWrite((body,))},
         )
 
@@ -117,10 +117,10 @@ class BodyRotVelResetCfg(ResetTermCfg):
 
     def __call__(self, ctx) -> ResetTerm:
         body = ctx.cfg.scene.objs.robot.resolved_base_link_name
-        amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
+        amplitude = torch.tensor(self.noise, dtype=torch.float32) * self.noise_scale
         return ResetTerm(
             _reset_body_rot_vel,
-            torch.from_numpy(amplitude),
+            amplitude,
             writes={"angular_velocity": BodyAngularVelocityWrite((body,))},
         )
 
@@ -205,8 +205,8 @@ class BallResetCfg(ResetTermCfg):
     def __call__(self, ctx) -> ResetTerm:
         return ResetTerm(
             _reset_ball,
-            torch.from_numpy(np.ascontiguousarray(self.spawn, dtype=np.float32)),
-            torch.from_numpy(np.ascontiguousarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)),
+            torch.tensor(self.spawn, dtype=torch.float32),
+            torch.tensor(self.noise, dtype=torch.float32) * self.noise_scale,
             torch.from_numpy(
                 np.ascontiguousarray(self.velocity_noise, dtype=np.float32) * np.float32(self.noise_scale)
             ),
