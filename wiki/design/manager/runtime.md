@@ -60,7 +60,7 @@ Manager group 的顺序是行为契约的一部分：action slice、observation 
 3. 创建 action、command、observation、reward 和 termination terms；
 4. 为每个 term 执行一次 `canonicalize_kernel_data`；
 5. resolver（`ManagerProgramResolver`）构造 `ManagerContext` layout、read plan 和
-   prepared invocations：term dispatch 以签名校验（`inspect` + 类型标注），不做任何
+   per-term-kind typed call records：term dispatch 以签名校验（`inspect` + 类型标注），不做任何
    代码生成或 dispatcher 编译；
 6. Torch 执行器按元数据调度；首次真实调用完成惰性 specialization，`warmup()` 用克隆
    输入执行一次 evaluate/observe 预热。

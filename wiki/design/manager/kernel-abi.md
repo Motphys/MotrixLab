@@ -96,7 +96,7 @@ Term 可以读取其他 term 的数据，但不应调用其他 term 的行为方
 - 收集 read program 的 sim input map；
 - 把 context 与 term 参数解析为 path-keyed resolved trees 和参数描述符（常量/叶子/树/sim key）；
 - 校验方法签名、注解契约和 layout；
-- 产出 `ManagerLayout`、`ReadPlan`、resolved trees 与 `PreparedInvocation`，供 Torch 执行器调度。
+- 产出 `ManagerLayout`、`ReadPlan`、resolved trees 与 per-term-kind typed call records，供 Torch 执行器调度。
 
 构造期 warm-up 以克隆输入执行一次 evaluate/observe，确认输入/输出契约（shape、dtype、batch 维、可写性）；
 schema rename、term type 变化、scope 变化和 query layout 变化都会改变 resolved layout。

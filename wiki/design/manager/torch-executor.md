@@ -5,7 +5,7 @@
 本文定义 `ManagerEnv` 的数值执行器：通用 Torch 批量执行器
 （`motrix_env_core.torch_manager.runtime.TorchManagerRuntime`）。resolver
 （`motrix_env_core.manager.resolver.ManagerProgramResolver`）把 manager 配置
-解析为 read plan / layout / prepared invocations 等执行元数据，Torch 执行器
+解析为 read plan / layout / typed term calls 等执行元数据，Torch 执行器
 以整批张量按固定语句顺序调度 term；host 生命周期与 term 配置 API 不变。
 Torch 是唯一执行器——历史上并存过的 Numba fused-kernel 路径与
 `executor="numba"|"torch"` 双执行器切换已经移除。相关背景见
@@ -24,8 +24,9 @@ RNG draw 顺序与 eager 完全一致；Inductor 重结合仅带来 ≤1e-8 量�
 - `ManagerProgramResolver`（backend-neutral）负责输入准备：把 `@kernel_data`
   term 参数与 `ManagerContext` 解析为 path-keyed 的 resolved tree（叶子持有
   live value 引用与 `PER_ENV`/`SHARED` scope），构建 `ManagerLayout`、
-  `ReadPlan`、`PreparedInvocation`（每个 term 的 dispatcher 与 resolved
-  argument 描述符），并校验签名注解契约与签名契约。它不做任何代码生成、
+  `ReadPlan`、per-term-kind typed call records（command hooks 携带 receiver 与
+  static function，reward/termination 携带 buffer column index 与 resolved
+  argument 描述符等），并校验签名注解契约与签名契约。它不做任何代码生成、
   缓存或 dispatcher 编译。
 - `TorchManagerRuntime` 消费这些元数据并执行 term 调度；所有写入落回
   host 持有的 numpy 缓冲（reward terms/masks/obs/command state/metrics），

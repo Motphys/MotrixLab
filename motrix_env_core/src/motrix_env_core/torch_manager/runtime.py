@@ -4,12 +4,12 @@
 """Generic Torch executor for resolved Manager programs.
 
 The runtime consumes the metadata produced by the manager resolver (read
-plan, layout, resolved context/term-argument trees, and prepared invocations)
-and executes the same term schedule as the previous fused Numba kernels —
-command ``update`` hooks, rewards, terminations, command ``advance`` hooks
-for evaluate; per-group observation terms for observe; command ``reset_env``
-hooks plus simulator reset terms for reset — with one batched tensor call per
-term instead of a per-lane loop. All writes go back into the persistent numpy
+plan, layout, resolved context/term-argument trees, and per-term-kind typed
+call records) and executes the manager term schedule — command ``update``
+hooks, rewards, terminations, command ``advance`` hooks for evaluate;
+per-group observation terms for observe; command ``reset_env`` hooks plus
+simulator reset terms for reset — with one batched tensor call per term
+instead of a per-lane loop. All writes go back into the persistent numpy
 buffers the host lifecycle already owns, so ``ManagerEnv`` keeps its current
 API and state surfaces unchanged.
 
@@ -35,12 +35,23 @@ import torch
 
 from motrix_env_core.manager.kernel import KernelOutputs
 from motrix_env_core.manager.kernel_data import KernelDataScope
-from motrix_env_core.manager.resolver import LeafArg, SimArg, TreeArg
+from motrix_env_core.manager.resolver import (
+    CommandAdvanceHook,
+    CommandResetHook,
+    CommandUpdateHook,
+    LeafArg,
+    ObservationTermCall,
+    RewardTermCall,
+    SimArg,
+    SimResetTermCall,
+    TerminationTermCall,
+    TreeArg,
+)
 from motrix_env_core.torch_manager.rand import draw_uniform
 
 if TYPE_CHECKING:
     from motrix_env_core.manager.env import ManagerEnv
-    from motrix_env_core.manager.resolver import PreparedInvocation, ResolvedManagerProgram
+    from motrix_env_core.manager.resolver import ResolvedManagerProgram
 
 # Simulator-backed read-only arrays are wrapped as tensors but never written
 # by the executor; suppress PyTorch's non-writable-array warning once instead
@@ -397,51 +408,30 @@ class TorchManagerRuntime:
         self._sim_paths = {path[1]: path for path in self._context_leaves if len(path) == 2 and path[0] == "sim"}
         self._rand_path = ("rand", "state")
 
-        # Command hooks are static functions on the CommandTerm class taking
-        # the command's kernel-data namespace as their receiver.
-        self.invocations = tuple(program.invocations)
-        # The resolver groups invocations by term kind; the evaluate schedule
-        # must instead follow the fused-kernel statement order: command
-        # update hooks -> rewards -> terminations -> command advance hooks
-        # (rewards and terminations read pre-advance command state).
-        self.evaluate_invocations = tuple(
-            sorted(
-                (i for i in self.invocations if i.kind in _EVALUATE_KINDS),
-                key=lambda invocation: _EVALUATE_ORDER[invocation.kind],
-            )
-        )
-        self.observe_invocations = tuple(i for i in self.invocations if i.kind == "observation")
-        self._reward_indices = {
-            i.context: index for index, i in enumerate(i for i in self.evaluate_invocations if i.kind == "reward")
-        }
-        self._termination_indices = {
-            i.context: index for index, i in enumerate(i for i in self.evaluate_invocations if i.kind == "termination")
-        }
-        self._observation_by_name = {i.context: i for i in self.observe_invocations}
+        # Typed call sequences encode the execution contract structurally:
+        # evaluate follows the fixed phase order command update hooks ->
+        # rewards -> terminations -> command advance hooks (rewards and
+        # terminations read pre-advance command state); each phase keeps its
+        # declaration order and reward/termination indices match
+        # ``layout.rewards``/``layout.terminations``.
+        self.command_updates: tuple[CommandUpdateHook, ...] = program.command_updates
+        self.rewards: tuple[RewardTermCall, ...] = program.rewards
+        self.terminations: tuple[TerminationTermCall, ...] = program.terminations
+        self.command_advances: tuple[CommandAdvanceHook, ...] = program.command_advances
+        self.command_reset_hooks: tuple[CommandResetHook, ...] = program.command_reset_hooks
+        self.observations: dict[str, tuple[ObservationTermCall, ...]] = program.observations
         reward_cfgs = env.cfg.reward_cfgs()
         self.reward_weights = np.asarray(
             [float(reward_cfgs[term.name].weight) for term in self.layout.rewards], dtype=np.float32
         )
         # Reset-term compact-write layout mirrors SimResetRuntime.buffers:
         # one entry per declared write, ordered by term then output name.
-        self._reset_terms: tuple[tuple[Any, int, tuple[str, ...]], ...] = ()
-        offsets: dict[str, int] = {}
-        offset = 0
-        for name, writes in env.sim_reset_writes.items():
-            fields = tuple(writes)
-            offsets[name] = offset
-            offset += len(fields)
-        self._reset_terms = tuple(
-            (
-                invocation,
-                offsets[name],
-                tuple(env.sim_reset_writes[name]),
-            )
-            for invocation in program.invocations
-            if invocation.kind == "reset"
-            for name in (invocation.context[len("sim_reset.") :],)
+        # The write-field names come from the host (same insertion order the
+        # resolver used when assigning offsets).
+        self._reset_terms: tuple[tuple[SimResetTermCall, int, tuple[str, ...]], ...] = tuple(
+            (reset.call, reset.output_offset, tuple(env.sim_reset_writes[name]))
+            for name, reset in zip(env.sim_reset_terms, program.sim_reset_terms, strict=True)
         )
-        self._reset_env_invocations = tuple(i for i in self.invocations if i.kind == "command_reset_env")
 
         # Per-anchor caches: the host reuses one persistent resolved-input
         # anchor (and at most two kernel-output buffer sets), so the batched
@@ -488,7 +478,7 @@ class TorchManagerRuntime:
         )
 
     def reset(self, inputs: tuple[Any, ...], env_ids: np.ndarray, reset_buffers: tuple[np.ndarray, ...]) -> None:
-        if not self._reset_env_invocations and not self._reset_terms:
+        if not self.command_reset_hooks and not self._reset_terms:
             return
         ids = torch.from_numpy(np.ascontiguousarray(env_ids, dtype=np.int64))
         kernel = self._compiled_kernels.get(("reset", id(inputs), id(reset_buffers)))
@@ -509,29 +499,30 @@ class TorchManagerRuntime:
         weighted_terms = torch.from_numpy(buffers[1])
         termination_masks = torch.from_numpy(buffers[2])
         dt = ctx.dt
-        reward_indices = self._reward_indices
-        termination_indices = self._termination_indices
-        plan = tuple((invocation.kind, invocation, args) for invocation, args in self._evaluate_plan(inputs))
+        update_hooks = self.command_updates
+        advance_hooks = self.command_advances
+        reward_plan = tuple((term, self._invocation_args_for(term, inputs)) for term in self.rewards)
+        termination_plan = tuple((term, self._invocation_args_for(term, inputs)) for term in self.terminations)
 
         def kernel(reward_view: torch.Tensor, terminated_view: torch.Tensor) -> None:
+            for hook in update_hooks:
+                receiver = ctx.commands[hook.receiver_key]
+                hook.function(receiver, ctx)
             total = None
+            for term, args in reward_plan:
+                value = term.function(ctx, *args).to(torch.float32)
+                weighted = value * weights[term.index] * dt
+                raw_terms[:, term.index] = value
+                weighted_terms[:, term.index] = weighted
+                total = weighted if total is None else total + weighted
             terminated = None
-            for kind, invocation, args in plan:
-                if kind in ("command_update", "command_advance"):
-                    receiver = ctx.commands[invocation.receiver_key]
-                    invocation.dispatcher(receiver, ctx)
-                elif kind == "reward":
-                    value = invocation.dispatcher(ctx, *args).to(torch.float32)
-                    index = reward_indices[invocation.context]
-                    weighted = value * weights[index] * dt
-                    raw_terms[:, index] = value
-                    weighted_terms[:, index] = weighted
-                    total = weighted if total is None else total + weighted
-                else:
-                    mask = invocation.dispatcher(ctx, *args).to(torch.bool)
-                    index = termination_indices[invocation.context]
-                    termination_masks[:, index] = mask
-                    terminated = mask if terminated is None else terminated | mask
+            for term, args in termination_plan:
+                mask = term.function(ctx, *args).to(torch.bool)
+                termination_masks[:, term.index] = mask
+                terminated = mask if terminated is None else terminated | mask
+            for hook in advance_hooks:
+                receiver = ctx.commands[hook.receiver_key]
+                hook.function(receiver, ctx)
             reward_view.copy_(total if total is not None else torch.zeros_like(reward_view))
             terminated_view.copy_(terminated if terminated is not None else torch.zeros_like(terminated_view))
 
@@ -541,13 +532,6 @@ class TorchManagerRuntime:
 
     def _build_compiled_observe(self, inputs: tuple[Any, ...]) -> Callable[[torch.Tensor, torch.Tensor | None], None]:
         ctx = self._context_for(inputs)
-        observation_by_name = self._observation_by_name
-        plan = tuple(
-            (group_name, term, observation_by_name[f"{group_name}.{term.name}"])
-            for group_name, group in self.layout.observations.items()
-            for term in group.terms
-        )
-        invocation_args = {id(inv): self._invocation_args_for(inv, inputs) for _, _, inv in plan}
         # Each term writes a private contiguous buffer; a single fused
         # ``cat + copy`` assembles the group output. Writing through strided
         # slice views of the group buffer forces per-term unfusable store
@@ -565,12 +549,8 @@ class TorchManagerRuntime:
             (
                 group_name,
                 tuple(
-                    (inv, invocation_args[id(inv)], buf)
-                    for (_group_name, _term, inv), buf in zip(
-                        tuple(entry for entry in plan if entry[0] == group_name),
-                        bufs,
-                        strict=True,
-                    )
+                    (call, self._invocation_args_for(call, inputs), buf)
+                    for call, buf in zip(self.observations[group_name], bufs, strict=True)
                 ),
             )
             for group_name, bufs in term_bufs.items()
@@ -581,12 +561,12 @@ class TorchManagerRuntime:
         # which measurably beats a single fused graph on many-core hosts.
 
         def make_group_kernel(
-            entries: tuple[tuple[PreparedInvocation, tuple[Any, ...], torch.Tensor], ...],
+            entries: tuple[tuple[ObservationTermCall, tuple[Any, ...], torch.Tensor], ...],
         ) -> Callable[[torch.Tensor], None]:
             def group_kernel(target: torch.Tensor) -> None:
-                for invocation, args, buf in entries:
-                    invocation.dispatcher(ctx, buf, *args)
-                target.copy_(torch.cat([buf for _inv, _args, buf in entries], dim=1))
+                for call, args, buf in entries:
+                    call.function(ctx, buf, *args)
+                target.copy_(torch.cat([buf for _call, _args, buf in entries], dim=1))
 
             if self.compile_enabled:
                 return torch.compile(group_kernel, dynamic=False, options=_compile_options())
@@ -623,21 +603,21 @@ class TorchManagerRuntime:
         per_env = self._per_env_paths
         sim_paths = frozenset(self._sim_paths.values())
         get = _leaf_lookup(self._context_tensors)
-        command_reset_env = self._reset_env_invocations
+        command_reset_hooks = self.command_reset_hooks
         num_envs = ctx.rand.state.shape[0]
         mask = torch.zeros(num_envs, dtype=torch.bool)
         all_ids = torch.arange(num_envs)
         write_plan = tuple(
             (
-                invocation,
+                call,
                 tuple(torch.from_numpy(reset_buffers[offset + index]) for index in range(len(fields))),
                 tuple(
                     torch.empty_like(torch.from_numpy(reset_buffers[offset + index])) for index in range(len(fields))
                 ),
                 fields,
-                self._invocation_args_for(invocation, inputs),
+                self._invocation_args_for(call, inputs),
             )
-            for invocation, offset, fields in self._reset_terms
+            for call, offset, fields in self._reset_terms
         )
 
         def kernel() -> None:
@@ -664,12 +644,12 @@ class TorchManagerRuntime:
                 all_ids,
                 actions=_ActionsMap(self._context_tensors, self.env.action_terms, lane_get),
             )
-            for invocation in command_reset_env:
-                receiver = lane_ctx.commands[invocation.receiver_key]
-                invocation.dispatcher(receiver, lane_ctx)
-            for invocation, _buffers, staging, fields, args in write_plan:
+            for hook in command_reset_hooks:
+                receiver = lane_ctx.commands[hook.receiver_key]
+                hook.function(receiver, lane_ctx)
+            for call, _buffers, staging, fields, args in write_plan:
                 sim_writes = {name: buffer for name, buffer in zip(fields, staging, strict=True)}
-                invocation.dispatcher(lane_ctx, _WritesMap(sim_writes), *args)
+                call.function(lane_ctx, _WritesMap(sim_writes), *args)
             for path, tensor in clones.items():
                 if tensor is not get(path):
                     full = get(path)
@@ -708,35 +688,30 @@ class TorchManagerRuntime:
             self._invocation_args_cache = {}
         return self._batch_ctx
 
-    def _evaluate_plan(self, inputs: tuple[Any, ...]) -> tuple[tuple[Any, tuple[Any, ...]], ...]:
-        plan = self._plan_cache(inputs).get("evaluate")
-        if plan is None:
-            plan = tuple(
-                (invocation, self._invocation_args_for(invocation, inputs)) for invocation in self.evaluate_invocations
-            )
-            self._plan_cache(inputs)["evaluate"] = plan
-        return plan
-
-    def _plan_cache(self, inputs: tuple[Any, ...]) -> dict[str, Any]:
+    def _plan_cache(self, inputs: tuple[Any, ...]) -> dict[int, tuple[Any, ...]]:
         cache = self._invocation_args_cache.get(id(inputs))
         if cache is None:
             cache = {}
             self._invocation_args_cache[id(inputs)] = cache
         return cache
 
-    def _invocation_args_for(self, invocation: Any, inputs: tuple[Any, ...]) -> tuple[Any, ...]:
+    def _invocation_args_for(self, call: Any, inputs: tuple[Any, ...]) -> tuple[Any, ...]:
         cache = self._plan_cache(inputs)
-        key = id(invocation)
+        key = id(call)
         args = cache.get(key)
         if args is None:
-            args = self._invocation_args(invocation, inputs)
+            args = self._invocation_args(call, inputs)
             cache[key] = args
         return args
 
-    def _invocation_args(self, invocation: PreparedInvocation, inputs: tuple[Any, ...]) -> tuple[Any, ...]:
+    def _invocation_args(
+        self,
+        call: RewardTermCall | TerminationTermCall | ObservationTermCall | SimResetTermCall,
+        inputs: tuple[Any, ...],
+    ) -> tuple[Any, ...]:
         assert self._tree_tensors is not None
         args: list[Any] = []
-        for arg in invocation.args:
+        for arg in call.args:
             if isinstance(arg, TreeArg):
                 leaves = self._tree_tensors[arg.tree_index]
                 host = self.program.prepared_trees[arg.tree_index].value
@@ -796,10 +771,6 @@ class _LaneContext:
         self.dt = base.dt
         self.sim_reset_requested = base.sim_reset_requested
         self.actions = actions if actions is not None else base.actions
-
-
-_EVALUATE_KINDS = ("command_update", "reward", "termination", "command_advance")
-_EVALUATE_ORDER = {"command_update": 0, "reward": 1, "termination": 2, "command_advance": 3}
 
 
 __all__ = ["TorchManagerRuntime", "TorchTaskProgram"]

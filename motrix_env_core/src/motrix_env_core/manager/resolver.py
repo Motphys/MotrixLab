@@ -6,11 +6,11 @@
 Lowers one constructed manager environment into its execution metadata: the
 simulator read plan, the resolved context/term-argument trees (path-keyed
 leaf descriptors with live value references and data scopes), prepared term
-arguments, and one invocation per manager term (command hooks, observations,
-rewards, terminations, simulator resets). Numerical executors — currently the
-Torch executor in :mod:`motrix_env_core.torch_manager` — consume this
-metadata and schedule the invocations; no code generation or dispatcher
-compilation happens here.
+arguments, and one typed call record per manager term (command hooks,
+observations, rewards, terminations, simulator resets). Numerical executors —
+currently the Torch executor in :mod:`motrix_env_core.torch_manager` —
+consume this metadata and schedule the typed calls; no code generation or
+dispatcher compilation happens here.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from time import perf_counter
 from types import MappingProxyType
@@ -167,15 +167,63 @@ PreparedArg = ConstantArg | TreeArg | LeafArg | SimArg
 
 
 @dataclass(frozen=True)
-class PreparedInvocation:
-    """Runtime metadata required to execute one manager term."""
+class CommandUpdateHook:
+    """One command term's ``update`` hook (receiver + static function)."""
 
-    context: str
-    kind: str
-    dispatcher: Any
-    receiver_key: str | None
-    args: tuple[PreparedArg, ...] = ()
-    output_size: int = 0
+    receiver_key: str
+    function: Callable
+
+
+@dataclass(frozen=True)
+class CommandAdvanceHook:
+    """One command term's ``advance`` hook (receiver + static function)."""
+
+    receiver_key: str
+    function: Callable
+
+
+@dataclass(frozen=True)
+class CommandResetHook:
+    """One command term's ``reset_env`` hook (receiver + static function)."""
+
+    receiver_key: str
+    function: Callable
+
+
+@dataclass(frozen=True)
+class RewardTermCall:
+    """One reward term call with its resolver-assigned buffer column."""
+
+    index: int
+    function: Callable
+    args: tuple[PreparedArg, ...]
+
+
+@dataclass(frozen=True)
+class TerminationTermCall:
+    """One termination term call with its resolver-assigned buffer column."""
+
+    index: int
+    function: Callable
+    args: tuple[PreparedArg, ...]
+
+
+@dataclass(frozen=True)
+class ObservationTermCall:
+    """One observation term call writing its group slice."""
+
+    group: str
+    name: str
+    function: Callable
+    args: tuple[PreparedArg, ...]
+
+
+@dataclass(frozen=True)
+class SimResetTermCall:
+    """One simulator reset term call (write offsets stay on ``ResolvedSimReset``)."""
+
+    function: Callable
+    args: tuple[PreparedArg, ...]
 
 
 @dataclass(frozen=True)
@@ -185,7 +233,7 @@ class ResolvedManagerContext:
 
 @dataclass(frozen=True)
 class ResolvedSimReset:
-    invocation: PreparedInvocation
+    call: SimResetTermCall
     sim_writes_type: str
     output_offset: int
     output_count: int
@@ -193,11 +241,25 @@ class ResolvedSimReset:
 
 @dataclass(frozen=True)
 class ResolvedManagerProgram:
-    """Resolved execution metadata for one manager environment."""
+    """Resolved execution metadata for one manager environment.
+
+    The phase sequences encode the execution contract structurally: evaluate
+    runs command updates, then rewards, then terminations, then command
+    advances (declaration order within each phase); observe iterates the
+    per-group observation calls; reset runs the command reset hooks followed
+    by the simulator reset terms. Reward and termination indices match
+    ``ManagerLayout.rewards``/``terminations`` ordering.
+    """
 
     read_plan: ReadPlan
     layout: ManagerLayout
-    invocations: tuple[PreparedInvocation, ...]
+    command_updates: tuple[CommandUpdateHook, ...]
+    rewards: tuple[RewardTermCall, ...]
+    terminations: tuple[TerminationTermCall, ...]
+    command_advances: tuple[CommandAdvanceHook, ...]
+    command_reset_hooks: tuple[CommandResetHook, ...]
+    sim_reset_terms: tuple[ResolvedSimReset, ...]
+    observations: dict[str, tuple[ObservationTermCall, ...]]
     prepared_trees: tuple[ResolvedTree, ...]
     context: ResolvedManagerContext
     fingerprint: str
@@ -205,21 +267,27 @@ class ResolvedManagerProgram:
 
 __all__ = [
     "ActionTermLayout",
+    "CommandAdvanceHook",
+    "CommandResetHook",
+    "CommandUpdateHook",
     "ConstantArg",
     "LeafArg",
     "ManagerLayout",
     "ManagerProgramResolver",
     "MetricFieldLayout",
     "ObservationGroupLayout",
+    "ObservationTermCall",
     "ObservationTermLayout",
     "PreparedArg",
-    "PreparedInvocation",
     "ResolvedManagerContext",
     "ResolvedManagerProgram",
     "ResolvedSimReset",
+    "RewardTermCall",
     "ScalarTermLayout",
     "SimArg",
     "SimInputLayout",
+    "SimResetTermCall",
+    "TerminationTermCall",
     "TreeArg",
 ]
 
@@ -277,13 +345,19 @@ class ManagerProgramResolver:
         reward_terms = self._env._reward_terms
         termination_terms = self._env.termination_manager.terms
         context = self._resolve_manager_context(observation_groups, reward_terms, termination_terms)
-        command_updates = self._resolve_command_hooks("update")
-        command_advances = self._resolve_command_hooks("advance")
-        command_resets = self._resolve_command_hooks("reset_env")
+        command_updates = tuple(
+            CommandUpdateHook(key, function) for key, function in self._resolve_command_hooks("update")
+        )
+        command_advances = tuple(
+            CommandAdvanceHook(key, function) for key, function in self._resolve_command_hooks("advance")
+        )
+        command_reset_hooks = tuple(
+            CommandResetHook(key, function) for key, function in self._resolve_command_hooks("reset_env")
+        )
         observation_terms, observation_layout = self._resolve_observations(observation_groups)
-        reward_invocations, reward_layout, _ = self._resolve_rewards(self._env.cfg, reward_terms)
-        termination_invocations, termination_layout = self._resolve_terminations(termination_terms)
-        reset_invocations = self._resolve_resets()
+        reward_calls, reward_layout, _ = self._resolve_rewards(self._env.cfg, reward_terms)
+        termination_calls, termination_layout = self._resolve_terminations(termination_terms)
+        sim_reset_terms = self._resolve_resets()
         per_env_metric_layout = tuple(
             MetricFieldLayout(name, index, np.dtype(value.dtype))
             for index, (name, value) in enumerate(self._env.metrics.items())
@@ -315,28 +389,34 @@ class ManagerProgramResolver:
             terminations=termination_layout,
             metrics=per_env_metric_layout,
         )
-        invocations = (
-            command_updates
-            + command_advances
-            + command_resets
-            + tuple(term for terms in observation_terms.values() for term in terms)
-            + reward_invocations
-            + termination_invocations
-            + tuple(reset.invocation for reset in reset_invocations)
+        call_count = (
+            len(command_updates)
+            + len(command_advances)
+            + len(command_reset_hooks)
+            + sum(len(terms) for terms in observation_terms.values())
+            + len(reward_calls)
+            + len(termination_calls)
+            + len(sim_reset_terms)
         )
         leaf_count = sum(len(tree.leaves) for tree in self._prepared_trees)
         logger.info(
-            "Manager startup %s: resolve finished in %.3fs (%d invocations, %d resolved leaves)",
+            "Manager startup %s: resolve finished in %.3fs (%d term calls, %d resolved leaves)",
             type(self._env).__name__,
             perf_counter() - build_started,
-            len(invocations),
+            call_count,
             leaf_count,
         )
         context_tree = self._prepared_trees[context.tree_index]
         return ResolvedManagerProgram(
             read_plan=ReadPlan(self._env.sim_data, context_tree),
             layout=layout,
-            invocations=invocations,
+            command_updates=command_updates,
+            rewards=reward_calls,
+            terminations=termination_calls,
+            command_advances=command_advances,
+            command_reset_hooks=command_reset_hooks,
+            sim_reset_terms=sim_reset_terms,
+            observations=observation_terms,
             prepared_trees=tuple(self._prepared_trees),
             context=context,
             fingerprint=hashlib.sha256(repr(tuple(self._layout_identity)).encode()).hexdigest(),
@@ -392,15 +472,8 @@ class ManagerProgramResolver:
         args = tuple(
             self._resolve_term_arg(f"sim_reset.{name}.args[{index}]", value) for index, value in enumerate(term.args)
         )
-        invocation = PreparedInvocation(
-            "sim_reset." + name,
-            "reset",
-            dispatcher,
-            None,
-            args=args,
-        )
         return ResolvedSimReset(
-            invocation,
+            SimResetTermCall(dispatcher, args),
             f"sim_reset_{name}_writes",
             output_offset,
             len(fields),
@@ -470,54 +543,68 @@ class ManagerProgramResolver:
         )
         return ResolvedManagerContext(tree_index)
 
-    def _resolve_command_hooks(self, function_name: str) -> tuple[PreparedInvocation, ...]:
+    def _resolve_command_hooks(self, function_name: str) -> tuple[tuple[str, Callable], ...]:
+        """Resolve one hook family over all command terms in declaration order.
+
+        Returns ``(receiver_key, function)`` pairs; the static function
+        signature is validated against the command hook contract.
+        """
         hooks = []
-        for index, (name, command_term) in enumerate(self._env.command_terms.items()):
+        for name, command_term in self._env.command_terms.items():
             function = inspect.getattr_static(type(command_term), function_name)
             if isinstance(function, staticmethod):
                 function = function.__func__
-            hooks.append(
-                self._resolve_receiver_term(
-                    "command",
-                    name,
-                    command_term,
-                    function_name,
-                    index,
-                    0,
-                    function=function,
-                    receiver_key=name,
-                )
-            )
+            self._validate_command_hook(name, function, function_name)
+            hooks.append((name, function))
         return tuple(hooks)
+
+    def _validate_command_hook(self, name: str, function: Any, function_name: str) -> None:
+        if not inspect.isfunction(function):
+            raise TypeError(f"Manager term command.{name} {function_name} must be a static function.")
+        parameters = tuple(inspect.signature(function).parameters.values())
+        if not parameters:
+            raise TypeError(f"Manager term command.{name} {function_name} must declare a receiver parameter.")
+        ctx_parameters = parameters[1:]
+        if not ctx_parameters:
+            raise TypeError(f"Manager term command.{name} {function_name} must declare a ManagerContext parameter.")
+        argument_parameters = ctx_parameters[1:]
+        annotations = get_type_hints(function, include_extras=True)
+        if annotations.get(ctx_parameters[0].name) is not ManagerContext:
+            raise TypeError(
+                f"Manager term command.{name} {function_name} must annotate its first parameter after the "
+                "receiver as ManagerContext (conventionally named ctx)."
+            )
+        if argument_parameters:
+            raise TypeError(
+                f"Manager term command.{name} {function_name} has unsupported dependency parameters "
+                f"{[parameter.name for parameter in argument_parameters]}; read manager and simulator data "
+                "from the ManagerContext parameter."
+            )
 
     # -- observations --------------------------------------------------------
 
     def _resolve_observations(
         self,
         groups: dict[str, ObservationGroupEntry],
-    ) -> tuple[dict[str, tuple[PreparedInvocation, ...]], dict[str, ObservationGroupLayout]]:
+    ) -> tuple[dict[str, tuple[ObservationTermCall, ...]], dict[str, ObservationGroupLayout]]:
         resolved_groups = {}
         layout_groups = {}
-        term_index = 0
         for group_name, group in groups.items():
             terms = []
             layouts = []
             offset = 0
             for entry in group.terms:
-                terms.append(self._resolve_observation(group_name, entry.name, entry.term, term_index, entry.size))
+                terms.append(self._resolve_observation(group_name, entry.name, entry.term))
                 output_slice = slice(offset, offset + entry.size)
                 layouts.append(ObservationTermLayout(entry.name, output_slice))
                 offset = output_slice.stop
-                term_index += 1
             if offset != group.size:
                 raise RuntimeError(f"Observation group {group_name!r} resolved width changed during resolution.")
             resolved_groups[group_name] = tuple(terms)
             layout_groups[group_name] = ObservationGroupLayout(group_name, tuple(layouts), group.size)
         return resolved_groups, layout_groups
 
-    def _resolve_observation_dispatch(
-        self, group: str, name: str, term: ObsTerm, term_index: int, output_size: int
-    ) -> PreparedInvocation:
+    def _resolve_observation(self, group: str, name: str, term: ObsTerm) -> ObservationTermCall:
         function = term.dispatch
         parameters = tuple(inspect.signature(function).parameters.values())
         if any(
@@ -545,25 +632,7 @@ class ManagerProgramResolver:
             self._resolve_term_arg(f"observation.{group}.{name}.args[{index}]", value)
             for index, value in enumerate(term.args)
         )
-        dispatcher = function
-        return PreparedInvocation(
-            f"{group}.{name}",
-            "observation",
-            dispatcher,
-            None,
-            args=args,
-            output_size=output_size,
-        )
-
-    def _resolve_observation(
-        self,
-        group: str,
-        name: str,
-        term: Any,
-        term_index: int,
-        output_size: int,
-    ) -> PreparedInvocation:
-        return self._resolve_observation_dispatch(group, name, term, term_index, output_size)
+        return ObservationTermCall(group, name, function, args)
 
     # -- rewards and terminations --------------------------------------------
 
@@ -571,13 +640,14 @@ class ManagerProgramResolver:
         self,
         cfg: Any,
         reward_terms: dict[str, RewardTerm],
-    ) -> tuple[tuple[PreparedInvocation, ...], tuple[ScalarTermLayout, ...], tuple[float, ...]]:
+    ) -> tuple[tuple[RewardTermCall, ...], tuple[ScalarTermLayout, ...], tuple[float, ...]]:
         term_cfgs = cfg.reward_cfgs()
         terms = []
         layout = []
         weights = []
         for index, (name, term) in enumerate(reward_terms.items()):
-            terms.append(self._resolve_reward(name, term, index))
+            args = self._resolve_dispatch_args("reward", name, term)
+            terms.append(RewardTermCall(index, term.dispatch, args))
             layout.append(ScalarTermLayout(name, index))
             try:
                 weights.append(float(term_cfgs[name].weight))
@@ -585,27 +655,19 @@ class ManagerProgramResolver:
                 raise TypeError(f"Manager reward term reward.{name} weight must be float-compatible.") from error
         return tuple(terms), tuple(layout), tuple(weights)
 
-    def _resolve_reward(self, name: str, term: RewardTerm, term_index: int) -> PreparedInvocation:
-        return self._resolve_dispatch_term("reward", name, term, term_index)
-
     def _resolve_terminations(
         self,
         termination_terms: dict[str, TerminationTerm],
-    ) -> tuple[tuple[PreparedInvocation, ...], tuple[ScalarTermLayout, ...]]:
+    ) -> tuple[tuple[TerminationTermCall, ...], tuple[ScalarTermLayout, ...]]:
         terms = []
         layout = []
         for index, (name, term) in enumerate(termination_terms.items()):
-            terms.append(self._resolve_termination(name, term, index))
+            args = self._resolve_dispatch_args("termination", name, term)
+            terms.append(TerminationTermCall(index, term.dispatch, args))
             layout.append(ScalarTermLayout(name, index))
         return tuple(terms), tuple(layout)
 
-    def _resolve_dispatch_term(
-        self,
-        group: str,
-        name: str,
-        term: Any,
-        term_index: int,
-    ) -> PreparedInvocation:
+    def _resolve_dispatch_args(self, group: str, name: str, term: Any) -> tuple[PreparedArg, ...]:
         function = term.dispatch
         parameters = tuple(inspect.signature(function).parameters.values())
         if any(
@@ -624,68 +686,9 @@ class ManagerProgramResolver:
                 f"Manager {group} {name} dispatch must annotate its first parameter as ManagerContext "
                 f"(conventionally named ctx)."
             )
-        args = tuple(
+        return tuple(
             self._resolve_term_arg(f"{group}.{name}.args[{index}]", value) for index, value in enumerate(term.args)
         )
-        dispatcher = function
-        return PreparedInvocation(
-            f"{group}.{name}",
-            group,
-            dispatcher,
-            None,
-            args=args,
-        )
-
-    def _resolve_termination(
-        self,
-        name: str,
-        term: TerminationTerm,
-        term_index: int,
-    ) -> PreparedInvocation:
-        return self._resolve_dispatch_term("termination", name, term, term_index)
-
-    # -- command hooks -------------------------------------------------------
-
-    def _resolve_receiver_term(
-        self,
-        group: str,
-        name: str,
-        term: Any,
-        function_name: str,
-        term_index: int,
-        output_size: int,
-        *,
-        function: Any | None = None,
-        receiver_key: str,
-    ) -> PreparedInvocation:
-        function = getattr(term, function_name) if function is None else function
-        has_receiver = receiver_key is not None
-        if not inspect.isfunction(function) or (not has_receiver and inspect.ismethod(function)):
-            raise TypeError(f"Manager term {group}.{name} {function_name} must be a static function.")
-        parameters = tuple(inspect.signature(function).parameters.values())
-        if has_receiver:
-            if not parameters:
-                raise TypeError(f"Manager term {group}.{name} {function_name} must declare a receiver parameter.")
-            parameters = parameters[1:]
-        if not parameters:
-            raise TypeError(f"Manager term {group}.{name} {function_name} must declare a ManagerContext parameter.")
-        argument_parameters = parameters[1:]
-        annotations = get_type_hints(function, include_extras=True)
-        if annotations.get(parameters[0].name) is not ManagerContext:
-            raise TypeError(
-                f"Manager term {group}.{name} {function_name} must annotate its first parameter after the "
-                "receiver as ManagerContext (conventionally named ctx)."
-            )
-        if argument_parameters:
-            raise TypeError(
-                f"Manager term {group}.{name} {function_name} has unsupported dependency parameters "
-                f"{[parameter.name for parameter in argument_parameters]}; read manager and simulator data "
-                "from the ManagerContext parameter."
-            )
-        kind = f"command_{function_name}" if group == "command" else group
-        context = f"{group}.{name} ({function.__module__}.{function.__qualname__})"
-        dispatcher = function
-        return PreparedInvocation(context, kind, dispatcher, receiver_key, output_size=output_size)
 
     # -- argument resolution ---------------------------------------------------
 
