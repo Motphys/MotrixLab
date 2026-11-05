@@ -474,14 +474,14 @@ class TorchManagerRuntime:
     ) -> None:
         kernel = self._compiled_kernels.get(("evaluate", id(inputs), id(buffers)))
         if kernel is None:
-            kernel = self._build_compiled_evaluate(inputs, reward_weights, buffers, outputs)
+            kernel = self._build_compiled_evaluate(inputs, reward_weights, buffers)
             self._compiled_kernels[("evaluate", id(inputs), id(buffers))] = kernel
         kernel(torch.from_numpy(outputs.reward), torch.from_numpy(outputs.terminated))
 
     def observe(self, inputs: tuple[Any, ...], outputs: KernelOutputs) -> None:
         kernel = self._compiled_kernels.get(("observe", id(inputs)))
         if kernel is None:
-            kernel = self._build_compiled_observe(inputs, outputs)
+            kernel = self._build_compiled_observe(inputs)
             self._compiled_kernels[("observe", id(inputs))] = kernel
         value_obs = outputs.value_obs
         kernel(
@@ -504,7 +504,6 @@ class TorchManagerRuntime:
         inputs: tuple[Any, ...],
         reward_weights: np.ndarray,
         buffers: tuple[np.ndarray, np.ndarray, np.ndarray],
-        outputs: KernelOutputs,
     ) -> Callable[[torch.Tensor, torch.Tensor], None]:
         ctx = self._context_for(inputs)
         weights = torch.from_numpy(np.asarray(reward_weights, dtype=np.float32))
@@ -542,9 +541,7 @@ class TorchManagerRuntime:
             return torch.compile(kernel, dynamic=False, options=_compile_options())
         return kernel
 
-    def _build_compiled_observe(
-        self, inputs: tuple[Any, ...], outputs: KernelOutputs
-    ) -> Callable[[torch.Tensor, torch.Tensor | None], None]:
+    def _build_compiled_observe(self, inputs: tuple[Any, ...]) -> Callable[[torch.Tensor, torch.Tensor | None], None]:
         ctx = self._context_for(inputs)
         observation_by_name = self._observation_by_name
         plan = tuple(
@@ -558,7 +555,7 @@ class TorchManagerRuntime:
         # slice views of the group buffer forces per-term unfusable store
         # regions in the generated code (aliased memory), which multiplies
         # the OpenMP fork/join cost of the fused kernel.
-        num_envs = outputs.policy_obs.shape[0]
+        num_envs = ctx.env_id.shape[0]
         term_bufs = {
             group_name: tuple(
                 torch.empty(num_envs, term.output_slice.stop - term.output_slice.start, dtype=torch.float32)
