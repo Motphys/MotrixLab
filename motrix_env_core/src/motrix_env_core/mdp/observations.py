@@ -223,8 +223,7 @@ def body_joint_pos_rel_obs(
     scale: float,
     noise_amplitude: float,
 ) -> None:
-    out.copy_(joint_pos - torch.as_tensor(np.asarray(defaults), dtype=out.dtype))
-    out.mul_(scale)
+    out.copy_((joint_pos - defaults.to(out.dtype)) * scale)
     add_uniform_noise(ctx, out, noise_amplitude)
 
 
