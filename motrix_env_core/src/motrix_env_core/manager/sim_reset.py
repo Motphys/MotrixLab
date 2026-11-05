@@ -18,18 +18,14 @@ from motrix_env_core.perf import active_perf_scope
 from motrix_env_core.sim.write import SimWrite, WriteProgram
 
 if TYPE_CHECKING:
-    from typing import Protocol
-
     from motrix_env_core.manager.env import ManagerEnv
     from motrix_env_core.sim.backend import SimBackend
-
-    class _TaskProgram(Protocol):
-        reset_kernel: Any
+    from motrix_env_core.torch_manager.runtime import TorchTaskProgram
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class ResetTerm(BaseTerm):
-    """Immutable reset dispatch descriptor and its static Numba-compatible arguments."""
+    """Immutable reset dispatch descriptor and its static positional arguments."""
 
     writes: dict[str, SimWrite]
 
@@ -99,7 +95,7 @@ class SimResetRuntime:
 
     def apply(
         self,
-        task_program: _TaskProgram,
+        task_program: TorchTaskProgram,
         inputs: tuple[Any, ...],
         env_ids: np.ndarray,
     ) -> None:
