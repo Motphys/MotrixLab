@@ -209,7 +209,7 @@ def penalty_feet_ori_reward(
     gravity = foot_quat.new_zeros(*foot_quat.shape[:2], 3)
     gravity[..., 2] = -1.0
     gx, gy, gz = rotate_inverse_components(foot_quat.reshape(-1, 4), gravity.reshape(-1, 3))
-    reference = torch.as_tensor(np.asarray(default_foot_gravity))
+    reference = torch.as_tensor(default_foot_gravity)
     total = None
     for foot in range(num_feet):
         # Flat layout is lane-major (lane * F + foot): strided slices pick one foot.

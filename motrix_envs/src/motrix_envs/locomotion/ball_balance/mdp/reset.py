@@ -207,9 +207,7 @@ class BallResetCfg(ResetTermCfg):
             _reset_ball,
             torch.tensor(self.spawn, dtype=torch.float32),
             torch.tensor(self.noise, dtype=torch.float32) * self.noise_scale,
-            torch.from_numpy(
-                np.ascontiguousarray(self.velocity_noise, dtype=np.float32) * np.float32(self.noise_scale)
-            ),
+            torch.tensor(self.velocity_noise, dtype=torch.float32) * self.noise_scale,
             writes={
                 "position": BodyPositionWrite((self.ball_link_name,)),
                 "linear_velocity": BodyLinearVelocityWrite((self.ball_link_name,)),
