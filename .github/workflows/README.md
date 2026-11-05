@@ -39,7 +39,7 @@ with these matrix checks.
 Nightly and manual dispatch run the **full** suite, including
 `test/test_all_envs.py::test_all_demos`. The full-environment subprocess smoke test is excluded
 from PR/push jobs. Each job reports the 20 slowest phases and uploads JUnit results, including on
-failure. Numba caches have per-suite write keys to avoid parallel jobs competing for one cache.
+failure.
 
 Local commands (activate `.venv` first):
 
@@ -62,38 +62,6 @@ keep task-specific smoke tests minimal, and retain a small set of representative
 regressions. The existing nightly smoke test automatically covers all registered environments.
 Do not duplicate a full expensive rollout for every preset. If the dedicated job grows too large,
 measure `--durations` and shard by environment family; do not silently drop kernel coverage from PRs.
-
-#### Diagnosing Numba startup costs
-
-Compare a fresh `NUMBA_CACHE_DIR` with a second process using the same directory, then compare
-another environment in the same process. `NUMBA_DEBUG_CACHE=1` reports actual specialization
-cache loads/saves. Manager INFO logs time each evaluate/observe/reset specialization; DEBUG
-logs include signatures. Dispatcher preparation is not the actual compilation phase.
-
-Precompilation uses the real input types, and warmup copies preserve strides and readonly flags,
-so warmup and reset/step share signatures. Function fingerprints use explicit code fields rather
-than marshal serialization, which can change after Numba inspects an unchanged code object.
-Keep these invariants intact when extending the compiler: a warmup must not introduce new
-signatures, and constructing the same configuration after execution must reuse the same plan.
-
-A local G1 WBT play-mode benchmark (`num_envs=2`, init and one step; interpreter imports excluded)
-measured about 29 seconds with an empty cache, 0.27 seconds in a second process with disk cache,
-and 0.07 seconds for another environment using the in-process cache after these fixes.
-The original cold benchmark took about 57 seconds and compiled each kernel twice.
-These are diagnostic measurements, not CI timing thresholds; hardware and cache state vary.
-
-### File: `codeql.yml`
-
-Runs GitHub CodeQL analysis for Python on pushes, pull requests, and a weekly
-scheduled scan. Review results under the repository's **Security** tab.
-
-### File: `branch-policy.yml`
-
-Checks pull request metadata without checking out contributor code. Normal PRs
-must target `main`; a post-patch back-merge may use upstream `stable → main`.
-Only a release PR from the upstream `main` branch or a `hotfix/*` stable patch
-PR may target `stable`. Add `Branch policy / validate` as a required status check on both
-protected branches.
 
 ## Docker Image Build Workflow
 

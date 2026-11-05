@@ -3,7 +3,6 @@
 
 """Public API for manager-based environments and terms."""
 
-from motrix_env_core.array import Array, mx
 from motrix_env_core.config.sim_reset import ManagerResetCfg, ResetTermCfg
 from motrix_env_core.manager.actions import (
     ActionCfg,
@@ -38,9 +37,7 @@ from motrix_env_core.sim import SimQueriesCfg
 __all__ = [
     "ActionCfg",
     "ActionTerm",
-    "Array",
     "ActionState",
-    "mx",
     "CommandCfg",
     "CommandTerm",
     "ContextMap",
