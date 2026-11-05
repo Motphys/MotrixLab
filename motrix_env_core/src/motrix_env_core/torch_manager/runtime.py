@@ -449,136 +449,32 @@ class TorchManagerRuntime:
         )
 
     def evaluate(self, inputs: tuple[Any, ...], reward_weights: np.ndarray, buffers, outputs) -> None:
-        if self.compile_enabled:
-            kernel = self._compiled_kernels.get(("evaluate", id(inputs), id(buffers)))
-            if kernel is None:
-                kernel = self._build_compiled_evaluate(inputs, reward_weights, buffers, outputs)
-                self._compiled_kernels[("evaluate", id(inputs), id(buffers))] = kernel
-            kernel(torch.from_numpy(outputs.reward), torch.from_numpy(outputs.terminated))
-            return
-        self._evaluate_eager(inputs, reward_weights, buffers, outputs)
-
-    def _evaluate_eager(self, inputs: tuple[Any, ...], reward_weights: np.ndarray, buffers, outputs) -> None:
-        ctx = self._context_for(inputs)
-        weights = torch.from_numpy(np.asarray(reward_weights, dtype=np.float32))
-        raw_terms = torch.from_numpy(buffers[0])
-        weighted_terms = torch.from_numpy(buffers[1])
-        termination_masks = torch.from_numpy(buffers[2])
-        dt = ctx.dt
-        total = None
-        terminated = None
-        for invocation, args in self._evaluate_plan(inputs):
-            kind = invocation.kind
-            if kind in ("command_update", "command_advance"):
-                receiver = ctx.commands[invocation.receiver_key]
-                invocation.dispatcher(receiver, ctx)
-            elif kind == "reward":
-                value = invocation.dispatcher(ctx, *args).to(torch.float32)
-                index = self._reward_indices[invocation.context]
-                weighted = value * weights[index] * dt
-                raw_terms[:, index] = value
-                weighted_terms[:, index] = weighted
-                total = weighted if total is None else total + weighted
-            elif kind == "termination":
-                mask = invocation.dispatcher(ctx, *args).to(torch.bool)
-                index = self._termination_indices[invocation.context]
-                termination_masks[:, index] = mask
-                terminated = mask if terminated is None else terminated | mask
-            else:  # pragma: no cover - schedule is fixed at resolve time
-                raise RuntimeError(f"Unsupported evaluate invocation kind {kind!r}.")
-        reward_view = torch.from_numpy(outputs.reward)
-        reward_view.copy_(total if total is not None else torch.zeros_like(reward_view))
-        terminated_view = torch.from_numpy(outputs.terminated)
-        terminated_view.copy_(terminated if terminated is not None else torch.zeros_like(terminated_view))
+        kernel = self._compiled_kernels.get(("evaluate", id(inputs), id(buffers)))
+        if kernel is None:
+            kernel = self._build_compiled_evaluate(inputs, reward_weights, buffers, outputs)
+            self._compiled_kernels[("evaluate", id(inputs), id(buffers))] = kernel
+        kernel(torch.from_numpy(outputs.reward), torch.from_numpy(outputs.terminated))
 
     def observe(self, inputs: tuple[Any, ...], outputs) -> None:
-        if self.compile_enabled:
-            kernel = self._compiled_kernels.get(("observe", id(inputs)))
-            if kernel is None:
-                kernel = self._build_compiled_observe(inputs, outputs)
-                self._compiled_kernels[("observe", id(inputs))] = kernel
-            value_obs = outputs.value_obs
-            kernel(
-                torch.from_numpy(outputs.policy_obs),
-                torch.from_numpy(value_obs) if value_obs is not None and value_obs.size else None,
-            )
-            return
-        self._observe_eager(inputs, outputs)
-
-    def _observe_eager(self, inputs: tuple[Any, ...], outputs) -> None:
-        ctx = self._context_for(inputs)
-        group_tensors = {"policy": torch.from_numpy(outputs.policy_obs)}
-        if outputs.value_obs is not None and outputs.value_obs.size:
-            group_tensors["value"] = torch.from_numpy(outputs.value_obs)
-        for group_name, group in self.layout.observations.items():
-            group_tensor = group_tensors[group_name]
-            for term in group.terms:
-                invocation = self._observation_by_name[f"{group_name}.{term.name}"]
-                out = group_tensor[:, term.output_slice]
-                invocation.dispatcher(ctx, out, *self._invocation_args_for(invocation, inputs))
+        kernel = self._compiled_kernels.get(("observe", id(inputs)))
+        if kernel is None:
+            kernel = self._build_compiled_observe(inputs, outputs)
+            self._compiled_kernels[("observe", id(inputs))] = kernel
+        value_obs = outputs.value_obs
+        kernel(
+            torch.from_numpy(outputs.policy_obs),
+            torch.from_numpy(value_obs) if value_obs is not None and value_obs.size else None,
+        )
 
     def reset(self, inputs: tuple[Any, ...], env_ids: np.ndarray, reset_buffers) -> None:
         if not self._reset_env_invocations and not self._reset_terms:
             return
         ids = torch.from_numpy(np.ascontiguousarray(env_ids, dtype=np.int64))
-        if self.compile_enabled:
-            kernel = self._compiled_kernels.get(("reset", id(inputs), id(reset_buffers)))
-            if kernel is None:
-                kernel = self._build_compiled_reset(inputs, reset_buffers)
-                self._compiled_kernels[("reset", id(inputs), id(reset_buffers))] = kernel
-            kernel(ids)
-            return
-        self._reset_eager(inputs, ids, reset_buffers)
-
-    def _reset_eager(self, inputs: tuple[Any, ...], ids: torch.Tensor, reset_buffers) -> None:
-        ctx = self._context_for(inputs)
-
-        gathered: dict[int, torch.Tensor] = {}
-
-        def gather(slot: int, tensor: torch.Tensor) -> torch.Tensor:
-            cached = gathered.get(slot)
-            if cached is None:
-                cached = tensor.index_select(0, ids)
-                gathered[slot] = cached
-            return cached
-
-        get = _leaf_getter(self._cache, inputs)
-        per_env = self._per_env_slots
-
-        def lane_get(slot: int) -> torch.Tensor:
-            full = get(slot)
-            return gather(slot, full) if slot in per_env else full
-
-        lane_rand = _LaneRand(self._context_paths[("rand", "state")], ctx, gather)
-        lane_ctx = _LaneContext(
-            ctx,
-            _CommandsMap(self._context_paths, self.env.command_terms, lane_get),
-            lane_rand,
-            _SimMap(
-                lane_get,
-                {path[1]: slot for path, slot in self._context_paths.items() if len(path) == 2 and path[0] == "sim"},
-            ),
-            _MetricsMap(self._context_paths, lane_get),
-            ids,
-            actions=_ActionsMap(self._context_paths, self.env.action_terms, lane_get),
-        )
-        for invocation in self._reset_env_invocations:
-            receiver = lane_ctx.commands[invocation.receiver_key]
-            invocation.dispatcher(receiver, lane_ctx)
-        for invocation, offset, fields in self._reset_terms:
-            sim_writes = {
-                name: torch.from_numpy(reset_buffers[offset + index][: ids.shape[0]])
-                for index, name in enumerate(fields)
-            }
-            invocation.dispatcher(lane_ctx, _WritesMap(sim_writes), *self._invocation_args_for(invocation, inputs))
-        for slot, tensor in gathered.items():
-            full = self._cache.tensor(inputs, slot)
-            if tensor.shape == full.shape:
-                full.copy_(tensor)
-            else:
-                full.index_copy_(0, ids, tensor)
-
-    # -- compiled schedules -------------------------------------------------
+        kernel = self._compiled_kernels.get(("reset", id(inputs), id(reset_buffers)))
+        if kernel is None:
+            kernel = self._build_compiled_reset(inputs, reset_buffers)
+            self._compiled_kernels[("reset", id(inputs), id(reset_buffers))] = kernel
+        kernel(ids)
 
     def _build_compiled_evaluate(self, inputs, reward_weights, buffers, outputs):
         ctx = self._context_for(inputs)
@@ -613,7 +509,9 @@ class TorchManagerRuntime:
             reward_view.copy_(total if total is not None else torch.zeros_like(reward_view))
             terminated_view.copy_(terminated if terminated is not None else torch.zeros_like(terminated_view))
 
-        return torch.compile(kernel, dynamic=False, options=_compile_options())
+        if self.compile_enabled:
+            return torch.compile(kernel, dynamic=False, options=_compile_options())
+        return kernel
 
     def _build_compiled_observe(self, inputs, outputs):
         ctx = self._context_for(inputs)
@@ -662,7 +560,9 @@ class TorchManagerRuntime:
                     invocation.dispatcher(ctx, buf, *args)
                 target.copy_(torch.cat([buf for _inv, _args, buf in entries], dim=1))
 
-            return torch.compile(group_kernel, dynamic=False, options=_compile_options())
+            if self.compile_enabled:
+                return torch.compile(group_kernel, dynamic=False, options=_compile_options())
+            return group_kernel
 
         group_kernels = {group_name: make_group_kernel(entries) for group_name, entries in per_term_plan}
         policy_kernel = group_kernels.get("policy")
@@ -747,7 +647,8 @@ class TorchManagerRuntime:
                     lane_mask = mask.view((num_envs,) + (1,) * (tensor.dim() - 1))
                     full.copy_(torch.where(lane_mask, tensor, full))
 
-        compiled = torch.compile(kernel, dynamic=False, options=_compile_options())
+        if self.compile_enabled:
+            kernel = torch.compile(kernel, dynamic=False, options=_compile_options())
         mask_np = mask.numpy()
         compact_plan = tuple(
             (buffer.numpy(), stage.numpy())
@@ -759,7 +660,7 @@ class TorchManagerRuntime:
             ids_np = ids.numpy()
             mask_np.fill(False)
             mask_np[ids_np] = True
-            compiled()
+            kernel()
             count = ids_np.shape[0]
             for buffer, stage in compact_plan:
                 buffer[:count] = stage[ids_np]
