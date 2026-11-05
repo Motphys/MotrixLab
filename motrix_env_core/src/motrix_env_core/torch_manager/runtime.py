@@ -34,12 +34,13 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 
+from motrix_env_core.manager.kernel import KernelOutputs
 from motrix_env_core.manager.kernel_data import KernelDataScope
 from motrix_env_core.torch_manager.rand import draw_uniform
 
 if TYPE_CHECKING:
     from motrix_env_core.manager.env import ManagerEnv
-    from motrix_env_core.manager.resolver import ResolvedManagerProgram
+    from motrix_env_core.manager.resolver import PreparedInvocation, ResolvedManagerProgram
 
 _INPUT_EXPRESSION = re.compile(r"^input_(\d+)(\[env_id\])?$")
 
@@ -139,7 +140,7 @@ class _TensorCache:
         return tensor
 
 
-def _leaf_getter(cache: _TensorCache, inputs: tuple[Any, ...]):
+def _leaf_getter(cache: _TensorCache, inputs: tuple[Any, ...]) -> Callable[[int], torch.Tensor]:
     """Leaf resolver over one input tuple.
 
     All tensor views are materialized eagerly so the getter body is a plain
@@ -165,7 +166,13 @@ class _Namespace:
     tensor views stay valid for the lifetime of the enclosing input tuple.
     """
 
-    def __init__(self, paths: dict[tuple[str, ...], int], prefix: tuple[str, ...], host: Any, get) -> None:
+    def __init__(
+        self,
+        paths: dict[tuple[str, ...], int],
+        prefix: tuple[str, ...],
+        host: Any,
+        get: Callable[[int], torch.Tensor],
+    ) -> None:
         self._paths = paths
         self._prefix = prefix
         self._host = host
@@ -264,7 +271,7 @@ class _BatchActions:
 
 
 class _SimMap:
-    def __init__(self, get, slots: dict[str, int]) -> None:
+    def __init__(self, get: Callable[[int], torch.Tensor], slots: dict[str, int]) -> None:
         self._get = get
         self._slots = slots
 
@@ -273,7 +280,12 @@ class _SimMap:
 
 
 class _CommandsMap:
-    def __init__(self, paths: dict[tuple[str, ...], int], command_terms: dict[str, Any], get) -> None:
+    def __init__(
+        self,
+        paths: dict[tuple[str, ...], int],
+        command_terms: dict[str, Any],
+        get: Callable[[int], torch.Tensor],
+    ) -> None:
         self._paths = paths
         self._command_terms = command_terms
         self._get = get
@@ -291,7 +303,12 @@ class _CommandsMap:
 
 
 class _ActionsMap:
-    def __init__(self, paths: dict[tuple[str, ...], int], action_terms: dict[str, Any], get) -> None:
+    def __init__(
+        self,
+        paths: dict[tuple[str, ...], int],
+        action_terms: dict[str, Any],
+        get: Callable[[int], torch.Tensor],
+    ) -> None:
         self._paths = paths
         self._action_terms = action_terms
         self._get = get
@@ -310,7 +327,7 @@ class _ActionsMap:
 
 
 class _MetricsMap:
-    def __init__(self, paths: dict[tuple[str, ...], int], get) -> None:
+    def __init__(self, paths: dict[tuple[str, ...], int], get: Callable[[int], torch.Tensor]) -> None:
         self._paths = paths
         self._get = get
 
@@ -448,14 +465,20 @@ class TorchManagerRuntime:
             reward_weights=self.reward_weights,
         )
 
-    def evaluate(self, inputs: tuple[Any, ...], reward_weights: np.ndarray, buffers, outputs) -> None:
+    def evaluate(
+        self,
+        inputs: tuple[Any, ...],
+        reward_weights: np.ndarray,
+        buffers: tuple[np.ndarray, np.ndarray, np.ndarray],
+        outputs: KernelOutputs,
+    ) -> None:
         kernel = self._compiled_kernels.get(("evaluate", id(inputs), id(buffers)))
         if kernel is None:
             kernel = self._build_compiled_evaluate(inputs, reward_weights, buffers, outputs)
             self._compiled_kernels[("evaluate", id(inputs), id(buffers))] = kernel
         kernel(torch.from_numpy(outputs.reward), torch.from_numpy(outputs.terminated))
 
-    def observe(self, inputs: tuple[Any, ...], outputs) -> None:
+    def observe(self, inputs: tuple[Any, ...], outputs: KernelOutputs) -> None:
         kernel = self._compiled_kernels.get(("observe", id(inputs)))
         if kernel is None:
             kernel = self._build_compiled_observe(inputs, outputs)
@@ -466,7 +489,7 @@ class TorchManagerRuntime:
             torch.from_numpy(value_obs) if value_obs is not None and value_obs.size else None,
         )
 
-    def reset(self, inputs: tuple[Any, ...], env_ids: np.ndarray, reset_buffers) -> None:
+    def reset(self, inputs: tuple[Any, ...], env_ids: np.ndarray, reset_buffers: tuple[np.ndarray, ...]) -> None:
         if not self._reset_env_invocations and not self._reset_terms:
             return
         ids = torch.from_numpy(np.ascontiguousarray(env_ids, dtype=np.int64))
@@ -476,7 +499,13 @@ class TorchManagerRuntime:
             self._compiled_kernels[("reset", id(inputs), id(reset_buffers))] = kernel
         kernel(ids)
 
-    def _build_compiled_evaluate(self, inputs, reward_weights, buffers, outputs):
+    def _build_compiled_evaluate(
+        self,
+        inputs: tuple[Any, ...],
+        reward_weights: np.ndarray,
+        buffers: tuple[np.ndarray, np.ndarray, np.ndarray],
+        outputs: KernelOutputs,
+    ) -> Callable[[torch.Tensor, torch.Tensor], None]:
         ctx = self._context_for(inputs)
         weights = torch.from_numpy(np.asarray(reward_weights, dtype=np.float32))
         raw_terms = torch.from_numpy(buffers[0])
@@ -513,7 +542,9 @@ class TorchManagerRuntime:
             return torch.compile(kernel, dynamic=False, options=_compile_options())
         return kernel
 
-    def _build_compiled_observe(self, inputs, outputs):
+    def _build_compiled_observe(
+        self, inputs: tuple[Any, ...], outputs: KernelOutputs
+    ) -> Callable[[torch.Tensor, torch.Tensor | None], None]:
         ctx = self._context_for(inputs)
         observation_by_name = self._observation_by_name
         plan = tuple(
@@ -554,7 +585,9 @@ class TorchManagerRuntime:
         # keep their code hot through the interleaved physics/evaluate passes,
         # which measurably beats a single fused graph on many-core hosts.
 
-        def make_group_kernel(entries):
+        def make_group_kernel(
+            entries: tuple[tuple[PreparedInvocation, tuple[Any, ...], torch.Tensor], ...],
+        ) -> Callable[[torch.Tensor], None]:
             def group_kernel(target: torch.Tensor) -> None:
                 for invocation, args, buf in entries:
                     invocation.dispatcher(ctx, buf, *args)
@@ -576,7 +609,9 @@ class TorchManagerRuntime:
 
         return kernel
 
-    def _build_compiled_reset(self, inputs, reset_buffers):
+    def _build_compiled_reset(
+        self, inputs: tuple[Any, ...], reset_buffers: tuple[np.ndarray, ...]
+    ) -> Callable[[torch.Tensor], None]:
         """Compile the reset schedule as a static full-batch masked graph.
 
         The reset math runs for ALL lanes with the selected lanes chosen by a
@@ -701,7 +736,7 @@ class TorchManagerRuntime:
             cache[key] = args
         return args
 
-    def _invocation_args(self, invocation: Any, inputs: tuple[Any, ...]) -> tuple[Any, ...]:
+    def _invocation_args(self, invocation: PreparedInvocation, inputs: tuple[Any, ...]) -> tuple[Any, ...]:
         args: list[Any] = []
         for value, prepared_index, expression in zip(
             invocation.args_values, invocation.args_prepared_indices, invocation.args_expressions, strict=True
@@ -728,7 +763,9 @@ class TorchManagerRuntime:
 class _LaneRand:
     """SplitMix64 draws on gathered reset rows, updated in place."""
 
-    def __init__(self, rand_slot: int, base: _BatchContext, gather) -> None:
+    def __init__(
+        self, rand_slot: int, base: _BatchContext, gather: Callable[[int, torch.Tensor], torch.Tensor]
+    ) -> None:
         self._rand_slot = rand_slot
         self._base = base
         self._gather = gather
