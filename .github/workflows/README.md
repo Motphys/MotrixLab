@@ -25,10 +25,9 @@ Python 3.10 uses `--all`; the other versions omit the Unitree hardware plugin an
 
 PR and push runs have two independent, parallel suites per Python version:
 
-- **fast**: `pytest -m "not slow and not integration and not numba"`.
-- **numba**: `pytest -m "not integration and (slow or numba)"`. This includes the two expensive
+- **fast**: `pytest -m "not slow and not integration"`.
+- **slow**: `pytest -m "not integration and (slow)"`. This includes the expensive
   WBT kernel regressions on every PR, so failures are not deferred until the next day.
-  The entire `test_wbt_numba.py` module stays together: excluding only the first two expensive
   tests shifts first-use compilation into later tests rather than making the fast suite cheap.
 
 These selections partition all non-integration tests, including future `slow` tests. They run on
@@ -46,21 +45,19 @@ Local commands (activate `.venv` first):
 
 ```bash
 # Quick feedback; excludes expensive kernel regressions and full-environment smoke.
-python -m pytest -m "not slow and not integration and not numba"
+python -m pytest -m "not slow and not integration"
 # Dedicated compilation/runtime regressions.
-python -m pytest -m "not integration and (slow or numba)"
+python -m pytest -m "not integration and (slow)"
 # Only the full-environment integration tests.
 python -m pytest -m integration
 # Full coverage remains the default; no tests are silently excluded by addopts.
 python -m pytest
 ```
 
-Markers are registered in the root `pyproject.toml`: `slow` describes cost, `numba` identifies
-specialized kernel regressions, and `integration` identifies tests reserved for full runs.
-Not every test importing Numba needs the `numba` marker: inexpensive core contract tests remain
-in the fast suite.
+Markers are registered in the root `pyproject.toml`: `slow` describes cost and `integration`
+identifies tests reserved for full runs.
 
-For new Numba environments, reuse small synthetic-manager tests for shared runtime contracts,
+For new manager environments, reuse small synthetic-manager tests for shared runtime contracts,
 keep task-specific smoke tests minimal, and retain a small set of representative real-environment
 regressions. The existing nightly smoke test automatically covers all registered environments.
 Do not duplicate a full expensive rollout for every preset. If the dedicated job grows too large,

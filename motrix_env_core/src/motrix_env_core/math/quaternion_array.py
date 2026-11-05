@@ -113,7 +113,6 @@ def rotate_inverse_components(quaternion, vector):
     ``quaternion`` is ``(..., 4)`` and ``vector`` is ``(..., 3)``; the rotated
     components are returned as three tensors of the leading shape.
     """
-    xp = array_namespace(quaternion, vector)
     x, y, z, w = (quaternion[..., i] for i in range(4))
     vx, vy, vz = (vector[..., i] for i in range(3))
     cx = y * vz - z * vy - w * vx
