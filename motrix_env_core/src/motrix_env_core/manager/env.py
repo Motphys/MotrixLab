@@ -57,6 +57,9 @@ from motrix_env_core.sim import (
     SimQueriesCfg,
 )
 from motrix_env_core.sim.backend import RenderConfig, SimBackend, SimRenderer
+
+if TYPE_CHECKING:
+    from motrix_env_core.torch_manager.runtime import TorchTaskProgram
 from motrix_env_core.sim.model import ActuatorSpec
 from motrix_env_core.sim.write import CtrlTargetsWrite, SimWrite
 
@@ -343,7 +346,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         self._sim_reset_runtime = SimResetRuntime.create(self, cfg.sim_reset, self.sim)
         from motrix_env_core.mdp.state import _create_rand_value
 
-        self._task_program: Any | None = None
+        self._task_program: TorchTaskProgram | None = None
         self._kernel_buffers: tuple[Any, ...] | None = None
         self.metrics: dict[str, np.ndarray] = {}
         self._kernel_outputs: KernelOutputs | None = None
@@ -778,7 +781,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
             raise RuntimeError("Manager layout is available after init_state() builds the task program.")
         return self._compiled_manager_program.layout
 
-    def _build_task_program(self) -> Any:
+    def _build_task_program(self) -> TorchTaskProgram:
         from motrix_env_core.torch_manager.binding import build_manager_binding
         from motrix_env_core.torch_manager.runtime import TorchManagerRuntime
 

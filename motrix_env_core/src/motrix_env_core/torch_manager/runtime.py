@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import re
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -69,9 +70,9 @@ def _compile_options() -> dict[str, Any]:
 class TorchTaskProgram:
     """Drop-in replacement task program backed by Torch kernels."""
 
-    evaluate_kernel: Any
-    observe_kernel: Any
-    reset_kernel: Any
+    evaluate_kernel: Callable[[tuple[Any, ...], np.ndarray, tuple[np.ndarray, ...], Any], None]
+    observe_kernel: Callable[[tuple[Any, ...], Any], None]
+    reset_kernel: Callable[[tuple[Any, ...], np.ndarray, tuple[np.ndarray, ...]], None]
     reward_weights: np.ndarray
 
 
