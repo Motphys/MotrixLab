@@ -14,8 +14,7 @@ class HeightFieldGrid:
     """Static terrain grid for batched bilinear height lookup.
 
     ``enabled=False`` degenerates to the flat-ground ``constant`` height.
-    Torch-side lookups (for example
-    ``motrix_envs.locomotion.humanoid.walk_manager_mdp.terrain.heightfield_lookup_batch``)
+    Torch-side lookups (:func:`heightfield_lookup`)
     mirror the engine's hfield sample convention in float64:
     bilinear interpolation of the four surrounding samples after mapping
     world ``xy`` to fractional grid coordinates.
@@ -43,24 +42,19 @@ class HeightFieldGrid:
     enabled: bool
 
 
-__all__ = [
-    "heightfield_lookup",
-    "HeightFieldGrid",
-]
+def heightfield_lookup(grid: HeightFieldGrid, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    """Batched bilinear height lookup in float64 over a height-field grid.
 
-
-def heightfield_lookup(grid, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    """Batched torch bilinear height lookup over a :class:`HeightFieldGrid`.
-
-    ``x``/``y`` are ``(N,)`` world coordinates. The interpolation runs in
-    float64, matching the engine's hfield sample convention.
+    ``x``/``y`` are ``(N,)`` world coordinates. ``grid`` is the batch
+    context's kernel-data view of a :class:`HeightFieldGrid`; its fields
+    arrive as zero-copy tensor views of the shared grid arrays.
     """
-    if not bool(grid.enabled):
+    if not grid.enabled:
         return torch.full_like(x.double(), float(grid.constant))
-    heights = torch.as_tensor(np.asarray(grid.heights)).to(torch.float64)
-    origin = torch.as_tensor(np.asarray(grid.origin)).to(torch.float64)
-    spacing = torch.as_tensor(np.asarray(grid.spacing)).to(torch.float64)
-    z0 = torch.as_tensor(np.asarray(grid.z0)).to(torch.float64)
+    heights = grid.heights.to(torch.float64)
+    origin = grid.origin.to(torch.float64)
+    spacing = grid.spacing.to(torch.float64)
+    z0 = grid.z0.to(torch.float64)
     nrow, ncol = heights.shape
     fx = ((x.to(torch.float64) - origin[0]) / spacing[0]).clamp(0.0, ncol - 1.0 - 1e-6)
     fy = ((y.to(torch.float64) - origin[1]) / spacing[1]).clamp(0.0, nrow - 1.0 - 1e-6)
@@ -75,3 +69,9 @@ def heightfield_lookup(grid, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     top = h00 * (1.0 - tx) + h01 * tx
     bottom = h10 * (1.0 - tx) + h11 * tx
     return z0[0] + top * (1.0 - ty) + bottom * ty
+
+
+__all__ = [
+    "heightfield_lookup",
+    "HeightFieldGrid",
+]
