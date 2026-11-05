@@ -14,35 +14,29 @@ import torch
 from motrix_env_core.manager.kernel_data import canonicalize_kernel_data, is_kernel_data
 from motrix_env_core.sim.read import SimDataQuery
 
-
-def _is_torch_tensor(value: object) -> bool:
-    return isinstance(value, torch.Tensor)
+# Static term-argument leaves accepted as-is; anything else is a cfg-authoring
+# error caught at term construction.
+_STATIC_LEAVES = (bool, int, float, str, np.generic, np.ndarray, torch.Tensor, SimDataQuery)
 
 
 def canonicalize_term_args(args: tuple[Any, ...], *, context: str) -> tuple[Any, ...]:
-    """Validate and canonicalize positional Numba-compatible term arguments.
+    """Validate and canonicalize positional term arguments.
 
     Accepted leaves are scalars (including strings for compile-time Map-name
-    lookups), scalar tuples, ndarrays, simulator data queries, and
-    ``@kernel_data`` carriers.
+    lookups), scalar tuples, ndarrays, tensors, simulator data queries, and
+    ``@kernel_data`` carriers (which are normalized in place).
     """
     values: list[Any] = []
     for index, value in enumerate(args):
         if is_kernel_data(value):
             values.append(canonicalize_kernel_data(value, context=f"{context} args[{index}]"))
+        elif isinstance(value, _STATIC_LEAVES):
+            values.append(value)
         elif isinstance(value, tuple) and all(isinstance(item, (bool, int, float, np.generic)) for item in value):
-            values.append(value)
-        elif isinstance(value, (bool, int, float, str, np.generic)):
-            values.append(value)
-        elif isinstance(value, np.ndarray):
-            values.append(value)
-        elif _is_torch_tensor(value):
-            values.append(value)
-        elif isinstance(value, SimDataQuery):
             values.append(value)
         else:
             raise TypeError(
-                f"{context} args[{index}] must be a scalar, a scalar tuple, an ndarray, "
+                f"{context} args[{index}] must be a scalar, a scalar tuple, an ndarray, a tensor, "
                 f"a @kernel_data value, or a simulator data query; got {type(value).__name__}."
             )
     return tuple(values)
