@@ -782,10 +782,10 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         return self._compiled_manager_program.layout
 
     def _build_task_program(self) -> TorchTaskProgram:
-        from motrix_env_core.torch_manager.binding import build_manager_binding
+        from motrix_env_core.manager.resolver import ManagerProgramResolver
         from motrix_env_core.torch_manager.runtime import TorchManagerRuntime
 
-        self._compiled_manager_program = build_manager_binding(self)
+        self._compiled_manager_program = ManagerProgramResolver(self).build()
         self._torch_runtime = TorchManagerRuntime(self, self._compiled_manager_program)
         return self._torch_runtime.task_program()
 
