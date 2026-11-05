@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy as np
 
@@ -18,21 +18,6 @@ if TYPE_CHECKING:
     from motrix_env_core.sim import SimModel
 
 T = TypeVar("T")
-
-
-class ContextMap(Protocol[T]):
-    def __getitem__(self, key: str) -> T: ...
-
-
-class MdpContext(Protocol):
-    """Logical context surface shared by NumPy/Numba and Torch MDP lowering."""
-
-    env_id: Any
-    actions: ContextMap[Any]
-    commands: ContextMap[Any]
-    metrics: ContextMap[Any]
-    sim: ContextMap[Any]
-    dt: Any
 
 
 @kernel_data
@@ -96,4 +81,4 @@ class BuildContext:
         return self._env.command_terms
 
 
-__all__ = ["BuildContext", "ContextMap", "ManagerContext", "MdpContext"]
+__all__ = ["BuildContext", "ManagerContext"]

@@ -11,7 +11,7 @@ from motrix_env_core.manager.actions import (
     ManagerActionsCfg,
 )
 from motrix_env_core.manager.commands import CommandCfg, CommandTerm, ManagerCommandsCfg
-from motrix_env_core.manager.context import ContextMap, ManagerContext, MdpContext
+from motrix_env_core.manager.context import BuildContext, ManagerContext
 from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
 from motrix_env_core.manager.kernel import ManagerWarmupResult
@@ -40,11 +40,10 @@ __all__ = [
     "ActionState",
     "CommandCfg",
     "CommandTerm",
-    "ContextMap",
-    "MdpContext",
     "ManagerActionsCfg",
     "ManagerBasedEnvCfg",
     "ManagerCommandsCfg",
+    "BuildContext",
     "ManagerContext",
     "dispatch",
     "ManagerEnv",
