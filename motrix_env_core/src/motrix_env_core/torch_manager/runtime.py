@@ -29,13 +29,17 @@ import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
 
 from motrix_env_core.manager.kernel_data import KernelDataScope
 from motrix_env_core.torch_manager.rand import draw_uniform
+
+if TYPE_CHECKING:
+    from motrix_env_core.manager.env import ManagerEnv
+    from motrix_env_core.manager.resolver import ResolvedManagerProgram
 
 _INPUT_EXPRESSION = re.compile(r"^input_(\d+)(\[env_id\])?$")
 
@@ -321,7 +325,13 @@ class _BatchContext:
     context operate on whole batches.
     """
 
-    def __init__(self, inputs: tuple[Any, ...], cache: _TensorCache, paths: dict[tuple[str, ...], int], env: Any):
+    def __init__(
+        self,
+        inputs: tuple[Any, ...],
+        cache: _TensorCache,
+        paths: dict[tuple[str, ...], int],
+        env: ManagerEnv,
+    ):
         get = _leaf_getter(cache, inputs)
         self._paths = paths
         self.env_id = get(paths[("env_id",)])
@@ -358,7 +368,7 @@ class TorchManagerRuntime:
     per-term eager schedule for debugging.
     """
 
-    def __init__(self, env: Any, program: Any, compile: bool = True) -> None:
+    def __init__(self, env: ManagerEnv, program: ResolvedManagerProgram, compile: bool = True) -> None:
         self.env = env
         self.program = program
         self.layout = program.layout
