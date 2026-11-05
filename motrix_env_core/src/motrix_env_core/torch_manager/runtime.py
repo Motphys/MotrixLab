@@ -34,7 +34,6 @@ import numpy as np
 import torch
 
 from motrix_env_core.manager.kernel import KernelOutputs
-from motrix_env_core.manager.kernel_data import KernelDataScope
 from motrix_env_core.manager.resolver import (
     CommandAdvanceHook,
     CommandResetHook,
@@ -402,8 +401,14 @@ class TorchManagerRuntime:
 
         self._context_tree = program.prepared_trees[program.context.tree_index]
         self._context_leaves = self._context_tree.leaves
-        self._per_env_paths = frozenset(
-            path for path, leaf in self._context_leaves.items() if leaf.scope is KernelDataScope.PER_ENV
+        # Reset terms write through three surfaces only: each reset hook's
+        # receiver command tree, the RNG state, and metrics. Everything
+        # else (sim views, action state, clip arrays, shared params) is
+        # read-only during reset and passes through uncloned.
+        self._reset_clone_prefixes: tuple[tuple[str, ...], ...] = (
+            *(("commands", hook.receiver_key) for hook in program.command_reset_hooks),
+            ("rand", "state"),
+            ("metrics",),
         )
         self._sim_paths = {path[1]: path for path in self._context_leaves if len(path) == 2 and path[0] == "sim"}
         self._rand_path = ("rand", "state")
@@ -600,8 +605,7 @@ class TorchManagerRuntime:
         """
         ctx = self._context_for(inputs)
         assert self._context_tensors is not None
-        per_env = self._per_env_paths
-        sim_paths = frozenset(self._sim_paths.values())
+        clone_prefixes = self._reset_clone_prefixes
         get = _leaf_lookup(self._context_tensors)
         command_reset_hooks = self.command_reset_hooks
         num_envs = ctx.rand.state.shape[0]
@@ -627,10 +631,17 @@ class TorchManagerRuntime:
                 cached = clones.get(path)
                 if cached is None:
                     full = get(path)
-                    # Simulator reads are never written by reset terms (writes
-                    # go through the sim_writes map), so they pass through
-                    # uncloned; every other per-env leaf may be mutated.
-                    cached = full.clone() if path in per_env and path not in sim_paths else full
+                    # Reset terms only write the receiver command trees,
+                    # RNG state and metrics (sim writes go through the
+                    # sim_writes map); every other leaf is read-only and
+                    # passes through uncloned.
+                    cached = (
+                        full.clone()
+                        if isinstance(full, torch.Tensor)
+                        and full.shape[:1] == (num_envs,)
+                        and any(path[: len(prefix)] == prefix for prefix in clone_prefixes)
+                        else full
+                    )
                     clones[path] = cached
                 return cached
 
