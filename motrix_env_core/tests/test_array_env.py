@@ -11,7 +11,7 @@ from motrix_env_core.array.env import ArrayEnv, ArrayEnvState, FinalObs, NpObs
 from motrix_env_core.base import EnvCfg, ObsSpace
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv
-from motrix_env_core.numba.manager.env import ManagerEnv
+from motrix_env_core.manager.env import ManagerEnv
 from motrix_env_core.registry import _infer_sim_backend
 from motrix_env_core.sim.backend import RenderConfig, SimRenderer
 

@@ -6,7 +6,7 @@
 import math
 
 import numpy as np
-from numba import njit
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import (
@@ -18,49 +18,71 @@ from motrix_env_core.manager import (
     kernel_data,
     metric,
 )
-from motrix_env_core.numba.manager.commands import ResetContext
-from motrix_env_core.numba.manager.dispatch import dispatch
+from motrix_env_core.manager.commands import ResetContext
+from motrix_env_core.manager.dispatch import dispatch
 
 
-@njit(inline="always")
-def _lane_phase(
-    cmd: np.ndarray,
-    phase_out: np.ndarray,
-    sin_cos_out: np.ndarray,
-    phase_offset: np.ndarray,
-    steps: float,
-    phase_step: float,
+def _phase(
+    command: torch.Tensor,
+    phase_out: torch.Tensor,
+    sin_cos_out: torch.Tensor,
+    phase_offset: torch.Tensor,
+    steps: torch.Tensor,
+    phase_step: torch.Tensor,
 ) -> None:
-    """Refresh both lanes' phase clocks, pinning standing commands to ``pi``."""
+    """Refresh both lanes' phase clocks over whole batches, pinning standing commands to ``pi``.
+
+    The clock arithmetic runs in float64 (the kernel's ``math.pi``
+    promotion) and is stored back as float32; standing commands pin both
+    lanes to ``pi`` per lane.
+    """
     tau = 2.0 * math.pi
-    for i in range(2):
-        phase_out[i] = (steps * phase_step + phase_offset[i] + math.pi) % tau - math.pi
-    speed = math.sqrt(cmd[0] * cmd[0] + cmd[1] * cmd[1])
-    if speed < 0.01 and abs(cmd[2]) < 0.01:
-        # Standing commands pin both lanes, matching the direct env's
-        # ``phase[stand] = pi``: the gait clock must freeze for both feet.
-        phase_out[:] = math.pi
-    for i in range(2):
-        sin_cos_out[i] = math.sin(phase_out[i])
-        sin_cos_out[2 + i] = math.cos(phase_out[i])
+    steps = steps.to(torch.float64)[:, None]
+    phase_step = phase_step.to(torch.float64)[:, None]
+    raw = (steps * phase_step + phase_offset.to(torch.float64) + math.pi) % tau - math.pi
+    speed = torch.sqrt(command[:, 0] * command[:, 0] + command[:, 1] * command[:, 1])
+    stand = (speed.to(torch.float64) < 0.01) & (command[:, 2].abs().to(torch.float64) < 0.01)
+    phase = raw.to(torch.float32)
+    phase = torch.where(stand[:, None], torch.full_like(phase, np.float32(math.pi)), phase)
+    sin = torch.sin(phase.to(torch.float64)).to(torch.float32)
+    cos = torch.cos(phase.to(torch.float64)).to(torch.float32)
+    sin_cos_out[:, 0] = sin[:, 0]
+    sin_cos_out[:, 1] = sin[:, 1]
+    sin_cos_out[:, 2] = cos[:, 0]
+    sin_cos_out[:, 3] = cos[:, 1]
+    phase_out.copy_(phase)
 
 
-@njit(inline="always")
-def _lane_resample_phase_offset(ctx: ManagerContext, phase_offset: np.ndarray) -> None:
-    first = ctx.rand.uniform_range(np.float32(-math.pi), np.float32(math.pi))
-    phase_offset[0] = first
-    phase_offset[1] = (first + 2.0 * math.pi) % (2.0 * math.pi) - math.pi
+def _uniform_range(u: torch.Tensor, low, high) -> torch.Tensor:
+    """Float32 ``low + (high - low) * 0.5 * (u + 1)`` matching the kernel convention."""
+    return low + (high - low) * np.float32(0.5) * (u + np.float32(1.0))
 
 
-@njit(inline="always")
-def _lane_resample_command(
-    ctx: ManagerContext, commands: np.ndarray, low: np.ndarray, high: np.ndarray, stand_prob: np.float32
+def _resample_command(
+    ctx: ManagerContext,
+    commands: torch.Tensor,
+    low: torch.Tensor,
+    high: torch.Tensor,
+    stand_prob,
+    resample: torch.Tensor,
 ) -> None:
-    rand = ctx.rand
-    for index in range(3):
-        commands[index] = rand.uniform_range(low[index], high[index])
-    if (rand.next_uniform() + 1.0) * 0.5 < stand_prob:
-        commands[:] = 0.0
+    """Resample velocity commands on ``resample`` lanes, preserving other lanes' RNG rows.
+
+    The draw counts and per-lane order are fixed: one 3-draw uniform batch
+    then one stand-probability draw; lanes that do not resample keep their
+    pre-draw RNG state.
+    """
+    if not bool(resample.any()):
+        return
+    previous_state = ctx.rand.state.clone()
+    u = ctx.rand.next_uniform(3)
+    sampled = _uniform_range(u, low, high)
+    stand_u = ctx.rand.next_uniform(1)[:, 0]
+    stand = (stand_u.to(torch.float64) + 1.0) * 0.5 < float(stand_prob)
+    sampled = torch.where(stand[:, None], torch.zeros_like(sampled), sampled)
+    keep_state = ~resample[:, None]
+    ctx.rand.state.copy_(torch.where(keep_state, previous_state, ctx.rand.state))
+    commands.copy_(torch.where(resample[:, None], sampled, commands))
 
 
 @kernel_data
@@ -129,40 +151,63 @@ class WalkCommand(CommandTerm):
     phase_step: np.ndarray
     steps: np.ndarray = metric(name="command_steps", dtype=np.float32)
 
+    @staticmethod
     @dispatch
-    def update(self, ctx: ManagerContext) -> None:
-        _lane_phase(
-            self.command,
-            self.phase,
-            self.sin_cos,
-            self.phase_offset,
-            self.steps[0],
-            self.phase_step[0],
+    def update(receiver, ctx: ManagerContext) -> None:
+        _phase(
+            receiver.command,
+            receiver.phase,
+            receiver.sin_cos,
+            receiver.phase_offset,
+            receiver.steps[:, 0],
+            receiver.phase_step[:, 0],
         )
 
+    @staticmethod
     @dispatch
-    def advance(self, ctx: ManagerContext) -> None:
-        self.steps[0] += 1.0
-        if self.steps[0] % self.resample_steps == 0.0:
-            _lane_resample_command(ctx, self.command, self.vel_limit_low, self.vel_limit_high, self.stand_prob)
+    def advance(receiver, ctx: ManagerContext) -> None:
+        steps = receiver.steps
+        steps[:, 0] += np.float32(1.0)
+        resample = torch.remainder(steps[:, 0], float(receiver.resample_steps)) == 0.0
+        _resample_command(
+            ctx,
+            receiver.command,
+            receiver.vel_limit_low,
+            receiver.vel_limit_high,
+            receiver.stand_prob,
+            resample,
+        )
 
+    @staticmethod
     @dispatch
-    def reset_env(self, ctx: ManagerContext) -> None:
-        self.steps[0] = 0.0
-        if self.gait_period_width > np.float32(0.0):
-            period = float(self.gait_period_base) + ctx.rand.uniform_range(
-                -self.gait_period_width, self.gait_period_width
-            )
-            self.phase_step[0] = np.float32(2.0 * math.pi * ctx.dt / max(period, 0.1))
-        _lane_resample_phase_offset(ctx, self.phase_offset)
-        _lane_resample_command(ctx, self.command, self.vel_limit_low, self.vel_limit_high, self.stand_prob)
-        _lane_phase(
-            self.command,
-            self.phase,
-            self.sin_cos,
-            self.phase_offset,
-            self.steps[0],
-            self.phase_step[0],
+    def reset_env(receiver, ctx: ManagerContext) -> None:
+        receiver.steps[:, 0] = 0.0
+        width = float(receiver.gait_period_width)
+        if width > 0.0:
+            u = ctx.rand.next_uniform(1)[:, 0]
+            jitter = _uniform_range(u, np.float32(-width), np.float32(width))
+            period = float(receiver.gait_period_base) + jitter.to(torch.float64)
+            receiver.phase_step[:, 0] = (2.0 * math.pi * ctx.dt / period.clamp(min=0.1)).to(torch.float32)
+        first = _uniform_range(ctx.rand.next_uniform(1)[:, 0], np.float32(-math.pi), np.float32(math.pi))
+        offsets = torch.empty_like(receiver.phase_offset)
+        offsets[:, 0] = first
+        offsets[:, 1] = ((first.to(torch.float64) + 2.0 * math.pi) % (2.0 * math.pi) - math.pi).to(torch.float32)
+        receiver.phase_offset.copy_(offsets)
+        _resample_command(
+            ctx,
+            receiver.command,
+            receiver.vel_limit_low,
+            receiver.vel_limit_high,
+            receiver.stand_prob,
+            torch.ones_like(first, dtype=torch.bool),
+        )
+        _phase(
+            receiver.command,
+            receiver.phase,
+            receiver.sin_cos,
+            receiver.phase_offset,
+            receiver.steps[:, 0],
+            receiver.phase_step[:, 0],
         )
 
     def reset(self, ctx: ResetContext) -> None:

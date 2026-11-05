@@ -16,7 +16,7 @@ from motrix_env_core.base import ABEnv
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import MjcfFileCfg, RobotCfg, SceneCfg
 from motrix_env_core.direct.env import DirectEnv, DirectEnvCfg
-from motrix_env_core.numba.manager.env import ManagerBasedEnvCfg, ManagerEnv
+from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
 from motrix_env_core.sim import ModelQuery
 from motrix_env_core.sim.backend import SimBackend
 from motrix_env_core.sim.model import SimModel

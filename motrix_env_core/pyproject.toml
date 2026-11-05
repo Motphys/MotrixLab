@@ -30,8 +30,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Typing :: Typed",
 ]
-# Heavy runtime deps (numba/scipy for manager kernel compilation, imageio for
-# video recording) are optional extras so deployment-side installs
+# Heavy runtime deps (imageio for video recording) are optional extras so
+# deployment-side installs
 # (motrix-deploy and its backend plugins) only pull the lightweight config,
 # registry and input layers of this package. gymnasium stays in the base
 # dependencies because ``motrix_env_core.base`` (on the bare package import
@@ -47,11 +47,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Manager kernel compilation and numba-accelerated mdp terms.
-numba = [
-    "numba==0.61.2",
-    "scipy==1.15.3", # numba requires scipy at compile time for np.linalg in kernels
-]
 # Headless video recording via VideoRecorder.
 video = [
     "imageio>=2.30",
@@ -59,13 +54,8 @@ video = [
 ]
 # Everything the training-side workspace needs from this package.
 all = [
-    "motrix-env-core[numba,video]",
+    "motrix-env-core[video]",
 ]
-# TBB threading layer for numba parallel kernels: on many-core machines the
-# default OpenMP layer pays a per-region thread-wakeup storm that dominates
-# short kernels. The wheel drops libtbb.so.12 into <venv>/lib, so the runtime
-# preloads it by full path (see motrix_env_core.numba.threading).
-tbb = ["tbb==2021.13.0"]
 
 [project.urls]
 Homepage = "https://github.com/Motphys/MotrixLab"

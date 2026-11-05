@@ -3,11 +3,10 @@
 
 from dataclasses import FrozenInstanceError
 
-import numba
 import numpy as np
 import pytest
 
-from motrix_env_core.numba.kernel_data import (
+from motrix_env_core.manager.kernel_data import (
     KernelDataLowering,
     KernelDataScope,
     Map,
@@ -15,7 +14,6 @@ from motrix_env_core.numba.kernel_data import (
     flatten_kernel_data,
     iter_layout_leaves,
     kernel_data,
-    map_proxy,
     rebuild_lowered,
     unflatten_kernel_data,
 )
@@ -112,62 +110,6 @@ def test_kernel_data_schema_fingerprint_ignores_values() -> None:
     assert first_layout.lowered_type.__module__ == _Tracking.__module__
 
 
-def test_map_supports_python_and_numba_literal_lookup() -> None:
-    values = Map({"pose": _Pose(np.asarray([[1.0]]), np.asarray([2.0])), "phase": np.float32(0.5)})
-    assert values["phase"] == np.float32(0.5)
-    with pytest.raises(KeyError, match="available entries"):
-        values["missing"]
-
-    proxy_type = map_proxy("test.values", values.keys_tuple, module_name=__name__)
-    proxy = proxy_type((np.float32(1.0),), values["phase"])
-
-    @numba.njit
-    def read_phase(kernel_values):
-        return kernel_values["phase"]
-
-    assert read_phase(proxy) == np.float32(0.5)
-    assert read_phase.nopython_signatures
-
-
-def test_map_participates_in_tree_lowering_and_round_trip() -> None:
-    position = np.asarray([[1.0]], dtype=np.float32)
-    orientation = np.asarray([2.0], dtype=np.float32)
-    value = _MappedValues(Map({"pose": _Pose(position, orientation), "phase": np.float32(0.5)}))
-
-    leaves, tree_def = flatten_kernel_data(value)
-    assert leaves == (position, orientation, np.float32(0.5))
-    rebuilt = unflatten_kernel_data(tree_def, leaves)
-    assert rebuilt.values.keys_tuple == ("pose", "phase")
-    assert rebuilt.values["pose"].position is position
-
-    layout = KernelDataLowering().lower(tree_def, context="mapped values")
-    lowered = rebuild_lowered(layout, leaves)
-
-    @numba.njit
-    def read_values(kernel_values):
-        return kernel_values.values["pose"].position[0, 0] + kernel_values.values["phase"]
-
-    assert read_values(lowered) == np.float32(1.5)
-    assert read_values.nopython_signatures
-
-
-def test_generic_array_map_participates_in_numba_lowering() -> None:
-    position = np.asarray([[1.0, 2.0]], dtype=np.float32)
-    velocity = np.asarray([3.0], dtype=np.float32)
-    value = _ArrayMapValues(Map({"position": position, "velocity": velocity}))
-
-    leaves, tree_def = flatten_kernel_data(value)
-    layout = KernelDataLowering().lower(tree_def, context="array map")
-    lowered = rebuild_lowered(layout, leaves)
-
-    @numba.njit
-    def read_values(kernel_values):
-        return kernel_values.values["position"][0, 1] + kernel_values.values["velocity"][0]
-
-    assert read_values(lowered) == np.float32(5.0)
-    assert read_values.nopython_signatures
-
-
 def test_map_schema_changes_tree_and_proxy_identity() -> None:
     first = _MappedValues(Map({"value": np.float32(1.0)}))
     second = _MappedValues(Map({"value": np.asarray([[1.0]], dtype=np.float32)}))
@@ -178,18 +120,6 @@ def test_map_schema_changes_tree_and_proxy_identity() -> None:
     assert first_tree.fingerprint != second_tree.fingerprint
     assert first_layout.lowered_type is not second_layout.lowered_type
     assert first_layout.fields[0].child.lowered_type is not second_layout.fields[0].child.lowered_type
-
-
-def test_map_rejects_dynamic_numba_key() -> None:
-    proxy_type = map_proxy("test.dynamic", ("value",), module_name=__name__)
-    proxy = proxy_type(np.float32(1.0))
-
-    @numba.njit
-    def read_value(kernel_values, name):
-        return kernel_values[name]
-
-    with pytest.raises(numba.TypingError):
-        read_value(proxy, "value")
 
 
 def test_kernel_data_rejects_unsupported_leaf() -> None:

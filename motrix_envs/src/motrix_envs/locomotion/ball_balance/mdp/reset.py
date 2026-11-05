@@ -5,9 +5,8 @@
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import (
@@ -15,9 +14,9 @@ from motrix_env_core.manager import (
     ResetTerm,
     ResetTermCfg,
 )
-from motrix_env_core.numba.kernel_data import Map, SharedArray, kernel_data
-from motrix_env_core.numba.manager.dispatch import dispatch
-from motrix_env_core.numba.math import quaternion as numba_quaternion
+from motrix_env_core.manager.dispatch import dispatch
+from motrix_env_core.manager.kernel_data import Map, SharedArray, kernel_data
+from motrix_env_core.math.quaternion_array import from_euler
 from motrix_env_core.sim import (
     BodyAngularVelocityWrite,
     BodyLinearVelocityWrite,
@@ -30,14 +29,10 @@ from motrix_env_core.sim import (
 
 @dispatch
 def _reset_body_pos(
-    ctx: ManagerContext,
-    sim_writes: Map[np.ndarray],
-    spawn: tuple[np.float32, np.float32, np.float32],
-    noise_scale: tuple[np.float32, np.float32, np.float32],
+    ctx: ManagerContext, sim_writes: Map[torch.Tensor], spawn: torch.Tensor, noise_amplitude: torch.Tensor
 ) -> None:
-    position = sim_writes["position"]
-    for index in range(3):
-        position[0, index] = spawn[index] + ctx.rand.next_uniform() * noise_scale[index]
+    noise = ctx.rand.next_uniform(3)
+    sim_writes["position"][:, 0].copy_(spawn + noise * noise_amplitude)
 
 
 @configclass(kw_only=True)
@@ -52,34 +47,24 @@ class BodyPosResetCfg(ResetTermCfg):
         body = ctx.cfg.scene.objs.robot.resolved_base_link_name
         return ResetTerm(
             _reset_body_pos,
-            tuple(np.asarray(self.spawn, dtype=np.float32)),
-            tuple(np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)),
+            torch.from_numpy(np.ascontiguousarray(self.spawn, dtype=np.float32)),
+            torch.from_numpy(np.ascontiguousarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)),
             writes={"position": BodyPositionWrite((body,))},
         )
 
 
 @dispatch
-def _reset_body_rot(
-    ctx: ManagerContext,
-    sim_writes: Map[np.ndarray],
-    noise_scale: tuple[np.float32, np.float32, np.float32],
-) -> None:
-    rotation = sim_writes["rotation"]
-    noisy_quat = np.empty(4, dtype=np.float32)
-    numba_quaternion.from_euler(
-        ctx.rand.next_uniform() * noise_scale[0],
-        ctx.rand.next_uniform() * noise_scale[1],
-        ctx.rand.next_uniform() * noise_scale[2],
-        noisy_quat,
-    )
-    rotation[0] = noisy_quat
-    norm = math.sqrt(
-        rotation[0, 0] * rotation[0, 0]
-        + rotation[0, 1] * rotation[0, 1]
-        + rotation[0, 2] * rotation[0, 2]
-        + rotation[0, 3] * rotation[0, 3]
-    )
-    rotation[0] /= norm
+def _reset_body_rot(ctx: ManagerContext, sim_writes: Map[torch.Tensor], noise_amplitude: torch.Tensor) -> None:
+    # Fixed promotion order: f32 angles, f64 trig, f32 quaternion,
+    # sequential f32 sum of squares, sqrt via f64 rounded back to f32, and an
+    # f32 division.
+    angles = ctx.rand.next_uniform(3) * noise_amplitude
+    quat64 = from_euler(angles.to(torch.float64))
+    quat = quat64.to(torch.float32)
+    squares = quat * quat
+    total = squares[:, 0] + squares[:, 1] + squares[:, 2] + squares[:, 3]
+    norm = total.to(torch.float64).sqrt().to(torch.float32)
+    sim_writes["rotation"][:, 0].copy_(quat / norm[:, None])
 
 
 @configclass(kw_only=True)
@@ -94,20 +79,15 @@ class BodyRotResetCfg(ResetTermCfg):
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_rot,
-            tuple(amplitude),
+            torch.from_numpy(amplitude),
             writes={"rotation": BodyRotationWrite((body,))},
         )
 
 
 @dispatch
-def _reset_body_lin_vel(
-    ctx: ManagerContext,
-    sim_writes: Map[np.ndarray],
-    noise_scale: tuple[np.float32, np.float32, np.float32],
-) -> None:
-    linear_velocity = sim_writes["linear_velocity"]
-    for index in range(3):
-        linear_velocity[0, index] = ctx.rand.next_uniform() * noise_scale[index]
+def _reset_body_lin_vel(ctx: ManagerContext, sim_writes: Map[torch.Tensor], noise_amplitude: torch.Tensor) -> None:
+    noise = ctx.rand.next_uniform(3)
+    sim_writes["linear_velocity"][:, 0].copy_(noise * noise_amplitude)
 
 
 @configclass(kw_only=True)
@@ -122,20 +102,15 @@ class BodyLinVelResetCfg(ResetTermCfg):
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_lin_vel,
-            tuple(amplitude),
+            torch.from_numpy(amplitude),
             writes={"linear_velocity": BodyLinearVelocityWrite((body,))},
         )
 
 
 @dispatch
-def _reset_body_rot_vel(
-    ctx: ManagerContext,
-    sim_writes: Map[np.ndarray],
-    noise_scale: tuple[np.float32, np.float32, np.float32],
-) -> None:
-    angular_velocity = sim_writes["angular_velocity"]
-    for index in range(3):
-        angular_velocity[0, index] = ctx.rand.next_uniform() * noise_scale[index]
+def _reset_body_rot_vel(ctx: ManagerContext, sim_writes: Map[torch.Tensor], noise_amplitude: torch.Tensor) -> None:
+    noise = ctx.rand.next_uniform(3)
+    sim_writes["angular_velocity"][:, 0].copy_(noise * noise_amplitude)
 
 
 @configclass(kw_only=True)
@@ -150,7 +125,7 @@ class BodyRotVelResetCfg(ResetTermCfg):
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_rot_vel,
-            tuple(amplitude),
+            torch.from_numpy(amplitude),
             writes={"angular_velocity": BodyAngularVelocityWrite((body,))},
         )
 
@@ -164,14 +139,11 @@ class DofResetParams:
 
 
 @dispatch
-def _reset_body_dof_pos(ctx: ManagerContext, sim_writes: Map[np.ndarray], params: DofResetParams) -> None:
-    position = sim_writes["position"]
-    velocity = sim_writes["velocity"]
-    velocity[:] = 0.0
-    rng = ctx.rand
-    for index in range(position.shape[0]):
-        value = params.default_pos[index] + rng.next_uniform() * params.noise_scale
-        position[index] = min(max(value, params.joint_lower[index]), params.joint_upper[index])
+def _reset_body_dof_pos(ctx: ManagerContext, sim_writes: Map[torch.Tensor], params: DofResetParams) -> None:
+    noise = ctx.rand.next_uniform(params.default_pos.shape[0])
+    value = params.default_pos + noise * params.noise_scale
+    sim_writes["position"].copy_(value.clamp(min=params.joint_lower, max=params.joint_upper))
+    sim_writes["velocity"].zero_()
 
 
 @configclass(kw_only=True)
@@ -214,18 +186,17 @@ class BodyDofPosResetCfg(ResetTermCfg):
 @dispatch
 def _reset_ball(
     ctx: ManagerContext,
-    sim_writes: Map[np.ndarray],
-    spawn: tuple[np.float32, np.float32, np.float32],
-    noise_scale: tuple[np.float32, np.float32, np.float32],
-    velocity_noise_scale: tuple[np.float32, np.float32, np.float32],
+    sim_writes: Map[torch.Tensor],
+    spawn: torch.Tensor,
+    noise_amplitude: torch.Tensor,
+    velocity_noise_amplitude: torch.Tensor,
 ) -> None:
-    position = sim_writes["position"]
-    linear_velocity = sim_writes["linear_velocity"]
-    angular_velocity = sim_writes["angular_velocity"]
-    for index in range(3):
-        position[0, index] = spawn[index] + ctx.rand.next_uniform() * noise_scale[index]
-        linear_velocity[0, index] = ctx.rand.next_uniform() * velocity_noise_scale[index]
-        angular_velocity[0, index] = 0.0
+    # Position and velocity draws interleave per axis, so one 6-wide draw is
+    # split into even (position) and odd (velocity) slots.
+    samples = ctx.rand.next_uniform(6)
+    sim_writes["position"][:, 0].copy_(spawn + samples[:, 0::2] * noise_amplitude)
+    sim_writes["linear_velocity"][:, 0].copy_(samples[:, 1::2] * velocity_noise_amplitude)
+    sim_writes["angular_velocity"].zero_()
 
 
 @configclass(kw_only=True)
@@ -241,9 +212,11 @@ class BallResetCfg(ResetTermCfg):
     def __call__(self, ctx) -> ResetTerm:
         return ResetTerm(
             _reset_ball,
-            tuple(np.asarray(self.spawn, dtype=np.float32)),
-            tuple(np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)),
-            tuple(np.asarray(self.velocity_noise, dtype=np.float32) * np.float32(self.noise_scale)),
+            torch.from_numpy(np.ascontiguousarray(self.spawn, dtype=np.float32)),
+            torch.from_numpy(np.ascontiguousarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)),
+            torch.from_numpy(
+                np.ascontiguousarray(self.velocity_noise, dtype=np.float32) * np.float32(self.noise_scale)
+            ),
             writes={
                 "position": BodyPositionWrite((self.ball_link_name,)),
                 "linear_velocity": BodyLinearVelocityWrite((self.ball_link_name,)),

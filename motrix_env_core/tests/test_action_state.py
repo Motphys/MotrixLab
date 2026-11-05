@@ -7,9 +7,9 @@ import gymnasium as gym
 import numpy as np
 import pytest
 
+from motrix_env_core.manager.actions import ActionState
+from motrix_env_core.manager.kernel_data import canonicalize_kernel_data, kernel_data
 from motrix_env_core.mdp.action import JointPositionActionState, JointPositionActionTerm
-from motrix_env_core.numba.kernel_data import canonicalize_kernel_data, kernel_data
-from motrix_env_core.numba.manager.actions import ActionState
 
 
 @kernel_data

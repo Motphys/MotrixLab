@@ -3,35 +3,30 @@
 
 """Reusable termination terms for manager-based environments."""
 
-import math
-
 import numpy as np
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, TerminationTerm, TerminationTermCfg
-from motrix_env_core.numba.manager.context import BuildContext
-from motrix_env_core.numba.manager.dispatch import dispatch
+from motrix_env_core.manager.context import BuildContext
+from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.sim import BodyJointVelocityQuery, GeomPairCollidingQuery
 
 
 @dispatch
-def colliding_termination(ctx: ManagerContext, colliding: np.ndarray) -> bool:
-    return bool(colliding.any())
+def colliding_termination(ctx: ManagerContext, colliding: torch.Tensor) -> torch.Tensor:
+    return colliding.any(dim=1)
 
 
 @dispatch
-def bad_dof_velocity_termination(ctx: ManagerContext, dof_vel: np.ndarray, threshold: np.float32) -> bool:
-    error = 0.0
-    finite = True
-    for joint_id in range(dof_vel.shape[0]):
-        velocity = dof_vel[joint_id]
-        if math.isfinite(velocity):
-            error = max(error, abs(velocity))
-        else:
-            finite = False
-            error = math.inf
-    ctx.metrics["dof_vel_abs_max"][0] = error
-    return (not finite) or error > threshold
+def bad_dof_velocity_termination(ctx: ManagerContext, dof_vel: torch.Tensor, threshold: float) -> torch.Tensor:
+    # Non-finite components count as +inf, so the max over the masked
+    # absolute velocities terminates lanes with non-finite joint speeds
+    # (inf > threshold is always true).
+    masked = torch.where(torch.isfinite(dof_vel), dof_vel.abs(), torch.inf)
+    error = masked.max(dim=1).values
+    ctx.metrics["dof_vel_abs_max"][:, 0] = error
+    return error > threshold
 
 
 @configclass(kw_only=True)
@@ -39,7 +34,7 @@ class CollidingTerminationCfg(TerminationTermCfg):
     """Terminate when any of ``termination_geoms`` contacts ``ground_geom``.
 
     The collision query is passed as an argument; the dispatch receives the
-    query's lane view (one bool per declared geom pair).
+    query's batched view (one bool per declared geom pair).
     """
 
     termination_geoms: tuple[str, ...] = ()

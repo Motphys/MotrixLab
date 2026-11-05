@@ -71,7 +71,7 @@ def _construct_env(
     runtime and rejects an explicit ``sim``.
     """
     from motrix_env_core.direct.env import DirectEnv
-    from motrix_env_core.numba.manager.env import ManagerEnv
+    from motrix_env_core.manager.env import ManagerEnv
 
     if issubclass(env_cls, ManagerEnv):
         return env_cls(

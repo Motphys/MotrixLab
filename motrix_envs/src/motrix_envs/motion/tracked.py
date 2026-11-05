@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from motrix_env_core.numba.kernel_data import Map, SharedArray, kernel_data
+from motrix_env_core.manager.kernel_data import Map, SharedArray, kernel_data
 from motrix_envs.motion.loader import MotionFormatError, MotrixMotion
 
 

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from motrix_env_core.numba.kernel_data import Map
+from motrix_env_core.manager.kernel_data import Map
 from motrix_envs.motion.loader import MotrixMotion
 from motrix_envs.motion.tracked import MotionChannel, WbtMotionClip
 

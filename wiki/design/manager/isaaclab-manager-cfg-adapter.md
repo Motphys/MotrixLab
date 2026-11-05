@@ -2,7 +2,7 @@
 
 ## 摘要
 
-本设计定义一个面向 IsaacLab manager-based 任务配置的薄适配层，目标是尽量保留用户熟悉的 ManagerCfg 分组、`func + params`、term 命名、嵌套覆写和 selector 表达。Numba-compatible 自定义 MDP 函数在程序构建时被特化为私有 concrete `@kernel_data` Term，selector 被归一化为显式 `SimDataQuery`。适配层不直接执行任意 IsaacLab Torch callback，也不改变 [Manager Task API](./task-authoring.md) 和 [Manager Runtime](./runtime.md) 中的 Numba 运行时边界。
+本设计定义一个面向 IsaacLab manager-based 任务配置的薄适配层，目标是尽量保留用户熟悉的 ManagerCfg 分组、`func + params`、term 命名、嵌套覆写和 selector 表达。Torch 批量自定义 MDP 函数在程序构建时被特化为私有 concrete `@kernel_data` Term，selector 被归一化为显式 `SimDataQuery`。适配层不直接执行任意 IsaacLab Torch callback，也不改变 [Manager Task API](./task-authoring.md) 和 [Manager Runtime](./runtime.md) 中的 Torch 执行器边界。
 
 本文是目标设计，不表示下述 API 均已实现。兼容基线参考本地 IsaacLab 快照 `21bcb476b2`；该快照检查时落后 `origin/main` 202 个 commit，因此不声称覆盖所有上游版本。
 
@@ -16,7 +16,7 @@ IsaacLab-like ManagerCfg
   -> native TermCfg.__call__() / functional term generation
   -> concrete @kernel_data Term
   -> ManagerContext / SimDataQuery / ReadPlan
-  -> fused Numba kernel
+  -> Torch executor（torch.compile kernel，整批张量）
 ```
 
 这意味着：
@@ -31,15 +31,15 @@ IsaacLab-like ManagerCfg
 - 不直接执行 IsaacLab 中以 `env` 为参数的通用 Python/Torch `func`。
 - 不允许 term 隐式读取整个 environment 或在 kernel 外隐藏 simulator 依赖。
 - 不静默忽略 noise、clip、history 等未支持选项。
-- 不让 callable、`dict[str, Any]` 或完整 environment 进入 KernelData/Numba ABI。
-- 不为表面兼容牺牲 typed cfg、compiler-visible dependency 或 fused Numba kernel。
+- 不让 callable、`dict[str, Any]` 或完整 environment 进入 kernel_data ABI 或编译图。
+- 不为表面兼容牺牲 typed cfg、compiler-visible dependency 或批量 Torch kernel。
 
 ## 2. 当前主要差异
 
 | 配置维度 | IsaacLab 常见形态 | MotrixLab 当前形态 | Adapter 责任 |
 | --- | --- | --- | --- |
 | Manager group | `@configclass` 容器，主要依赖字段结构 | `dict` 或指定的 `Manager*Cfg` nominal type | 按结构枚举配置字段，不要求必须继承特定 group base |
-| Term 定义 | `func` + `params` + 通用 term cfg | concrete typed `*TermCfg.__call__()` | Numba-compatible 函数自动特化为 concrete Term；foreign callback 通过注册 adapter 映射 |
+| Term 定义 | `func` + `params` + 通用 term cfg | concrete typed `*TermCfg.__call__()` | Torch 批量函数自动特化为 concrete Term；foreign callback 通过注册 adapter 映射 |
 | 禁用 term | 继承配置中常设为 `None` | term group 目前期望有效 cfg 实例 | normalization 时过滤 `None` |
 | Reward 权重 | 常通过 `.weight` 嵌套覆写，0 通常表示关闭 | typed reward cfg，运行时统一加权 | 保留 `.weight` 覆写；`weight == 0` 在 program 构建前裁剪 |
 | Scene selector | `SceneEntityCfg` 将 asset/body/joint/sensor 选择放在 term params 内 | `queries.data` 中集中声明 `SimDataQuery` | 解析 backend-neutral selector，产生并去重 `SimDataQuery` |
@@ -78,7 +78,7 @@ track_lin_vel_xy_exp = RewTerm(
 )
 ```
 
-后一种形态应成为 adapter 的一等输入，而不是只能通过逐函数 factory 注册使用的例外路径。用户经常需要自定义 MDP 函数，因此普通 Numba-compatible 函数不应额外要求 `CommandRef`、参数语义 decorator 或 adapter registry。
+后一种形态应成为 adapter 的一等输入，而不是只能通过逐函数 factory 注册使用的例外路径。用户经常需要自定义 MDP 函数，因此普通 Torch 批量函数不应额外要求 `CommandRef`、参数语义 decorator 或 adapter registry。
 
 #### IsaacLab 的实际解析语义
 
@@ -135,7 +135,7 @@ class _GeneratedTrackLinVelXYExp:
 
 #### 自动生成与 foreign adapter 边界
 
-Numba-compatible 纯函数使用上述自动生成路径，无需逐函数注册。原始 IsaacLab callback 若依赖 `ManagerBasedRLEnv`、Torch tensor 或其 scene/manager object model，不能原样进入 Numba kernel；这类 foreign callable 需要注册到等价的 Numba-native function 或 typed `*TermCfg` factory。
+Torch 批量纯函数使用上述自动生成路径，无需逐函数注册。原始 IsaacLab callback 若依赖 `ManagerBasedRLEnv` 的 scene/manager object model，不能原样进入 Torch 执行器的编译图；这类 foreign callable 需要注册到等价的批量 Torch function 或 typed `*TermCfg` factory。
 
 自动生成首先覆盖无状态 Reward 和 Termination。Observation 还需要固定输出 `size`，可由 config 或函数 metadata 提供；Action、Command 和其他拥有 reset/update 生命周期的 stateful term 继续使用显式 typed Term class。
 
@@ -167,7 +167,7 @@ self.rewards.action_rate_l2.weight = -0.005
 self.rewards.undesired_contacts = None
 ```
 
-第一行修改 typed cfg 中的纯数值字段；第二行在 normalization 时删除 term。对 reward，`weight == 0` 也应在 `NumbaTaskProgram` 构建之前裁剪，避免为明确关闭的 term 创建 runtime object、query 和 kernel slot。
+第一行修改 typed cfg 中的纯数值字段；第二行在 normalization 时删除 term。对 reward，`weight == 0` 也应在 manager program 构建之前裁剪，避免为明确关闭的 term 创建 runtime object、query 和 kernel slot。
 
 ## 4. Observation group 兼容范围
 
@@ -188,8 +188,8 @@ self.rewards.undesired_contacts = None
 - term 字段支持 `None`，reward `weight == 0` 在程序构建前裁剪。
 - 提供 backend-neutral `SceneEntityCfg`，归一化为显式、可去重的 `SimDataQuery`。
 - 保留 `.weight = ...` 与 `term = None` 等嵌套覆写方式。
-- 对无状态 Reward/Termination 接受 Numba-compatible `func + params`，自动生成 concrete Term，不要求用户注册 factory。
-- `params` 字典只存在于 host config，不进入 KernelData/Numba ABI。
+- 对无状态 Reward/Termination 接受 Torch 批量 `func + params`，自动生成 concrete Term，不要求用户注册 factory。
+- `params` 字典只存在于 host config，不进入 kernel_data ABI 或编译图。
 
 ### P1：Observation 常用选项
 
@@ -201,7 +201,7 @@ self.rewards.undesired_contacts = None
 
 ### P2：Foreign callback 与扩展 term
 
-- 为依赖 IsaacLab env/Torch object model 的 foreign callable 提供显式 adapter registry，映射到 Numba-native function 或 native `*TermCfg` factory。
+- 为依赖 IsaacLab env/Torch object model 的 foreign callable 提供显式 adapter registry，映射到批量 Torch function 或 native `*TermCfg` factory。
 - 对 functional Observation 补充固定 `size` 契约，再按同一生成模型支持。
 - Action、Command 与 stateful term 只在能保留其生命周期契约时扩展，不将其伪装为无状态 callback。
 - 未注册 foreign callable、不兼容 params 和未支持 option 在 config normalization 阶段立即报错。
@@ -212,9 +212,9 @@ self.rewards.undesired_contacts = None
 适配层完成时至少应验证：
 
 1. 一个典型 IsaacLab locomotion ManagerCfg 可保留 `func + params`、原有分组、term 名称与大部分派生配置覆写。
-2. 用户自定义 Numba-compatible Reward/Termination 函数无需创建 Term class、注册 factory 或声明 `CommandRef`。
+2. 用户自定义 Torch 批量 Reward/Termination 函数无需创建 Term class、注册 factory 或声明 `CommandRef`。
 3. `term = None`、`weight == 0`、`critic -> value` 和 selector 去重有独立配置层测试。
 4. 生成的 KernelData/ABI 中不包含 callable、`params` 字典或 environment reference；compiler plan 记录原函数 fingerprint 与生成 term schema。
 5. 数值参数、string literal、enum、ndarray 和 selector 有独立 lowering 测试，不支持的值会报出包含 group/term/param 路径的错误。
-6. `ctx.commands[command_name]` 能在生成 wrapper 传入 string literal 时编译为 nopython；无效 key 在 warm-up 阶段报错。
+6. `ctx.commands[command_name]` 能在生成 wrapper 传入 string literal 时进入 torch.compile 编译图；无效 key 在 warm-up 阶段报错。
 7. 归一化前后 term 顺序、observation layout、reward 权重和 termination 语义有 parity 测试。

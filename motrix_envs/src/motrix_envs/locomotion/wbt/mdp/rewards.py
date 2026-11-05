@@ -3,27 +3,25 @@
 
 """WBT command-backed reward terms."""
 
-import math
 from typing import cast
 
 import numpy as np
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, RewardTerm, RewardTermCfg
-from motrix_env_core.manager.math.quaternion import rotation_distance
+from motrix_env_core.manager.dispatch import dispatch
+from motrix_env_core.manager.kernel_data import SharedArray, kernel_data
+from motrix_env_core.math.quaternion_array import rotation_distance
 from motrix_env_core.mdp.action import JointPositionActionState
-from motrix_env_core.numba.kernel_data import SharedArray, kernel_data
-from motrix_env_core.numba.manager.dispatch import dispatch
-from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommand
 
 
 @dispatch
-def global_ref_position_reward(ctx: ManagerContext, sigma: np.float32) -> float:
-    tracked_body_pos = ctx.sim["tracked_body_pos"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    error = motion.clip.reference_body_pos_w[motion.steps[0]] - tracked_body_pos[motion.reference_index]
-    error_sq = float(np.dot(error, error))
-    return math.exp(-error_sq / (sigma * sigma))
+def global_ref_position_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
+    motion = ctx.commands["motion"]
+    steps = motion.steps[:, 0]
+    error = motion.clip.reference_body_pos_w[steps] - ctx.sim["tracked_body_pos"][:, motion.reference_index]
+    return torch.exp(-torch.sum(error * error, dim=-1) / (sigma * sigma))
 
 
 @configclass(kw_only=True)
@@ -31,19 +29,17 @@ class GlobalRefPositionRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        del ctx
         return RewardTerm(global_ref_position_reward, np.float32(self.sigma))
 
 
 @dispatch
-def global_ref_orientation_reward(ctx: ManagerContext, sigma: np.float32) -> float:
-    tracked_body_quat = ctx.sim["tracked_body_quat"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    distance = rotation_distance(
-        motion.clip.reference_body_quat_w[motion.steps[0]],
-        tracked_body_quat[motion.reference_index],
-    )
-    return math.exp(-(distance * distance) / (sigma * sigma))
+def global_ref_orientation_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
+    motion = ctx.commands["motion"]
+    steps = motion.steps[:, 0]
+    target = motion.clip.reference_body_quat_w[steps]
+    quaternion = ctx.sim["tracked_body_quat"][:, motion.reference_index]
+    distance = rotation_distance(target, quaternion)
+    return torch.exp(-(distance * distance) / (sigma * sigma))
 
 
 @configclass(kw_only=True)
@@ -51,17 +47,15 @@ class GlobalRefOrientationRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        del ctx
         return RewardTerm(global_ref_orientation_reward, np.float32(self.sigma))
 
 
 @dispatch
-def relative_body_position_reward(ctx: ManagerContext, sigma: np.float32) -> float:
-    tracked_body_pos = ctx.sim["tracked_body_pos"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    diff = motion.target_body_position_relative - tracked_body_pos
-    error_sq = float(np.sum(diff * diff))
-    return math.exp(-(error_sq / tracked_body_pos.shape[0]) / (sigma * sigma))
+def relative_body_position_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
+    motion = ctx.commands["motion"]
+    diff = motion.target_body_position_relative - ctx.sim["tracked_body_pos"]
+    error_sq = torch.sum(diff * diff, dim=(-2, -1)) / diff.shape[-2]
+    return torch.exp(-error_sq / (sigma * sigma))
 
 
 @configclass(kw_only=True)
@@ -69,19 +63,16 @@ class RelativeBodyPositionRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        del ctx
         return RewardTerm(relative_body_position_reward, np.float32(self.sigma))
 
 
 @dispatch
-def ee_body_pos_reward(ctx: ManagerContext, body_indices: tuple[int, ...], sigma: np.float32) -> float:
-    tracked_body_pos = ctx.sim["tracked_body_pos"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    error_sq = 0.0
-    for body_id in body_indices:
-        diff = motion.target_body_position_relative[body_id] - tracked_body_pos[body_id]
-        error_sq += float(np.dot(diff, diff))
-    return math.exp(-(error_sq / len(body_indices)) / (sigma * sigma))
+def ee_body_pos_reward(ctx: ManagerContext, body_indices: tuple[int, ...], sigma: float) -> torch.Tensor:
+    motion = ctx.commands["motion"]
+    position = ctx.sim["tracked_body_pos"]
+    error = motion.target_body_position_relative[:, body_indices, :] - position[:, body_indices, :]
+    error_sq = torch.sum(error * error, dim=(-2, -1)) / len(body_indices)
+    return torch.exp(-error_sq / (sigma * sigma))
 
 
 @configclass(kw_only=True)
@@ -111,17 +102,12 @@ class EeBodyPosRewardCfg(RewardTermCfg):
 
 
 @dispatch
-def relative_body_orientation_reward(ctx: ManagerContext, sigma: np.float32) -> float:
-    tracked_body_quat = ctx.sim["tracked_body_quat"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    error_sq = 0.0
-    for body_id in range(tracked_body_quat.shape[0]):
-        distance = rotation_distance(
-            motion.target_body_orientation_relative[body_id],
-            tracked_body_quat[body_id],
-        )
-        error_sq += distance * distance
-    return math.exp(-(error_sq / tracked_body_quat.shape[0]) / (sigma * sigma))
+def relative_body_orientation_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
+    motion = ctx.commands["motion"]
+    quaternion = ctx.sim["tracked_body_quat"]
+    distance = rotation_distance(motion.target_body_orientation_relative, quaternion)
+    error_sq = torch.sum(distance * distance, dim=-1) / quaternion.shape[-2]
+    return torch.exp(-error_sq / (sigma * sigma))
 
 
 @configclass(kw_only=True)
@@ -129,17 +115,17 @@ class RelativeBodyOrientationRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        del ctx
         return RewardTerm(relative_body_orientation_reward, np.float32(self.sigma))
 
 
 @dispatch
-def global_body_linear_velocity_reward(ctx: ManagerContext, sigma: np.float32) -> float:
-    tracked_body_linear_velocity = ctx.sim["tracked_body_linear_velocity"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    diff = motion.clip.tracked_bodies_lin_vel_w[motion.steps[0]] - tracked_body_linear_velocity
-    error_sq = float(np.sum(diff * diff))
-    return math.exp(-(error_sq / tracked_body_linear_velocity.shape[0]) / (sigma * sigma))
+def global_body_linear_velocity_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
+    motion = ctx.commands["motion"]
+    steps = motion.steps[:, 0]
+    velocity = ctx.sim["tracked_body_linear_velocity"]
+    error = motion.clip.tracked_bodies_lin_vel_w[steps] - velocity
+    error_sq = torch.sum(error * error, dim=(-2, -1)) / velocity.shape[-2]
+    return torch.exp(-error_sq / (sigma * sigma))
 
 
 @configclass(kw_only=True)
@@ -147,17 +133,17 @@ class GlobalBodyLinearVelocityRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        del ctx
         return RewardTerm(global_body_linear_velocity_reward, np.float32(self.sigma))
 
 
 @dispatch
-def global_body_angular_velocity_reward(ctx: ManagerContext, sigma: np.float32) -> float:
-    tracked_body_angular_velocity = ctx.sim["tracked_body_angular_velocity"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    diff = motion.clip.tracked_bodies_ang_vel_w[motion.steps[0]] - tracked_body_angular_velocity
-    error_sq = float(np.sum(diff * diff))
-    return math.exp(-(error_sq / tracked_body_angular_velocity.shape[0]) / (sigma * sigma))
+def global_body_angular_velocity_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
+    motion = ctx.commands["motion"]
+    steps = motion.steps[:, 0]
+    velocity = ctx.sim["tracked_body_angular_velocity"]
+    error = motion.clip.tracked_bodies_ang_vel_w[steps] - velocity
+    error_sq = torch.sum(error * error, dim=(-2, -1)) / velocity.shape[-2]
+    return torch.exp(-error_sq / (sigma * sigma))
 
 
 @configclass(kw_only=True)
@@ -165,7 +151,6 @@ class GlobalBodyAngularVelocityRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        del ctx
         return RewardTerm(global_body_angular_velocity_reward, np.float32(self.sigma))
 
 
@@ -178,10 +163,11 @@ class DofLimitParams:
 
 
 @dispatch
-def dof_limit_reward(ctx: ManagerContext, params: DofLimitParams) -> float:
-    dof_pos = ctx.sim["robot_dof_pos"]
-    violation = np.abs(dof_pos - params.midpoint) - params.half_range * params.soft_limit
-    return min(float(np.sum(np.maximum(violation, 0.0))), params.cap)
+def dof_limit_reward(ctx: ManagerContext, params: DofLimitParams) -> torch.Tensor:
+    dof_position = ctx.sim["robot_dof_pos"]
+    violation = torch.abs(dof_position - params.midpoint) - params.half_range * params.soft_limit
+    total = torch.sum(torch.where(violation > 0.0, violation, 0.0), dim=-1)
+    return torch.where(total > params.cap, params.cap, total)
 
 
 @configclass(kw_only=True)
@@ -201,14 +187,11 @@ class DofLimitRewardCfg(RewardTermCfg):
 
 
 @dispatch
-def undesired_contacts_reward(ctx: ManagerContext, threshold: np.float32) -> float:
+def undesired_contacts_reward(ctx: ManagerContext, threshold: float) -> torch.Tensor:
     contact_forces = ctx.sim["undesired_contact_forces"]
-    count = 0.0
-    for link_id in range(contact_forces.shape[0]):
-        fx, fy, fz = contact_forces[link_id, :3]
-        if math.sqrt(fx * fx + fy * fy + fz * fz) > threshold:
-            count += 1.0
-    return count
+    forces = contact_forces[..., :3]
+    norm = torch.sqrt(torch.sum(forces * forces, dim=-1))
+    return torch.sum((norm > threshold).to(contact_forces.dtype), dim=-1)
 
 
 @configclass(kw_only=True)
@@ -216,5 +199,4 @@ class UndesiredContactsRewardCfg(RewardTermCfg):
     threshold: float
 
     def __call__(self, ctx) -> RewardTerm:
-        del ctx
         return RewardTerm(undesired_contacts_reward, np.float32(self.threshold))

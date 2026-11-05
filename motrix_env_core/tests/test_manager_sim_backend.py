@@ -9,22 +9,23 @@ from collections.abc import Mapping
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SceneCfg
-from motrix_env_core.numba.kernel_data import kernel_data
-from motrix_env_core.numba.manager.actions import ActionCfg, ActionState, ActionTerm, ManagerActionsCfg
-from motrix_env_core.numba.manager.context import ManagerContext
-from motrix_env_core.numba.manager.dispatch import dispatch
-from motrix_env_core.numba.manager.env import ManagerBasedEnvCfg, ManagerEnv
-from motrix_env_core.numba.manager.observations import (
+from motrix_env_core.manager.actions import ActionCfg, ActionState, ActionTerm, ManagerActionsCfg
+from motrix_env_core.manager.context import ManagerContext
+from motrix_env_core.manager.dispatch import dispatch
+from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
+from motrix_env_core.manager.kernel_data import kernel_data
+from motrix_env_core.manager.observations import (
     ManagerObservationGroupCfg,
     ManagerObservationsCfg,
     ObservationTermCfg,
     ObsTerm,
 )
-from motrix_env_core.numba.manager.rewards import ManagerRewardsCfg, RewardTerm, RewardTermCfg
-from motrix_env_core.numba.manager.terminations import (
+from motrix_env_core.manager.rewards import ManagerRewardsCfg, RewardTerm, RewardTermCfg
+from motrix_env_core.manager.terminations import (
     ManagerTerminationsCfg,
     TerminationTerm,
     TerminationTermCfg,
@@ -237,16 +238,13 @@ class _CtrlActionCfg(ActionCfg):
 
 
 @dispatch
-def _sim_reading_observation(ctx: ManagerContext, out: np.ndarray) -> None:
-    dof_pos = ctx.sim["dof_pos"]
-    out[0] = dof_pos[0]
-    out[1] = dof_pos[1]
+def _sim_reading_observation(ctx: ManagerContext, out: torch.Tensor) -> None:
+    out.copy_(ctx.sim["dof_pos"])
 
 
 @configclass(kw_only=True)
 class _SimReadingObservationCfg(ObservationTermCfg):
     def __call__(self, env):
-        del env
         return ObsTerm(2, _sim_reading_observation)
 
 
@@ -261,8 +259,8 @@ class _FakeObservationsCfg(ManagerObservationsCfg):
 
 
 @dispatch
-def _unit_reward(ctx: ManagerContext) -> float:
-    return 1.0
+def _unit_reward(ctx: ManagerContext) -> torch.Tensor:
+    return torch.ones_like(ctx.env_id, dtype=torch.float32)
 
 
 @configclass(kw_only=True)
@@ -270,7 +268,6 @@ class _UnitRewardCfg(RewardTermCfg):
     weight: float = 1.0
 
     def __call__(self, env):
-        del env
         return RewardTerm(_unit_reward)
 
 
@@ -280,14 +277,13 @@ class _FakeRewardsCfg(ManagerRewardsCfg):
 
 
 @dispatch
-def _never_termination(ctx: ManagerContext) -> bool:
-    return False
+def _never_termination(ctx: ManagerContext) -> torch.Tensor:
+    return torch.zeros_like(ctx.env_id, dtype=torch.bool)
 
 
 @configclass(kw_only=True)
 class _NeverTerminationCfg(TerminationTermCfg):
     def __call__(self, env):
-        del env
         return TerminationTerm(_never_termination)
 
 
@@ -358,8 +354,6 @@ def test_partial_reset_hands_canonical_rows_to_runtime_and_clears_ctrl() -> None
 
 
 def test_manager_frontend_does_not_import_motrixsim() -> None:
-    code = (
-        "import sys\nimport motrix_env_core.numba.manager.env\nsys.exit(0 if 'motrixsim' not in sys.modules else 1)\n"
-    )
+    code = "import sys\nimport motrix_env_core.manager.env\nsys.exit(0 if 'motrixsim' not in sys.modules else 1)\n"
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

@@ -3,7 +3,7 @@
 ## 摘要
 
 本文面向任务开发者，说明如何使用 `ManagerBasedEnvCfg` 和 Manager term 创建一个 config-driven `ManagerEnv`。
-内容覆盖任务文件组织、manager groups、term 创建、`required_queries()`、`@kernel_data` 字段和常用 term 接口。
+内容覆盖任务文件组织、manager groups、term 创建、`SimDataQuery` 参数、`@kernel_data` 字段和常用 term 接口。
 运行时边界见 [Manager Runtime](./runtime.md)，kernel ABI 见 [Manager Kernel ABI](./kernel-abi.md)。
 
 ## 1. 任务文件组织
@@ -101,26 +101,29 @@ class TrackingErrorTermination:
 
 ## 4. Simulator query 声明
 
-任务可以在 `cfg.queries.data` 和 `cfg.queries.model` 中声明 query。Observation term 也可以通过 `required_queries()` 声明自己需要的 query：
+任务可以在 `cfg.queries.data` 和 `cfg.queries.model` 中声明 query；此外，reward、termination 和
+observation term 可以把 `SimDataQuery` 对象直接作为 term 参数传入，声明自己需要的 sim 数据：
 
 ```python
 @configclass(kw_only=True)
 class RobotPositionObsCfg(ObservationTermCfg):
-    def required_queries(self) -> SimQueriesCfg:
-        return SimQueriesCfg(
-            data={"robot_pos": LinkPositionQuery(link=lambda cfg: cfg.scene.objs.robot.resolved_base_link_name)}
+    def __call__(self, env):
+        return ObservationTerm(
+            size=3,
+            dispatch=robot_position_obs,
+            args=(LinkPositionQuery(link=env.cfg.scene.objs.robot.resolved_base_link_name), 0.5),
         )
 ```
 
-合并规则：
+dispatch 收到的对应参数是 read program 提供的整批 sim 视图（`(N, ...)`）。合并规则：
 
-1. 任务显式声明拥有该 key；
-2. 任务未声明时，由 term 提供默认 query；
-3. 多个 term 对同一 key 提供不相等 query 时，构造期报错；
-4. 相等 query 由 backend read program 折叠为一次 physical read，并保留各 key 的 logical view。
+1. Manager 构造期扫描 term 参数中的 `SimDataQuery`，按相等去重登记为合成 key，与任务声明统一合并；
+2. 同一 key 下不相等的声明构造期报错；
+3. 相等 query 由 backend read program 折叠为一次 physical read，并保留各 key 的 logical view。
 
-Query key 是 compiled interface；重命名 key 需要同步修改所有 `ctx.sim["key"]` 消费者。
-Term 不持有 backend handle，也不在运行期创建或执行 simulator query。
+完整机制见 [Term 自声明 Sim Query](./term-required-queries.md)。Query key 是 compiled interface；重命名
+key 需要同步修改所有 `ctx.sim["key"]` 消费者。Term 不持有 backend handle，也不在运行期创建或执行
+simulator query。
 
 ## 5. Action
 

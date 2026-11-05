@@ -3,15 +3,12 @@
 
 """WBT termination terms and raw diagnostic metrics."""
 
-import math
-
 import numpy as np
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, TerminationTerm, TerminationTermCfg
-from motrix_env_core.mdp.action import JointPositionActionState
-from motrix_env_core.numba.manager.dispatch import dispatch
-from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommand
+from motrix_env_core.manager.dispatch import dispatch
 
 
 @configclass(kw_only=True)
@@ -20,18 +17,19 @@ class _WbtTerminationCfg(TerminationTermCfg):
 
 
 @dispatch
-def bad_ref_z_termination(ctx: ManagerContext, threshold: np.float32) -> bool:
-    tracked_body_pos = ctx.sim["tracked_body_pos"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    error = abs(motion.clip.reference_body_pos_w[motion.steps[0], 2] - tracked_body_pos[motion.reference_index, 2])
-    ctx.metrics["ref_z_abs_err"][0] = error
+def bad_ref_z_termination(ctx: ManagerContext, threshold: float) -> torch.Tensor:
+    motion = ctx.commands["motion"]
+    steps = motion.steps[:, 0]
+    error = torch.abs(
+        motion.clip.reference_body_pos_w[steps][..., 2] - ctx.sim["tracked_body_pos"][:, motion.reference_index][..., 2]
+    )
+    ctx.metrics["ref_z_abs_err"][:, 0] = error
     return error > threshold
 
 
 @configclass(kw_only=True)
 class BadRefZTerminationCfg(_WbtTerminationCfg):
     def __call__(self, ctx) -> TerminationTerm:
-        del ctx
         return TerminationTerm(
             bad_ref_z_termination,
             np.float32(self.threshold),
@@ -40,22 +38,19 @@ class BadRefZTerminationCfg(_WbtTerminationCfg):
 
 
 @dispatch
-def bad_ref_orientation_termination(ctx: ManagerContext, threshold: np.float32) -> bool:
-    tracked_body_quat = ctx.sim["tracked_body_quat"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    target = motion.clip.reference_body_quat_w[motion.steps[0]]
-    motion_gravity_z = 2.0 * (target[0] * target[0] + target[1] * target[1]) - 1.0
-    robot_quat = tracked_body_quat[motion.reference_index]
-    robot_gravity_z = 2.0 * (robot_quat[0] * robot_quat[0] + robot_quat[1] * robot_quat[1]) - 1.0
-    error = abs(motion_gravity_z - robot_gravity_z)
-    ctx.metrics["ref_ori_abs_err"][0] = error
+def bad_ref_orientation_termination(ctx: ManagerContext, threshold: float) -> torch.Tensor:
+    motion = ctx.commands["motion"]
+    steps = motion.steps[:, 0]
+    target = motion.clip.reference_body_quat_w[steps]
+    actual = ctx.sim["tracked_body_quat"][:, motion.reference_index]
+    error = torch.abs(2 * (target[..., 0] ** 2 + target[..., 1] ** 2 - actual[..., 0] ** 2 - actual[..., 1] ** 2))
+    ctx.metrics["ref_ori_abs_err"][:, 0] = error
     return error > threshold
 
 
 @configclass(kw_only=True)
 class BadRefOrientationTerminationCfg(_WbtTerminationCfg):
     def __call__(self, ctx) -> TerminationTerm:
-        del ctx
         return TerminationTerm(
             bad_ref_orientation_termination,
             np.float32(self.threshold),
@@ -67,8 +62,8 @@ class BadRefOrientationTerminationCfg(_WbtTerminationCfg):
 def bad_motion_body_position_termination(
     ctx: ManagerContext,
     body_indices: tuple[int, ...],
-    threshold: np.float32,
-) -> bool:
+    threshold: float,
+) -> torch.Tensor:
     """Holosoma-aligned tracked-body tracking termination.
 
     Terminates when the mean position error of the configured tracked bodies
@@ -76,19 +71,15 @@ def bad_motion_body_position_termination(
     their reference targets (the yaw/height-anchored body targets the
     relative rewards track) exceeds ``threshold``.
     """
-    tracked_body_pos = ctx.sim["tracked_body_pos"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    count = len(body_indices)
-    if count == 0:
-        ctx.metrics["motion_body_pos_err"][0] = 0.0
-        return False
-    error_sq_sum = 0.0
-    for index in range(count):
-        body_id = body_indices[index]
-        diff = motion.target_body_position_relative[body_id] - tracked_body_pos[body_id]
-        error_sq_sum += float(np.dot(diff, diff))
-    mean_err = math.sqrt(error_sq_sum / count)
-    ctx.metrics["motion_body_pos_err"][0] = mean_err
+    motion = ctx.commands["motion"]
+    if not body_indices:
+        error = torch.zeros_like(motion.steps[:, 0], dtype=torch.float32)
+        ctx.metrics["motion_body_pos_err"][:, 0] = error
+        return torch.zeros_like(error, dtype=torch.bool)
+    diff = motion.target_body_position_relative[:, body_indices, :] - ctx.sim["tracked_body_pos"][:, body_indices, :]
+    error_sq_sum = torch.sum(diff * diff, dim=(-2, -1))
+    mean_err = torch.sqrt(error_sq_sum / len(body_indices))
+    ctx.metrics["motion_body_pos_err"][:, 0] = mean_err
     return mean_err > threshold
 
 
@@ -111,17 +102,16 @@ class BadMotionBodyPositionTerminationCfg(_WbtTerminationCfg):
 def bad_body_z_termination(
     ctx: ManagerContext,
     body_indices: tuple[int, ...],
-    threshold: np.float32,
-) -> bool:
-    tracked_body_pos = ctx.sim["tracked_body_pos"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    error = 0.0
-    for body_id in body_indices:
-        error = max(
-            error,
-            abs(motion.target_body_position_relative[body_id, 2] - tracked_body_pos[body_id, 2]),
-        )
-    ctx.metrics["body_z_max_err"][0] = error
+    threshold: float,
+) -> torch.Tensor:
+    motion = ctx.commands["motion"]
+    target = motion.target_body_position_relative[:, body_indices, :]
+    actual = ctx.sim["tracked_body_pos"][:, body_indices, :]
+    if target.shape[-2] == 0:
+        error = torch.zeros_like(torch.sum(target, dim=(-2, -1)))
+    else:
+        error = torch.max(torch.abs(target[..., 2] - actual[..., 2]), dim=-1).values
+    ctx.metrics["body_z_max_err"][:, 0] = error
     return error > threshold
 
 
@@ -141,28 +131,21 @@ class BadBodyZTerminationCfg(_WbtTerminationCfg):
 
 
 @dispatch
-def bad_dof_position_termination(ctx: ManagerContext, threshold: np.float32) -> bool:
-    dof_pos = ctx.sim["robot_dof_pos"]
-    action: JointPositionActionState = ctx.actions["joint_position"]
-    error = 0.0
-    finite = True
-    for joint_id in range(dof_pos.shape[0]):
-        position = dof_pos[joint_id]
-        if math.isfinite(position):
-            violation = max(action.joint_lower[joint_id] - position, 0.0)
-            violation += max(position - action.joint_upper[joint_id], 0.0)
-            error = max(error, violation)
-        else:
-            finite = False
-            error = math.inf
-    ctx.metrics["dof_limit_violation_max"][0] = error
-    return (not finite) or error > threshold
+def bad_dof_position_termination(ctx: ManagerContext, threshold: float) -> torch.Tensor:
+    action = ctx.actions["joint_position"]
+    position = ctx.sim["robot_dof_pos"]
+    zero = torch.zeros_like(position)
+    violation = torch.maximum(action.joint_lower - position, zero) + torch.maximum(position - action.joint_upper, zero)
+    finite = torch.all(torch.isfinite(position), dim=-1)
+    error = torch.max(violation, dim=-1).values
+    error = torch.where(finite, error, torch.full_like(error, float("inf")))
+    ctx.metrics["dof_limit_violation_max"][:, 0] = error
+    return error > threshold
 
 
 @configclass(kw_only=True)
 class BadDofPositionTerminationCfg(_WbtTerminationCfg):
     def __call__(self, ctx) -> TerminationTerm:
-        del ctx
         return TerminationTerm(
             bad_dof_position_termination,
             np.float32(self.threshold),

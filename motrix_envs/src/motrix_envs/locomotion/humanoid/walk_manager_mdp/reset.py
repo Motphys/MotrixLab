@@ -3,10 +3,8 @@
 
 """Simulator reset terms for the humanoid velocity-tracking task."""
 
-import math
-
 import numpy as np
-from numba import njit
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import (
@@ -16,10 +14,10 @@ from motrix_env_core.manager import (
     SharedArray,
     kernel_data,
 )
+from motrix_env_core.manager.context import BuildContext
+from motrix_env_core.manager.dispatch import dispatch
+from motrix_env_core.manager.kernel_data.map import Map
 from motrix_env_core.mdp.terrain import HeightFieldGrid, heightfield_lookup
-from motrix_env_core.numba.kernel_data.map import Map
-from motrix_env_core.numba.manager.context import BuildContext
-from motrix_env_core.numba.manager.dispatch import dispatch
 from motrix_env_core.sim.write import (
     ActuatorDampingWrite,
     ActuatorKpWrite,
@@ -33,6 +31,7 @@ from motrix_env_core.sim.write import (
     LinkComWrite,
     LinkMassWrite,
 )
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.command import _uniform_range
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.randomization import WalkRandomizationCfg
 
 
@@ -94,97 +93,90 @@ class WalkResetParams:
     com_noise: np.ndarray
 
 
-@njit(inline="always")
-def _sample_randomized_dynamics(ctx: ManagerContext, sim_writes: Map[np.ndarray], params: WalkResetParams) -> None:
-    """Sample one lane's randomized dynamics into the reset write buffers.
+def _sample_spawn_xy(ctx: ManagerContext, params: WalkResetParams) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Sample world xy and lifted z, mirroring the per-lane spawn draws."""
+    pose = params.init_pose
+    low = np.float32(-float(params.spawn_range))
+    high = np.float32(float(params.spawn_range))
+    x = _uniform_range(ctx.rand.next_uniform(1)[:, 0], low, high)
+    y = _uniform_range(ctx.rand.next_uniform(1)[:, 0], low, high)
+    offsets = torch.tensor([(i - 1) * 0.15 for i in range(3)], dtype=torch.float64)
+    xs = x.to(torch.float64)[:, None] + offsets[None, :]
+    ys = y.to(torch.float64)[:, None] + offsets[None, :]
+    xs9 = xs[:, :, None].expand(-1, -1, 3).reshape(-1)
+    ys9 = ys[:, None, :].expand(-1, 3, -1).reshape(-1)
+    samples = heightfield_lookup(params.heightfield, xs9, ys9).view(x.shape[0], 9)
+    z = pose[2].to(torch.float64) + samples.max(dim=1).values
+    return x, y, z
 
-    Row-scoped buffers: ``(N, A)``-style writes arrive as 1-D rows, while
-    ``(N, 1, 3)``-style writes keep their leading lane dimension.
-    """
+
+def _sample_randomized_dynamics(ctx: ManagerContext, sim_writes: Map[torch.Tensor], params: WalkResetParams) -> None:
+    """Sample randomized dynamics into the reset write buffers on compact rows."""
     rand = ctx.rand
-    if params.kp_range[1] > params.kp_range[0]:
-        kp = sim_writes["kp"]
-        for i in range(kp.shape[0]):
-            kp[i] = params.kp_default[i] * rand.uniform_range(params.kp_range[0], params.kp_range[1])
-    if params.damping_range[1] > params.damping_range[0]:
-        damping = sim_writes["damping"]
-        for i in range(damping.shape[0]):
-            damping[i] = params.damping_default[i] * rand.uniform_range(
-                params.damping_range[0], params.damping_range[1]
-            )
-    if params.friction_range[1] > params.friction_range[0]:
-        ratio = rand.uniform_range(params.friction_range[0], params.friction_range[1])
-        friction = sim_writes["friction"]
-        for i in range(3):
-            friction[0, i] = params.friction_default[i] * ratio
-    mass_randomized = params.mass_scale_range[1] > params.mass_scale_range[0]
-    base_mass_randomized = params.base_mass_off_range[1] > params.base_mass_off_range[0]
+    if float(params.kp_range[1]) > float(params.kp_range[0]):
+        u = rand.next_uniform(int(params.kp_default.numel()))
+        scale = _uniform_range(u, params.kp_range[0], params.kp_range[1])
+        sim_writes["kp"][:] = params.kp_default * scale
+    if float(params.damping_range[1]) > float(params.damping_range[0]):
+        u = rand.next_uniform(int(params.damping_default.numel()))
+        scale = _uniform_range(u, params.damping_range[0], params.damping_range[1])
+        sim_writes["damping"][:] = params.damping_default * scale
+    if float(params.friction_range[1]) > float(params.friction_range[0]):
+        ratio = _uniform_range(rand.next_uniform(1), params.friction_range[0], params.friction_range[1])
+        sim_writes["friction"][:, 0, :] = params.friction_default * ratio
+    mass_randomized = float(params.mass_scale_range[1]) > float(params.mass_scale_range[0])
+    base_mass_randomized = float(params.base_mass_off_range[1]) > float(params.base_mass_off_range[0])
     if mass_randomized or base_mass_randomized:
-        mass = sim_writes["mass"]
-        for i in range(mass.shape[0]):
-            if i == params.base_link_index:
-                mass[i] = params.base_mass_default + rand.uniform_range(
-                    params.base_mass_off_range[0], params.base_mass_off_range[1]
-                )
-            else:
-                mass[i] = params.link_mass_default[i] * rand.uniform_range(
-                    params.mass_scale_range[0], params.mass_scale_range[1]
-                )
-    if params.com_noise[0] > 0.0 or params.com_noise[1] > 0.0 or params.com_noise[2] > 0.0:
-        com = sim_writes["com"]
-        com[0, 0] = params.base_com_default[0] + rand.uniform_range(-params.com_noise[0], params.com_noise[0])
-        com[0, 1] = params.base_com_default[1] + rand.uniform_range(-params.com_noise[1], params.com_noise[1])
-        com[0, 2] = params.base_com_default[2] + rand.uniform_range(-params.com_noise[2], params.com_noise[2])
+        u = rand.next_uniform(int(params.link_mass_default.numel()))
+        offset = _uniform_range(u, params.base_mass_off_range[0], params.base_mass_off_range[1])
+        scale = _uniform_range(u, params.mass_scale_range[0], params.mass_scale_range[1])
+        is_base = torch.arange(int(params.link_mass_default.numel()), device=u.device) == int(params.base_link_index)
+        values = torch.where(
+            is_base[None, :],
+            params.base_mass_default + offset,
+            params.link_mass_default * scale,
+        )
+        sim_writes["mass"][:] = values
+    noise = params.com_noise
+    if float(noise[0]) > 0.0 or float(noise[1]) > 0.0 or float(noise[2]) > 0.0:
+        u = rand.next_uniform(3)
+        offsets = _uniform_range(u, -noise, noise)
+        sim_writes["com"][:, 0, :] = params.base_com_default + offsets
 
 
-@njit(inline="always")
-def _spawn_ground_height(grid: HeightFieldGrid, x: float, y: float) -> float:
-    """Highest terrain height over the +/-0.15 m 9-point spawn grid."""
-    best = -math.inf
-    for i in range(3):
-        for j in range(3):
-            best = max(best, heightfield_lookup(grid, x + (i - 1) * 0.15, y + (j - 1) * 0.15))
-    return best
-
-
-@njit(inline="always")
 def _write_spawn_state(
-    ctx: ManagerContext, sim_writes: Map[np.ndarray], params: WalkResetParams, x: float, y: float, z: float
+    sim_writes: Map[torch.Tensor], params: WalkResetParams, x: torch.Tensor, y: torch.Tensor, z: torch.Tensor
 ) -> None:
-    # Homogeneous float32 tuple: z picks up float64 from the terrain-height add.
-    sim_writes["position"][0, :3] = np.float32(x), np.float32(y), np.float32(z)
-    sim_writes["rotation"][0] = params.init_pose[3:]
-    sim_writes["linear_velocity"][0, :] = 0.0
-    sim_writes["angular_velocity"][0, :] = 0.0
+    position = sim_writes["position"][:, 0, :3]
+    position[:, 0] = x.to(torch.float32)
+    position[:, 1] = y.to(torch.float32)
+    position[:, 2] = z.to(torch.float32)
+    sim_writes["rotation"][:, 0] = params.init_pose[3:]
+    sim_writes["linear_velocity"][:, 0] = 0.0
+    sim_writes["angular_velocity"][:, 0] = 0.0
     sim_writes["joints_position"][:] = params.default_joint_angles
     sim_writes["joints_velocity"][:] = 0.0
 
 
 @dispatch
-def reset_walk_state(ctx: ManagerContext, sim_writes: Map[np.ndarray], params: WalkResetParams) -> None:
+def reset_walk_state(ctx: ManagerContext, sim_writes: Map[torch.Tensor], params: WalkResetParams) -> None:
     """Spawn-state-only reset for configs without dynamics randomization."""
     pose = params.init_pose
     x, y, z = pose[0], pose[1], pose[2]
-    if params.spawn_range > 0.0:
-        rand = ctx.rand
-        x = rand.uniform_range(-params.spawn_range, params.spawn_range)
-        y = rand.uniform_range(-params.spawn_range, params.spawn_range)
-        z += _spawn_ground_height(params.heightfield, x, y)
-    _write_spawn_state(ctx, sim_writes, params, x, y, z)
+    if float(params.spawn_range) > 0.0:
+        x, y, z = _sample_spawn_xy(ctx, params)
+    _write_spawn_state(sim_writes, params, x, y, z)
 
 
 @dispatch
-def reset_walk_state_randomized(ctx: ManagerContext, sim_writes: Map[np.ndarray], params: WalkResetParams) -> None:
+def reset_walk_state_randomized(ctx: ManagerContext, sim_writes: Map[torch.Tensor], params: WalkResetParams) -> None:
     """Reset plus in-kernel dynamics randomization (kp/damping/friction/mass/com)."""
     pose = params.init_pose
     x, y, z = pose[0], pose[1], pose[2]
-    if params.spawn_range > 0.0:
-        rand = ctx.rand
-        x = rand.uniform_range(-params.spawn_range, params.spawn_range)
-        y = rand.uniform_range(-params.spawn_range, params.spawn_range)
-        z += _spawn_ground_height(params.heightfield, x, y)
+    if float(params.spawn_range) > 0.0:
+        x, y, z = _sample_spawn_xy(ctx, params)
     _sample_randomized_dynamics(ctx, sim_writes, params)
-    _write_spawn_state(ctx, sim_writes, params, x, y, z)
+    _write_spawn_state(sim_writes, params, x, y, z)
 
 
 @configclass(kw_only=True)
@@ -217,8 +209,8 @@ class WalkStateResetCfg(ResetTermCfg):
         if not joint_names or len(set(joint_names)) != len(joint_names):
             raise ValueError("humanoid walk requires unique actuator target joints")
         # The dof_pos query (and every consumer aligned to it) uses the
-        # key-pose declaration order; require it to match the body's
-        # joint-DOF order so per-joint arrays stay aligned.
+        # key-pose declaration order; require it to match the body's joint-DOF
+        # order so per-joint arrays stay aligned.
         key_pose_names = tuple(robot.resolve_name(name) for name in robot.key_pose.joint_names)
         if joint_names != key_pose_names:
             raise ValueError(
@@ -249,8 +241,8 @@ class WalkStateResetCfg(ResetTermCfg):
             actuator_names = tuple(spec.name for spec in ctx.model.actuators)
             link_names = body.link_names
             base_index = link_names.index(body.base_link_name)
-            # Keep the write-map schema stable for Numba: Map keys are part of
-            # the compiled type even when a particular range is degenerate.
+            # Keep the write-map schema stable: Map keys are part of the
+            # compiled type even when a particular range is degenerate.
             writes.update(
                 kp=ActuatorKpWrite(actuator_names),
                 damping=ActuatorDampingWrite(actuator_names),

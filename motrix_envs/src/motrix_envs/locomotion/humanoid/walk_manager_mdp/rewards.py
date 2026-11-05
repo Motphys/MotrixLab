@@ -6,7 +6,7 @@
 import math
 
 import numpy as np
-from numba import njit
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import (
@@ -14,9 +14,10 @@ from motrix_env_core.manager import (
     RewardTerm,
     RewardTermCfg,
 )
+from motrix_env_core.manager.context import BuildContext
+from motrix_env_core.manager.dispatch import dispatch
+from motrix_env_core.math.quaternion_array import rotate_inverse_components
 from motrix_env_core.mdp.terrain import HeightFieldGrid, heightfield_lookup
-from motrix_env_core.numba.manager.dispatch import dispatch
-from motrix_env_core.numba.math.quaternion import rotate_inverse_components
 from motrix_env_core.sim import (
     BatchLinkPositionQuery,
     BatchLinkQuaternionQuery,
@@ -25,27 +26,23 @@ from motrix_env_core.sim import (
     LinkQuaternionQuery,
     SitePositionQuery,
 )
-from motrix_envs.locomotion.humanoid.walk_manager_mdp.command import WalkCommand
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.terrain import ground_height_grid
 
 
-@njit(inline="always")
-def _expected_foot_height(phi: float, swing_height: float) -> float:
-    """Expected foot height from gait phase using the direct env's Bezier profile."""
-    x = (phi + math.pi) / (2.0 * math.pi)
-
-    def bezier(y_start, y_end, t):
-        return y_start + (y_end - y_start) * (t**3 + 3.0 * (t**2 * (1.0 - t)))
-
-    if x <= 0.5:
-        return bezier(0.0, swing_height, 2.0 * x)
-    return bezier(swing_height, 0.0, 2.0 * x - 1.0)
+def _expected_foot_height(phi: torch.Tensor, swing_height: float) -> torch.Tensor:
+    """Expected foot height from gait phase using the direct env's Bezier profile (float64, ``(N,)``)."""
+    x = (phi.to(torch.float64) + math.pi) / (2.0 * math.pi)
+    swing = float(swing_height)
+    t = torch.where(x <= 0.5, 2.0 * x, 2.0 * x - 1.0)
+    y_start = torch.where(x <= 0.5, 0.0, swing)
+    y_end = torch.where(x <= 0.5, swing, 0.0)
+    return y_start + (y_end - y_start) * (t**3 + 3.0 * (t**2 * (1.0 - t)))
 
 
 @dispatch
-def penalty_ang_vel_xy_reward(ctx: ManagerContext, base_quat: np.ndarray, base_ang_vel: np.ndarray) -> float:
+def penalty_ang_vel_xy_reward(ctx: ManagerContext, base_quat: torch.Tensor, base_ang_vel: torch.Tensor) -> torch.Tensor:
     vx, vy, _ = rotate_inverse_components(base_quat, base_ang_vel)
-    walk: WalkCommand = ctx.commands["walk"]
+    walk = ctx.commands["walk"]
     return (vx * vx + vy * vy) * walk.penalty_scale[0]
 
 
@@ -61,9 +58,11 @@ class PenaltyAngVelXyRewardCfg(RewardTermCfg):
 
 
 @dispatch
-def penalty_orientation_reward(ctx: ManagerContext, base_quat: np.ndarray) -> float:
-    gx, gy, _ = rotate_inverse_components(base_quat, (0.0, 0.0, -1.0))
-    walk: WalkCommand = ctx.commands["walk"]
+def penalty_orientation_reward(ctx: ManagerContext, base_quat: torch.Tensor) -> torch.Tensor:
+    gravity = base_quat.new_zeros(base_quat.shape[0], 3)
+    gravity[:, 2] = -1.0
+    gx, gy, _ = rotate_inverse_components(base_quat, gravity)
+    walk = ctx.commands["walk"]
     return (gx * gx + gy * gy) * walk.penalty_scale[0]
 
 
@@ -78,38 +77,38 @@ class PenaltyOrientationRewardCfg(RewardTermCfg):
 
 
 @dispatch
-def penalty_action_rate_reward(ctx: ManagerContext) -> float:
+def penalty_action_rate_reward(ctx: ManagerContext) -> torch.Tensor:
     action = ctx.actions["joint_position"]
     delta = action.current() - action.previous()
-    walk: WalkCommand = ctx.commands["walk"]
-    return float(np.dot(delta, delta)) * walk.penalty_scale[0]
+    walk = ctx.commands["walk"]
+    return (delta * delta).sum(dim=1) * walk.penalty_scale[0]
 
 
 @configclass(kw_only=True)
 class PenaltyActionRateRewardCfg(RewardTermCfg):
     def __call__(self, ctx) -> RewardTerm:
-        del ctx
         return RewardTerm(penalty_action_rate_reward)
 
 
 @dispatch
 def feet_phase_reward(
     ctx: ManagerContext,
-    swing_height: np.float32,
-    feet_phase_sigma: np.float32,
+    swing_height: float,
+    feet_phase_sigma: float,
     heightfield: HeightFieldGrid,
-    sole_l: np.ndarray,
-    sole_r: np.ndarray,
-) -> float:
-    walk: WalkCommand = ctx.commands["walk"]
-    error = 0.0
+    sole_l: torch.Tensor,
+    sole_r: torch.Tensor,
+) -> torch.Tensor:
+    walk = ctx.commands["walk"]
+    soles = (sole_l, sole_r)
+    error = None
     for foot in range(2):
-        expected = _expected_foot_height(walk.phase[foot], swing_height)
-        sole = sole_l if foot == 0 else sole_r
-        ground_z = heightfield_lookup(heightfield, sole[0], sole[1])
-        delta = sole[2] - ground_z - expected
-        error += delta * delta
-    return math.exp(-error / feet_phase_sigma)
+        expected = _expected_foot_height(walk.phase[:, foot], swing_height)
+        sole = soles[foot]
+        ground_z = heightfield_lookup(heightfield, sole[:, 0], sole[:, 1])
+        delta = sole[:, 2].to(torch.float64) - ground_z - expected
+        error = delta * delta if error is None else error + delta * delta
+    return torch.exp(-error / float(feet_phase_sigma)).to(torch.float32)
 
 
 @configclass(kw_only=True)
@@ -141,11 +140,11 @@ class FeetPhaseRewardCfg(RewardTermCfg):
 
 @dispatch
 def pose_reward(
-    ctx: ManagerContext, default_joint_angles: np.ndarray, pose_weights: np.ndarray, joint_pos: np.ndarray
-) -> float:
+    ctx: ManagerContext, default_joint_angles: torch.Tensor, pose_weights: torch.Tensor, joint_pos: torch.Tensor
+) -> torch.Tensor:
     delta = joint_pos - default_joint_angles
-    walk: WalkCommand = ctx.commands["walk"]
-    return float(np.dot(delta * delta, pose_weights)) * walk.penalty_scale[0]
+    walk = ctx.commands["walk"]
+    return ((delta * delta) * pose_weights).sum(dim=1) * walk.penalty_scale[0]
 
 
 @configclass(kw_only=True)
@@ -178,22 +177,19 @@ class PoseRewardCfg(RewardTermCfg):
 
 @dispatch
 def penalty_close_feet_xy_reward(
-    ctx: ManagerContext, close_feet_threshold: np.float32, base_quat: np.ndarray, foot_pos: np.ndarray
-) -> float:
-    left = foot_pos[0]
-    right = foot_pos[1]
+    ctx: ManagerContext, close_feet_threshold: float, base_quat: torch.Tensor, foot_pos: torch.Tensor
+) -> torch.Tensor:
     # Lateral foot separation in the base frame: rotate the world-frame foot
     # delta's XY components (z forced to zero — vertical separation is
     # intentionally ignored) back into the base frame and take its y
     # magnitude. Rotating the world x-axis instead (as a yaw proxy) flips the
     # yaw sign under the inverse rotation and misjudges staggered feet as
     # crossing.
-    _, lateral, _ = rotate_inverse_components(base_quat, (left[0] - right[0], left[1] - right[1], 0.0))
-    distance = abs(lateral)
-    walk: WalkCommand = ctx.commands["walk"]
-    if distance < close_feet_threshold:
-        return 1.0 * walk.penalty_scale[0]
-    return 0.0
+    delta = foot_pos.new_zeros(foot_pos.shape[0], 3)
+    delta[:, :2] = foot_pos[:, 0, :2] - foot_pos[:, 1, :2]
+    _, lateral, _ = rotate_inverse_components(base_quat, delta)
+    walk = ctx.commands["walk"]
+    return torch.where(lateral.abs() < close_feet_threshold, walk.penalty_scale[0], torch.zeros_like(lateral))
 
 
 @configclass(kw_only=True)
@@ -213,17 +209,28 @@ class PenaltyCloseFeetXyRewardCfg(RewardTermCfg):
 
 
 @dispatch
-def penalty_feet_ori_reward(ctx: ManagerContext, default_foot_gravity: np.ndarray, foot_quat: np.ndarray) -> float:
-    total = 0.0
-    for foot in range(2):
-        gx, gy, gz = rotate_inverse_components(foot_quat[foot], (0.0, 0.0, -1.0))
-        reference = default_foot_gravity[foot]
-        # |cross(foot_gravity, reference)|
-        cx = gy * reference[2] - gz * reference[1]
-        cy = gz * reference[0] - gx * reference[2]
-        cz = gx * reference[1] - gy * reference[0]
-        total += math.sqrt(cx * cx + cy * cy + cz * cz)
-    walk: WalkCommand = ctx.commands["walk"]
+def penalty_feet_ori_reward(
+    ctx: ManagerContext, default_foot_gravity: torch.Tensor, foot_quat: torch.Tensor
+) -> torch.Tensor:
+    # foot_quat is (N, F, 4); rotate gravity by each foot's inverse quaternion.
+    num_feet = foot_quat.shape[1]
+    gravity = foot_quat.new_zeros(*foot_quat.shape[:2], 3)
+    gravity[..., 2] = -1.0
+    gx, gy, gz = rotate_inverse_components(foot_quat.reshape(-1, 4), gravity.reshape(-1, 3))
+    reference = torch.as_tensor(np.asarray(default_foot_gravity))
+    total = None
+    for foot in range(num_feet):
+        # Flat layout is lane-major (lane * F + foot): strided slices pick one foot.
+        fx = gx[foot::num_feet]
+        fy = gy[foot::num_feet]
+        fz = gz[foot::num_feet]
+        ref = reference[foot]
+        cx = fy * ref[2] - fz * ref[1]
+        cy = fz * ref[0] - fx * ref[2]
+        cz = fx * ref[1] - fy * ref[0]
+        norm = torch.sqrt(cx * cx + cy * cy + cz * cz)
+        total = norm if total is None else total + norm
+    walk = ctx.commands["walk"]
     return total * walk.penalty_scale[0]
 
 
@@ -231,18 +238,20 @@ def penalty_feet_ori_reward(ctx: ManagerContext, default_foot_gravity: np.ndarra
 class PenaltyFeetOriRewardCfg(RewardTermCfg):
     def __call__(self, ctx) -> RewardTerm:
         robot = ctx.cfg.scene.objs.robot
-        body = ctx.model.bodies["robot"]
         # Default foot gravity at the init key pose, from BodyModel's
         # compile-time init-pose FK snapshot.
-        gravity_vec = (0.0, 0.0, -1.0)
-        default_foot_gravity = np.stack(
-            [
-                rotate_inverse_components(body.init_link_quats[body.link_names.index(link)], gravity_vec)
-                for link in robot.resolved_foot_link_names
-            ]
-        ).astype(np.float32)
+        default_foot_gravity = _default_foot_gravity(ctx, robot)
         return RewardTerm(
             penalty_feet_ori_reward,
             default_foot_gravity,
             BatchLinkQuaternionQuery(links=robot.resolved_foot_link_names),
         )
+
+
+def _default_foot_gravity(ctx: BuildContext, robot) -> np.ndarray:
+    """Rotate world gravity into each default foot frame (host-side numpy)."""
+    body = ctx.model.bodies["robot"]
+    quats = np.stack([body.init_link_quats[body.link_names.index(link)] for link in robot.resolved_foot_link_names])
+    gravity = np.broadcast_to(np.array((0.0, 0.0, -1.0)), quats.shape[:-1] + (3,))
+    gx, gy, gz = rotate_inverse_components(quats, gravity)
+    return np.stack((gx, gy, gz), axis=-1).astype(np.float32)

@@ -12,6 +12,7 @@ lives in :mod:`motrix_env_motrixsim.torch_env`, not here.
 """
 
 from motrix_env_core import registry
+from motrix_env_core.array import Array
 from motrix_env_core.base import ABEnv, EnvCfg, ObsSpace, SimCfg
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SceneCfg
@@ -30,6 +31,7 @@ from motrix_env_core.perf import Perf, PerfNode, perf_root, perf_scope
 
 __all__ = [
     "ABEnv",
+    "Array",
     "BoundedGamePadPlanarVelocityBinding",
     "CommandBinding",
     "ConstantPlanarVelocityBinding",

@@ -3,16 +3,15 @@
 
 from collections import namedtuple
 
-import numba
 import numpy as np
 import pytest
 
-from motrix_env_core.numba.kernel import clone_kernel_value
+from motrix_env_core.manager.kernel import clone_kernel_value
 
 
 @pytest.mark.parametrize("layout", ["c", "f", "strided", "reversed", "broadcast", "empty", "empty_strided"])
 @pytest.mark.parametrize("readonly", [False, True])
-def test_kernel_clone_preserves_numba_array_type_and_isolates_storage(layout, readonly):
+def test_kernel_clone_preserves_array_type_and_isolates_storage(layout, readonly):
     source = np.arange(48, dtype=np.float32).reshape(8, 6)
     if layout == "f":
         source = np.asfortranarray(source)
@@ -29,8 +28,8 @@ def test_kernel_clone_preserves_numba_array_type_and_isolates_storage(layout, re
     source.flags.writeable = not readonly
     copied = clone_kernel_value(source)
 
-    assert numba.typeof(copied) == numba.typeof(source)
     assert copied.strides == source.strides
+    assert copied.dtype == source.dtype
     assert not np.shares_memory(copied, source)
     np.testing.assert_array_equal(copied, source)
     if not readonly:

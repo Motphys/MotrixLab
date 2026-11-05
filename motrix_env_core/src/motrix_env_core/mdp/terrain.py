@@ -1,28 +1,24 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""In-kernel terrain-height lookup over a static height-field grid."""
+"""Static terrain-height grid shared by manager reset and reward terms."""
 
 import numpy as np
-from numba import njit
+import torch
 
 from motrix_env_core.manager import SharedArray, kernel_data
 
 
 @kernel_data
 class HeightFieldGrid:
-    """Static terrain grid for in-kernel bilinear height lookup.
+    """Static terrain grid for batched bilinear height lookup.
 
     ``enabled=False`` degenerates to the flat-ground ``constant`` height.
-
-    采样高度计算公式（见 :func:`heightfield_lookup`）::
-
-        fx = (x - origin[0]) / spacing[0]
-        fy = (y - origin[1]) / spacing[1]          # clamp 到 [0, n - 1 - eps]
-        col, row = int(fx), int(fy); tx, ty = fx - col, fy - row
-        top    = heights[row, col]     * (1 - tx) + heights[row, col + 1]       * tx
-        bottom = heights[row + 1, col] * (1 - tx) + heights[row + 1, col + 1]   * tx
-        h(x, y) = z0[0] + top * (1 - ty) + bottom * ty
+    Torch-side lookups (for example
+    ``motrix_envs.locomotion.humanoid.walk_manager_mdp.terrain.heightfield_lookup_batch``)
+    mirror the engine's hfield sample convention in float64:
+    bilinear interpolation of the four surrounding samples after mapping
+    world ``xy`` to fractional grid coordinates.
 
     Attributes:
         heights: ``SharedArray`` of shape ``(nrow, ncol)`` holding the
@@ -35,8 +31,8 @@ class HeightFieldGrid:
         z0: 长度为 1 的 ``SharedArray``，叠加在插值结果之上的基准高度偏移。
         constant: 平地退化模式下的常数高度；仅在 ``enabled=False`` 时生效，
             对应平地 ground geom 的世界 z 坐标。
-        enabled: 是否启用网格插值；``False`` 时 ``heightfield_lookup``
-            直接返回 ``constant``，忽略所有网格字段。
+        enabled: 是否启用网格插值；``False`` 时高度查找直接返回
+            ``constant``，忽略所有网格字段。
     """
 
     heights: SharedArray
@@ -47,31 +43,35 @@ class HeightFieldGrid:
     enabled: bool
 
 
-@njit(inline="always")
-def heightfield_lookup(grid: HeightFieldGrid, x: float, y: float) -> float:
-    """Bilinear grid lookup matching the engine's hfield sample convention."""
-    if not grid.enabled:
-        return grid.constant
-    nrow = grid.heights.shape[0]
-    ncol = grid.heights.shape[1]
-    fx = (x - grid.origin[0]) / grid.spacing[0]
-    fy = (y - grid.origin[1]) / grid.spacing[1]
-    fx = min(max(fx, 0.0), ncol - 1.0 - 1e-6)
-    fy = min(max(fy, 0.0), nrow - 1.0 - 1e-6)
-    col = int(fx)
-    row = int(fy)
+__all__ = [
+    "heightfield_lookup",
+    "HeightFieldGrid",
+]
+
+
+def heightfield_lookup(grid, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    """Batched torch bilinear height lookup over a :class:`HeightFieldGrid`.
+
+    ``x``/``y`` are ``(N,)`` world coordinates. The interpolation runs in
+    float64, matching the engine's hfield sample convention.
+    """
+    if not bool(grid.enabled):
+        return torch.full_like(x.double(), float(grid.constant))
+    heights = torch.as_tensor(np.asarray(grid.heights)).to(torch.float64)
+    origin = torch.as_tensor(np.asarray(grid.origin)).to(torch.float64)
+    spacing = torch.as_tensor(np.asarray(grid.spacing)).to(torch.float64)
+    z0 = torch.as_tensor(np.asarray(grid.z0)).to(torch.float64)
+    nrow, ncol = heights.shape
+    fx = ((x.to(torch.float64) - origin[0]) / spacing[0]).clamp(0.0, ncol - 1.0 - 1e-6)
+    fy = ((y.to(torch.float64) - origin[1]) / spacing[1]).clamp(0.0, nrow - 1.0 - 1e-6)
+    col = fx.to(torch.long)
+    row = fy.to(torch.long)
     tx = fx - col
     ty = fy - row
-    h00 = grid.heights[row, col]
-    h01 = grid.heights[row, col + 1]
-    h10 = grid.heights[row + 1, col]
-    h11 = grid.heights[row + 1, col + 1]
+    h00 = heights[row, col]
+    h01 = heights[row, col + 1]
+    h10 = heights[row + 1, col]
+    h11 = heights[row + 1, col + 1]
     top = h00 * (1.0 - tx) + h01 * tx
     bottom = h10 * (1.0 - tx) + h11 * tx
-    return grid.z0[0] + top * (1.0 - ty) + bottom * ty
-
-
-__all__ = [
-    "HeightFieldGrid",
-    "heightfield_lookup",
-]
+    return z0[0] + top * (1.0 - ty) + bottom * ty
