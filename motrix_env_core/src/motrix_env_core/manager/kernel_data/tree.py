@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import fields, is_dataclass
-from functools import cache
 from typing import Any, get_origin, get_type_hints
 
 import numpy as np
@@ -49,7 +48,6 @@ def leaf_value_type(annotation: Any) -> type | None:
     return None
 
 
-@cache
 def _type_hints(cls: type) -> dict[str, Any]:
     return get_type_hints(cls, include_extras=True)
 
