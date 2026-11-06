@@ -36,10 +36,10 @@ from motrix_env_core.manager.kernel_data import (
     ResolvedLeaf,
     ResolvedTree,
     TreeClassDef,
-    flatten_kernel_data,
     is_kernel_data,
-    iter_tree_leaves,
+    iter_leaves,
     leaf_value_type,
+    tree_def_for,
 )
 from motrix_env_core.manager.kernel_data.methods import dispatch_methods
 from motrix_env_core.manager.kernel_data.tree import BaseDef, KernelMapDef, LeafDef
@@ -555,7 +555,7 @@ class ManagerProgramResolver:
 
     def _resolve_runtime_terms(self) -> None:
         for name, action_term in self._env.action_terms.items():
-            _, tree_def = flatten_kernel_data(action_term.state)
+            tree_def = tree_def_for(action_term.state)
             self._layout_identity.append(
                 (
                     "action",
@@ -569,7 +569,7 @@ class ManagerProgramResolver:
                 )
             )
         for name, command_term in self._env.command_terms.items():
-            _, tree_def = flatten_kernel_data(command_term)
+            tree_def = tree_def_for(command_term)
             self._layout_identity.append(
                 (
                     "command",
@@ -805,9 +805,9 @@ class ManagerProgramResolver:
         by their owning runtime objects and scalar/shared leaves are reused
         unchanged.
         """
-        values, tree_def = flatten_kernel_data(value)
+        tree_def = tree_def_for(value)
         leaves: dict[tuple[str, ...], ResolvedLeaf] = {}
-        for leaf_def, field_value in zip(iter_tree_leaves(tree_def), values, strict=True):
+        for leaf_def, leaf_value in iter_leaves(value, tree_def):
             value_type = leaf_value_type(leaf_def.annotation)
             if value_type is None:
                 raise TypeError(
@@ -815,14 +815,14 @@ class ManagerProgramResolver:
                     "scalar."
                 )
             if value_type in (np.ndarray, torch.Tensor):
-                if not isinstance(field_value, value_type):
+                if not isinstance(leaf_value, value_type):
                     raise TypeError(f"{source_name} field {'.'.join(leaf_def.path)!r} must be {value_type.__name__}.")
-            elif type(field_value) is not value_type:
+            elif type(leaf_value) is not value_type:
                 raise TypeError(
                     f"{source_name} field {'.'.join(leaf_def.path)!r} must return "
-                    f"{value_type.__name__}, got {type(field_value).__name__}."
+                    f"{value_type.__name__}, got {type(leaf_value).__name__}."
                 )
-            leaves[leaf_def.path] = ResolvedLeaf(field_value)
+            leaves[leaf_def.path] = ResolvedLeaf(leaf_value)
         self._prepared_trees.append(ResolvedTree(value, leaves))
         return len(self._prepared_trees) - 1, tree_def
 

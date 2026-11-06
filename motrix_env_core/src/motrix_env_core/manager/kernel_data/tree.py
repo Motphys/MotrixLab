@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
 from dataclasses import dataclass, fields, is_dataclass
 from typing import Any, get_origin, get_type_hints
 
@@ -84,11 +85,11 @@ class FieldDef(BaseDef):
 class TreeClassDef(BaseDef):
     """Root definition of one concrete kernel-data class tree.
 
-    Every flattened kernel-data value is represented by a ``TreeClassDef`` root.
+    Every kernel-data value is described by a ``TreeClassDef`` root.
     Its fields recursively contain nested class, map, and leaf definitions.
 
     Attributes:
-        logical_type: Frozen dataclass type reconstructed by host unflattening.
+        logical_type: Concrete dataclass type described by this definition.
         fields: Field definitions in dataclass declaration order.
         fingerprint: Deterministic identity of the complete class tree schema.
     """
@@ -96,14 +97,6 @@ class TreeClassDef(BaseDef):
     logical_type: type
     fields: tuple[FieldDef, ...]
     fingerprint: str
-
-    def flatten(self, value: Any) -> tuple[Any, ...]:
-        """Flatten a matching class value without copying leaves."""
-        return _flatten(value, self)
-
-    def unflatten(self, leaves: tuple[Any, ...]) -> Any:
-        """Rebuild one class value from ordered leaves."""
-        return unflatten_kernel_data(self, leaves)
 
 
 @dataclass(frozen=True)
@@ -134,35 +127,22 @@ class KernelMapDef(BaseDef):
     fingerprint: str
 
 
-def flatten_kernel_data(value: Any) -> tuple[tuple[Any, ...], TreeClassDef]:
-    """Return zero-copy leaves and the concrete class tree definition for one kernel-data value."""
+def tree_def_for(value: Any) -> TreeClassDef:
+    """Build and validate the class tree schema for one kernel-data value."""
     if not is_kernel_data(value):
         raise TypeError(f"KernelData tree root must be a dataclass value, got {type(value).__name__}.")
-    tree_def = _build_class_def(type(value), value, (), ())
-    return _flatten(value, tree_def), tree_def
+    return _build_class_def(type(value), value, (), ())
 
 
-def unflatten_kernel_data(tree_def: TreeClassDef, leaves: tuple[Any, ...]) -> Any:
-    """Rebuild a logical host value from a tree definition and ordered leaves."""
-    value, next_index = _unflatten(tree_def, leaves, 0)
-    if next_index != len(leaves):
-        raise ValueError("KernelData unflatten received extra leaves.")
-    return value
+def iter_leaves(value: Any, tree_def: BaseDef) -> Iterator[tuple[LeafDef, Any]]:
+    """Yield (leaf definition, leaf value) pairs in declaration order.
 
-
-def iter_tree_leaves(tree_def: BaseDef) -> tuple[LeafDef, ...]:
-    """Return logical leaves in stable declaration order."""
+    The value is walked alongside the schema; structural mismatches (wrong
+    class type or changed Map keys) raise ``TypeError``.
+    """
     if isinstance(tree_def, LeafDef):
-        return (tree_def,)
-    if isinstance(tree_def, TreeClassDef):
-        return tuple(leaf for field in tree_def.fields for leaf in iter_tree_leaves(field.tree_def))
-    assert isinstance(tree_def, KernelMapDef)
-    return tuple(leaf for entry in tree_def.entries for leaf in iter_tree_leaves(entry.tree_def))
-
-
-def _flatten(value: Any, tree_def: BaseDef) -> tuple[Any, ...]:
-    if isinstance(tree_def, LeafDef):
-        return (value,)
+        yield tree_def, value
+        return
     if isinstance(tree_def, KernelMapDef):
         if not isinstance(value, Map):
             raise TypeError(f"KernelData value at {'.'.join(tree_def.path)!r} must be Map.")
@@ -171,34 +151,34 @@ def _flatten(value: Any, tree_def: BaseDef) -> tuple[Any, ...]:
                 f"Map at {'.'.join(tree_def.path)!r} has keys {value.keys_tuple!r}, expected "
                 f"{tuple(entry.key for entry in tree_def.entries)!r}."
             )
-        return tuple(leaf for entry in tree_def.entries for leaf in _flatten(value[entry.key], entry.tree_def))
+        for entry in tree_def.entries:
+            yield from iter_leaves(value[entry.key], entry.tree_def)
+        return
     assert isinstance(tree_def, TreeClassDef)
     if type(value) is not tree_def.logical_type:
         raise TypeError(f"KernelData value must be {tree_def.logical_type.__name__}, got {type(value).__name__}.")
-    return tuple(leaf for field in tree_def.fields for leaf in _flatten(getattr(value, field.name), field.tree_def))
-
-
-def _unflatten(
-    tree_def: BaseDef,
-    leaves: tuple[Any, ...],
-    index: int,
-) -> tuple[Any, int]:
-    if isinstance(tree_def, LeafDef):
-        if index >= len(leaves):
-            raise ValueError("KernelData unflatten received too few leaves.")
-        return leaves[index], index + 1
-    if isinstance(tree_def, KernelMapDef):
-        entries: dict[str, Any] = {}
-        for entry in tree_def.entries:
-            value, index = _unflatten(entry.tree_def, leaves, index)
-            entries[entry.key] = value
-        return Map(entries), index
-    assert isinstance(tree_def, TreeClassDef)
-    values = []
     for field in tree_def.fields:
-        value, index = _unflatten(field.tree_def, leaves, index)
-        values.append(value)
-    return tree_def.logical_type(*values), index
+        yield from iter_leaves(getattr(value, field.name), field.tree_def)
+
+
+def clone_tree(value: Any, tree_def: BaseDef) -> Any:
+    """Deep-clone one kernel-data value following its tree schema.
+
+    Tensor leaves are cloned, ndarray leaves are copied, and scalar leaves are
+    reused as-is; dataclass fields and Map entries are rebuilt around the
+    cloned children.
+    """
+    if isinstance(tree_def, LeafDef):
+        if isinstance(value, torch.Tensor):
+            return value.clone()
+        if isinstance(value, np.ndarray):
+            return value.copy()
+        return value
+    if isinstance(tree_def, KernelMapDef):
+        return Map({entry.key: clone_tree(value[entry.key], entry.tree_def) for entry in tree_def.entries})
+    assert isinstance(tree_def, TreeClassDef)
+    cloned = tuple(clone_tree(getattr(value, field.name), field.tree_def) for field in tree_def.fields)
+    return tree_def.logical_type(*cloned)
 
 
 def _build_class_def(

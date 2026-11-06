@@ -67,11 +67,12 @@ dof_pos = ctx.sim["robot_dof_pos"]
 ## 4. Logical tree 与 resolved tree
 
 Kernel-data record 是 plain frozen dataclass（`@dataclass(frozen=True, slots=True)`，
-不再有专用装饰器），支持有序、可逆的 record tree：
+不再有专用装饰器），支持按声明序遍历与深拷贝的 record tree：
 
 ```python
-leaves, tree_def = flatten_kernel_data(value)
-rebuilt = unflatten_kernel_data(tree_def, leaves)
+tree_def = tree_def_for(value)
+leaves = iter_leaves(value, tree_def)  # (LeafDef, value) 声明序
+cloned = clone_tree(value, tree_def)
 ```
 
 Record 可以嵌套另一个 kernel-data record；不支持递归结构、dict、list、字符串、object array 或 backend handle

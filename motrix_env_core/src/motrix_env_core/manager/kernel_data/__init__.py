@@ -1,4 +1,5 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
+# SPDX-License-Identifier: Apache-2.0
 
 from motrix_env_core.manager.kernel_data.canonical import canonicalize_kernel_data
 from motrix_env_core.manager.kernel_data.map import Map
@@ -10,12 +11,12 @@ from motrix_env_core.manager.kernel_data.tree import (
     LeafDef,
     MapEntryDef,
     TreeClassDef,
-    flatten_kernel_data,
+    clone_tree,
     is_kernel_data,
     is_kernel_data_type,
-    iter_tree_leaves,
+    iter_leaves,
     leaf_value_type,
-    unflatten_kernel_data,
+    tree_def_for,
 )
 
 __all__ = [
@@ -29,10 +30,10 @@ __all__ = [
     "ResolvedLeaf",
     "ResolvedTree",
     "canonicalize_kernel_data",
-    "flatten_kernel_data",
+    "clone_tree",
     "is_kernel_data",
     "is_kernel_data_type",
-    "iter_tree_leaves",
+    "iter_leaves",
     "leaf_value_type",
-    "unflatten_kernel_data",
+    "tree_def_for",
 ]
