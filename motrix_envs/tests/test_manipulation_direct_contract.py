@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 from motrix_env_core import registry
-from motrix_env_core.array.env import ArrayEnvState, NpObs
+from motrix_env_core.array.env import ArrayEnvState, EnvObs
 
 _MANIPULATION_ENVS = [
     "franka-lift-cube",
@@ -51,7 +51,7 @@ def _spy_execute(env) -> list:
 
 
 def _assert_finite_state(state: ArrayEnvState, num_envs: int, obs_dim: Iterable[int]) -> None:
-    assert isinstance(state.obs, NpObs)
+    assert isinstance(state.obs, EnvObs)
     assert state.obs.policy.shape == (num_envs, *obs_dim)
     assert not np.isnan(state.obs.policy).any()
     assert state.reward.shape == (num_envs,)
@@ -126,9 +126,9 @@ def test_compute_observation_reads_cache_without_executing(env_name: str) -> Non
 
     # Observation must be served purely from cache.
     assert calls == []
-    # step() normalizes obs to NpObs; a raw compute_observation call may return
+    # step() normalizes obs to EnvObs; a raw compute_observation call may return
     # either the dataclass or the bare policy array.
-    obs = observed.obs.policy if isinstance(observed.obs, NpObs) else observed.obs
+    obs = observed.obs.policy if isinstance(observed.obs, EnvObs) else observed.obs
     assert obs.shape == (num_envs, *env.observation_space.shape)
     assert not np.isnan(obs).any()
     # Reward / termination / reward terms must not be modified by observation.

@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import torch
 
-from motrix_env_core.array.env import ArrayEnvState, NpObs
+from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_motrixsim.torch_env import TorchEnv, TorchEnvState, TorchObs
 
@@ -37,7 +37,7 @@ def _make_env(sim_backend: str):
     if sim_backend == "np":
         env = Mock(spec=DirectEnv)
         state = ArrayEnvState(
-            obs=NpObs(np.zeros((_NUM_ENVS, _OBS_DIM), dtype=np.float32)),
+            obs=EnvObs(np.zeros((_NUM_ENVS, _OBS_DIM), dtype=np.float32)),
             reward=np.ones(_NUM_ENVS, dtype=np.float32),
             terminated=np.zeros(_NUM_ENVS, dtype=bool),
             truncated=np.zeros(_NUM_ENVS, dtype=bool),

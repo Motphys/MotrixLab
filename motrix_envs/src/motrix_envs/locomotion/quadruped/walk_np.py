@@ -7,7 +7,7 @@ import gymnasium as gym
 import numpy as np
 from motrix_robots.quadruped import QuadrupedRobotCfg
 
-from motrix_env_core.array.env import ArrayEnvState, NpObs
+from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.base import ObsSpace
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.mdp.action_space import asymmetric_residual_action_space
@@ -376,7 +376,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
                 f"expected policy[{expected_policy}]; value={value.shape}, "
                 f"expected value[{expected_value}]"
             )
-        return state.replace(obs=NpObs(policy=policy, value=value))
+        return state.replace(obs=EnvObs(policy=policy, value=value))
 
     def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
         self.sim_data.execute()

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import TypeVar
 
+import numpy as np
+
 from motrix_env_core.array.env import ArrayEnv
 from motrix_env_core.array.env import ArrayEnvState as ArrayEnvState
 from motrix_env_core.base import EnvCfg
@@ -32,7 +34,7 @@ class DirectEnvCfg(EnvCfg):
 DirectEnvCfgType = TypeVar("DirectEnvCfgType", bound=DirectEnvCfg)
 
 
-class DirectEnv(ArrayEnv[DirectEnvCfgType]):
+class DirectEnv(ArrayEnv[DirectEnvCfgType, np.ndarray]):
     """Direct-workflow frontend that exposes only the simulator backend.
 
     Concrete environments own their model/data query declarations and compile

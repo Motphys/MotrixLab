@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from motrix_env_core import registry
-from motrix_env_core.array.env import NpObs
+from motrix_env_core.array.env import EnvObs
 
 
 @pytest.mark.parametrize("num_envs", [1, 2])
@@ -22,7 +22,7 @@ def test_basic_environment_step_preserves_numpy_observation_contract(env_name: s
         state = env.step(action)
 
     assert state is not None
-    assert isinstance(state.obs, NpObs)
+    assert isinstance(state.obs, EnvObs)
     assert state.obs.policy.shape == (num_envs, *env.observation_space.shape)
     if env_name == "franka-open-cabinet":
         # Episode-scoped gripper state lives on the env instance, not in info.

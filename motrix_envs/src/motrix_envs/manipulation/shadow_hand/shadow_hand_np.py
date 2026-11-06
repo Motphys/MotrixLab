@@ -5,7 +5,7 @@ import gymnasium as gym
 import numpy as np
 
 from motrix_env_core import registry
-from motrix_env_core.array.env import ArrayEnvState, NpObs
+from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.math import quaternion, utils
 from motrix_env_core.sim import (
@@ -259,7 +259,7 @@ class ShadowHandReposeEnv(DirectEnv):
         # name is applied via setattr so static audits can tell this
         # sanctioned observation-stage write apart from the forbidden
         # transition-time writes.
-        setattr(state, "obs", NpObs(policy=obs))
+        setattr(state, "obs", EnvObs(policy=obs))
         return state
 
     def compute_transition(self, state: ArrayEnvState):

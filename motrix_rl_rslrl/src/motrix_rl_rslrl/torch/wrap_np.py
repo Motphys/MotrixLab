@@ -8,7 +8,7 @@ import torch
 from rsl_rl.env.vec_env import VecEnv
 from tensordict import TensorDict
 
-from motrix_env_core.array.env import ArrayEnv, NpObs
+from motrix_env_core.array.env import ArrayEnv, EnvObs
 from motrix_env_core.renderer import RenderConfig, create_renderer
 
 
@@ -147,7 +147,7 @@ class RslrlNpEnvWrap(VecEnv):
 
         return self._to_tensordict(self._state.obs)
 
-    def _to_tensordict(self, obs: NpObs) -> TensorDict:
+    def _to_tensordict(self, obs: EnvObs) -> TensorDict:
         tensors = {"policy": _as_torch(obs.policy, self._device)}
         if obs.value is not None:
             tensors["value"] = _as_torch(obs.value, self._device)

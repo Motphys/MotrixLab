@@ -7,7 +7,7 @@ import gymnasium as gym
 import numpy as np
 import pytest
 
-from motrix_env_core.array.env import ArrayEnv, ArrayEnvState, FinalObs, NpObs
+from motrix_env_core.array.env import ArrayEnv, ArrayEnvState, EnvObs, FinalObs
 from motrix_env_core.base import EnvCfg, ObsSpace
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv
@@ -80,7 +80,7 @@ class _FinalCounterEnv(_CounterEnv):
         self.capture_rewards.append(self.state.reward[env_ids].copy())
         policy = self.counters[env_ids, None].copy()
         value = np.concatenate((policy, -policy), axis=1) if self.has_value_observation else None
-        return FinalObs(env_ids=env_ids.copy(), obs=NpObs(policy=policy, value=value))
+        return FinalObs(env_ids=env_ids.copy(), obs=EnvObs(policy=policy, value=value))
 
 
 def _step(env: _CounterEnv) -> ArrayEnvState:
@@ -138,7 +138,7 @@ def test_final_obs_contains_only_truncated_rows_before_auto_reset(with_value: bo
 
     final = state.final_obs
     assert isinstance(final, FinalObs)
-    assert isinstance(final.obs, NpObs)
+    assert isinstance(final.obs, EnvObs)
     np.testing.assert_array_equal(state.truncated, [True, False, True, False])
     np.testing.assert_array_equal(state.terminated, [False, True, False, False])
     np.testing.assert_array_equal(final.env_ids, [0, 2])

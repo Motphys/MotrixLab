@@ -170,7 +170,7 @@ Observation terms use the host-side ``ObservationTerm(size, dispatch, *args)`` f
 
 ## 5. 执行与性能边界
 
-- 只有纯数组计算进入 term dispatch；不得传入 `SceneModel`、`SceneData`、`ArrayEnvState`、`NpObs`、config 或 `info`；
+- 只有纯数组计算进入 term dispatch；不得传入 `SceneModel`、`SceneData`、`ArrayEnvState`、`EnvObs`、config 或 `info`；
 - term 一次调用处理整批张量，写入预分配 output 和 term-owned buffers；
 - Torch 执行器默认以 `torch.compile` 编译整段 term 调度（可回退 eager），不自动转换任意 Python/NumPy 环境方法；
 - 单个环境实例不修改进程级 Torch 线程数，线程策略由训练 runtime 管理；
