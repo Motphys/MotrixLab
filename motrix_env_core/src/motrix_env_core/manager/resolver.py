@@ -33,11 +33,9 @@ from motrix_env_core.manager.kernel_data import (
     Map,
     ResolvedLeaf,
     ResolvedTree,
-    TreeClassDef,
     is_kernel_data,
     iter_leaves,
     leaf_value_type,
-    tree_def_for,
 )
 from motrix_env_core.manager.observations import ObservationGroupEntry, ObsTerm
 from motrix_env_core.manager.rewards import RewardTerm
@@ -473,7 +471,7 @@ class ManagerProgramResolver:
             dt=np.float32(self._env.cfg.ctrl_dt),
             sim_reset_requested=torch.from_numpy(self._env._sim_reset_requested),
         )
-        tree_index = self._register_tree("manager_context", value)[0]
+        tree_index = self._register_tree("manager_context", value)
         return ResolvedManagerContext(tree_index)
 
     def _resolve_command_hooks(self, function_name: str) -> tuple[tuple[str, Callable], ...]:
@@ -646,33 +644,32 @@ class ManagerProgramResolver:
         self,
         source_name: str,
         value: Any,
-    ) -> tuple[int, TreeClassDef]:
-        """Validate one kernel-data value against its tree schema and record its tree.
+    ) -> int:
+        """Validate one kernel-data value's leaves and record its tree.
 
         Leaves are captured by reference: array leaves are refreshed in place
         by their owning runtime objects and scalar/shared leaves are reused
         unchanged.
         """
-        tree_def = tree_def_for(value)
         leaves: dict[tuple[str, ...], ResolvedLeaf] = {}
-        for leaf_def, leaf_value in iter_leaves(value, tree_def):
-            value_type = leaf_value_type(leaf_def.annotation)
+        for leaf_path, annotation, leaf_value in iter_leaves(value):
+            value_type = leaf_value_type(annotation)
             if value_type is None:
                 raise TypeError(
-                    f"{source_name} KernelData {'.'.join(leaf_def.path)} expected a tensor, an ndarray, or a numeric "
+                    f"{source_name} KernelData {'.'.join(leaf_path)} expected a tensor, an ndarray, or a numeric "
                     "scalar."
                 )
             if value_type in (np.ndarray, torch.Tensor):
                 if not isinstance(leaf_value, value_type):
-                    raise TypeError(f"{source_name} field {'.'.join(leaf_def.path)!r} must be {value_type.__name__}.")
+                    raise TypeError(f"{source_name} field {'.'.join(leaf_path)!r} must be {value_type.__name__}.")
             elif type(leaf_value) is not value_type:
                 raise TypeError(
-                    f"{source_name} field {'.'.join(leaf_def.path)!r} must return "
+                    f"{source_name} field {'.'.join(leaf_path)!r} must return "
                     f"{value_type.__name__}, got {type(leaf_value).__name__}."
                 )
-            leaves[leaf_def.path] = ResolvedLeaf(leaf_value)
+            leaves[leaf_path] = ResolvedLeaf(leaf_value)
         self._prepared_trees.append(ResolvedTree(value, leaves))
-        return len(self._prepared_trees) - 1, tree_def
+        return len(self._prepared_trees) - 1
 
     def _validate_observation_spaces(self, groups: dict[str, ObservationGroupEntry]) -> None:
         expected_policy = self._env.policy_observation_space.shape

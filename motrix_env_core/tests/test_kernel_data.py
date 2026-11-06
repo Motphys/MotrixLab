@@ -13,7 +13,6 @@ from motrix_env_core.manager.kernel_data import (
     is_kernel_data,
     iter_leaves,
     leaf_value_type,
-    tree_def_for,
 )
 
 
@@ -40,8 +39,8 @@ class _Tracking:
 
 
 @dataclass(frozen=True, slots=True)
-class _MappedValues:
-    values: Map
+class _Cyclic:
+    child: "_Cyclic"
 
 
 def test_kernel_data_is_frozen_and_compiles_nested_inherited_leaves() -> None:
@@ -52,14 +51,14 @@ def test_kernel_data_is_frozen_and_compiles_nested_inherited_leaves() -> None:
     with pytest.raises(FrozenInstanceError):
         value.phase = np.float32(1.0)  # type: ignore[misc]
 
-    leaves = [(leaf.path, leaf_value) for leaf, leaf_value in iter_leaves(value, tree_def_for(value))]
+    leaves = [(path, leaf_value) for path, _, leaf_value in iter_leaves(value)]
     assert [path for path, _ in leaves] == [
         ("robot", "velocity"),
         ("robot", "pose", "position"),
         ("robot", "pose", "orientation"),
         ("phase",),
     ]
-    annotations = [leaf.annotation for leaf, _ in iter_leaves(value, tree_def_for(value))]
+    annotations = [annotation for _, annotation, _ in iter_leaves(value)]
     assert leaf_value_type(annotations[0]) is np.ndarray
     assert leaf_value_type(annotations[-1]) is np.float32
 
@@ -71,41 +70,44 @@ def test_kernel_data_accepts_tensor_leaves() -> None:
 
     buffer = torch.zeros((2, 3), dtype=torch.float32)
     value = _Tensors(buffer)
-    leaves = list(iter_leaves(value, tree_def_for(value)))
-    assert [leaf_value for _, leaf_value in leaves] == [buffer]
-    assert leaf_value_type(leaves[0][0].annotation) is torch.Tensor
+    leaves = list(iter_leaves(value))
+    assert [leaf_value for _, _, leaf_value in leaves] == [buffer]
+    assert leaf_value_type(leaves[0][1]) is torch.Tensor
 
 
-def test_kernel_data_schema_fingerprint_ignores_values() -> None:
-    first_value = _Tracking(
-        _Robot(np.asarray([[1.0]], dtype=np.float32), _Pose(np.asarray([[2.0]]), np.asarray([3.0]))),
-        np.float32(0.5),
-    )
-    second_value = _Tracking(
-        _Robot(np.asarray([[4.0]], dtype=np.float32), _Pose(np.asarray([[5.0]]), np.asarray([6.0]))),
-        np.float32(0.75),
-    )
-    first = tree_def_for(first_value)
-    second = tree_def_for(second_value)
-    assert first.fingerprint == second.fingerprint
-    assert first.logical_type.__module__ == _Tracking.__module__
+def test_iter_leaves_rejects_wrong_class_field() -> None:
+    @dataclass(frozen=True, slots=True)
+    class _Inner:
+        x: np.ndarray
+
+    @dataclass(frozen=True, slots=True)
+    class _Outer:
+        inner: _Inner
+
+    @dataclass(frozen=True, slots=True)
+    class _Impostor:
+        x: np.ndarray
+
+    with pytest.raises(TypeError, match="must be _Inner, got _Impostor"):
+        list(iter_leaves(_Outer(_Impostor(np.zeros(1)))))  # type: ignore[arg-type]
 
 
-def test_map_schema_changes_tree_identity() -> None:
-    first = _MappedValues(Map({"value": np.float32(1.0)}))
-    second = _MappedValues(Map({"value": np.asarray([[1.0]], dtype=np.float32)}))
-    first_tree = tree_def_for(first)
-    second_tree = tree_def_for(second)
-    assert first_tree.fingerprint != second_tree.fingerprint
-    first_map = first_tree.fields[0].tree_def
-    second_map = second_tree.fields[0].tree_def
-    assert first_map.fingerprint != second_map.fingerprint
+def test_iter_leaves_rejects_class_cycle() -> None:
+    @dataclass(frozen=True, slots=True)
+    class _Node:
+        child: _Cyclic
+
+    with pytest.raises(TypeError, match="cycle detected"):
+        list(iter_leaves(_Node(_Cyclic(None))))  # type: ignore[arg-type]
 
 
-def test_iter_leaves_rejects_changed_map_keys() -> None:
-    schema = tree_def_for(_MappedValues(Map({"a": np.float32(1.0), "b": np.float32(2.0)})))
-    with pytest.raises(TypeError, match="has keys"):
-        list(iter_leaves(_MappedValues(Map({"a": np.float32(1.0)})), schema))
+def test_iter_leaves_rejects_map_annotation_without_map_value() -> None:
+    @dataclass(frozen=True, slots=True)
+    class _HoldsMap:
+        values: Map
+
+    with pytest.raises(TypeError, match="requires a concrete Map value"):
+        list(iter_leaves(_HoldsMap({"a": np.float32(1.0)})))  # type: ignore[arg-type]
 
 
 def test_kernel_data_rejects_unsupported_leaf() -> None:
