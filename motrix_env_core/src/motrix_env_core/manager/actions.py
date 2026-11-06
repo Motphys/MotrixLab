@@ -12,7 +12,7 @@ import numpy as np
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager.dispatch import dispatch
-from motrix_env_core.manager.kernel_data import SharedArray, canonicalize_kernel_data, kernel_data
+from motrix_env_core.manager.kernel_data import canonicalize_kernel_data, kernel_data
 
 if TYPE_CHECKING:
     from motrix_env_core.manager.env import ManagerEnv
@@ -31,7 +31,7 @@ class ActionState:
     """
 
     action_queue: np.ndarray
-    action_ptr: SharedArray
+    action_ptr: np.ndarray
 
     @dispatch
     def current(self) -> np.ndarray:

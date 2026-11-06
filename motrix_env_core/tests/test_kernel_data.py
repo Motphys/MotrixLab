@@ -8,9 +8,7 @@ import pytest
 
 from motrix_env_core.manager.kernel_data import (
     KernelDataLowering,
-    KernelDataScope,
     Map,
-    SharedArray,
     flatten_kernel_data,
     iter_layout_leaves,
     kernel_data,
@@ -21,7 +19,7 @@ from motrix_env_core.manager.kernel_data import (
 @kernel_data
 class _Pose:
     position: np.ndarray
-    orientation: SharedArray
+    orientation: np.ndarray
 
 
 @kernel_data
@@ -66,12 +64,6 @@ def test_kernel_data_is_frozen_and_compiles_nested_inherited_leaves() -> None:
         ("robot", "pose", "position"),
         ("robot", "pose", "orientation"),
         ("phase",),
-    ]
-    assert [leaf.scope for leaf in leaves] == [
-        KernelDataScope.PER_ENV,
-        KernelDataScope.PER_ENV,
-        KernelDataScope.SHARED,
-        KernelDataScope.SHARED,
     ]
 
 

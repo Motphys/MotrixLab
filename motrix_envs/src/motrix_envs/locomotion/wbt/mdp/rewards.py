@@ -10,7 +10,7 @@ import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, RewardTerm, RewardTermCfg
-from motrix_env_core.manager.kernel_data import SharedArray, kernel_data
+from motrix_env_core.manager.kernel_data import kernel_data
 from motrix_env_core.math.quaternion_array import rotation_distance
 from motrix_env_core.mdp.action import JointPositionActionState
 
@@ -148,8 +148,8 @@ class GlobalBodyAngularVelocityRewardCfg(RewardTermCfg):
 
 @kernel_data
 class DofLimitParams:
-    midpoint: SharedArray
-    half_range: SharedArray
+    midpoint: np.ndarray
+    half_range: np.ndarray
     soft_limit: np.float32
     cap: np.float32
 

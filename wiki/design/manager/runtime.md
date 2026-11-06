@@ -82,7 +82,7 @@ reset 只处理指定的原始 `env_ids`：
 - action/command/reset terms 只修改目标 rows；
 - backend reset program 只写目标 rows；
 - read program 只刷新目标 rows；
-- reset 路径按原始 environment id gather `PER_ENV` leaves，不把 reset batch row 当作环境 id；
+- reset 路径按原始 environment id gather lane 状态，不把 reset batch row 当作环境 id；
 - `ArrayEnv` 继续负责 auto-reset、episode steps 和 truncation 语义。
 
 ## 4. Term 协议
@@ -93,7 +93,7 @@ Term 不要求继承统一实现基类，但必须遵循对应 protocol：
 @kernel_data
 class BaseActionState:
     action_queue: np.ndarray  # host (N, W, A), lane (W, A); W >= 2
-    action_ptr: SharedArray   # one shared cursor, advanced once per control step
+    action_ptr: np.ndarray     # one shared cursor, advanced once per control step
 
 
 @dataclass(frozen=True)
@@ -183,5 +183,5 @@ Observation terms use the host-side ``ObservationTerm(size, dispatch, *args)`` f
 - config 不持有 runtime state，concrete term 是其 persistent state 的唯一 owner；
 - action policy layout 与 actuator route 分离，route 非空且不重叠；
 - sim snapshot 只来自编译后的 read program；
-- `ctx.env_id` 和所有 `PER_ENV` leaves 使用同一原始 environment id；
+- `ctx.env_id` 和所有 lane 形状 leaves 使用同一原始 environment id；
 - Manager 不引入 generic `ManagerValue` registry 或独立 Hydra backend 维度。

@@ -8,7 +8,7 @@ import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, RewardTerm, RewardTermCfg
-from motrix_env_core.manager.kernel_data import SharedArray, kernel_data
+from motrix_env_core.manager.kernel_data import kernel_data
 from motrix_env_core.math.quaternion_array import rotate_inverse as rotate_inverse_batch
 
 
@@ -72,7 +72,7 @@ class BallUnderFeetRewardCfg(RewardTermCfg):
 
 @kernel_data
 class DofDefaultParams:
-    reference: SharedArray
+    reference: np.ndarray
     sigma: np.float32
 
 

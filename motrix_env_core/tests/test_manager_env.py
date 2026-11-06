@@ -38,7 +38,6 @@ from motrix_env_core.manager import (  # noqa: E402
     ObsTerm,
     RewardTerm,
     RewardTermCfg,
-    SharedArray,
     TerminationTerm,
     TerminationTermCfg,
     kernel_data,
@@ -97,7 +96,7 @@ def _second_action_space(_: ManagerEnv, __: np.ndarray | None) -> gym.spaces.Box
 
 @kernel_data
 class _ObservationParams:
-    offset: SharedArray
+    offset: np.ndarray
     scale: np.float32
 
 
@@ -529,9 +528,8 @@ def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> 
     command = _counter_command(env)
     assert env._compiled_manager_program is not None
     context_tree = env._compiled_manager_program.prepared_trees[env._compiled_manager_program.context.tree_index]
-    scopes = {path: leaf.scope for path, leaf in context_tree.leaves.items()}
-    assert scopes[("actions", "test", "action_queue")].value == "per_env"
-    assert scopes[("actions", "test", "action_ptr")].value == "shared"
+    assert context_tree.leaves[("actions", "test", "action_queue")].value is action.state.action_queue
+    assert context_tree.leaves[("actions", "test", "action_ptr")].value is action.state.action_ptr
     assert [term.output_slice for term in env.manager_layout.observations["policy"].terms] == [
         slice(0, 2),
         slice(2, 3),

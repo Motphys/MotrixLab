@@ -84,8 +84,8 @@ distributed to the terms.
    one actuator may belong to a single term. `None` means the term writes no actuator
    targets.
 2. An `ActionTerm` subclass decorated with `@kernel_data`: it holds persistent state
-   (`np.ndarray` fields, one row per environment) and shared model data (`SharedArray`
-   fields), and implements three methods — `action_space()` returns this term's action
+   (`np.ndarray` fields, one row per environment) and shared model data (scalar or
+   batch-free `np.ndarray` fields), and implements three methods — `action_space()` returns this term's action
    space, `process(actions)` transforms the action batch into routed actuator controls,
    and `reset(env_ids)` clears persistent state.
 
@@ -103,7 +103,7 @@ class MyJointActionCfg(ActionCfg):
 @kernel_data
 class MyJointAction(ActionTerm):
     current: np.ndarray              # persistent state: previous action (num_envs rows)
-    scale: SharedArray               # static parameter: passed in by __call__
+    scale: np.float32                # static parameter: passed in by __call__
 
     def action_space(self, env, actuators) -> gym.spaces.Box:
         ...  # derived from the actuators' ctrl_range

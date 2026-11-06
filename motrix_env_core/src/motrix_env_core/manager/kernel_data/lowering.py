@@ -5,8 +5,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from enum import Enum
-from typing import Annotated, Any, TypeAlias, get_args, get_origin
+from typing import Any
 
 import numpy as np
 
@@ -21,23 +20,6 @@ _LAYOUT_CACHE: dict[
 ] = {}
 
 
-class KernelDataScope(str, Enum):
-    """How one resolved KernelData leaf is exposed to execution.
-
-    Attributes:
-        PER_ENV: Leaf is an ``(N, ...)`` array covering the whole batch; the
-            reset schedule clones it for selected lanes.
-        SHARED: Pass the complete leaf unchanged to every environment lane.
-    """
-
-    PER_ENV = "per_env"
-    SHARED = "shared"
-
-
-SharedArray: TypeAlias = Annotated[np.ndarray, KernelDataScope.SHARED]
-"""A writable ndarray passed unchanged to every environment lane."""
-
-
 @dataclass(frozen=True)
 class KernelLeafLayout:
     """Lowered ABI description of one logical KernelData leaf.
@@ -45,13 +27,11 @@ class KernelLeafLayout:
     Attributes:
         tree_def: Logical leaf definition that owns the path and annotation.
         value_type: Concrete Python/NumPy type accepted for the leaf value.
-        scope: Whether the leaf is per-environment batched or shared.
         slot_index: Zero-based declaration index relative to the root layout.
     """
 
     tree_def: LeafDef
     value_type: type
-    scope: KernelDataScope
     slot_index: int
 
     @property
@@ -108,8 +88,8 @@ class KernelRecordLayout:
     Attributes:
         tree_def: Logical record definition being lowered.
         fields: Lowered children in logical dataclass declaration order.
-        fingerprint: Deterministic identity including child types, scopes,
-            and dispatch-method code fingerprints.
+        fingerprint: Deterministic identity including child types and
+            dispatch-method code fingerprints.
     """
 
     tree_def: TreeClassDef
@@ -154,9 +134,9 @@ class KernelDataLowering:
     """Validate one logical ``TreeClassDef`` and derive its leaf layout.
 
     The lowering checks that every leaf annotation is a supported
-    ndarray/scalar type, assigns each leaf its data scope, and produces a
-    deterministic structural fingerprint (field names, types, scopes, and
-    dispatch-method code) used for resolved-program invalidation.
+    ndarray/scalar type and produces a deterministic structural fingerprint
+    (field names, types, and dispatch-method code) used for
+    resolved-program invalidation.
     """
 
     def lower(
@@ -164,14 +144,13 @@ class KernelDataLowering:
         tree_def: TreeClassDef,
         *,
         context: str,
-        force_shared: bool = False,
     ) -> KernelRecordLayout:
         method_key = hashlib.sha256(repr(_tree_method_fingerprint(tree_def)).encode()).hexdigest()
-        cache_key = (f"{tree_def.fingerprint}:{method_key}", force_shared)
+        cache_key = f"{tree_def.fingerprint}:{method_key}"
         cached = _LAYOUT_CACHE.get(cache_key)
         if cached is not None:
             return cached
-        layout, _ = self._lower_record(tree_def, 0, force_shared, context)
+        layout, _ = self._lower_record(tree_def, 0, context)
         _LAYOUT_CACHE[cache_key] = layout
         return layout
 
@@ -179,7 +158,6 @@ class KernelDataLowering:
         self,
         tree_def: TreeClassDef,
         slot_index: int,
-        force_shared: bool,
         context: str,
     ) -> tuple[KernelRecordLayout, int]:
         field_layouts: list[KernelFieldLayout] = []
@@ -187,33 +165,18 @@ class KernelDataLowering:
         for field in tree_def.fields:
             child: KernelDataLayout
             if isinstance(field.tree_def, TreeClassDef):
-                child, slot_index = self._lower_record(
-                    field.tree_def,
-                    slot_index,
-                    force_shared,
-                    context,
-                )
+                child, slot_index = self._lower_record(field.tree_def, slot_index, context)
             elif isinstance(field.tree_def, KernelMapDef):
-                child, slot_index = self._lower_map(
-                    field.tree_def,
-                    slot_index,
-                    force_shared,
-                    context,
-                )
+                child, slot_index = self._lower_map(field.tree_def, slot_index, context)
             else:
                 assert isinstance(field.tree_def, LeafDef)
-                value_type, scope = self._leaf_type(
-                    field.tree_def.annotation,
-                    context=f"{context} KernelData {tree_def.logical_type.__name__}.{'.'.join(field.tree_def.path)}",
-                    force_shared=force_shared,
-                )
+                value_type = self._leaf_type(field.tree_def.annotation)
                 if value_type is None:
                     raise TypeError(
                         f"{context} KernelData {tree_def.logical_type.__name__}."
-                        f"{'.'.join(field.tree_def.path)} expected "
-                        "np.ndarray, SharedArray, or numeric scalar."
+                        f"{'.'.join(field.tree_def.path)} expected np.ndarray or numeric scalar."
                     )
-                child = KernelLeafLayout(field.tree_def, value_type, scope, slot_index)
+                child = KernelLeafLayout(field.tree_def, value_type, slot_index)
                 slot_index += 1
             field_layouts.append(KernelFieldLayout(field.name, child))
             fingerprint_fields.append((field.name, self._fingerprint_part(child)))
@@ -232,39 +195,23 @@ class KernelDataLowering:
         self,
         tree_def: KernelMapDef,
         slot_index: int,
-        force_shared: bool,
         context: str,
     ) -> tuple[KernelMapLayout, int]:
         entry_layouts: list[KernelMapEntryLayout] = []
         fingerprint_entries: list[Any] = []
         for entry in tree_def.entries:
             if isinstance(entry.tree_def, TreeClassDef):
-                child, slot_index = self._lower_record(
-                    entry.tree_def,
-                    slot_index,
-                    force_shared,
-                    context,
-                )
+                child, slot_index = self._lower_record(entry.tree_def, slot_index, context)
             elif isinstance(entry.tree_def, KernelMapDef):
-                child, slot_index = self._lower_map(
-                    entry.tree_def,
-                    slot_index,
-                    force_shared,
-                    context,
-                )
+                child, slot_index = self._lower_map(entry.tree_def, slot_index, context)
             else:
                 assert isinstance(entry.tree_def, LeafDef)
-                value_type, scope = self._leaf_type(
-                    entry.tree_def.annotation,
-                    context=f"{context} Map {'.'.join(entry.tree_def.path)}",
-                    force_shared=force_shared,
-                )
+                value_type = self._leaf_type(entry.tree_def.annotation)
                 if value_type is None:
                     raise TypeError(
-                        f"{context} Map {'.'.join(entry.tree_def.path)} expected np.ndarray, "
-                        "SharedArray, or numeric scalar."
+                        f"{context} Map {'.'.join(entry.tree_def.path)} expected np.ndarray or numeric scalar."
                     )
-                child = KernelLeafLayout(entry.tree_def, value_type, scope, slot_index)
+                child = KernelLeafLayout(entry.tree_def, value_type, slot_index)
                 slot_index += 1
             entry_layouts.append(KernelMapEntryLayout(entry.key, child))
             fingerprint_entries.append((entry.key, self._fingerprint_part(child)))
@@ -279,7 +226,6 @@ class KernelDataLowering:
                 "leaf",
                 layout.path,
                 f"{layout.value_type.__module__}.{layout.value_type.__qualname__}",
-                layout.scope.value,
                 layout.slot_index,
             )
         if isinstance(layout, KernelMapLayout):
@@ -298,30 +244,16 @@ class KernelDataLowering:
         )
 
     @staticmethod
-    def _leaf_type(
-        annotation: Any,
-        *,
-        context: str,
-        force_shared: bool,
-    ) -> tuple[type[Any] | None, KernelDataScope]:
-        metadata: tuple[Any, ...] = ()
-        if get_origin(annotation) is Annotated:
-            annotation, *metadata_values = get_args(annotation)
-            metadata = tuple(metadata_values)
-        if metadata and metadata != (KernelDataScope.SHARED,):
-            raise TypeError(f"{context} has unsupported or conflicting metadata {metadata!r}.")
+    def _leaf_type(annotation: Any) -> type[Any] | None:
         if annotation is np.ndarray:
-            scope = KernelDataScope.SHARED if metadata or force_shared else KernelDataScope.PER_ENV
-            return annotation, scope
-        if metadata:
-            raise TypeError(f"{context} scope metadata is only valid on np.ndarray leaves.")
+            return annotation
         if annotation in {bool, int, float}:
-            return annotation, KernelDataScope.SHARED
+            return annotation
         if isinstance(annotation, type) and issubclass(annotation, np.generic):
             try:
                 dtype = np.dtype(annotation)
             except TypeError:
-                return None, KernelDataScope.SHARED
+                return None
             if dtype.type is annotation and dtype.kind in "biuf":
-                return annotation, KernelDataScope.SHARED
-        return None, KernelDataScope.SHARED
+                return annotation
+        return None

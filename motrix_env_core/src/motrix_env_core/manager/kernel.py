@@ -6,7 +6,6 @@ from typing import Any, NamedTuple, TypeVar, cast
 
 import numpy as np
 
-from motrix_env_core.manager.kernel_data.lowering import KernelDataScope
 from motrix_env_core.manager.kernel_data.resolved import ResolvedLeaf, ResolvedTree
 
 T = TypeVar("T")
@@ -44,20 +43,14 @@ def validate_kernel_context(
     """Validate the numeric kernel contract once when a context is bound.
 
     ``trees`` is the resolved program input: one :class:`ResolvedTree` per
-    prepared kernel-data source. Each leaf is validated against its declared
-    scope (``PER_ENV`` leaves must lead with the batch dimension).
+    prepared kernel-data source. Leaf values are checked for dtype and type
+    sanity without any batch-dimension assumptions.
     """
     if not isinstance(trees, tuple):
         raise TypeError(f"inputs must be a tuple of resolved trees, got {type(trees).__name__}.")
     for tree in trees:
         for path, leaf in tree.leaves.items():
-            _validate_value(
-                leaf.value,
-                f"inputs.{'.'.join(path)}",
-                num_envs=num_envs,
-                batched=leaf.scope is KernelDataScope.PER_ENV,
-                writable=False,
-            )
+            _validate_value(leaf.value, f"inputs.{'.'.join(path)}", num_envs=num_envs, batched=False, writable=False)
     _validate_value(reward_weights, "reward_weights", num_envs=num_envs, batched=False, writable=False)
     _validate_value(buffers, "buffers", num_envs=num_envs, batched=True, writable=True)
     _validate_outputs(outputs, num_envs)
@@ -74,7 +67,7 @@ def clone_resolved_trees(trees: tuple[ResolvedTree, ...]) -> tuple[ResolvedTree,
     return tuple(
         ResolvedTree(
             tree.value,
-            {path: ResolvedLeaf(clone_kernel_value(leaf.value), leaf.scope) for path, leaf in tree.leaves.items()},
+            {path: ResolvedLeaf(clone_kernel_value(leaf.value)) for path, leaf in tree.leaves.items()},
         )
         for tree in trees
     )

@@ -14,7 +14,6 @@ from motrix_env_core.manager import (
     ObsTerm,
     kernel_data,
 )
-from motrix_env_core.manager.kernel_data import SharedArray
 from motrix_env_core.math import quaternion_array
 from motrix_env_core.math.quaternion_array import relative_orientation, rotate_inverse
 from motrix_env_core.mdp.observations import (
@@ -121,7 +120,7 @@ class RobotBodyOrientationObsCfg(ObservationTermCfg):
 
 @kernel_data
 class RelativePositionParams:
-    reference: SharedArray
+    reference: np.ndarray
     noise_amplitude: np.float32
 
 

@@ -4,11 +4,9 @@ from motrix_env_core.manager.kernel_data.canonical import canonicalize_kernel_da
 from motrix_env_core.manager.kernel_data.lowering import (
     KernelDataLayout,
     KernelDataLowering,
-    KernelDataScope,
     KernelLeafLayout,
     KernelMapLayout,
     KernelRecordLayout,
-    SharedArray,
     iter_layout_leaves,
 )
 from motrix_env_core.manager.kernel_data.map import Map
@@ -33,7 +31,6 @@ __all__ = [
     "KernelDataLayout",
     "Map",
     "KernelDataLowering",
-    "KernelDataScope",
     "KernelLeafLayout",
     "KernelMapDef",
     "FieldDef",
@@ -42,7 +39,6 @@ __all__ = [
     "KernelMapLayout",
     "KernelRecordLayout",
     "TreeClassDef",
-    "SharedArray",
     "ResolvedLeaf",
     "ResolvedTree",
     "canonicalize_kernel_data",

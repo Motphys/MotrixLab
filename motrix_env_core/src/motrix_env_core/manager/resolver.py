@@ -5,7 +5,7 @@
 
 Lowers one constructed manager environment into its execution metadata: the
 simulator read plan, the resolved context/term-argument trees (path-keyed
-leaf descriptors with live value references and data scopes), prepared term
+leaf descriptors with live value references), prepared term
 arguments, and one typed call record per manager term (command hooks,
 observations, rewards, terminations, simulator resets). Numerical executors —
 currently the Torch executor in :mod:`motrix_env_core.torch_manager` —
@@ -32,7 +32,6 @@ from motrix_env_core.manager.env import ManagerEnv, ReadPlan
 from motrix_env_core.manager.kernel_data import (
     KernelDataLayout,
     KernelDataLowering,
-    KernelDataScope,
     Map,
     ResolvedLeaf,
     ResolvedTree,
@@ -314,11 +313,10 @@ def _manager_sim_inputs(sim_data: PhysicsReadProgram) -> tuple[Mapping[str, Mana
 
 
 def _tree_leaf_fingerprint(tree: ResolvedTree) -> tuple[Any, ...]:
-    """Per-leaf content fingerprint: scope plus array shape/dtype identity."""
+    """Per-leaf content fingerprint: array shape/dtype identity."""
     return tuple(
         (
             path,
-            leaf.scope.value,
             None
             if not isinstance(leaf.value, np.ndarray)
             else (leaf.value.shape, leaf.value.dtype.str, leaf.value.strides),
@@ -702,16 +700,12 @@ class ManagerProgramResolver:
         """
         if is_kernel_data(value):
             _, tree_def = flatten_kernel_data(value)
-            layout = self._kernel_data_lowering.lower(
-                tree_def,
-                context=source_name,
-                force_shared=True,
-            )
+            layout = self._kernel_data_lowering.lower(tree_def, context=source_name)
             return TreeArg(self._register_tree(source_name, value, layout))
         if isinstance(value, (float, np.floating)):
-            return LeafArg(ResolvedLeaf(np.float32(value), KernelDataScope.SHARED))
+            return LeafArg(ResolvedLeaf(np.float32(value)))
         if isinstance(value, np.ndarray):
-            return LeafArg(ResolvedLeaf(value, KernelDataScope.SHARED))
+            return LeafArg(ResolvedLeaf(value))
         if isinstance(value, SimDataQuery):
             # A query passed as a term argument resolves to its registered
             # read-program batched view; the dispatch receives the array in
@@ -743,7 +737,7 @@ class ManagerProgramResolver:
                     f"{source_name} field {'.'.join(prepared_field.path)!r} must return "
                     f"{prepared_field.value_type.__name__}, got {type(field_value).__name__}."
                 )
-            leaves[prepared_field.path] = ResolvedLeaf(field_value, prepared_field.scope)
+            leaves[prepared_field.path] = ResolvedLeaf(field_value)
         self._prepared_trees.append(ResolvedTree(value, leaves))
         return len(self._prepared_trees) - 1
 

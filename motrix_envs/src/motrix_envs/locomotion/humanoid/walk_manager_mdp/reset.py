@@ -11,7 +11,6 @@ from motrix_env_core.manager import (
     ManagerContext,
     ResetTerm,
     ResetTermCfg,
-    SharedArray,
     kernel_data,
 )
 from motrix_env_core.manager.context import BuildContext
@@ -72,18 +71,18 @@ class WalkResetParams:
             base center of mass.
     """
 
-    default_joint_angles: SharedArray
-    init_pose: SharedArray
+    default_joint_angles: np.ndarray
+    init_pose: np.ndarray
     heightfield: HeightFieldGrid
     spawn_range: np.float32
     randomization_enabled: bool
-    kp_default: SharedArray
-    damping_default: SharedArray
-    link_mass_default: SharedArray
+    kp_default: np.ndarray
+    damping_default: np.ndarray
+    link_mass_default: np.ndarray
     base_link_index: np.int64
     base_mass_default: np.float32
-    base_com_default: SharedArray
-    friction_default: SharedArray
+    base_com_default: np.ndarray
+    friction_default: np.ndarray
     kp_range: np.ndarray
     damping_range: np.ndarray
     friction_range: np.ndarray

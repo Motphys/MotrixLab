@@ -9,8 +9,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from motrix_env_core.manager.kernel_data.lowering import KernelDataScope
-
 
 @dataclass(frozen=True)
 class ResolvedLeaf:
@@ -19,11 +17,9 @@ class ResolvedLeaf:
     Attributes:
         value: Live leaf value reference — an ndarray held and refreshed in
             place by its owning runtime object, or an immutable scalar.
-        scope: Whether the leaf is an ``(N, ...)`` batched array or shared.
     """
 
     value: Any
-    scope: KernelDataScope
 
 
 @dataclass(frozen=True)
@@ -32,8 +28,8 @@ class ResolvedTree:
 
     ``value`` keeps the host root object (used as the attribute fallback for
     executor namespace views); ``leaves`` maps every leaf path to its live
-    value reference and scope. Array leaves are rewritten in place by their
-    owning runtime objects, so the tree itself never needs rebuilding.
+    value reference. Array leaves are rewritten in place by their owning
+    runtime objects, so the tree itself never needs rebuilding.
     """
 
     value: Any

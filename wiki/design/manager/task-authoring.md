@@ -92,8 +92,7 @@ class TrackingErrorTermination:
 `@kernel_data` 的字段必须有类型标注，结构在构造期固定。Term record 不可替换字段，但 owner 可以按契约原地更新 ndarray backing。
 支持的 leaf 类型为：
 
-- 普通 `np.ndarray`：默认按 environment 切片，第一维为 `num_envs`；
-- `SharedArray`：所有 lane 访问完整数组，适合模型参数、查表数据和 motion clip；
+- 普通 `np.ndarray`：term 拿到完整数组引用；lane 形状数组第一维为 `num_envs`，模型参数、查表数据和 motion clip 等共享数组则没有 batch 维；
 - Python 标量和固定 dtype NumPy scalar；
 - 另一个 `@kernel_data` 类型。
 

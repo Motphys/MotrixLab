@@ -73,7 +73,7 @@ step 循环内不再编译。
    `actuator_names` 为空元组 `()` 时控制全部执行器，写显式名称时只控制列出的执行器；
    一个执行器只能归属一项。设为 `None` 表示本项不写执行器目标。
 2. `@kernel_data` 装饰的 `ActionTerm` 子类：持有持久状态（`np.ndarray` 字段，按环境行）与
-   共享模型数据（`SharedArray` 字段），实现三个方法：`action_space()` 给出本项的动作空间、
+   共享模型数据（无 batch 维的 `np.ndarray` / 标量字段），实现三个方法：`action_space()` 给出本项的动作空间、
    `process(actions)` 把动作批次变换为路由执行器的控制量、`reset(env_ids)` 清理持久状态。
 
 ```python
@@ -90,7 +90,7 @@ class MyJointActionCfg(ActionCfg):
 @kernel_data
 class MyJointAction(ActionTerm):
     current: np.ndarray              # 持久状态：上一动作缓存（num_envs 行）
-    scale: SharedArray               # 静态参数：由 __call__ 传入
+    scale: np.float32                # 静态参数：由 __call__ 传入
 
     def action_space(self, env, actuators) -> gym.spaces.Box:
         ...  # 由执行器 ctrl_range 推导

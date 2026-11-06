@@ -14,7 +14,6 @@ from motrix_env_core.manager import (
     CommandTerm,
     ManagerContext,
     ManagerEnv,
-    SharedArray,
     kernel_data,
     metric,
 )
@@ -126,15 +125,15 @@ class WalkCommand(CommandTerm):
             the ``command_steps`` metric).
     """
 
-    vel_limit_low: SharedArray
-    vel_limit_high: SharedArray
+    vel_limit_low: np.ndarray
+    vel_limit_high: np.ndarray
     stand_prob: np.float32
     resample_steps: np.float32
     gait_period_base: np.float32
     gait_period_width: np.float32
     curriculum_enabled: bool
-    penalty_scale: SharedArray
-    avg_ep_len: SharedArray
+    penalty_scale: np.ndarray
+    avg_ep_len: np.ndarray
     level_down_threshold: np.float32
     level_up_threshold: np.float32
     degree: np.float32

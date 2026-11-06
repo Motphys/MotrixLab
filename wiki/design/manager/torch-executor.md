@@ -23,7 +23,7 @@ RNG draw 顺序与 eager 完全一致；Inductor 重结合仅带来 ≤1e-8 量�
 
 - `ManagerProgramResolver`（backend-neutral）负责输入准备：把 `@kernel_data`
   term 参数与 `ManagerContext` 解析为 path-keyed 的 resolved tree（叶子持有
-  live value 引用与 `PER_ENV`/`SHARED` scope），构建 `ManagerLayout`、
+  live value 引用），构建 `ManagerLayout`、
   `ReadPlan`、per-term-kind typed call records（command hooks 携带 receiver 与
   static function，reward/termination 携带 buffer column index 与 resolved
   argument 描述符等），并校验签名注解契约与签名契约。它不做任何代码生成、
@@ -46,9 +46,10 @@ RNG draw 顺序与 eager 完全一致；Inductor 重结合仅带来 ≤1e-8 量�
   `_TensorCache` 在同一 anchor 上按叶子值身份缓存 tensor 视图，0 维
   int/float/bool 叶子转为 Python 标量（graph-break-free 编译的关键）。
 - reset 路径是静态全批 masked 设计：选中的 lane 由布尔掩码选择，
-  `PER_ENV` 叶子在 reset term 首次访问时 clone（sim 叶子除外），term 写
-  clone 行后以 `where(mask, clone, original)` 合并回常驻缓冲，未选中 lane
-  （含 RNG 状态）保持不变；compact sim-reset write 缓冲布局与
+  reset write contract 覆盖的可写叶子（reset hook 的 receiver command
+  tree、RNG state 与 lane 形状的 metric）在 reset term 首次访问时 clone，
+  term 写 clone 行后以 `where(mask, clone, original)` 合并回常驻缓冲，
+  未选中 lane（含 RNG 状态）保持不变；compact sim-reset write 缓冲布局与
   `SimResetRuntime.buffers` 一致。
 
 ## 批量 term 约定

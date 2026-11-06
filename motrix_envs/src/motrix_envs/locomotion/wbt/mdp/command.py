@@ -14,7 +14,6 @@ from motrix_env_core.manager import (
     CommandTerm,
     ManagerContext,
     ManagerEnv,
-    SharedArray,
     kernel_data,
     metric,
 )
@@ -101,9 +100,9 @@ class WbtMotionCommand(CommandTerm):
     target_body_orientation_relative: np.ndarray
 
     # Host-side adaptive frame-sampling state and parameters.
-    adaptive_bin_failed_count: SharedArray
-    adaptive_current_bin_failed_count: SharedArray
-    sampling_cdf: SharedArray
+    adaptive_bin_failed_count: np.ndarray
+    adaptive_current_bin_failed_count: np.ndarray
+    sampling_cdf: np.ndarray
     start_at_timestep_zero_prob: np.float32
     hold_at_clip_end: bool
     sequential_clips: bool

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from motrix_env_core.manager.kernel_data import Map, SharedArray, kernel_data
+from motrix_env_core.manager.kernel_data import Map, kernel_data
 from motrix_envs.motion.loader import MotionFormatError, MotrixMotion
 
 
@@ -42,11 +42,11 @@ def load_extension_channel(motion: MotrixMotion, name: str) -> np.ndarray:
 class MotionChannel:
     """One declared ``ext_`` channel, aligned with the clip's frame axis.
 
-    Map leaves cannot carry ``SharedArray`` annotations directly, so each
+    Map leaves are flattened by value type, so each
     channel is wrapped in this record whose field is shared across lanes.
     """
 
-    data: SharedArray
+    data: np.ndarray
 
 
 @kernel_data
@@ -80,19 +80,19 @@ class WbtMotionClip:
             axis; empty when the task declares none.
     """
 
-    joint_pos: SharedArray
-    joint_vel: SharedArray
-    tracked_bodies_pos_w: SharedArray
-    tracked_bodies_quat_w: SharedArray
-    tracked_bodies_lin_vel_w: SharedArray
-    tracked_bodies_ang_vel_w: SharedArray
-    root_body_pos_w: SharedArray
-    root_body_quat_w: SharedArray
-    root_body_lin_vel_w: SharedArray
-    root_body_ang_vel_w: SharedArray
-    reference_body_pos_w: SharedArray
-    reference_body_quat_w: SharedArray
-    frame_clip_end: SharedArray
+    joint_pos: np.ndarray
+    joint_vel: np.ndarray
+    tracked_bodies_pos_w: np.ndarray
+    tracked_bodies_quat_w: np.ndarray
+    tracked_bodies_lin_vel_w: np.ndarray
+    tracked_bodies_ang_vel_w: np.ndarray
+    root_body_pos_w: np.ndarray
+    root_body_quat_w: np.ndarray
+    root_body_lin_vel_w: np.ndarray
+    root_body_ang_vel_w: np.ndarray
+    reference_body_pos_w: np.ndarray
+    reference_body_quat_w: np.ndarray
+    frame_clip_end: np.ndarray
     extensions: Map
 
     @staticmethod

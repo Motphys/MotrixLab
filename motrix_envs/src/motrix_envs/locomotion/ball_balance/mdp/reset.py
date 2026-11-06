@@ -14,7 +14,7 @@ from motrix_env_core.manager import (
     ResetTerm,
     ResetTermCfg,
 )
-from motrix_env_core.manager.kernel_data import Map, SharedArray, kernel_data
+from motrix_env_core.manager.kernel_data import Map, kernel_data
 from motrix_env_core.math.quaternion_array import from_euler
 from motrix_env_core.sim import (
     BodyAngularVelocityWrite,
@@ -127,9 +127,9 @@ class BodyRotVelResetCfg(ResetTermCfg):
 
 @kernel_data
 class DofResetParams:
-    default_pos: SharedArray
-    joint_lower: SharedArray
-    joint_upper: SharedArray
+    default_pos: np.ndarray
+    joint_lower: np.ndarray
+    joint_upper: np.ndarray
     noise_scale: np.float32
 
 

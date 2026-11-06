@@ -8,7 +8,7 @@ import numpy as np
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import RobotCfg
-from motrix_env_core.manager import ActionCfg, ActionState, ActionTerm, ManagerEnv, SharedArray, kernel_data
+from motrix_env_core.manager import ActionCfg, ActionState, ActionTerm, ManagerEnv, kernel_data
 from motrix_env_core.mdp.action_space import joint_position_action_space_from_ctrl_ranges
 from motrix_env_core.sim.model import ActuatorSpec, ActuatorType
 
@@ -41,10 +41,10 @@ class JointPositionActionState(ActionState):
             path entirely.
     """
 
-    default_angles: SharedArray
-    joint_lower: SharedArray
-    joint_upper: SharedArray
-    action_scales: SharedArray
+    default_angles: np.ndarray
+    joint_lower: np.ndarray
+    joint_upper: np.ndarray
+    action_scales: np.ndarray
     delay_steps: np.ndarray
     delay_lo: int
     delay_hi: int
