@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, fields
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import array_api_compat.torch as array_namespace_torch
 import gymnasium as gym
 import numpy as np
 import torch
@@ -414,17 +415,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
     # The manager pipeline's transition storage is torch-native: the compiled
     # kernels write tensors directly and torch consumers pass them through
     # without copies. Non-torch consumers take zero-copy ``.numpy()`` views.
-    def _zeros_box(self, space: gym.spaces.Box) -> torch.Tensor:
-        return torch.zeros((self.num_envs, *space.shape), dtype=torch.float32)
-
-    def _zeros_reward(self) -> torch.Tensor:
-        return torch.zeros((self.num_envs,), dtype=torch.float32)
-
-    def _zeros_terminated(self) -> torch.Tensor:
-        return torch.ones((self.num_envs,), dtype=torch.bool)
-
-    def _zeros_truncated(self) -> torch.Tensor:
-        return torch.zeros((self.num_envs,), dtype=torch.bool)
+    _xp = array_namespace_torch
 
     def init_state(self) -> ArrayEnvState[torch.Tensor]:
         startup_started = perf_counter()

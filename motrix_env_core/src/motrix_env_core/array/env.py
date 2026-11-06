@@ -6,6 +6,7 @@ import dataclasses
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
+import array_api_compat.numpy as array_namespace_numpy
 import gymnasium as gym
 import numpy as np
 import torch
@@ -223,17 +224,23 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType, T]):
     def has_value_observation(self) -> bool:
         return _as_obs_space(self.observation_space).value is not None
 
-    def _zeros_box(self, space: gym.spaces.Box) -> np.ndarray:
-        return np.zeros((self._num_envs, *space.shape), dtype=space.dtype)
+    # Array module for the frontend's native currency (array_api_compat
+    # namespaces expose zeros/ones/full with module dtypes); numpy frontends
+    # inherit this default, torch frontends override the attribute only.
+    _xp = array_namespace_numpy
 
-    def _zeros_reward(self) -> np.ndarray:
-        return np.zeros((self._num_envs,), dtype=np.float32)
+    def _zeros_box(self, space: gym.spaces.Box) -> T:
+        dtype = {np.dtype(np.float32): self._xp.float32, np.dtype(np.float64): self._xp.float64}[np.dtype(space.dtype)]
+        return self._xp.zeros((self._num_envs, *space.shape), dtype=dtype)
 
-    def _zeros_terminated(self) -> np.ndarray:
-        return np.ones((self._num_envs,), dtype=bool)
+    def _zeros_reward(self) -> T:
+        return self._xp.zeros((self._num_envs,), dtype=self._xp.float32)
 
-    def _zeros_truncated(self) -> np.ndarray:
-        return np.zeros((self._num_envs,), dtype=bool)
+    def _zeros_terminated(self) -> T:
+        return self._xp.ones((self._num_envs,), dtype=self._xp.bool)
+
+    def _zeros_truncated(self) -> T:
+        return self._xp.zeros((self._num_envs,), dtype=self._xp.bool)
 
     def _zeros_obs(self, space: gym.Space | ObsSpace) -> EnvObs[T]:
         obs_space = _as_obs_space(space)
