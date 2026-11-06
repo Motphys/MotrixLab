@@ -161,26 +161,6 @@ def iter_leaves(value: Any, tree_def: BaseDef) -> Iterator[tuple[LeafDef, Any]]:
         yield from iter_leaves(getattr(value, field.name), field.tree_def)
 
 
-def clone_tree(value: Any, tree_def: BaseDef) -> Any:
-    """Deep-clone one kernel-data value following its tree schema.
-
-    Tensor leaves are cloned, ndarray leaves are copied, and scalar leaves are
-    reused as-is; dataclass fields and Map entries are rebuilt around the
-    cloned children.
-    """
-    if isinstance(tree_def, LeafDef):
-        if isinstance(value, torch.Tensor):
-            return value.clone()
-        if isinstance(value, np.ndarray):
-            return value.copy()
-        return value
-    if isinstance(tree_def, KernelMapDef):
-        return Map({entry.key: clone_tree(value[entry.key], entry.tree_def) for entry in tree_def.entries})
-    assert isinstance(tree_def, TreeClassDef)
-    cloned = tuple(clone_tree(getattr(value, field.name), field.tree_def) for field in tree_def.fields)
-    return tree_def.logical_type(*cloned)
-
-
 def _build_class_def(
     logical_type: type,
     value: Any | None,

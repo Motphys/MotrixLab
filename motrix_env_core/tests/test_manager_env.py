@@ -334,6 +334,41 @@ def test_action_and_command_terms_are_environment_owned() -> None:
     assert _counter_command(env) is env.command_terms["counter"]
 
 
+def test_same_cfg_class_instances_keep_independent_runtime_state() -> None:
+    """Cfg-produced state must be freshly allocated per environment instance.
+
+    The framework consumes cfg values by reference (no defensive clone), so
+    two environments built from the same cfg class must not share any mutable
+    per-env buffer: their action queues and command state stay distinct
+    objects and interleaved stepping only reflects each environment's own
+    actions and resets.
+    """
+    first = _ManagerEnv(num_envs=3)
+    second = _ManagerEnv(num_envs=3)
+    first.init_state()
+    second.init_state()
+
+    first_queue = first.action_terms["test"].state.action_queue
+    second_queue = second.action_terms["test"].state.action_queue
+    assert first_queue.data_ptr() != second_queue.data_ptr()
+    assert _counter_command(first).command.data_ptr() != _counter_command(second).command.data_ptr()
+    assert _counter_command(first).double.data_ptr() != _counter_command(second).double.data_ptr()
+
+    dt = float(first.cfg.ctrl_dt)
+    first_state = first.step(torch.full((3, 1), 0.1, dtype=torch.float32))
+    second_state = second.step(torch.full((3, 1), -0.1, dtype=torch.float32))
+    first.step(torch.full((3, 1), 0.2, dtype=torch.float32))
+    second.step(torch.full((3, 1), -0.2, dtype=torch.float32))
+    del first_state, second_state
+    first.reset(np.asarray([0]))
+    second.reset(np.asarray([0]))
+
+    np.testing.assert_allclose(_counter_command(first).double.numpy()[:, 0], [0.4, 0.4, 0.4])
+    np.testing.assert_allclose(_counter_command(second).double.numpy()[:, 0], [-0.4, -0.4, -0.4])
+    np.testing.assert_allclose(_counter_command(first).command.numpy()[:, 0], [-1.0, -1.0 + 2 * dt, -1.0 + 2 * dt])
+    np.testing.assert_allclose(_counter_command(second).command.numpy()[:, 0], [-1.0, -1.0 + 2 * dt, -1.0 + 2 * dt])
+
+
 def test_command_rematerialization_reuses_transition_kernel_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
     env = _ManagerEnv(num_envs=3)
     state = env.init_state()

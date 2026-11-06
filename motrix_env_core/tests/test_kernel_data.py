@@ -10,7 +10,6 @@ import torch
 from motrix_env_core.manager.kernel_data import (
     Map,
     canonicalize_kernel_data,
-    clone_tree,
     is_kernel_data,
     iter_leaves,
     leaf_value_type,
@@ -65,22 +64,7 @@ def test_kernel_data_is_frozen_and_compiles_nested_inherited_leaves() -> None:
     assert leaf_value_type(annotations[-1]) is np.float32
 
 
-def test_kernel_data_clone_copies_leaves_and_rebuilds_host_value() -> None:
-    velocity = np.asarray([[1.0]], dtype=np.float32)
-    position = np.asarray([[2.0]], dtype=np.float32)
-    orientation = np.asarray([3.0], dtype=np.float32)
-    value = _Tracking(_Robot(velocity, _Pose(position, orientation)), np.float32(0.25))
-    cloned = clone_tree(value, tree_def_for(value))
-    assert cloned.robot.velocity is not velocity
-    assert not np.shares_memory(cloned.robot.velocity, velocity)
-    assert np.array_equal(cloned.robot.velocity, velocity)
-    assert cloned.robot.pose.position is not position
-    assert np.array_equal(cloned.robot.pose.position, position)
-    assert cloned.phase is value.phase
-    assert cloned == value
-
-
-def test_kernel_data_accepts_tensor_leaves_and_clones_them() -> None:
+def test_kernel_data_accepts_tensor_leaves() -> None:
     @dataclass(frozen=True, slots=True)
     class _Tensors:
         buffer: torch.Tensor
@@ -90,10 +74,6 @@ def test_kernel_data_accepts_tensor_leaves_and_clones_them() -> None:
     leaves = list(iter_leaves(value, tree_def_for(value)))
     assert [leaf_value for _, leaf_value in leaves] == [buffer]
     assert leaf_value_type(leaves[0][0].annotation) is torch.Tensor
-    cloned = clone_tree(value, tree_def_for(value))
-    assert cloned.buffer is not buffer
-    assert cloned.buffer.data_ptr() != buffer.data_ptr()
-    assert torch.equal(cloned.buffer, buffer)
 
 
 def test_kernel_data_schema_fingerprint_ignores_values() -> None:
