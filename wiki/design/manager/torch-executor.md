@@ -21,9 +21,12 @@ RNG draw 顺序与 eager 完全一致；Inductor 重结合仅带来 ≤1e-8 量�
 
 ## 解析与执行的分工
 
-- `ManagerProgramResolver`（backend-neutral）负责输入准备：把 kernel-data
-  dataclass term 参数与 `ManagerContext` 解析为 path-keyed 的 resolved tree（叶子持有
-  live value 引用；数组字段已是 torch tensor，执行器无需再包装），构建 `ManagerLayout`、
+- `ManagerProgramResolver`（backend-neutral）负责输入准备：`ManagerContext`
+  解析为 path-keyed 的 resolved tree（叶子持有 live value 引用；数组字段已是
+  torch tensor，执行器无需再包装）；carrier dataclass term 参数按常量参数
+  原样透传，Dynamo 直接 trace 其属性访问，其结构化 fingerprint（字段名/类型/
+  张量 dtype+shape+内容哈希/标量值）计入 program fingerprint 以保持缓存失效
+  强度。构建 `ManagerLayout`、
   `ReadPlan`、per-term-kind typed call records（command hooks 携带 receiver 与
   static function，reward/termination 携带 buffer column index 与 resolved
   argument 描述符等），并校验签名注解契约与签名契约。它不做任何代码生成、

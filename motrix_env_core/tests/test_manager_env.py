@@ -96,7 +96,7 @@ def _second_action_space(_: ManagerEnv, __: np.ndarray | None) -> gym.spaces.Box
 @dataclass(frozen=True, slots=True)
 class _ObservationParams:
     offset: torch.Tensor
-    scale: np.float32
+    scale: float
 
 
 def _injected_observation(ctx: ManagerContext, out: torch.Tensor, params: _ObservationParams) -> None:
@@ -114,7 +114,7 @@ class _InjectedObservationCfg(ObservationTermCfg):
         return ObsTerm(
             2,
             _injected_observation,
-            _ObservationParams(torch.from_numpy(np.asarray([1.0], dtype=np.float32)), np.float32(self.scale)),
+            _ObservationParams(torch.from_numpy(np.asarray([1.0], dtype=np.float32)), float(self.scale)),
         )
 
 

@@ -132,7 +132,7 @@ class DofResetParams:
     default_pos: torch.Tensor
     joint_lower: torch.Tensor
     joint_upper: torch.Tensor
-    noise_scale: np.float32
+    noise_scale: float
 
 
 def _reset_body_dof_pos(ctx: ManagerContext, sim_writes: Map[torch.Tensor], params: DofResetParams) -> None:
@@ -173,7 +173,7 @@ class BodyDofPosResetCfg(ResetTermCfg):
                 default_pos=torch.from_numpy(default_pos),
                 joint_lower=torch.from_numpy(joint_lower),
                 joint_upper=torch.from_numpy(joint_upper),
-                noise_scale=np.float32(self.noise * self.noise_scale),
+                noise_scale=float(self.noise * self.noise_scale),
             ),
             writes={"position": JointPositionWrite(joints), "velocity": JointVelocityWrite(joints)},
         )

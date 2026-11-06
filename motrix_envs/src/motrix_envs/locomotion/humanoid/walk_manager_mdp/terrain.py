@@ -23,7 +23,7 @@ def ground_height_grid(ctx, ground_geom: str) -> HeightFieldGrid:
             origin=torch.from_numpy(np.ascontiguousarray(hf["origin"], dtype=np.float32)),
             spacing=torch.from_numpy(np.ascontiguousarray(hf["spacing"], dtype=np.float32)),
             z0=torch.from_numpy(np.ascontiguousarray(hf["z0"], dtype=np.float32)),
-            constant=np.float32(0.0),
+            constant=0.0,
             enabled=True,
         )
     spec = ctx.model.others["geoms"][ground_geom]
@@ -32,6 +32,6 @@ def ground_height_grid(ctx, ground_geom: str) -> HeightFieldGrid:
         origin=torch.zeros((2,), dtype=torch.float32),
         spacing=torch.ones((2,), dtype=torch.float32),
         z0=torch.zeros((1,), dtype=torch.float32),
-        constant=np.float32(spec.local_pose[2]),
+        constant=float(spec.local_pose[2]),
         enabled=False,
     )

@@ -122,7 +122,7 @@ class RobotBodyOrientationObsCfg(ObservationTermCfg):
 @dataclass(frozen=True, slots=True)
 class RelativePositionParams:
     reference: torch.Tensor
-    noise_amplitude: np.float32
+    noise_amplitude: float
 
 
 def dof_pos_rel_obs(ctx: ManagerContext, out: torch.Tensor, params: RelativePositionParams) -> None:
@@ -163,7 +163,7 @@ class DofPosRelObsCfg(ObservationTermCfg):
         if missing:
             raise ValueError(f"RobotCfg {robot_name!r} key pose is missing queried joints: {missing}.")
         reference = np.asarray([positions[name] for name in queried_joints], dtype=np.float32)
-        params = RelativePositionParams(torch.from_numpy(reference), np.float32(self.noise.amplitude))
+        params = RelativePositionParams(torch.from_numpy(reference), float(self.noise.amplitude))
         return ObsTerm(reference.shape[0], dof_pos_rel_obs, params)
 
 

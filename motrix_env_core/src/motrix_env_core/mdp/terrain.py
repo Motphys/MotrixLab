@@ -5,7 +5,6 @@
 
 from dataclasses import dataclass
 
-import numpy as np
 import torch
 
 
@@ -20,14 +19,14 @@ class HeightFieldGrid:
     world ``xy`` to fractional grid coordinates.
 
     Attributes:
-        heights: ``np.ndarray`` of shape ``(nrow, ncol)`` holding the
+        heights: ``torch.Tensor`` of shape ``(nrow, ncol)`` holding the
             height-field sample values (row = y 方向, column = x 方向)，
             单位与引擎导出的 hfield 数据一致。
-        origin: 长度为 2 的 ``np.ndarray``，网格首个采样点 ``(x, y)`` 的
+        origin: 长度为 2 的 ``torch.Tensor``，网格首个采样点 ``(x, y)`` 的
             世界坐标，是 bilinear 插值前的平移原点。
-        spacing: 长度为 2 的 ``np.ndarray``，相邻采样点在世界坐标系下的
+        spacing: 长度为 2 的 ``torch.Tensor``，相邻采样点在世界坐标系下的
             间距 ``(dx, dy)``，用于把世界坐标映射到分数网格坐标。
-        z0: 长度为 1 的 ``np.ndarray``，叠加在插值结果之上的基准高度偏移。
+        z0: 长度为 1 的 ``torch.Tensor``，叠加在插值结果之上的基准高度偏移。
         constant: 平地退化模式下的常数高度；仅在 ``enabled=False`` 时生效，
             对应平地 ground geom 的世界 z 坐标。
         enabled: 是否启用网格插值；``False`` 时高度查找直接返回
@@ -38,7 +37,7 @@ class HeightFieldGrid:
     origin: torch.Tensor
     spacing: torch.Tensor
     z0: torch.Tensor
-    constant: np.float32
+    constant: float
     enabled: bool
 
 

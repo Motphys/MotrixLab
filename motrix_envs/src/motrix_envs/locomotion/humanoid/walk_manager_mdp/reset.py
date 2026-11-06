@@ -75,13 +75,13 @@ class WalkResetParams:
     default_joint_angles: torch.Tensor
     init_pose: torch.Tensor
     heightfield: HeightFieldGrid
-    spawn_range: np.float32
+    spawn_range: float
     randomization_enabled: bool
     kp_default: torch.Tensor
     damping_default: torch.Tensor
     link_mass_default: torch.Tensor
-    base_link_index: np.int64
-    base_mass_default: np.float32
+    base_link_index: int
+    base_mass_default: float
     base_com_default: torch.Tensor
     friction_default: torch.Tensor
     kp_range: torch.Tensor
@@ -232,7 +232,7 @@ class WalkStateResetCfg(ResetTermCfg):
                 np.concatenate([body.init_base_position, body.init_base_quat]).astype(np.float32)
             ),
             heightfield=ground_height_grid(ctx, self.ground_geom),
-            spawn_range=np.float32(self.spawn_xy_range),
+            spawn_range=float(self.spawn_xy_range),
         )
 
         randomization = self.randomization
@@ -256,8 +256,8 @@ class WalkStateResetCfg(ResetTermCfg):
                 kp_default=torch.from_numpy(np.asarray(others["actuator_kp"], dtype=np.float32)),
                 damping_default=torch.from_numpy(np.asarray(others["randomize_actuator_kd"], dtype=np.float32)),
                 link_mass_default=torch.from_numpy(link_masses),
-                base_link_index=np.int64(base_index),
-                base_mass_default=np.float32(link_masses[base_index]),
+                base_link_index=base_index,
+                base_mass_default=float(link_masses[base_index]),
                 base_com_default=torch.from_numpy(np.asarray(others["randomize_base_com"], dtype=np.float32)),
                 friction_default=torch.from_numpy(np.asarray(others["randomize_friction_default"], dtype=np.float32)),
                 kp_range=torch.from_numpy(np.asarray(randomization.kp_scale_range, dtype=np.float32)),
@@ -282,8 +282,8 @@ class WalkStateResetCfg(ResetTermCfg):
                 kp_default=torch.zeros(0, dtype=torch.float32),
                 damping_default=torch.zeros(0, dtype=torch.float32),
                 link_mass_default=torch.zeros(0, dtype=torch.float32),
-                base_link_index=np.int64(0),
-                base_mass_default=np.float32(0.0),
+                base_link_index=0,
+                base_mass_default=0.0,
                 base_com_default=torch.zeros(3, dtype=torch.float32),
                 friction_default=torch.zeros(3, dtype=torch.float32),
                 kp_range=torch.ones(2, dtype=torch.float32),

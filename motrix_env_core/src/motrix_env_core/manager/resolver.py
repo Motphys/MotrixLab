@@ -4,7 +4,7 @@
 """Backend-neutral resolver for manager task programs.
 
 Lowers one constructed manager environment into its execution metadata: the
-simulator read plan, the resolved context/term-argument trees (path-keyed
+simulator read plan, the resolved context tree (path-keyed
 leaf descriptors with live value references), prepared term
 arguments, and one typed call record per manager term (command hooks,
 observations, rewards, terminations, simulator resets). Numerical executors —
@@ -20,7 +20,7 @@ import inspect
 import logging
 import warnings
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from time import perf_counter
 from types import MappingProxyType
 from typing import Any, get_args, get_origin, get_type_hints
@@ -152,13 +152,6 @@ class ConstantArg:
 
 
 @dataclass(frozen=True)
-class TreeArg:
-    """Term argument resolved as a structured kernel-data tree."""
-
-    tree_index: int
-
-
-@dataclass(frozen=True)
 class LeafArg:
     """Term argument resolved as one leaf value (numeric/ndarray argument)."""
 
@@ -172,7 +165,7 @@ class SimArg:
     key: str
 
 
-PreparedArg = ConstantArg | TreeArg | LeafArg | SimArg
+PreparedArg = ConstantArg | LeafArg | SimArg
 
 
 @dataclass(frozen=True)
@@ -297,7 +290,6 @@ __all__ = [
     "SimInputLayout",
     "SimResetTermCall",
     "TerminationTermCall",
-    "TreeArg",
 ]
 
 
@@ -332,6 +324,43 @@ def _tree_leaf_fingerprint(tree: ResolvedTree) -> tuple[Any, ...]:
             else (tuple(leaf.value.shape), str(leaf.value.dtype), getattr(leaf.value, "strides", None)),
         )
         for path, leaf in tree.leaves.items()
+    )
+
+
+def _carrier_fingerprint(value: Any) -> Any:
+    """Structural + content fingerprint of a raw carrier dataclass term argument.
+
+    Recurses over dataclass fields recording field names, concrete types,
+    tensor/ndarray dtype+shape+content hashes, and Python scalar values.
+    Carriers previously resolved as kernel-data trees contributed no content
+    to the program fingerprint at all; this makes every carrier data change
+    (a grid array value, a scalar) invalidate compiled-program caches.
+    """
+    if isinstance(value, torch.Tensor):
+        return (
+            "tensor",
+            str(value.dtype),
+            tuple(value.shape),
+            hashlib.sha256(value.detach().contiguous().numpy().tobytes()).hexdigest(),
+        )
+    if isinstance(value, np.ndarray):
+        return (
+            "ndarray",
+            str(value.dtype),
+            value.shape,
+            hashlib.sha256(np.ascontiguousarray(value).tobytes()).hexdigest(),
+        )
+    if is_kernel_data(value):
+        return (
+            "dataclass",
+            type(value).__qualname__,
+            tuple((field.name, _carrier_fingerprint(getattr(value, field.name))) for field in fields(value)),
+        )
+    if isinstance(value, (bool, int, float, str)):
+        return (type(value).__name__, value)
+    raise TypeError(
+        f"Carrier dataclass term argument holds field of unsupported type {type(value).__name__}; "
+        "allowed: torch.Tensor, ndarray, Python scalars, str, nested carrier dataclasses."
     )
 
 
@@ -708,15 +737,18 @@ class ManagerProgramResolver:
     def _resolve_term_arg(self, source_name: str, value: Any) -> PreparedArg:
         """Resolve one manager term argument into a prepared descriptor.
 
-        Kernel-data dataclass arguments become structured trees; float-like
-        scalars and arrays/tensors become shared leaf slots read by reference; simulator queries
-        resolve to their read-program batched array; every other value is a
-        literal constant.
+        Carrier dataclass arguments pass through as constants: Dynamo traces
+        their attribute access directly, and a structural fingerprint over
+        their raw fields feeds the program fingerprint for cache
+        invalidation. Float-like scalars and arrays/tensors become shared
+        leaf slots read by reference; simulator queries resolve to their
+        read-program batched array; every other value is a literal constant.
         """
         if is_kernel_data(value):
-            _, tree_def = flatten_kernel_data(value)
-            layout = self._kernel_data_lowering.lower(tree_def, context=source_name)
-            return TreeArg(self._register_tree(source_name, value, layout))
+            self._layout_identity.append(
+                ("term_arg", source_name, type(value).__qualname__, _carrier_fingerprint(value))
+            )
+            return ConstantArg(value)
         if isinstance(value, (float, np.floating)):
             return LeafArg(ResolvedLeaf(np.float32(value)))
         if isinstance(value, np.ndarray):

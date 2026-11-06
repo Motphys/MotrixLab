@@ -74,7 +74,7 @@ class BallUnderFeetRewardCfg(RewardTermCfg):
 @dataclass(frozen=True, slots=True)
 class DofDefaultParams:
     reference: torch.Tensor
-    sigma: np.float32
+    sigma: float
 
 
 def dof_default_reward(ctx: ManagerContext, params: DofDefaultParams) -> torch.Tensor:
@@ -103,5 +103,5 @@ class DofDefaultRewardCfg(RewardTermCfg):
         if missing:
             raise KeyError(f"key pose 'default' is missing joints: {missing}")
         reference = np.asarray([default[name] for name in joint_names], dtype=np.float32)
-        params = DofDefaultParams(torch.from_numpy(reference), np.float32(self.sigma))
+        params = DofDefaultParams(torch.from_numpy(reference), float(self.sigma))
         return RewardTerm(dof_default_reward, params)

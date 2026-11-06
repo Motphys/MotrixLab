@@ -77,8 +77,10 @@ rebuilt = unflatten_kernel_data(tree_def, leaves)
 Record 可以嵌套另一个 kernel-data record；不支持递归结构、dict、list、字符串、object array 或 backend handle
 （SimDataQuery 是 dataclass 但通过 read program 解析，不属于 kernel-data tree）。
 
-Logical tree 与 execution lowering 分离：同一 concrete value 在 host term 和 context 中保留相同的 tree schema，
-resolver 产出 path-keyed 的 resolved tree（leaf 引用），运行时据此构建 namespace 视图。只有 ndarray/scalar leaves 可以成为 resolved leaves；term 内不应产生稳态临时大数组分配。
+Logical tree 与 execution lowering 分离：`ManagerContext` 及其 Map 容器中的 concrete value 保留 tree schema，
+resolver 产出 path-keyed 的 resolved tree（leaf 引用），运行时据此构建 namespace 视图。只有 ndarray/scalar leaves 可以成为 resolved leaves；term 内不应产生稳态临时大数组分配。作为
+term 参数传入的 carrier dataclass 不走 tree 机制，按常量参数原样透传（字段仅限
+torch.Tensor、Python 标量、str 与嵌套 carrier dataclass）。
 
 ## 5. Ownership 与 metric
 
@@ -97,7 +99,10 @@ Term 可以读取其他 term 的数据，但不应调用其他 term 的行为方
 
 - 校验 concrete runtime terms 和 `ManagerContext` 的 KernelData schema（leaf 类型）；
 - 收集 read program 的 sim input map；
-- 把 context 与 term 参数解析为 path-keyed resolved trees 和参数描述符（常量/叶子/树/sim key）；
+- 把 context 解析为 path-keyed resolved tree，把 term 参数解析为参数描述符
+  （常量/叶子/sim key）；carrier dataclass term 参数按常量透传，其结构化
+  fingerprint（字段名/类型/张量 dtype+shape+内容哈希/标量值）计入 program
+  fingerprint；
 - 校验方法签名、注解契约和 layout；
 - 产出 `ManagerLayout`、`ReadPlan`、resolved trees 与 per-term-kind typed call records，供 Torch 执行器调度。
 

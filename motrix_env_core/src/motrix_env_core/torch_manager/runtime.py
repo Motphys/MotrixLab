@@ -4,7 +4,7 @@
 """Generic Torch executor for resolved Manager programs.
 
 The runtime consumes the metadata produced by the manager resolver (read
-plan, layout, resolved context/term-argument trees, and per-term-kind typed
+plan, layout, the resolved context tree, and per-term-kind typed
 call records) and executes the manager term schedule — command ``update``
 hooks, rewards, terminations, command ``advance`` hooks for evaluate;
 per-group observation terms for observe; command ``reset_env`` hooks plus
@@ -45,7 +45,6 @@ from motrix_env_core.manager.resolver import (
     SimArg,
     SimResetTermCall,
     TerminationTermCall,
-    TreeArg,
 )
 from motrix_env_core.torch_manager.rand import draw_uniform
 
@@ -745,11 +744,7 @@ class TorchManagerRuntime:
         assert self._tree_tensors is not None
         args: list[Any] = []
         for arg in call.args:
-            if isinstance(arg, TreeArg):
-                leaves = self._tree_tensors[arg.tree_index]
-                host = self.program.prepared_trees[arg.tree_index].value
-                args.append(_Namespace(leaves, (), host, _leaf_lookup(leaves)))
-            elif isinstance(arg, LeafArg):
+            if isinstance(arg, LeafArg):
                 args.append(self._cache.tensor(inputs, arg.leaf.value))
             elif isinstance(arg, SimArg):
                 assert self._context_tensors is not None

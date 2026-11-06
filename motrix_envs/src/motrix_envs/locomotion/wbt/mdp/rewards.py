@@ -150,8 +150,8 @@ class GlobalBodyAngularVelocityRewardCfg(RewardTermCfg):
 class DofLimitParams:
     midpoint: torch.Tensor
     half_range: torch.Tensor
-    soft_limit: np.float32
-    cap: np.float32
+    soft_limit: float
+    cap: float
 
 
 def dof_limit_reward(ctx: ManagerContext, params: DofLimitParams) -> torch.Tensor:
@@ -171,8 +171,8 @@ class DofLimitRewardCfg(RewardTermCfg):
         params = DofLimitParams(
             midpoint=(action.joint_lower + action.joint_upper) * 0.5,
             half_range=(action.joint_upper - action.joint_lower) * 0.5,
-            soft_limit=np.float32(self.soft_limit),
-            cap=np.float32(self.cap),
+            soft_limit=float(self.soft_limit),
+            cap=float(self.cap),
         )
         return RewardTerm(dof_limit_reward, params)
 
