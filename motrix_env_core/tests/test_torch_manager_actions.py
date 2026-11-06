@@ -19,13 +19,15 @@ def _make_term(width: int, delayed: bool) -> JointPositionActionTerm:
     # Nonzero history catches off-by-one reads before fresh actions fill the ring.
     queue = np.arange(num_envs * width * num_actions, dtype=np.float32).reshape(num_envs, width, num_actions) / 8
     state = JointPositionActionState(
-        action_queue=queue,
-        action_ptr=np.asarray([width - 1], dtype=np.int64),
-        default_angles=np.asarray([0.25, -2.0, 0.75], dtype=np.float32),
-        joint_lower=np.full(num_actions, -np.inf, dtype=np.float32),
-        joint_upper=np.full(num_actions, np.inf, dtype=np.float32),
-        action_scales=np.asarray([0.5, 2.0, 0.0], dtype=np.float32),
-        delay_steps=np.arange(num_envs, dtype=np.int64) % width if delayed else np.zeros(num_envs, dtype=np.int64),
+        action_queue=torch.from_numpy(queue),
+        action_ptr=torch.from_numpy(np.asarray([width - 1], dtype=np.int64)),
+        default_angles=torch.from_numpy(np.asarray([0.25, -2.0, 0.75], dtype=np.float32)),
+        joint_lower=torch.from_numpy(np.full(num_actions, -np.inf, dtype=np.float32)),
+        joint_upper=torch.from_numpy(np.full(num_actions, np.inf, dtype=np.float32)),
+        action_scales=torch.from_numpy(np.asarray([0.5, 2.0, 0.0], dtype=np.float32)),
+        delay_steps=torch.from_numpy(
+            np.arange(num_envs, dtype=np.int64) % width if delayed else np.zeros(num_envs, dtype=np.int64)
+        ),
         # Keep native reset resampling deterministic without mocking its path.
         delay_lo=width - 1 if delayed else 0,
         delay_hi=width - 1 if delayed else 0,
@@ -36,23 +38,23 @@ def _make_term(width: int, delayed: bool) -> JointPositionActionTerm:
 def _exercise_process(process: Callable, *, width: int, delayed: bool) -> None:
     term = _make_term(width, delayed)
     state = term.state
-    queue = torch.from_numpy(state.action_queue.copy())
-    ptr = torch.from_numpy(state.action_ptr.copy())
-    delays = torch.from_numpy(state.delay_steps.copy())
-    scales = torch.from_numpy(state.action_scales.copy())
-    defaults = torch.from_numpy(state.default_angles.copy())
+    queue = state.action_queue.clone()
+    ptr = state.action_ptr.clone()
+    delays = state.delay_steps.clone()
+    scales = state.action_scales.clone()
+    defaults = state.default_angles.clone()
     rng = np.random.default_rng(17)
     for _ in range(2 * width + 1):
-        raw = rng.uniform(-5, 5, size=state.current().shape).astype(np.float32)
+        raw = rng.uniform(-5, 5, size=tuple(state.current().shape)).astype(np.float32)
         actions = torch.from_numpy(raw.copy())
         queue_before, ptr_before = queue.clone(), ptr.clone()
         targets, new_queue, new_ptr, current, previous = process(queue, ptr, actions, delays, scales, defaults)
         expected = term.process(raw)
         torch.testing.assert_close(targets, torch.from_numpy(expected))
-        torch.testing.assert_close(new_queue, torch.from_numpy(state.action_queue), rtol=0, atol=0)
-        torch.testing.assert_close(new_ptr, torch.from_numpy(state.action_ptr), rtol=0, atol=0)
-        torch.testing.assert_close(current, torch.from_numpy(state.current()), rtol=0, atol=0)
-        torch.testing.assert_close(previous, torch.from_numpy(state.previous()), rtol=0, atol=0)
+        torch.testing.assert_close(new_queue, state.action_queue, rtol=0, atol=0)
+        torch.testing.assert_close(new_ptr, state.action_ptr, rtol=0, atol=0)
+        torch.testing.assert_close(current, state.current(), rtol=0, atol=0)
+        torch.testing.assert_close(previous, state.previous(), rtol=0, atol=0)
         torch.testing.assert_close(queue, queue_before, rtol=0, atol=0)
         torch.testing.assert_close(ptr, ptr_before, rtol=0, atol=0)
         torch.testing.assert_close(actions, torch.from_numpy(raw), rtol=0, atol=0)
@@ -69,8 +71,8 @@ def test_joint_position_process_matches_native(width: int, delayed: bool) -> Non
 def _exercise_reset(reset: Callable, process: Callable) -> None:
     term = _make_term(4, True)
     state = term.state
-    queue = torch.from_numpy(state.action_queue.copy())
-    ptr = torch.from_numpy(state.action_ptr.copy())
+    queue = state.action_queue.clone()
+    ptr = state.action_ptr.clone()
     for mask in (
         np.asarray([False, True, False, True, False]),
         np.zeros(5, dtype=bool),
@@ -80,25 +82,25 @@ def _exercise_reset(reset: Callable, process: Callable) -> None:
         pointer_before = ptr.clone()
         queue_after = reset(queue, torch.from_numpy(mask))
         term.reset(np.flatnonzero(mask))
-        torch.testing.assert_close(queue_after, torch.from_numpy(state.action_queue), rtol=0, atol=0)
+        torch.testing.assert_close(queue_after, state.action_queue, rtol=0, atol=0)
         torch.testing.assert_close(queue, before, rtol=0, atol=0)
         torch.testing.assert_close(ptr, pointer_before, rtol=0, atol=0)
-        torch.testing.assert_close(ptr, torch.from_numpy(state.action_ptr), rtol=0, atol=0)
+        torch.testing.assert_close(ptr, state.action_ptr, rtol=0, atol=0)
         # Reset randomization belongs to the host, not the pure history helper.
-        delays = torch.from_numpy(state.delay_steps.copy())
+        delays = state.delay_steps.clone()
         raw = np.full((5, 3), 3.5, dtype=np.float32)
         targets, queue, ptr, current, previous = process(
             queue_after,
             ptr,
             torch.from_numpy(raw),
             delays,
-            torch.from_numpy(state.action_scales),
-            torch.from_numpy(state.default_angles),
+            state.action_scales,
+            state.default_angles,
         )
         torch.testing.assert_close(targets, torch.from_numpy(term.process(raw)))
-        torch.testing.assert_close(queue, torch.from_numpy(state.action_queue), rtol=0, atol=0)
-        torch.testing.assert_close(current, torch.from_numpy(state.current()), rtol=0, atol=0)
-        torch.testing.assert_close(previous, torch.from_numpy(state.previous()), rtol=0, atol=0)
+        torch.testing.assert_close(queue, state.action_queue, rtol=0, atol=0)
+        torch.testing.assert_close(current, state.current(), rtol=0, atol=0)
+        torch.testing.assert_close(previous, state.previous(), rtol=0, atol=0)
 
 
 def test_reset_action_history_matches_native_selected_lanes() -> None:

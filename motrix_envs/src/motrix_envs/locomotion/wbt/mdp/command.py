@@ -3,6 +3,8 @@
 
 """Command terms for manager-based whole-body tracking."""
 
+from dataclasses import dataclass
+
 import numpy as np
 import torch
 from omegaconf import MISSING
@@ -14,7 +16,6 @@ from motrix_env_core.manager import (
     CommandTerm,
     ManagerContext,
     ManagerEnv,
-    kernel_data,
     metric,
 )
 from motrix_env_core.manager.commands import ResetContext
@@ -53,7 +54,7 @@ def _sample_motion_step(
     return torch.where(zero_unit[:, 0] < start_zero_prob, torch.zeros_like(steps), steps)
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class WbtMotionCommand(CommandTerm):
     """Drive each environment through a shared whole-body reference-motion clip.
 
@@ -96,13 +97,15 @@ class WbtMotionCommand(CommandTerm):
 
     # Runtime buffers and tracked-body alignment metadata.
     reference_index: np.int64
-    target_body_position_relative: np.ndarray
-    target_body_orientation_relative: np.ndarray
+    target_body_position_relative: torch.Tensor
+    target_body_orientation_relative: torch.Tensor
 
-    # Host-side adaptive frame-sampling state and parameters.
-    adaptive_bin_failed_count: np.ndarray
-    adaptive_current_bin_failed_count: np.ndarray
-    sampling_cdf: np.ndarray
+    # Host-side adaptive frame-sampling state and parameters. Host hooks read
+    # and write them through zero-copy ``.numpy()`` views; kernels write the
+    # per-env members through the tensors themselves.
+    adaptive_bin_failed_count: torch.Tensor
+    adaptive_current_bin_failed_count: torch.Tensor
+    sampling_cdf: torch.Tensor
     start_at_timestep_zero_prob: np.float32
     hold_at_clip_end: bool
     sequential_clips: bool
@@ -115,22 +118,24 @@ class WbtMotionCommand(CommandTerm):
     # Kept as ``(num_envs, 1)`` per-env arrays: the kernel lowering hands each
     # lane a writable row view, so advance/reset_env can update the lane's
     # frame in place without a shared backing.
-    steps: np.ndarray = metric(name="motion_step", dtype=np.float32)
-    clip_ended: np.ndarray = metric()
+    steps: torch.Tensor = metric(name="motion_step", dtype=np.float32)
+    clip_ended: torch.Tensor = metric()
 
     def reset(self, ctx: ResetContext) -> None:
         """Update adaptive statistics and prepare sampling for selected environments."""
         env_ids = ctx.env_ids
-        if self.sampling_cdf.size:
+        cdf = self.sampling_cdf.numpy()
+        if cdf.size:
+            failed = self.adaptive_bin_failed_count.numpy()
             episode_failed = ctx.terminated[env_ids]
             if np.any(episode_failed):
-                failed_steps = self.steps[env_ids, 0][episode_failed]
-                num_bins = self.adaptive_bin_failed_count.size
+                failed_steps = self.steps.numpy()[env_ids, 0][episode_failed]
+                num_bins = failed.size
                 failed_bins = (failed_steps.astype(np.int64) * num_bins) // max(self.clip.joint_pos.shape[0], 1)
                 failed_bins = np.clip(failed_bins, 0, num_bins - 1)
-                self.adaptive_current_bin_failed_count[:] += np.bincount(failed_bins, minlength=num_bins).astype(
-                    np.float32
-                )
+                self.adaptive_current_bin_failed_count.numpy()[:] += np.bincount(
+                    failed_bins, minlength=num_bins
+                ).astype(np.float32)
             probabilities = self._sampling_probabilities()
             entropy = -float(np.sum(probabilities * np.log(probabilities + 1e-12)))
             entropy_norm = entropy / float(np.log(max(probabilities.size, 2)))
@@ -138,7 +143,7 @@ class WbtMotionCommand(CommandTerm):
             ctx.metrics["adaptive_sampling_entropy"] = entropy_norm
             ctx.metrics["adaptive_sampling_top1_prob"] = float(probabilities[top_bin])
             ctx.metrics["adaptive_sampling_top1_bin"] = float(top_bin) / float(probabilities.size)
-            ctx.metrics["adaptive_failure_mass"] = float(np.sum(self.adaptive_bin_failed_count))
+            ctx.metrics["adaptive_failure_mass"] = float(np.sum(failed))
             num_frames = self.clip.joint_pos.shape[0]
             max_step = num_frames - 1
             max_bin = int(np.clip(np.ceil(max_step * probabilities.size / max(num_frames, 1)), 1, probabilities.size))
@@ -149,22 +154,23 @@ class WbtMotionCommand(CommandTerm):
                 probabilities[:max_bin] = 1.0 / max_bin
             else:
                 probabilities /= total
-            self.sampling_cdf[:] = np.cumsum(probabilities, dtype=np.float32)
-            self.sampling_cdf[-1] = 1.0
+            cdf[:] = np.cumsum(probabilities, dtype=np.float32)
+            cdf[-1] = 1.0
 
     def on_transition(self) -> None:
         """Fold accumulated failures into the adaptive sampler once per step."""
-        if self.adaptive_bin_failed_count.size:
-            self.adaptive_bin_failed_count[:] = (
-                self.alpha * self.adaptive_current_bin_failed_count
-                + (np.float32(1.0) - self.alpha) * self.adaptive_bin_failed_count
+        failed = self.adaptive_bin_failed_count.numpy()
+        if failed.size:
+            failed[:] = self.alpha * self.adaptive_current_bin_failed_count.numpy() + (np.float32(1.0) - self.alpha) * (
+                failed
             )
-            self.adaptive_current_bin_failed_count.fill(0.0)
+            self.adaptive_current_bin_failed_count.numpy().fill(0.0)
 
     def _sampling_probabilities(self) -> np.ndarray:
         """Build normalized frame-bin probabilities from failure history."""
-        num_bins = self.adaptive_bin_failed_count.size
-        probability = self.adaptive_bin_failed_count + self.uniform_ratio / num_bins
+        failed = self.adaptive_bin_failed_count.numpy()
+        num_bins = failed.size
+        probability = failed + self.uniform_ratio / num_bins
         kernel_size = max(self.kernel_size, 1)
         if kernel_size > 1:
             kernel = np.asarray([self.kernel_lambda**i for i in range(kernel_size)], dtype=np.float32)
@@ -316,14 +322,16 @@ class WbtMotionCommandCfg(CommandCfg):
         return WbtMotionCommand(
             clip=source,
             reference_index=np.int64(reference_index),
-            steps=np.zeros((env.num_envs, 1), dtype=np.int64),
-            clip_ended=np.zeros((env.num_envs, 1), dtype=bool),
-            command=np.empty((env.num_envs, 2 * env.num_actuators), dtype=np.float32),
-            target_body_position_relative=np.empty((env.num_envs, *tracked_shape), dtype=np.float32),
-            target_body_orientation_relative=np.empty((env.num_envs, tracked_shape[0], 4), dtype=np.float32),
-            adaptive_bin_failed_count=np.zeros((num_bins,), dtype=np.float32),
-            adaptive_current_bin_failed_count=np.zeros((num_bins,), dtype=np.float32),
-            sampling_cdf=np.ones((num_bins,), dtype=np.float32) if num_bins else np.empty((0,), dtype=np.float32),
+            steps=torch.zeros((env.num_envs, 1), dtype=torch.int64),
+            clip_ended=torch.zeros((env.num_envs, 1), dtype=torch.bool),
+            command=torch.empty((env.num_envs, 2 * env.num_actuators), dtype=torch.float32),
+            target_body_position_relative=torch.empty((env.num_envs, *tracked_shape), dtype=torch.float32),
+            target_body_orientation_relative=torch.empty((env.num_envs, tracked_shape[0], 4), dtype=torch.float32),
+            adaptive_bin_failed_count=torch.zeros((num_bins,), dtype=torch.float32),
+            adaptive_current_bin_failed_count=torch.zeros((num_bins,), dtype=torch.float32),
+            sampling_cdf=torch.ones((num_bins,), dtype=torch.float32)
+            if num_bins
+            else torch.empty((0,), dtype=torch.float32),
             start_at_timestep_zero_prob=np.float32(self.start_at_timestep_zero_prob),
             hold_at_clip_end=self.hold_at_clip_end,
             sequential_clips=self.sequential_clips,

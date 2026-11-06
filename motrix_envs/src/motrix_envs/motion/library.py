@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from motrix_env_core.manager.kernel_data import Map
 from motrix_envs.motion.loader import MotrixMotion
@@ -104,15 +105,13 @@ class MotionLibrary:
         clip_offsets = np.zeros_like(clip_lengths)
         np.cumsum(clip_lengths[:-1], out=clip_offsets[1:])
         return WbtMotionClip(
-            **{
-                field: np.concatenate([getattr(segment, field) for segment in segments]) for field in _FRAME_AXIS_FIELDS
-            },
-            frame_clip_end=np.concatenate(
+            **{field: torch.cat([getattr(segment, field) for segment in segments]) for field in _FRAME_AXIS_FIELDS},
+            frame_clip_end=torch.cat(
                 [segment.frame_clip_end + offset for segment, offset in zip(segments, clip_offsets)]
             ),
             extensions=Map(
                 {
-                    name: MotionChannel(np.concatenate([segment.extensions[name].data for segment in segments]))
+                    name: MotionChannel(torch.cat([segment.extensions[name].data for segment in segments]))
                     for name in self.extension_channels
                 }
             ),

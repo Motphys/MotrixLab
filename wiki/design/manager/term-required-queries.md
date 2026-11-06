@@ -73,13 +73,13 @@ term 因此不需要在 dispatch 内部用字符串 key 访问 `ctx.sim`：query
 
 ## 5. 边界与已知限制
 
-- 收集范围是 reward、termination 和 observation term 的 `args`；command/action term 的 kernel_data
+- 收集范围是 reward、termination 和 observation term 的 `args`；command/action term 的 kernel-data dataclass
   走各自的 canonicalize 路径，不参与本机制。
 - 合成 key `terms.args[i]` 依赖收集顺序（配置映射顺序），属于内部执行元数据，不是面向任务的稳定命名
   契约；任务需要稳定 key 时应在 `queries.data` 中显式声明。
 - 不支持单环境多机器人的 per-entity key 命名空间；canonical key 是单数角色（"the robot"）。
 - model query 是静态数据，不经 read program：term 在 `__call__(env)` 时从 `env.model` 读出并烘焙进
-  term 的 `@kernel_data` params，与本机制无关。
+  term 的 kernel-data params，与本机制无关。
 
 ## 验收标准
 

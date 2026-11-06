@@ -4,24 +4,29 @@
 from __future__ import annotations
 
 import abc
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager.dispatch import dispatch
-from motrix_env_core.manager.kernel_data import canonicalize_kernel_data, kernel_data
+from motrix_env_core.manager.kernel_data import canonicalize_kernel_data
 
 if TYPE_CHECKING:
     from motrix_env_core.manager.env import ManagerEnv
     from motrix_env_core.sim.model import ActuatorSpec
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class ActionState:
     """Manager-owned raw-action history shared by every action type.
+
+    Array fields are zero-copy torch tensors over host-owned numpy arenas, so
+    host code may write through ``tensor.numpy()`` views while kernels write
+    through the tensors — both see one backing buffer.
 
     Attributes:
         action_queue: Raw policy actions, host ``(N, W, A)`` and kernel
@@ -30,25 +35,25 @@ class ActionState:
             slot. Only the manager advances it; partial reset leaves it intact.
     """
 
-    action_queue: np.ndarray
-    action_ptr: np.ndarray
+    action_queue: torch.Tensor
+    action_ptr: torch.Tensor
 
     @dispatch
-    def current(self) -> np.ndarray:
+    def current(self) -> torch.Tensor:
         """Return current raw actions: host ``(N, A)``, kernel lane ``(A,)``.
 
         The returned view shares history storage and does not advance the cursor.
         """
-        return self.action_queue[..., self.action_ptr[0], :]
+        return self.action_queue[:, self.action_ptr[0], :]
 
     @dispatch
-    def previous(self) -> np.ndarray:
+    def previous(self) -> torch.Tensor:
         """Return previous raw actions: host ``(N, A)``, kernel lane ``(A,)``.
 
         The returned view wraps around the ring without copying data.
         """
         ptr = (self.action_ptr[0] - 1) % self.action_queue.shape[-2]
-        return self.action_queue[..., ptr, :]
+        return self.action_queue[:, ptr, :]
 
 
 class ActionTerm(abc.ABC):
@@ -67,7 +72,7 @@ class ActionTerm(abc.ABC):
         state = self.state
         ptr = (int(state.action_ptr[0]) + 1) % state.action_queue.shape[1]
         state.action_ptr[0] = ptr
-        state.action_queue[:, ptr] = actions
+        state.action_queue.numpy()[:, ptr] = actions
         return self._process(actions)
 
     @abc.abstractmethod
@@ -76,7 +81,7 @@ class ActionTerm(abc.ABC):
 
     def reset(self, env_ids: np.ndarray) -> None:
         """Clear raw history and reset action-specific state for selected rows."""
-        self.state.action_queue[env_ids] = 0.0
+        self.state.action_queue.numpy()[env_ids] = 0.0
         self._reset(env_ids)
 
     @abc.abstractmethod

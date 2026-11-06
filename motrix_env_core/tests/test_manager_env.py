@@ -9,7 +9,7 @@ observation lifetimes, perf phases, and term validation can be asserted
 without a simulator backend.
 """
 
-from dataclasses import fields, replace
+from dataclasses import dataclass, fields, replace
 
 import gymnasium as gym
 import numpy as np
@@ -40,23 +40,22 @@ from motrix_env_core.manager import (  # noqa: E402
     RewardTermCfg,
     TerminationTerm,
     TerminationTermCfg,
-    kernel_data,
     metric,
 )
 from motrix_env_core.manager.dispatch import dispatch  # noqa: E402
 from motrix_env_core.manager.observations import create_observation_groups
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class _TestActionState(ActionState):
-    reset_flags: np.ndarray
-    source: np.ndarray
+    reset_flags: torch.Tensor
+    source: torch.Tensor
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class _SecondActionState(ActionState):
-    reset_flags: np.ndarray
-    source: np.ndarray
+    reset_flags: torch.Tensor
+    source: torch.Tensor
 
 
 class _TestActionTerm(ActionTerm):
@@ -64,10 +63,10 @@ class _TestActionTerm(ActionTerm):
         super().__init__(action_space, state)
 
     def _process(self, actions: np.ndarray) -> None:
-        self.state.source[...] = actions
+        self.state.source.copy_(torch.from_numpy(actions))
 
     def _reset(self, env_ids: np.ndarray) -> None:
-        self.state.reset_flags.fill(False)
+        self.state.reset_flags.fill_(False)
         self.state.reset_flags[env_ids] = True
 
 
@@ -76,10 +75,10 @@ class _SecondActionTerm(ActionTerm):
         super().__init__(action_space, state)
 
     def _process(self, actions: np.ndarray) -> None:
-        self.state.source[...] = actions
+        self.state.source.copy_(torch.from_numpy(actions))
 
     def _reset(self, env_ids: np.ndarray) -> None:
-        self.state.reset_flags.fill(False)
+        self.state.reset_flags.fill_(False)
         self.state.reset_flags[env_ids] = True
 
 
@@ -94,9 +93,9 @@ def _second_action_space(_: ManagerEnv, __: np.ndarray | None) -> gym.spaces.Box
     )
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class _ObservationParams:
-    offset: np.ndarray
+    offset: torch.Tensor
     scale: np.float32
 
 
@@ -115,7 +114,7 @@ class _InjectedObservationCfg(ObservationTermCfg):
         return ObsTerm(
             2,
             _injected_observation,
-            _ObservationParams(np.asarray([1.0], dtype=np.float32), np.float32(self.scale)),
+            _ObservationParams(torch.from_numpy(np.asarray([1.0], dtype=np.float32)), np.float32(self.scale)),
         )
 
 
@@ -197,10 +196,10 @@ class _TestActionCfg(ActionCfg):
         return _TestActionTerm(
             _test_action_space(env, actuator_indices),
             _TestActionState(
-                np.zeros((env.num_envs, 2, 1), dtype=np.float32),
-                np.zeros(1, dtype=np.int64),
-                np.zeros((env.num_envs, 1), dtype=bool),
-                np.zeros((env.num_envs, 1), dtype=np.float32),
+                torch.from_numpy(np.zeros((env.num_envs, 2, 1), dtype=np.float32)),
+                torch.from_numpy(np.zeros(1, dtype=np.int64)),
+                torch.from_numpy(np.zeros((env.num_envs, 1), dtype=bool)),
+                torch.from_numpy(np.zeros((env.num_envs, 1), dtype=np.float32)),
             ),
         )
 
@@ -213,10 +212,10 @@ class _SecondActionCfg(ActionCfg):
         return _SecondActionTerm(
             _second_action_space(env, actuator_indices),
             _SecondActionState(
-                np.zeros((env.num_envs, 2, 2), dtype=np.float32),
-                np.zeros(1, dtype=np.int64),
-                np.zeros((env.num_envs, 1), dtype=bool),
-                np.zeros((env.num_envs, 2), dtype=np.float32),
+                torch.from_numpy(np.zeros((env.num_envs, 2, 2), dtype=np.float32)),
+                torch.from_numpy(np.zeros(1, dtype=np.int64)),
+                torch.from_numpy(np.zeros((env.num_envs, 1), dtype=bool)),
+                torch.from_numpy(np.zeros((env.num_envs, 2), dtype=np.float32)),
             ),
         )
 
@@ -226,14 +225,14 @@ class _CounterCommandCfg(CommandCfg):
     def __call__(self, env: ManagerEnv) -> "_CounterCommand":
         shape = (env.num_envs, 1)
         return _CounterCommand(
-            double=np.zeros(shape, dtype=np.float32),
-            command=np.zeros(shape, dtype=np.float32),
+            double=torch.zeros(shape, dtype=torch.float32),
+            command=torch.zeros(shape, dtype=torch.float32),
         )
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class _CounterCommand(CommandTerm):
-    double: np.ndarray = metric()
+    double: torch.Tensor = metric()
 
     @staticmethod
     @dispatch
@@ -462,10 +461,11 @@ def test_rand_value_owns_seeded_per_environment_states() -> None:
     reproduced = _ManagerEnv(num_envs=3, rand_seed=7)._rand.state
     different = _ManagerEnv(num_envs=3, rand_seed=8)._rand.state
 
-    assert first.shape == (3, 1)
-    assert first.dtype == np.uint64
-    np.testing.assert_array_equal(first, reproduced)
-    assert not np.array_equal(first, different)
+    # The state is a signed-int64 tensor view over the per-lane uint64 bits.
+    assert tuple(first.shape) == (3, 1)
+    assert first.dtype == torch.int64
+    np.testing.assert_array_equal(first.numpy().view(np.uint64), reproduced.numpy().view(np.uint64))
+    assert not np.array_equal(first.numpy(), different.numpy())
 
 
 def test_step_perf_records_standard_and_manager_phases() -> None:
@@ -536,7 +536,7 @@ def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> 
         slice(3, 4),
     ]
 
-    action.state.source[:, 0] = [0.25, 0.75]
+    action.state.source[:, 0] = torch.tensor([0.25, 0.75])
     env.compute_transition(state)
     env.compute_observation(state)
 
@@ -582,9 +582,9 @@ def test_command_evaluation_updates_state_only_in_evaluate_kernel() -> None:
     assert env._compiled_manager_program is not None
     action = env.action_terms["test"]
     assert isinstance(action, ActionTerm)
-    action.state.source[:, 0] = [1.0, 2.0]
+    action.state.source[:, 0] = torch.tensor([1.0, 2.0])
     derived = _counter_command(env).double
-    derived.fill(-1.0)
+    derived.fill_(-1.0)
 
     env._refresh_sim_reads()
     inputs = env._resolved_inputs
@@ -604,7 +604,7 @@ def test_command_term_updates_lifecycle_and_selected_reset_ids() -> None:
     command = _counter_command(env).command
     np.testing.assert_array_equal(command, -1.0)
 
-    command[:] = [[1.0], [2.0], [3.0]]
+    command[:] = torch.tensor([[1.0], [2.0], [3.0]])
     action = env.action_terms["test"]
     state.terminated[:] = [False, True, False]
     env._reset_done_envs()
@@ -674,19 +674,24 @@ def test_final_observations_capture_command_before_reset_and_survive_steps(with_
 def test_final_observation_noise_uses_shared_observation_rng() -> None:
     env = _ManagerEnv()
     env.init_state()
-    rng_before = env._rand.state.copy()
+    rng_before = env._rand.state.clone()
     observe = env._task_program.observe_kernel
 
     def noisy_observe(inputs, outputs):
         observe(inputs, outputs)
         env._rand.state[:] += np.uint64(1)
-        outputs.policy_obs[:, 0] = env._rand.state[:, 0].astype(np.float32)
+        outputs.policy_obs[:, 0] = env._rand.state[:, 0].to(torch.float32)
 
     env._task_program = replace(env._task_program, observe_kernel=noisy_observe)
     final = env._capture_final_obs(np.array([0], dtype=np.int64))
-    np.testing.assert_array_equal(env._rand.state, rng_before + np.uint64(1))
+    np.testing.assert_array_equal(
+        env._rand.state.numpy().view(np.uint64), rng_before.numpy().view(np.uint64) + np.uint64(1)
+    )
     saved_final = final.obs.policy.copy()
-    np.testing.assert_array_equal(final.obs.policy[:, 0], (rng_before[[0], 0] + np.uint64(1)).astype(np.float32))
+    np.testing.assert_array_equal(
+        final.obs.policy[:, 0],
+        (rng_before[[0], 0] + 1).to(torch.float32).numpy(),
+    )
     env._execute_observe_kernel(env._resolved_inputs)
     np.testing.assert_array_equal(env._rand.state, rng_before + np.uint64(2))
     np.testing.assert_array_equal(final.obs.policy, saved_final)
@@ -698,7 +703,7 @@ def test_post_reset_observation_does_not_run_command_evaluation() -> None:
     assert env._compiled_manager_program is not None
     action = env.action_terms["test"]
     assert isinstance(action, ActionTerm)
-    action.state.source[:, 0] = [0.25, 0.5, 0.75]
+    action.state.source[:, 0] = torch.tensor([0.25, 0.5, 0.75])
     state.terminated[:] = [False, True, False]
     env._refresh_sim_reads()
     env._reset_done_envs()
@@ -729,10 +734,10 @@ def test_shared_arrays_in_terms_are_writable() -> None:
 
     assert isinstance(injected, ObsTerm)
     assert injected.args
-    assert injected.args[0].offset.flags.writeable
+    assert torch.is_tensor(injected.args[0].offset)
 
 
-def test_observation_term_must_be_kernel_data_with_instance_compute() -> None:
+def test_observation_term_must_be_a_term_with_instance_compute() -> None:
     class _InvalidObservation:
         def compute(self, env_id: int, out: torch.Tensor) -> None:
             out[0] = env_id

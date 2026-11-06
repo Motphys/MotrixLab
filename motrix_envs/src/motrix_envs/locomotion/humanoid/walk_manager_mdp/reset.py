@@ -3,6 +3,8 @@
 
 """Simulator reset terms for the humanoid velocity-tracking task."""
 
+from dataclasses import dataclass
+
 import numpy as np
 import torch
 
@@ -11,7 +13,6 @@ from motrix_env_core.manager import (
     ManagerContext,
     ResetTerm,
     ResetTermCfg,
-    kernel_data,
 )
 from motrix_env_core.manager.context import BuildContext
 from motrix_env_core.manager.kernel_data.map import Map
@@ -33,7 +34,7 @@ from motrix_envs.locomotion.humanoid.walk_manager_mdp.command import _uniform_ra
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.randomization import WalkRandomizationCfg
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class WalkResetParams:
     """Reset parameters, including in-kernel rough-terrain spawn sampling.
 
@@ -71,24 +72,24 @@ class WalkResetParams:
             base center of mass.
     """
 
-    default_joint_angles: np.ndarray
-    init_pose: np.ndarray
+    default_joint_angles: torch.Tensor
+    init_pose: torch.Tensor
     heightfield: HeightFieldGrid
     spawn_range: np.float32
     randomization_enabled: bool
-    kp_default: np.ndarray
-    damping_default: np.ndarray
-    link_mass_default: np.ndarray
+    kp_default: torch.Tensor
+    damping_default: torch.Tensor
+    link_mass_default: torch.Tensor
     base_link_index: np.int64
     base_mass_default: np.float32
-    base_com_default: np.ndarray
-    friction_default: np.ndarray
-    kp_range: np.ndarray
-    damping_range: np.ndarray
-    friction_range: np.ndarray
-    mass_scale_range: np.ndarray
-    base_mass_off_range: np.ndarray
-    com_noise: np.ndarray
+    base_com_default: torch.Tensor
+    friction_default: torch.Tensor
+    kp_range: torch.Tensor
+    damping_range: torch.Tensor
+    friction_range: torch.Tensor
+    mass_scale_range: torch.Tensor
+    base_mass_off_range: torch.Tensor
+    com_noise: torch.Tensor
 
 
 def _sample_spawn_xy(ctx: ManagerContext, params: WalkResetParams) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -226,8 +227,10 @@ class WalkStateResetCfg(ResetTermCfg):
             "joints_velocity": JointVelocityWrite(joint_names),
         }
         params = dict(
-            default_joint_angles=body.init_joint_pos,
-            init_pose=np.concatenate([body.init_base_position, body.init_base_quat]).astype(np.float32),
+            default_joint_angles=torch.from_numpy(np.ascontiguousarray(body.init_joint_pos, dtype=np.float32)),
+            init_pose=torch.from_numpy(
+                np.concatenate([body.init_base_position, body.init_base_quat]).astype(np.float32)
+            ),
             heightfield=ground_height_grid(ctx, self.ground_geom),
             spawn_range=np.float32(self.spawn_xy_range),
         )
@@ -250,41 +253,45 @@ class WalkStateResetCfg(ResetTermCfg):
             link_masses = np.asarray(others["randomize_link_masses"], dtype=np.float32)
             params.update(
                 randomization_enabled=True,
-                kp_default=np.asarray(others["actuator_kp"], dtype=np.float32),
-                damping_default=np.asarray(others["randomize_actuator_kd"], dtype=np.float32),
-                link_mass_default=link_masses,
+                kp_default=torch.from_numpy(np.asarray(others["actuator_kp"], dtype=np.float32)),
+                damping_default=torch.from_numpy(np.asarray(others["randomize_actuator_kd"], dtype=np.float32)),
+                link_mass_default=torch.from_numpy(link_masses),
                 base_link_index=np.int64(base_index),
                 base_mass_default=np.float32(link_masses[base_index]),
-                base_com_default=np.asarray(others["randomize_base_com"], dtype=np.float32),
-                friction_default=np.asarray(others["randomize_friction_default"], dtype=np.float32),
-                kp_range=np.asarray(randomization.kp_scale_range, dtype=np.float32),
-                damping_range=np.asarray(randomization.damping_scale_range, dtype=np.float32),
-                friction_range=np.asarray(
-                    (1.0, 1.0)
-                    if randomization.sliding_friction_range is None
-                    else randomization.sliding_friction_range,
-                    dtype=np.float32,
+                base_com_default=torch.from_numpy(np.asarray(others["randomize_base_com"], dtype=np.float32)),
+                friction_default=torch.from_numpy(np.asarray(others["randomize_friction_default"], dtype=np.float32)),
+                kp_range=torch.from_numpy(np.asarray(randomization.kp_scale_range, dtype=np.float32)),
+                damping_range=torch.from_numpy(np.asarray(randomization.damping_scale_range, dtype=np.float32)),
+                friction_range=torch.from_numpy(
+                    np.asarray(
+                        (1.0, 1.0)
+                        if randomization.sliding_friction_range is None
+                        else randomization.sliding_friction_range,
+                        dtype=np.float32,
+                    )
                 ),
-                mass_scale_range=np.asarray(randomization.link_mass_scale_range, dtype=np.float32),
-                base_mass_off_range=np.asarray(randomization.base_mass_offset_range, dtype=np.float32),
-                com_noise=np.asarray(randomization.base_com_offset_noise, dtype=np.float32),
+                mass_scale_range=torch.from_numpy(np.asarray(randomization.link_mass_scale_range, dtype=np.float32)),
+                base_mass_off_range=torch.from_numpy(
+                    np.asarray(randomization.base_mass_offset_range, dtype=np.float32)
+                ),
+                com_noise=torch.from_numpy(np.asarray(randomization.base_com_offset_noise, dtype=np.float32)),
             )
         else:
             params.update(
                 randomization_enabled=False,
-                kp_default=np.zeros(0, dtype=np.float32),
-                damping_default=np.zeros(0, dtype=np.float32),
-                link_mass_default=np.zeros(0, dtype=np.float32),
+                kp_default=torch.zeros(0, dtype=torch.float32),
+                damping_default=torch.zeros(0, dtype=torch.float32),
+                link_mass_default=torch.zeros(0, dtype=torch.float32),
                 base_link_index=np.int64(0),
                 base_mass_default=np.float32(0.0),
-                base_com_default=np.zeros(3, dtype=np.float32),
-                friction_default=np.zeros(3, dtype=np.float32),
-                kp_range=np.ones(2, dtype=np.float32),
-                damping_range=np.ones(2, dtype=np.float32),
-                friction_range=np.ones(2, dtype=np.float32),
-                mass_scale_range=np.ones(2, dtype=np.float32),
-                base_mass_off_range=np.zeros(2, dtype=np.float32),
-                com_noise=np.zeros(3, dtype=np.float32),
+                base_com_default=torch.zeros(3, dtype=torch.float32),
+                friction_default=torch.zeros(3, dtype=torch.float32),
+                kp_range=torch.ones(2, dtype=torch.float32),
+                damping_range=torch.ones(2, dtype=torch.float32),
+                friction_range=torch.ones(2, dtype=torch.float32),
+                mass_scale_range=torch.ones(2, dtype=torch.float32),
+                base_mass_off_range=torch.zeros(2, dtype=torch.float32),
+                com_noise=torch.zeros(3, dtype=torch.float32),
             )
 
         kernel = reset_walk_state_randomized if randomization.enabled else reset_walk_state

@@ -3,13 +3,13 @@
 
 """Static terrain-height grid shared by manager reset and reward terms."""
 
+from dataclasses import dataclass
+
 import numpy as np
 import torch
 
-from motrix_env_core.manager import kernel_data
 
-
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class HeightFieldGrid:
     """Static terrain grid for batched bilinear height lookup.
 
@@ -34,10 +34,10 @@ class HeightFieldGrid:
             ``constant``，忽略所有网格字段。
     """
 
-    heights: np.ndarray
-    origin: np.ndarray
-    spacing: np.ndarray
-    z0: np.ndarray
+    heights: torch.Tensor
+    origin: torch.Tensor
+    spacing: torch.Tensor
+    z0: torch.Tensor
     constant: np.float32
     enabled: bool
 

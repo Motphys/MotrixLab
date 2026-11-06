@@ -3,12 +3,13 @@
 
 """Reward terms for the manager-based ball-balance task."""
 
+from dataclasses import dataclass
+
 import numpy as np
 import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, RewardTerm, RewardTermCfg
-from motrix_env_core.manager.kernel_data import kernel_data
 from motrix_env_core.math.quaternion_array import rotate_inverse as rotate_inverse_batch
 
 
@@ -70,9 +71,9 @@ class BallUnderFeetRewardCfg(RewardTermCfg):
         return RewardTerm(ball_under_feet_reward, np.float32(self.sigma))
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class DofDefaultParams:
-    reference: np.ndarray
+    reference: torch.Tensor
     sigma: np.float32
 
 
@@ -102,5 +103,5 @@ class DofDefaultRewardCfg(RewardTermCfg):
         if missing:
             raise KeyError(f"key pose 'default' is missing joints: {missing}")
         reference = np.asarray([default[name] for name in joint_names], dtype=np.float32)
-        params = DofDefaultParams(reference, np.float32(self.sigma))
+        params = DofDefaultParams(torch.from_numpy(reference), np.float32(self.sigma))
         return RewardTerm(dof_default_reward, params)

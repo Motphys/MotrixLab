@@ -3,6 +3,8 @@
 
 """WBT command-backed observation terms."""
 
+from dataclasses import dataclass
+
 import numpy as np
 import torch
 
@@ -12,7 +14,6 @@ from motrix_env_core.manager import (
     ManagerContext,
     ObservationTermCfg,
     ObsTerm,
-    kernel_data,
 )
 from motrix_env_core.math import quaternion_array
 from motrix_env_core.math.quaternion_array import relative_orientation, rotate_inverse
@@ -118,9 +119,9 @@ class RobotBodyOrientationObsCfg(ObservationTermCfg):
         return ObsTerm(6 * num_tracked, robot_body_orientation_obs)
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class RelativePositionParams:
-    reference: np.ndarray
+    reference: torch.Tensor
     noise_amplitude: np.float32
 
 
@@ -162,7 +163,7 @@ class DofPosRelObsCfg(ObservationTermCfg):
         if missing:
             raise ValueError(f"RobotCfg {robot_name!r} key pose is missing queried joints: {missing}.")
         reference = np.asarray([positions[name] for name in queried_joints], dtype=np.float32)
-        params = RelativePositionParams(reference, np.float32(self.noise.amplitude))
+        params = RelativePositionParams(torch.from_numpy(reference), np.float32(self.noise.amplitude))
         return ObsTerm(reference.shape[0], dof_pos_rel_obs, params)
 
 

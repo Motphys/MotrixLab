@@ -4,6 +4,7 @@
 """Velocity-command and gait-phase command term."""
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -14,7 +15,6 @@ from motrix_env_core.manager import (
     CommandTerm,
     ManagerContext,
     ManagerEnv,
-    kernel_data,
     metric,
 )
 from motrix_env_core.manager.commands import ResetContext
@@ -84,7 +84,7 @@ def _resample_command(
     commands.copy_(torch.where(resample[:, None], sampled, commands))
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class WalkCommand(CommandTerm):
     """Per-environment velocity command and gait-phase clock.
 
@@ -125,15 +125,15 @@ class WalkCommand(CommandTerm):
             the ``command_steps`` metric).
     """
 
-    vel_limit_low: np.ndarray
-    vel_limit_high: np.ndarray
+    vel_limit_low: torch.Tensor
+    vel_limit_high: torch.Tensor
     stand_prob: np.float32
     resample_steps: np.float32
     gait_period_base: np.float32
     gait_period_width: np.float32
     curriculum_enabled: bool
-    penalty_scale: np.ndarray
-    avg_ep_len: np.ndarray
+    penalty_scale: torch.Tensor
+    avg_ep_len: torch.Tensor
     level_down_threshold: np.float32
     level_up_threshold: np.float32
     degree: np.float32
@@ -143,12 +143,12 @@ class WalkCommand(CommandTerm):
     # Per-environment state. ``phase`` and ``steps`` are published as metrics;
     # the kernel lowering hands each lane a writable row view.
     # Contract goal vector (inherited CommandTerm.command row view).
-    # command: np.ndarray
-    phase_offset: np.ndarray
-    sin_cos: np.ndarray
-    phase: np.ndarray
-    phase_step: np.ndarray
-    steps: np.ndarray = metric(name="command_steps", dtype=np.float32)
+    # command: torch.Tensor
+    phase_offset: torch.Tensor
+    sin_cos: torch.Tensor
+    phase: torch.Tensor
+    phase_step: torch.Tensor
+    steps: torch.Tensor = metric(name="command_steps", dtype=np.float32)
 
     @staticmethod
     @dispatch
@@ -216,18 +216,18 @@ class WalkCommand(CommandTerm):
         truncated), so the EMA sample matches the direct env's
         ``done = terminated | truncated``.
         """
-        ctx.metrics["penalty_scale"] = float(self.penalty_scale[0])
+        penalty_scale = self.penalty_scale.numpy()
+        avg_ep_len = self.avg_ep_len.numpy()
+        ctx.metrics["penalty_scale"] = float(penalty_scale[0])
         if not self.curriculum_enabled or ctx.env_ids.size == 0:
             return
-        ep_len = self.steps[ctx.env_ids, 0].astype(np.float64) + 1.0
-        self.avg_ep_len[0] = np.float32(0.99 * self.avg_ep_len[0] + 0.01 * float(ep_len.mean()))
-        if self.avg_ep_len[0] < self.level_down_threshold:
-            self.penalty_scale[0] *= np.float32(1.0 - self.degree)
-        elif self.avg_ep_len[0] > self.level_up_threshold:
-            self.penalty_scale[0] *= np.float32(1.0 + self.degree)
-        self.penalty_scale[0] = np.float32(
-            min(max(float(self.penalty_scale[0]), float(self.min_scale)), float(self.max_scale))
-        )
+        ep_len = self.steps.numpy()[ctx.env_ids, 0].astype(np.float64) + 1.0
+        avg_ep_len[0] = np.float32(0.99 * avg_ep_len[0] + 0.01 * float(ep_len.mean()))
+        if avg_ep_len[0] < self.level_down_threshold:
+            penalty_scale[0] *= np.float32(1.0 - self.degree)
+        elif avg_ep_len[0] > self.level_up_threshold:
+            penalty_scale[0] *= np.float32(1.0 + self.degree)
+        penalty_scale[0] = np.float32(min(max(float(penalty_scale[0]), float(self.min_scale)), float(self.max_scale)))
 
 
 @configclass(kw_only=True)
@@ -255,32 +255,36 @@ class WalkCommandCfg(CommandCfg):
     def __call__(self, env: ManagerEnv) -> WalkCommand:
         num_envs = env.num_envs
         return WalkCommand(
-            vel_limit_low=np.asarray(self.vel_limit[0], dtype=np.float32),
-            vel_limit_high=np.asarray(self.vel_limit[1], dtype=np.float32),
+            vel_limit_low=torch.from_numpy(np.asarray(self.vel_limit[0], dtype=np.float32)),
+            vel_limit_high=torch.from_numpy(np.asarray(self.vel_limit[1], dtype=np.float32)),
             stand_prob=np.float32(self.stand_prob),
             resample_steps=np.float32(max(int(round(self.resampling_time / self.ctrl_dt)), 1)),
-            phase_step=np.full(
-                (num_envs, 1),
-                np.float32(2.0 * math.pi * self.ctrl_dt / self.gait_period),
-                dtype=np.float32,
+            phase_step=torch.from_numpy(
+                np.full(
+                    (num_envs, 1),
+                    np.float32(2.0 * math.pi * self.ctrl_dt / self.gait_period),
+                    dtype=np.float32,
+                )
             ),
             gait_period_base=np.float32(self.gait_period),
             gait_period_width=np.float32(self.gait_period_randomization_width),
             curriculum_enabled=self.curriculum_enabled,
-            penalty_scale=np.full(
-                (1,),
-                self.initial_scale if self.curriculum_enabled else 1.0,
-                dtype=np.float32,
+            penalty_scale=torch.from_numpy(
+                np.full(
+                    (1,),
+                    self.initial_scale if self.curriculum_enabled else 1.0,
+                    dtype=np.float32,
+                )
             ),
-            avg_ep_len=np.zeros((1,), dtype=np.float32),
+            avg_ep_len=torch.from_numpy(np.zeros((1,), dtype=np.float32)),
             level_down_threshold=np.float32(self.level_down_threshold),
             level_up_threshold=np.float32(self.level_up_threshold),
             degree=np.float32(self.degree),
             min_scale=np.float32(self.min_scale),
             max_scale=np.float32(self.max_scale),
-            command=np.zeros((num_envs, 3), dtype=np.float32),
-            phase_offset=np.zeros((num_envs, 2), dtype=np.float32),
-            sin_cos=np.zeros((num_envs, 4), dtype=np.float32),
-            phase=np.zeros((num_envs, 2), dtype=np.float32),
-            steps=np.zeros((num_envs, 1), dtype=np.float32),
+            command=torch.zeros((num_envs, 3), dtype=torch.float32),
+            phase_offset=torch.zeros((num_envs, 2), dtype=torch.float32),
+            sin_cos=torch.zeros((num_envs, 4), dtype=torch.float32),
+            phase=torch.zeros((num_envs, 2), dtype=torch.float32),
+            steps=torch.zeros((num_envs, 1), dtype=torch.float32),
         )

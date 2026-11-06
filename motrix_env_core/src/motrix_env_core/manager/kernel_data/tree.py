@@ -4,36 +4,35 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, fields
-from typing import Annotated, Any, TypeVar, cast, get_args, get_origin, get_type_hints
+from dataclasses import dataclass, fields, is_dataclass
+from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
-from typing_extensions import dataclass_transform
+import numpy as np
+import torch
 
 from motrix_env_core.manager.kernel_data.map import Map
+from motrix_env_core.sim.read import SimDataQuery
 
-_KernelDataType = TypeVar("_KernelDataType", bound=type)
-_MARKER = "__motrix_kernel_data__"
 _TREE_SCHEMA_VERSION = 2
 _TREE_DEF_CACHE: dict[type, TreeClassDef] = {}
 
 
-@dataclass_transform(frozen_default=True, field_specifiers=())
-def kernel_data(cls: _KernelDataType) -> _KernelDataType:
-    """Declare one immutable logical class value that can be flattened for Numba kernels."""
-    _validate_declaration(cls)
-    decorated: type[Any] = dataclass(frozen=True, slots=True)(cls)
-    setattr(decorated, _MARKER, True)
-    return cast(_KernelDataType, decorated)
-
-
 def is_kernel_data_type(value_type: object) -> bool:
-    """Return whether a type is a concrete ``@kernel_data`` logical class."""
-    return isinstance(value_type, type) and value_type.__dict__.get(_MARKER) is True
+    """Return whether a type is a concrete kernel-data dataclass."""
+    return isinstance(value_type, type) and is_dataclass(value_type)
 
 
 def is_kernel_data(value: object) -> bool:
-    """Return whether a value is an instance of a concrete KernelData type."""
-    return is_kernel_data_type(type(value))
+    """Return whether a value is an instance of a kernel-data dataclass.
+
+    Simulator read queries are dataclasses too; they resolve through the read
+    program instead of the kernel-data tree and are excluded here.
+    """
+    return (
+        is_dataclass(value)
+        and not isinstance(value, (np.ndarray, torch.Tensor))
+        and not isinstance(value, SimDataQuery)
+    )
 
 
 class BaseDef:
@@ -58,7 +57,7 @@ class FieldDef:
     """Named child of a ``TreeClassDef``.
 
     Attributes:
-        name: Python dataclass field name on the logical KernelData class.
+        name: Python dataclass field name on the logical kernel-data class.
         tree_def: Logical tree definition for the field value.
     """
 
@@ -68,9 +67,9 @@ class FieldDef:
 
 @dataclass(frozen=True)
 class TreeClassDef(BaseDef):
-    """Root definition of one concrete ``@kernel_data`` class tree.
+    """Root definition of one concrete kernel-data class tree.
 
-    Every flattened KernelData value is represented by a ``TreeClassDef`` root.
+    Every flattened kernel-data value is represented by a ``TreeClassDef`` root.
     Its fields recursively contain nested class, map, and leaf definitions.
 
     Attributes:
@@ -121,9 +120,9 @@ class KernelMapDef(BaseDef):
 
 
 def flatten_kernel_data(value: Any) -> tuple[tuple[Any, ...], TreeClassDef]:
-    """Return zero-copy leaves and the concrete class tree definition for one KernelData value."""
+    """Return zero-copy leaves and the concrete class tree definition for one kernel-data value."""
     if not is_kernel_data(value):
-        raise TypeError(f"KernelData tree root must be a concrete @kernel_data value, got {type(value).__name__}.")
+        raise TypeError(f"KernelData tree root must be a dataclass value, got {type(value).__name__}.")
     tree_def, dynamic = _build_class_def(type(value), value, (), ())
     if not dynamic:
         cached = _TREE_DEF_CACHE.get(type(value))
@@ -303,22 +302,3 @@ def _metadata_identity(value: Any) -> Any:
 
 def _node_annotation(annotation: Any) -> Any:
     return get_args(annotation)[0] if get_origin(annotation) is Annotated else annotation
-
-
-def _validate_declaration(logical_type: type) -> None:
-    kernel_bases = [base for base in logical_type.__bases__ if is_kernel_data_type(base)]
-    if len(kernel_bases) > 1:
-        raise TypeError(f"KernelData {logical_type.__name__} must not inherit multiple KernelData bases.")
-    inherited_fields: set[str] = set()
-    for base in logical_type.__mro__[1:]:
-        if is_kernel_data_type(base):
-            inherited_fields.update(field.name for field in fields(base))
-        elif hasattr(base, "__dataclass_fields__") and base is not object:
-            raise TypeError(
-                f"KernelData {logical_type.__name__} must not inherit fields from ordinary dataclass {base.__name__}."
-            )
-    own_annotations = logical_type.__dict__.get("__annotations__", {})
-    overridden = inherited_fields.intersection((*logical_type.__dict__, *own_annotations))
-    if overridden:
-        names = ", ".join(sorted(overridden))
-        raise TypeError(f"KernelData {logical_type.__name__} must not override inherited fields: {names}.")

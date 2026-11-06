@@ -39,7 +39,7 @@ Manager 不是完整的 `step()` 替代品，也不编译物理推进。物理�
 ManagerBasedEnvCfg
   -> normalize manager groups
   -> create concrete terms
-  -> canonicalize @kernel_data terms
+  -> canonicalize kernel-data dataclass terms
   -> compile model/read/write/reset programs
   -> construct ManagerContext layout
   -> warm up generated kernels
@@ -90,10 +90,10 @@ reset 只处理指定的原始 `env_ids`：
 Term 不要求继承统一实现基类，但必须遵循对应 protocol：
 
 ```python
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class BaseActionState:
-    action_queue: np.ndarray  # host (N, W, A), lane (W, A); W >= 2
-    action_ptr: np.ndarray     # one shared cursor, advanced once per control step
+    action_queue: torch.Tensor  # host (N, W, A), lane (W, A); W >= 2
+    action_ptr: torch.Tensor    # one shared cursor, advanced once per control step
 
 
 @dataclass(frozen=True)

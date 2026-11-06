@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, NamedTuple, TypeVar, cast
 
 import numpy as np
+import torch
 
 from motrix_env_core.manager.kernel_data.resolved import ResolvedLeaf, ResolvedTree
 
@@ -74,7 +75,9 @@ def clone_resolved_trees(trees: tuple[ResolvedTree, ...]) -> tuple[ResolvedTree,
 
 
 def clone_kernel_value(value: T) -> T:
-    """Recursively clone arrays while preserving task-specific tuple types."""
+    """Recursively clone arrays and tensors while preserving task-specific tuple types."""
+    if isinstance(value, torch.Tensor):
+        return cast(T, value.clone())
     if isinstance(value, np.ndarray):
         # Warmup must use the same Numba array type as real execution: copy()
         # normalizes strided views to C layout and drops the readonly flag.
@@ -98,6 +101,11 @@ def clone_kernel_value(value: T) -> T:
 
 
 def _validate_value(value: Any, path: str, *, num_envs: int, batched: bool, writable: bool) -> None:
+    if isinstance(value, torch.Tensor):
+        if batched and (value.dim() == 0 or value.shape[0] != num_envs):
+            raise ValueError(f"{path} must have batch dimension {num_envs}, got shape {tuple(value.shape)}.")
+        return
+
     if isinstance(value, np.ndarray):
         if value.dtype.hasobject:
             raise TypeError(f"{path} must not use object dtype, got {value.dtype}.")

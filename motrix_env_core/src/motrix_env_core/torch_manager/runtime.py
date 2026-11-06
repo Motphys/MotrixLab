@@ -113,14 +113,29 @@ class _TensorCache:
         key = id(value)
         tensor = tensors.get(key)
         if tensor is None:
-            if isinstance(value, np.ndarray):
-                # 0-dim scalar leaves are configuration constants (body
+            if isinstance(value, torch.Tensor):
+                # 0-dim tensor leaves are configuration constants (body
                 # indices, sizes, noise amplitudes, mode flags); as tensors
                 # they force tensor-dependent control flow that Dynamo cannot
                 # trace (``if amplitude != 0`` / ``if sequential_clips``) and
                 # a scalar extraction Inductor cannot compile. Python scalars
                 # carry no dtype-precision concern and specialize branches at
-                # trace time.
+                # trace time. Non-0-dim tensors are already zero-copy views
+                # over their owning arenas and pass through unchanged.
+                if value.dim() == 0:
+                    if value.dtype in (torch.int64, torch.int32):
+                        tensors[key] = int(value)
+                        return tensors[key]
+                    if value.dtype in (torch.float32, torch.float64):
+                        tensors[key] = float(value)
+                        return tensors[key]
+                    if value.dtype is torch.bool:
+                        tensors[key] = bool(value)
+                        return tensors[key]
+                tensors[key] = value
+                return value
+            if isinstance(value, np.ndarray):
+                # 0-dim numpy scalar leaves follow the same rule.
                 if value.shape == ():
                     if np.issubdtype(value.dtype, np.integer):
                         tensors[key] = int(value)
@@ -224,6 +239,12 @@ class _Namespace:
         if self._host is None:
             raise AttributeError(name)
         value = getattr(self._host, name)
+        if isinstance(value, torch.Tensor):
+            # Host records keep tensor fields; expose the same 0-dim
+            # integer-constant rule as _TensorCache.tensor.
+            if value.dim() == 0 and value.dtype in (torch.int64, torch.int32):
+                return int(value)
+            return value
         if isinstance(value, np.ndarray):
             # Same 0-dim integer-constant rule as _TensorCache.tensor.
             if value.shape == () and np.issubdtype(value.dtype, np.integer):

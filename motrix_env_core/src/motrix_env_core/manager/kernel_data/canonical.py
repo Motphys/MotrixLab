@@ -1,9 +1,10 @@
-# Copyright Motphys Technology Co., Ltd. 2025, 2026
+# Copyright Motrix Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import TypeVar, cast
 
 import numpy as np
+import torch
 
 from motrix_env_core.manager.kernel_data.lowering import KernelDataLowering
 from motrix_env_core.manager.kernel_data.tree import (
@@ -16,12 +17,15 @@ KernelDataType = TypeVar("KernelDataType")
 
 
 def canonicalize_kernel_data(value: KernelDataType, *, context: str) -> KernelDataType:
-    """Copy one KernelData value into environment-owned backing arrays."""
+    """Copy one kernel-data value into environment-owned backing arrays."""
     if not is_kernel_data(value):
-        raise TypeError(f"{context} must return a concrete @kernel_data, got {type(value).__name__}.")
+        raise TypeError(f"{context} must return a concrete kernel-data dataclass, got {type(value).__name__}.")
     leaves, tree_def = flatten_kernel_data(value)
     KernelDataLowering().lower(tree_def, context=context)
-    copied = tuple(leaf.copy() if isinstance(leaf, np.ndarray) else leaf for leaf in leaves)
+    copied = tuple(
+        leaf.clone() if isinstance(leaf, torch.Tensor) else leaf.copy() if isinstance(leaf, np.ndarray) else leaf
+        for leaf in leaves
+    )
     return cast(KernelDataType, unflatten_kernel_data(tree_def, copied))
 
 

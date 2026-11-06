@@ -3,6 +3,7 @@
 
 """WBT command-backed reward terms."""
 
+from dataclasses import dataclass
 from typing import cast
 
 import numpy as np
@@ -10,7 +11,6 @@ import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, RewardTerm, RewardTermCfg
-from motrix_env_core.manager.kernel_data import kernel_data
 from motrix_env_core.math.quaternion_array import rotation_distance
 from motrix_env_core.mdp.action import JointPositionActionState
 
@@ -146,10 +146,10 @@ class GlobalBodyAngularVelocityRewardCfg(RewardTermCfg):
         return RewardTerm(global_body_angular_velocity_reward, np.float32(self.sigma))
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class DofLimitParams:
-    midpoint: np.ndarray
-    half_range: np.ndarray
+    midpoint: torch.Tensor
+    half_range: torch.Tensor
     soft_limit: np.float32
     cap: np.float32
 

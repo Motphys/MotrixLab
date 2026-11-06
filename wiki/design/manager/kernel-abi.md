@@ -2,8 +2,8 @@
 
 ## 摘要
 
-本文定义 Manager term 的数据 ABI：`@kernel_data` logical tree 如何解析为
-path-keyed 的 resolved tree，`ManagerContext` 如何以整批张量
+本文定义 Manager term 的数据 ABI：kernel-data dataclass（plain frozen dataclass）
+logical tree 如何解析为 path-keyed 的 resolved tree，`ManagerContext` 如何以整批张量
 提供固定 namespace，以及 metric backing 的 ownership 语义。任务开发者只需遵守
 [Manager Task API](./task-authoring.md) 中的 term 协议；数值执行器见 [Torch 执行器设计](./torch-executor.md)，
 backend 读侧和 simulator 边界见 [SimBackend](./sim-backend.md)。
@@ -13,15 +13,16 @@ backend 读侧和 simulator 边界见 [SimBackend](./sim-backend.md)。
 `ManagerContext` 是 term dispatch 的唯一 manager/runtime 输入入口：
 
 ```python
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class ManagerContext:
-    env_id: np.ndarray
+    env_id: torch.Tensor
     actions: Map
     commands: Map
+    metrics: Map[np.ndarray]
     rand: RandValue
     sim: Map
     dt: np.float32
-    sim_reset_requested: np.ndarray
+    sim_reset_requested: torch.Tensor
 ```
 
 Context 不包含 config、provider、backend handle、dynamic Python container 或 generic `states` / `resources` store。
@@ -55,7 +56,8 @@ dof_pos = ctx.sim["robot_dof_pos"]
 
 | 类型 | term 访问语义 |
 | --- | --- |
-| `np.ndarray` | 完整 ndarray 引用，term 按自己的契约决定第 0 维是否为 batch 维 |
+| `torch.Tensor` | term 拥有字段的默认类型。张量是宿主 numpy arena 之上的零拷贝视图（`torch.from_numpy`）；host 侧代码可通过 `tensor.numpy()` 读写同一 backing |
+| `np.ndarray` | 完整 ndarray 引用，term 按自己的契约决定第 0 维是否为 batch 维；SimBackend 读侧 arena（`ctx.sim`）与 metric backing 保持 ndarray |
 | Python scalar | 所有环境使用同一个标量 |
 | 固定 dtype NumPy scalar | 所有环境使用同一个定 dtype 标量 |
 
@@ -64,14 +66,16 @@ dof_pos = ctx.sim["robot_dof_pos"]
 
 ## 4. Logical tree 与 resolved tree
 
-`@kernel_data` 支持有序、可逆的 record tree：
+Kernel-data record 是 plain frozen dataclass（`@dataclass(frozen=True, slots=True)`，
+不再有专用装饰器），支持有序、可逆的 record tree：
 
 ```python
 leaves, tree_def = flatten_kernel_data(value)
 rebuilt = unflatten_kernel_data(tree_def, leaves)
 ```
 
-Record 可以嵌套另一个 KernelData record；不支持 multiple inheritance、覆盖 inherited field、普通 dataclass、递归结构、dict、list、字符串、object array 或 backend handle。
+Record 可以嵌套另一个 kernel-data record；不支持递归结构、dict、list、字符串、object array 或 backend handle
+（SimDataQuery 是 dataclass 但通过 read program 解析，不属于 kernel-data tree）。
 
 Logical tree 与 execution lowering 分离：同一 concrete value 在 host term 和 context 中保留相同的 tree schema，
 resolver 产出 path-keyed 的 resolved tree（leaf 引用），运行时据此构建 namespace 视图。只有 ndarray/scalar leaves 可以成为 resolved leaves；term 内不应产生稳态临时大数组分配。

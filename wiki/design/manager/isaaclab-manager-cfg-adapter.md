@@ -2,7 +2,7 @@
 
 ## 摘要
 
-本设计定义一个面向 IsaacLab manager-based 任务配置的薄适配层，目标是尽量保留用户熟悉的 ManagerCfg 分组、`func + params`、term 命名、嵌套覆写和 selector 表达。Torch 批量自定义 MDP 函数在程序构建时被特化为私有 concrete `@kernel_data` Term，selector 被归一化为显式 `SimDataQuery`。适配层不直接执行任意 IsaacLab Torch callback，也不改变 [Manager Task API](./task-authoring.md) 和 [Manager Runtime](./runtime.md) 中的 Torch 执行器边界。
+本设计定义一个面向 IsaacLab manager-based 任务配置的薄适配层，目标是尽量保留用户熟悉的 ManagerCfg 分组、`func + params`、term 命名、嵌套覆写和 selector 表达。Torch 批量自定义 MDP 函数在程序构建时被特化为私有 concrete kernel-data dataclass Term，selector 被归一化为显式 `SimDataQuery`。适配层不直接执行任意 IsaacLab Torch callback，也不改变 [Manager Task API](./task-authoring.md) 和 [Manager Runtime](./runtime.md) 中的 Torch 执行器边界。
 
 本文是目标设计，不表示下述 API 均已实现。兼容基线参考本地 IsaacLab 快照 `21bcb476b2`；该快照检查时落后 `origin/main` 202 个 commit，因此不声称覆盖所有上游版本。
 
@@ -14,7 +14,7 @@
 IsaacLab-like ManagerCfg
   -> configuration normalization
   -> native TermCfg.__call__() / functional term generation
-  -> concrete @kernel_data Term
+  -> concrete kernel-data dataclass Term
   -> ManagerContext / SimDataQuery / ReadPlan
   -> Torch executor（torch.compile kernel，整批张量）
 ```
@@ -24,14 +24,14 @@ IsaacLab-like ManagerCfg
 - 用户可以继续按 action、command、observation、reward、termination 和 event 组织配置。
 - 配置层可接受 IsaacLab 常见的嵌套属性修改和以 `None` 删除 term。
 - 每个被接受的 term 最终必须成为 concrete runtime term；native typed cfg 直接创建，functional cfg 由框架在构建期生成。
-- [`@kernel_data`](./kernel-abi.md)、[`ManagerContext`](./kernel-abi.md) 和 [SimDataQuery 读侧编译](./sim-read-program.md) 的契约保持不变。
+- [kernel-data dataclass](./kernel-abi.md)、[`ManagerContext`](./kernel-abi.md) 和 [SimDataQuery 读侧编译](./sim-read-program.md) 的契约保持不变。
 
 非目标：
 
 - 不直接执行 IsaacLab 中以 `env` 为参数的通用 Python/Torch `func`。
 - 不允许 term 隐式读取整个 environment 或在 kernel 外隐藏 simulator 依赖。
 - 不静默忽略 noise、clip、history 等未支持选项。
-- 不让 callable、`dict[str, Any]` 或完整 environment 进入 kernel_data ABI 或编译图。
+- 不让 callable、`dict[str, Any]` 或完整 environment 进入 kernel-data ABI 或编译图。
 - 不为表面兼容牺牲 typed cfg、compiler-visible dependency 或批量 Torch kernel。
 
 ## 2. 当前主要差异
@@ -106,7 +106,7 @@ def track_lin_vel_xy_exp(
 `func + params` normalizer 使用函数签名绑定 keyword params，再按参数值的实际类型生成 concrete Term。对上述配置，等价的内部结果是：
 
 ```python
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class _GeneratedTrackLinVelXYExp:
     std: np.float32
 
@@ -126,9 +126,9 @@ class _GeneratedTrackLinVelXYExp:
 | --- | --- |
 | 数值标量 | 转换为类型确定的 Term field，例如 `np.float32` |
 | `str` 或 enum | 嵌入生成调用作为 compile-time literal；它在 MDP 函数中可以用作 command/map key 或普通常量 |
-| `np.ndarray` | 转换为具有明确 shared/per-env scope 的 typed field |
+| `np.ndarray` / `torch.Tensor` | 转换为具有明确 shared/per-env scope 的 typed tensor field |
 | `SceneEntityCfg` | 根据值的 selector 类型生成并去重 `SimDataQuery`，将解析后的 kernel 输入传给 MDP 计算 |
-| nested `@kernel_data` | 作为 typed subtree flatten/lower |
+| nested kernel-data record | 作为 typed subtree flatten/lower |
 | 任意 Python object、closure 或未支持容器 | 在构建期报出包含 group/term/param 路径的错误 |
 
 生成的 Term class 是 compiler 实现细节，应按 `(term kind, func fingerprint, param schema, structural literals)` 缓存。数值参数只改变 Term 实例，不生成新类型；改变 string/enum/selector 属于结构配置变化，需要重建 program。调试输出和错误必须引用原始 `func` 与 `params` 路径，不向用户暴露 `_Generated*` 类名。
@@ -189,7 +189,7 @@ self.rewards.undesired_contacts = None
 - 提供 backend-neutral `SceneEntityCfg`，归一化为显式、可去重的 `SimDataQuery`。
 - 保留 `.weight = ...` 与 `term = None` 等嵌套覆写方式。
 - 对无状态 Reward/Termination 接受 Torch 批量 `func + params`，自动生成 concrete Term，不要求用户注册 factory。
-- `params` 字典只存在于 host config，不进入 kernel_data ABI 或编译图。
+- `params` 字典只存在于 host config，不进入 kernel-data ABI 或编译图。
 
 ### P1：Observation 常用选项
 

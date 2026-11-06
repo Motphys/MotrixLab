@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import torch
 
 from motrix_env_core.manager.fingerprint import function_fingerprint
 from motrix_env_core.manager.kernel_data.methods import dispatch_methods
@@ -22,7 +23,7 @@ _LAYOUT_CACHE: dict[
 
 @dataclass(frozen=True)
 class KernelLeafLayout:
-    """Lowered ABI description of one logical KernelData leaf.
+    """Lowered ABI description of one logical kernel-data leaf.
 
     Attributes:
         tree_def: Logical leaf definition that owns the path and annotation.
@@ -83,7 +84,7 @@ class KernelMapLayout:
 
 @dataclass(frozen=True)
 class KernelRecordLayout:
-    """Lowered schema for one concrete ``@kernel_data`` class tree.
+    """Lowered schema for one concrete kernel-data class tree.
 
     Attributes:
         tree_def: Logical record definition being lowered.
@@ -98,7 +99,7 @@ class KernelRecordLayout:
 
     @property
     def logical_type(self) -> type:
-        """Return the host ``@kernel_data`` type represented by this layout."""
+        """Return the host kernel-data type represented by this layout."""
         return self.tree_def.logical_type
 
 
@@ -174,7 +175,7 @@ class KernelDataLowering:
                 if value_type is None:
                     raise TypeError(
                         f"{context} KernelData {tree_def.logical_type.__name__}."
-                        f"{'.'.join(field.tree_def.path)} expected np.ndarray or numeric scalar."
+                        f"{'.'.join(field.tree_def.path)} expected a tensor, an ndarray, or a numeric scalar."
                     )
                 child = KernelLeafLayout(field.tree_def, value_type, slot_index)
                 slot_index += 1
@@ -209,7 +210,8 @@ class KernelDataLowering:
                 value_type = self._leaf_type(entry.tree_def.annotation)
                 if value_type is None:
                     raise TypeError(
-                        f"{context} Map {'.'.join(entry.tree_def.path)} expected np.ndarray or numeric scalar."
+                        f"{context} Map {'.'.join(entry.tree_def.path)} expected a tensor, an ndarray, or a numeric "
+                        "scalar."
                     )
                 child = KernelLeafLayout(entry.tree_def, value_type, slot_index)
                 slot_index += 1
@@ -245,7 +247,7 @@ class KernelDataLowering:
 
     @staticmethod
     def _leaf_type(annotation: Any) -> type[Any] | None:
-        if annotation is np.ndarray:
+        if annotation in (np.ndarray, torch.Tensor):
             return annotation
         if annotation in {bool, int, float}:
             return annotation

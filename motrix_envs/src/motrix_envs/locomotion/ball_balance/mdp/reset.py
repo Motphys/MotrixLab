@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import torch
 
@@ -14,7 +16,7 @@ from motrix_env_core.manager import (
     ResetTerm,
     ResetTermCfg,
 )
-from motrix_env_core.manager.kernel_data import Map, kernel_data
+from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.math.quaternion_array import from_euler
 from motrix_env_core.sim import (
     BodyAngularVelocityWrite,
@@ -125,11 +127,11 @@ class BodyRotVelResetCfg(ResetTermCfg):
         )
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class DofResetParams:
-    default_pos: np.ndarray
-    joint_lower: np.ndarray
-    joint_upper: np.ndarray
+    default_pos: torch.Tensor
+    joint_lower: torch.Tensor
+    joint_upper: torch.Tensor
     noise_scale: np.float32
 
 
@@ -168,9 +170,9 @@ class BodyDofPosResetCfg(ResetTermCfg):
         return ResetTerm(
             _reset_body_dof_pos,
             DofResetParams(
-                default_pos=default_pos,
-                joint_lower=joint_lower,
-                joint_upper=joint_upper,
+                default_pos=torch.from_numpy(default_pos),
+                joint_lower=torch.from_numpy(joint_lower),
+                joint_upper=torch.from_numpy(joint_upper),
                 noise_scale=np.float32(self.noise * self.noise_scale),
             ),
             writes={"position": JointPositionWrite(joints), "velocity": JointVelocityWrite(joints)},

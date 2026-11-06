@@ -3,6 +3,7 @@
 
 import numpy as np
 import pytest
+import torch
 
 from motrix_envs.motion import MotionLibrary, MotrixMotion, WbtMotionClip
 from motrix_envs.motion.loader import MotionFormatError
@@ -110,7 +111,7 @@ def test_library_emits_per_frame_clip_boundaries(tmp_path):
     clip = MotionLibrary([tmp_path / "a.npz", tmp_path / "b.npz", tmp_path / "c.npz"], **_TASK_ORDER).assemble()
 
     np.testing.assert_array_equal(clip.frame_clip_end, [5] * 6 + [9] * 4 + [14] * 5)
-    assert clip.frame_clip_end.dtype == np.int64
+    assert clip.frame_clip_end.dtype == torch.int64
 
 
 @pytest.mark.parametrize("directory_source", [False, True])
@@ -276,7 +277,7 @@ def test_wbt_motion_clip_loads_declared_extension_channel(tmp_path):
         extension_channels=("smpl_joints",),
     )
     np.testing.assert_array_equal(clip.extensions["smpl_joints"].data, motion.extensions["smpl_joints"])
-    assert clip.extensions["smpl_joints"].data.flags.c_contiguous
+    assert clip.extensions["smpl_joints"].data.is_contiguous()
 
     with pytest.raises(MotionFormatError, match="does not provide declared extension channel"):
         WbtMotionClip.create(

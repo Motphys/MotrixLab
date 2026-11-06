@@ -3,9 +3,10 @@
 
 """SplitMix64 PRNG primitives for manager environments."""
 
-import numpy as np
+from dataclasses import dataclass
 
-from motrix_env_core.manager.kernel_data import kernel_data
+import numpy as np
+import torch
 
 _GOLDEN_RATIO_64 = np.uint64(0x9E3779B97F4A7C15)
 _ENV_SALT_64 = np.uint64(0xD2B74407B1CE6E93)
@@ -13,15 +14,19 @@ _MIX_MULTIPLIER_1 = np.uint64(0xBF58476D1CE4E5B9)
 _MIX_MULTIPLIER_2 = np.uint64(0x94D049BB133111EB)
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class RandValue:
-    """Mutable per-environment PRNG state shared by manager terms."""
+    """Mutable per-environment PRNG state shared by manager terms.
 
-    state: np.ndarray
+    ``state`` is a signed-int64 torch view over the per-lane uint64 bit
+    buffer; the bit pattern is the SplitMix64 state.
+    """
+
+    state: torch.Tensor
 
     def next_uniform(self) -> np.float32:
         """Advance this environment's PRNG and return a value in ``[-1, 1)``."""
-        return next_uniform(self.state)
+        return next_uniform(self.state.numpy().view(np.uint64))
 
 
 def initialize_rand_states(num_envs: int, rand_seed: int) -> np.ndarray:

@@ -1,49 +1,50 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, dataclass
 
 import numpy as np
 import pytest
+import torch
 
 from motrix_env_core.manager.kernel_data import (
     KernelDataLowering,
     Map,
     flatten_kernel_data,
+    is_kernel_data,
     iter_layout_leaves,
-    kernel_data,
     unflatten_kernel_data,
 )
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class _Pose:
     position: np.ndarray
     orientation: np.ndarray
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class _RobotBase:
     velocity: np.ndarray
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class _Robot(_RobotBase):
     pose: _Pose
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class _Tracking:
     robot: _Robot
     phase: np.float32
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class _MappedValues:
     values: Map
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class _ArrayMapValues:
     values: Map[np.ndarray]
 
@@ -81,6 +82,19 @@ def test_kernel_data_flatten_is_zero_copy_and_rebuilds_host_value() -> None:
     assert rebuilt.phase == np.float32(0.25)
 
 
+def test_kernel_data_accepts_tensor_leaves() -> None:
+    @dataclass(frozen=True, slots=True)
+    class _Tensors:
+        buffer: torch.Tensor
+
+    buffer = torch.zeros((2, 3), dtype=torch.float32)
+    value = _Tensors(buffer)
+    leaves, tree_def = flatten_kernel_data(value)
+    assert leaves == (buffer,)
+    layout = KernelDataLowering().lower(tree_def, context="test")
+    assert iter_layout_leaves(layout)[0].value_type is torch.Tensor
+
+
 def test_kernel_data_schema_fingerprint_ignores_values() -> None:
     first_value = _Tracking(
         _Robot(np.asarray([[1.0]], dtype=np.float32), _Pose(np.asarray([[2.0]]), np.asarray([3.0]))),
@@ -113,28 +127,16 @@ def test_map_schema_changes_tree_and_layout_identity() -> None:
 
 
 def test_kernel_data_rejects_unsupported_leaf() -> None:
-    @kernel_data
+    @dataclass(frozen=True, slots=True)
     class _Invalid:
         label: str
 
     _, tree_def = flatten_kernel_data(_Invalid("invalid"))
-    with pytest.raises(TypeError, match="expected np.ndarray"):
+    with pytest.raises(TypeError, match="expected a tensor"):
         KernelDataLowering().lower(tree_def, context="invalid")
 
 
-def test_kernel_data_rejects_inherited_field_override_before_slots_transform() -> None:
-    @kernel_data
-    class _Base:
-        value: int = 1
-
-    with pytest.raises(TypeError, match="must not override inherited fields: value"):
-
-        @kernel_data
-        class _AnnotationOverride(_Base):
-            value: int = 2
-
-    with pytest.raises(TypeError, match="must not override inherited fields: value"):
-
-        @kernel_data
-        class _DefaultOverride(_Base):
-            value = 2
+def test_ndarrays_and_tensors_are_not_kernel_data_values() -> None:
+    assert not is_kernel_data(np.zeros(2))
+    assert not is_kernel_data(torch.zeros(2))
+    assert is_kernel_data(_Pose(np.zeros(2), np.zeros(2)))

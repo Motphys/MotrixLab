@@ -3,7 +3,7 @@
 ## 摘要
 
 本文面向任务开发者，说明如何使用 `ManagerBasedEnvCfg` 和 Manager term 创建一个 config-driven `ManagerEnv`。
-内容覆盖任务文件组织、manager groups、term 创建、`SimDataQuery` 参数、`@kernel_data` 字段和常用 term 接口。
+内容覆盖任务文件组织、manager groups、term 创建、`SimDataQuery` 参数、kernel-data dataclass 字段和常用 term 接口。
 运行时边界见 [Manager Runtime](./runtime.md)，kernel ABI 见 [Manager Kernel ABI](./kernel-abi.md)。
 
 ## 1. 任务文件组织
@@ -75,13 +75,13 @@ class MyTaskEnvCfg(ManagerBasedEnvCfg):
 
 ## 3. Term 创建与字段
 
-各 term cfg 通过 `__call__()` 创建 concrete runtime term。Concrete term 使用 `@kernel_data` 声明固定字段：
+各 term cfg 通过 `__call__()` 创建 concrete runtime term。Concrete term 使用 plain frozen dataclass（kernel-data record）声明固定字段：
 
 ```python
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class TrackingErrorTermination:
     threshold: np.float32
-    error: np.ndarray = metric()
+    error: torch.Tensor = metric()
 
     def compute(self, ctx: ManagerContext) -> bool:
         value = ...
@@ -89,12 +89,12 @@ class TrackingErrorTermination:
         return value > self.threshold
 ```
 
-`@kernel_data` 的字段必须有类型标注，结构在构造期固定。Term record 不可替换字段，但 owner 可以按契约原地更新 ndarray backing。
+kernel-data record 的字段必须有类型标注，结构在构造期固定。Term record 不可替换字段，但 owner 可以按契约原地更新 backing（tensor 写入或经 `tensor.numpy()` 视图写入）。
 支持的 leaf 类型为：
 
-- 普通 `np.ndarray`：term 拿到完整数组引用；lane 形状数组第一维为 `num_envs`，模型参数、查表数据和 motion clip 等共享数组则没有 batch 维；
-- Python 标量和固定 dtype NumPy scalar；
-- 另一个 `@kernel_data` 类型。
+- `torch.Tensor`：term 拥有字段的默认类型，是宿主 numpy arena 上的零拷贝视图；lane 形状张量第一维为 `num_envs`，模型参数、查表数据和 motion clip 等共享张量则没有 batch 维；
+- 普通 `np.ndarray`（SimBackend 读侧数组与 metric backing）与 Python 标量、固定 dtype NumPy scalar；
+- 另一个 kernel-data record 类型。
 
 需要对外发布逐环境指标时使用 `metric()` 字段。框架为其分配 `(num_envs, 1)` backing，term 在当前 lane 写入 `[0]`。
 
@@ -133,7 +133,7 @@ ActionCfg 在构造期返回冻结的 host 描述对象：
 ```python
 ActionTerm(
     action_space=space,
-    state=state,  # @kernel_data BaseActionState 子类
+    state=state,  # kernel-data dataclass（BaseActionState 子类）
     process=process_action,  # process_action(state, actions_batch) -> controls | None
     reset=reset_action,  # reset_action(state, env_ids) -> None
 )
@@ -160,7 +160,7 @@ Reward term 返回当前 environment 的 scalar，Manager 最终按配置 weight
 Termination term 返回单个 environment 的 `bool`：
 
 ```python
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class OutOfBoundsTermination:
     limit: np.float32
 

@@ -15,7 +15,6 @@ from motrix_env_core.manager.context import BuildContext, ManagerContext
 from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
 from motrix_env_core.manager.kernel import ManagerWarmupResult
-from motrix_env_core.manager.kernel_data import kernel_data
 from motrix_env_core.manager.metrics import metric
 from motrix_env_core.manager.observations import (
     ManagerObservationGroupCfg,
@@ -64,6 +63,5 @@ __all__ = [
     "TerminationManager",
     "TerminationTermCfg",
     "TerminationTerm",
-    "kernel_data",
     "metric",
 ]

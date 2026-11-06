@@ -34,7 +34,7 @@ main 上唯一的 motion 消费者是 `WbtMotionCommand`，"单 clip"假设同�
 
 ### 数据平面：`MotionLibrary`
 
-位置 `motrix_envs/src/motrix_envs/motion/`，kernel_data 纯数值对象。
+位置 `motrix_envs/src/motrix_envs/motion/`，kernel-data dataclass 纯数值对象（torch tensor 字段）。
 
 - 输入：有序的 MotrixMotion npz v1 文件列表（cfg 显式列表或目录展开，顺序固定可复现）；
 - 逐文件：`MotrixMotion` 加载校验（schema、fps、finite、单位四元数）→ 按任务 joint/body 顺序重排 →

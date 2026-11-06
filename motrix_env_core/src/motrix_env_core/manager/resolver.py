@@ -313,13 +313,13 @@ def _manager_sim_inputs(sim_data: PhysicsReadProgram) -> tuple[Mapping[str, Mana
 
 
 def _tree_leaf_fingerprint(tree: ResolvedTree) -> tuple[Any, ...]:
-    """Per-leaf content fingerprint: array shape/dtype identity."""
+    """Per-leaf content fingerprint: array/tensor shape/dtype identity."""
     return tuple(
         (
             path,
             None
-            if not isinstance(leaf.value, np.ndarray)
-            else (leaf.value.shape, leaf.value.dtype.str, leaf.value.strides),
+            if not isinstance(leaf.value, (np.ndarray, torch.Tensor))
+            else (tuple(leaf.value.shape), str(leaf.value.dtype), getattr(leaf.value, "strides", None)),
         )
         for path, leaf in tree.leaves.items()
     )
@@ -516,14 +516,14 @@ class ManagerProgramResolver:
         sim = {key: binding.value for key, binding in self._sim_inputs.items()}
         commands = dict(self._env.command_terms)
         value = ManagerContext(
-            env_id=np.arange(self._env.num_envs, dtype=np.int64),
+            env_id=torch.from_numpy(np.arange(self._env.num_envs, dtype=np.int64)),
             actions=Map(actions),
             commands=Map(commands),
             metrics=Map(self._env.metrics),
             rand=self._env._rand,
             sim=Map(sim),
             dt=np.float32(self._env.cfg.ctrl_dt),
-            sim_reset_requested=self._env._sim_reset_requested,
+            sim_reset_requested=torch.from_numpy(self._env._sim_reset_requested),
         )
         _, tree_def = flatten_kernel_data(value)
         layout = self._kernel_data_lowering.lower(
@@ -693,8 +693,8 @@ class ManagerProgramResolver:
     def _resolve_term_arg(self, source_name: str, value: Any) -> PreparedArg:
         """Resolve one manager term argument into a prepared descriptor.
 
-        KernelData arguments become structured trees; float-like scalars and
-        ndarrays become shared leaf slots read by reference; simulator queries
+        Kernel-data dataclass arguments become structured trees; float-like
+        scalars and arrays/tensors become shared leaf slots read by reference; simulator queries
         resolve to their read-program batched array; every other value is a
         literal constant.
         """
@@ -730,9 +730,13 @@ class ManagerProgramResolver:
             raise TypeError(f"{source_name} value has a different KernelData schema.")
         leaves: dict[tuple[str, ...], ResolvedLeaf] = {}
         for prepared_field, field_value in zip(iter_layout_leaves(layout), values, strict=True):
-            if prepared_field.value_type is np.ndarray and not isinstance(field_value, np.ndarray):
-                raise TypeError(f"{source_name} field {'.'.join(prepared_field.path)!r} must be np.ndarray.")
-            if prepared_field.value_type is not np.ndarray and type(field_value) is not prepared_field.value_type:
+            if prepared_field.value_type in (np.ndarray, torch.Tensor):
+                if not isinstance(field_value, prepared_field.value_type):
+                    raise TypeError(
+                        f"{source_name} field {'.'.join(prepared_field.path)!r} must be "
+                        f"{prepared_field.value_type.__name__}."
+                    )
+            elif type(field_value) is not prepared_field.value_type:
                 raise TypeError(
                     f"{source_name} field {'.'.join(prepared_field.path)!r} must return "
                     f"{prepared_field.value_type.__name__}, got {type(field_value).__name__}."

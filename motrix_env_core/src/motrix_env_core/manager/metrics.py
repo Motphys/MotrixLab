@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any
 
 import numpy as np
+import torch
 
 _METRIC_METADATA_KEY = "motrix_metric"
 _UNBOUND_METRIC = object()
@@ -43,7 +44,7 @@ def _field_metric(data_field: Any) -> Metric | None:
 
 
 def materialize_metrics(value: Any, num_envs: int, *, context: str) -> Any:
-    """Replace metric() placeholders with writable ``(num_envs,)`` arrays."""
+    """Replace metric() placeholders with writable ``(num_envs,)`` tensor views."""
 
     if not is_dataclass(value):
         return value
@@ -55,8 +56,8 @@ def materialize_metrics(value: Any, num_envs: int, *, context: str) -> Any:
         if current is _UNBOUND_METRIC:
             if spec is None:
                 raise TypeError(f"{context} field {data_field.name!r} has an unbound non-metric value.")
-            dtype = np.dtype(np.float32 if spec.dtype is None else spec.dtype)
-            current = np.empty(num_envs, dtype=dtype)
+            dtype = np.float32 if spec.dtype is None else spec.dtype
+            current = torch.from_numpy(np.empty(num_envs, dtype=dtype))
             changed = True
         values.append(current)
     return type(value)(*values) if changed else value
@@ -69,8 +70,12 @@ def collect_metrics(
     context: str,
     context_path: tuple[str, ...],
 ) -> tuple[tuple[str, np.ndarray], ...]:
-    """Validate direct metric fields on one canonical manager term."""
+    """Validate direct metric fields on one canonical manager term.
 
+    Tensor fields register their zero-copy numpy views, so kernel writes
+    through the tensor and host reads through ``ArrayEnvState.metrics`` share
+    one backing buffer.
+    """
     del context_path
     bindings = []
     for data_field in fields(value):
@@ -78,8 +83,10 @@ def collect_metrics(
         if spec is None:
             continue
         array = getattr(value, data_field.name)
+        if isinstance(array, torch.Tensor):
+            array = array.numpy()
         if not isinstance(array, np.ndarray):
-            raise TypeError(f"{context} metric field {data_field.name!r} must be an ndarray.")
+            raise TypeError(f"{context} metric field {data_field.name!r} must hold a tensor or an ndarray.")
         if array.shape not in {(num_envs,), (num_envs, 1)}:
             raise ValueError(
                 f"{context} metric field {data_field.name!r} must have shape "

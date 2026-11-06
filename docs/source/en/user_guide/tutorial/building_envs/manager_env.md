@@ -83,9 +83,9 @@ distributed to the terms.
    tuple `()` controls all actuators, explicit names control only the listed ones, and
    one actuator may belong to a single term. `None` means the term writes no actuator
    targets.
-2. An `ActionTerm` subclass decorated with `@kernel_data`: it holds persistent state
-   (`np.ndarray` fields, one row per environment) and shared model data (scalar or
-   batch-free `np.ndarray` fields), and implements three methods — `action_space()` returns this term's action
+2. An `ActionTerm` subclass — a plain frozen dataclass: it holds persistent state
+   (`torch.Tensor` fields, one row per environment) and shared model data (scalar or
+   batch-free tensor fields), and implements three methods — `action_space()` returns this term's action
    space, `process(actions)` transforms the action batch into routed actuator controls,
    and `reset(env_ids)` clears persistent state.
 
@@ -100,9 +100,9 @@ class MyJointActionCfg(ActionCfg):
                              actuators=actuators)
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class MyJointAction(ActionTerm):
-    current: np.ndarray              # persistent state: previous action (num_envs rows)
+    current: torch.Tensor            # persistent state: previous action (num_envs rows)
     scale: np.float32                # static parameter: passed in by __call__
 
     def action_space(self, env, actuators) -> gym.spaces.Box:
@@ -248,7 +248,7 @@ through `env.state.metrics` / `env.metrics`. Most tasks can reuse built-in comma
 never need a custom one.
 
 **How to define one**: a command term is a `CommandCfg` subclass whose `__call__(env)`
-returns a `CommandTerm` subclass decorated with `@kernel_data`, implementing four
+returns a `CommandTerm` subclass — a plain frozen dataclass — implementing four
 callbacks:
 
 | Callback          | Runs in           | Responsibility                                              |

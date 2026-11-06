@@ -3,17 +3,20 @@
 
 """Generic joint-position action terms for manager-based environments."""
 
+from dataclasses import dataclass
+
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import RobotCfg
-from motrix_env_core.manager import ActionCfg, ActionState, ActionTerm, ManagerEnv, kernel_data
+from motrix_env_core.manager import ActionCfg, ActionState, ActionTerm, ManagerEnv
 from motrix_env_core.mdp.action_space import joint_position_action_space_from_ctrl_ranges
 from motrix_env_core.sim.model import ActuatorSpec, ActuatorType
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class JointPositionActionState(ActionState):
     """Persistent joint-position action pipeline, history, and shared model data.
 
@@ -41,11 +44,11 @@ class JointPositionActionState(ActionState):
             path entirely.
     """
 
-    default_angles: np.ndarray
-    joint_lower: np.ndarray
-    joint_upper: np.ndarray
-    action_scales: np.ndarray
-    delay_steps: np.ndarray
+    default_angles: torch.Tensor
+    joint_lower: torch.Tensor
+    joint_upper: torch.Tensor
+    action_scales: torch.Tensor
+    delay_steps: torch.Tensor
     delay_lo: int
     delay_hi: int
 
@@ -64,20 +67,23 @@ class JointPositionActionTerm(ActionTerm):
         ptr = int(state.action_ptr[0])
         target_raw = actions
         if state.delay_hi > 0:
-            width = state.action_queue.shape[1]
-            delay_indices = (ptr - state.delay_steps) % width
+            queue = state.action_queue.numpy()
+            width = queue.shape[1]
+            delay_indices = (ptr - state.delay_steps.numpy()) % width
             target_raw = np.take_along_axis(
-                state.action_queue,
+                queue,
                 delay_indices[:, None, None],
                 axis=1,
             )[:, 0, :]
-        return target_raw * state.action_scales + state.default_angles
+        return target_raw * state.action_scales.numpy() + state.default_angles.numpy()
 
     def _reset(self, env_ids: np.ndarray) -> None:
         """Resample per-episode delay after the base term clears raw history."""
         state = self.state
         if state.delay_hi > 0:
-            state.delay_steps[env_ids] = np.random.randint(state.delay_lo, state.delay_hi + 1, size=env_ids.size)
+            state.delay_steps.numpy()[env_ids] = np.random.randint(
+                state.delay_lo, state.delay_hi + 1, size=env_ids.size
+            )
 
 
 @configclass(kw_only=True)
@@ -137,13 +143,13 @@ class JointPositionActionCfg(ActionCfg):
         delay_steps = np.zeros(env.num_envs, dtype=np.int64)
         action_ptr = np.zeros(1, dtype=np.int64)
         state = JointPositionActionState(
-            action_queue=action_queue,
-            default_angles=default_angles[indices],
-            joint_lower=joint_lower,
-            joint_upper=joint_upper,
-            action_scales=action_scales[indices],
-            delay_steps=delay_steps,
-            action_ptr=action_ptr,
+            action_queue=torch.from_numpy(action_queue),
+            default_angles=torch.from_numpy(default_angles[indices]),
+            joint_lower=torch.from_numpy(joint_lower),
+            joint_upper=torch.from_numpy(joint_upper),
+            action_scales=torch.from_numpy(action_scales[indices]),
+            delay_steps=torch.from_numpy(delay_steps),
+            action_ptr=torch.from_numpy(action_ptr),
             delay_lo=int(lo),
             delay_hi=int(hi),
         )
@@ -155,7 +161,7 @@ class JointPositionActionCfg(ActionCfg):
                 raise ValueError(f"position actuator {spec.name!r} must define or inherit ctrl_range")
             ctrl_ranges.append(spec.ctrl_range)
         space = joint_position_action_space_from_ctrl_ranges(
-            np.asarray(ctrl_ranges, dtype=np.float32), state.default_angles, state.action_scales
+            np.asarray(ctrl_ranges, dtype=np.float32), state.default_angles.numpy(), state.action_scales.numpy()
         )
         return JointPositionActionTerm(space, state)
 

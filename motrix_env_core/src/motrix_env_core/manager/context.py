@@ -5,11 +5,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy as np
+import torch
 
-from motrix_env_core.manager.kernel_data import Map, kernel_data
+from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.manager.rand import RandValue
 
 if TYPE_CHECKING:
@@ -20,11 +22,11 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class ManagerContext:
     """Framework-owned manager data available to every compiled term."""
 
-    env_id: np.ndarray
+    env_id: torch.Tensor
     actions: Map
     commands: Map
     metrics: Map[np.ndarray]
@@ -35,7 +37,7 @@ class ManagerContext:
     # request simulator-state rematerialization for that lane after the
     # transition. It is not an episode reset: episode bookkeeping and
     # action-term state are untouched (see CommandTerm.advance).
-    sim_reset_requested: np.ndarray
+    sim_reset_requested: torch.Tensor
 
 
 class BuildContext:

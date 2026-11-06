@@ -22,7 +22,6 @@ from motrix_env_core.manager.kernel_data.tree import (
     is_kernel_data,
     is_kernel_data_type,
     iter_tree_leaves,
-    kernel_data,
     unflatten_kernel_data,
 )
 
@@ -47,6 +46,5 @@ __all__ = [
     "is_kernel_data_type",
     "iter_layout_leaves",
     "iter_tree_leaves",
-    "kernel_data",
     "unflatten_kernel_data",
 ]

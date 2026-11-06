@@ -6,6 +6,7 @@
 import subprocess
 import sys
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 import gymnasium as gym
 import numpy as np
@@ -16,7 +17,6 @@ from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.manager.actions import ActionCfg, ActionState, ActionTerm, ManagerActionsCfg
 from motrix_env_core.manager.context import ManagerContext
 from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
-from motrix_env_core.manager.kernel_data import kernel_data
 from motrix_env_core.manager.observations import (
     ManagerObservationGroupCfg,
     ManagerObservationsCfg,
@@ -199,9 +199,9 @@ class _FakeBackend(SimBackend):
         return self._write_compiler
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class _CtrlActionState(ActionState):
-    source: np.ndarray
+    source: torch.Tensor
 
 
 class _CtrlActionTerm(ActionTerm):
@@ -209,7 +209,7 @@ class _CtrlActionTerm(ActionTerm):
         super().__init__(action_space, state)
 
     def _process(self, actions: np.ndarray) -> np.ndarray:
-        self.state.source[...] = actions
+        self.state.source.copy_(torch.from_numpy(actions))
         return actions * np.float32(2.0)
 
     def _reset(self, env_ids: np.ndarray) -> None:
@@ -229,9 +229,9 @@ class _CtrlActionCfg(ActionCfg):
         return _CtrlActionTerm(
             _ctrl_action_space(env, actuator_indices),
             _CtrlActionState(
-                np.zeros((env.num_envs, 2, 1), dtype=np.float32),
-                np.zeros(1, dtype=np.int64),
-                np.zeros((env.num_envs, 1), dtype=np.float32),
+                torch.from_numpy(np.zeros((env.num_envs, 2, 1), dtype=np.float32)),
+                torch.from_numpy(np.zeros(1, dtype=np.int64)),
+                torch.from_numpy(np.zeros((env.num_envs, 1), dtype=np.float32)),
             ),
         )
 
