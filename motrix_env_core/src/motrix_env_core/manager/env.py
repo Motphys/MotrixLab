@@ -182,10 +182,10 @@ class ManagerBasedEnvCfg(EnvCfg):
 class ReadPlan:
     """Simulator read program bound to the resolved context tree.
 
-    ``read`` executes the compiled read program; the simulator-backed ndarray
-    leaves of the resolved context tree are rewritten in place, so every other
-    resolved leaf and the tree objects themselves stay valid without
-    rebuilding.
+    ``read`` executes the compiled read program; the simulator arena the
+    context tree's sim leaves view (as zero-copy tensors) is rewritten in
+    place, so every resolved leaf and the tree objects themselves stay valid
+    without rebuilding.
     """
 
     sim_data: PhysicsReadProgram

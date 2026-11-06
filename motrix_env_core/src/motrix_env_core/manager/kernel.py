@@ -134,7 +134,7 @@ def _validate_value(value: Any, path: str, *, num_envs: int, batched: bool, writ
         return
 
     raise TypeError(
-        f"{path} must contain only ndarrays, numeric scalars, and fixed tuples; got {type(value).__name__}."
+        f"{path} must contain only tensors, ndarrays, numeric scalars, and fixed tuples; got {type(value).__name__}."
     )
 
 

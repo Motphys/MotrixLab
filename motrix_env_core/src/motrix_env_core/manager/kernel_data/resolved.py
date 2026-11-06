@@ -15,8 +15,10 @@ class ResolvedLeaf:
     """One resolved leaf of a kernel-data tree.
 
     Attributes:
-        value: Live leaf value reference — an ndarray held and refreshed in
-            place by its owning runtime object, or an immutable scalar.
+        value: Live leaf value reference — a tensor or ndarray held and
+            refreshed in place by its owning runtime object, or an immutable
+            scalar. Simulator-backed leaves are zero-copy tensor views over
+            the read-program arena; metrics leaves stay ndarray.
     """
 
     value: Any

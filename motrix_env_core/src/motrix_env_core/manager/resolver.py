@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import logging
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from time import perf_counter
@@ -45,6 +46,15 @@ from motrix_env_core.manager.terminations import TerminationTerm
 from motrix_env_core.sim import PhysicsReadProgram, SimDataQuery
 
 logger = logging.getLogger(__name__)
+
+# Simulator-backed read-only arena views are wrapped as tensors at resolution
+# time; suppress PyTorch's non-writable-array warning once here instead of
+# copying every view (mirrors the filter in the Torch executor).
+warnings.filterwarnings(
+    "ignore",
+    message="The given NumPy array is not writable",
+    category=UserWarning,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +523,12 @@ class ManagerProgramResolver:
     ) -> ResolvedManagerContext:
         del observation_groups, reward_terms, termination_terms
         actions = {name: term.state for name, term in self._env.action_terms.items()}
-        sim = {key: binding.value for key, binding in self._sim_inputs.items()}
+        # Sim views enter the resolved tree as zero-copy tensor views over the
+        # read-program arena: the read program rewrites the arena contents in
+        # place, so the pre-built views stay valid for the program's lifetime
+        # and every upper layer sees one leaf type. Metrics stay ndarray per
+        # the existing numpy metrics contract.
+        sim = {key: torch.from_numpy(binding.value) for key, binding in self._sim_inputs.items()}
         commands = dict(self._env.command_terms)
         value = ManagerContext(
             env_id=torch.from_numpy(np.arange(self._env.num_envs, dtype=np.int64)),
