@@ -1,5 +1,4 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
-# SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import FrozenInstanceError, dataclass
 
@@ -8,11 +7,12 @@ import pytest
 import torch
 
 from motrix_env_core.manager.kernel_data import (
-    KernelDataLowering,
     Map,
+    canonicalize_kernel_data,
     flatten_kernel_data,
     is_kernel_data,
-    iter_layout_leaves,
+    iter_tree_leaves,
+    leaf_value_type,
     unflatten_kernel_data,
 )
 
@@ -44,11 +44,6 @@ class _MappedValues:
     values: Map
 
 
-@dataclass(frozen=True, slots=True)
-class _ArrayMapValues:
-    values: Map[np.ndarray]
-
-
 def test_kernel_data_is_frozen_and_compiles_nested_inherited_leaves() -> None:
     value = _Tracking(
         _Robot(np.asarray([[1.0, 2.0]], dtype=np.float32), _Pose(np.asarray([[3.0]]), np.asarray([4.0]))),
@@ -58,14 +53,15 @@ def test_kernel_data_is_frozen_and_compiles_nested_inherited_leaves() -> None:
         value.phase = np.float32(1.0)  # type: ignore[misc]
 
     _, tree_def = flatten_kernel_data(value)
-    layout = KernelDataLowering().lower(tree_def, context="test")
-    leaves = iter_layout_leaves(layout)
+    leaves = iter_tree_leaves(tree_def)
     assert [leaf.path for leaf in leaves] == [
         ("robot", "velocity"),
         ("robot", "pose", "position"),
         ("robot", "pose", "orientation"),
         ("phase",),
     ]
+    assert leaf_value_type(leaves[0].annotation) is np.ndarray
+    assert leaf_value_type(leaves[-1].annotation) is np.float32
 
 
 def test_kernel_data_flatten_is_zero_copy_and_rebuilds_host_value() -> None:
@@ -76,7 +72,7 @@ def test_kernel_data_flatten_is_zero_copy_and_rebuilds_host_value() -> None:
     leaves, tree_def = flatten_kernel_data(value)
     assert leaves[:3] == (velocity, position, orientation)
     rebuilt = unflatten_kernel_data(tree_def, leaves)
-    KernelDataLowering().lower(tree_def, context="test")
+    canonicalize_kernel_data(value, context="test")
     assert rebuilt.robot.pose.position is position
     assert rebuilt.robot.pose.orientation is orientation
     assert rebuilt.phase == np.float32(0.25)
@@ -91,8 +87,7 @@ def test_kernel_data_accepts_tensor_leaves() -> None:
     value = _Tensors(buffer)
     leaves, tree_def = flatten_kernel_data(value)
     assert leaves == (buffer,)
-    layout = KernelDataLowering().lower(tree_def, context="test")
-    assert iter_layout_leaves(layout)[0].value_type is torch.Tensor
+    assert leaf_value_type(iter_tree_leaves(tree_def)[0].annotation) is torch.Tensor
 
 
 def test_kernel_data_schema_fingerprint_ignores_values() -> None:
@@ -106,24 +101,19 @@ def test_kernel_data_schema_fingerprint_ignores_values() -> None:
     )
     _, first = flatten_kernel_data(first_value)
     _, second = flatten_kernel_data(second_value)
-    assert first is second
     assert first.fingerprint == second.fingerprint
-    first_layout = KernelDataLowering().lower(first, context="first")
-    second_layout = KernelDataLowering().lower(second, context="second")
-    assert first_layout is second_layout
-    assert first_layout.logical_type.__module__ == _Tracking.__module__
+    assert first.logical_type.__module__ == _Tracking.__module__
 
 
-def test_map_schema_changes_tree_and_layout_identity() -> None:
+def test_map_schema_changes_tree_identity() -> None:
     first = _MappedValues(Map({"value": np.float32(1.0)}))
     second = _MappedValues(Map({"value": np.asarray([[1.0]], dtype=np.float32)}))
     _, first_tree = flatten_kernel_data(first)
     _, second_tree = flatten_kernel_data(second)
-    first_layout = KernelDataLowering().lower(first_tree, context="first")
-    second_layout = KernelDataLowering().lower(second_tree, context="second")
     assert first_tree.fingerprint != second_tree.fingerprint
-    assert first_layout.fingerprint != second_layout.fingerprint
-    assert first_layout.fields[0].child.fingerprint != second_layout.fields[0].child.fingerprint
+    first_map = first_tree.fields[0].tree_def
+    second_map = second_tree.fields[0].tree_def
+    assert first_map.fingerprint != second_map.fingerprint
 
 
 def test_kernel_data_rejects_unsupported_leaf() -> None:
@@ -131,9 +121,8 @@ def test_kernel_data_rejects_unsupported_leaf() -> None:
     class _Invalid:
         label: str
 
-    _, tree_def = flatten_kernel_data(_Invalid("invalid"))
     with pytest.raises(TypeError, match="expected a tensor"):
-        KernelDataLowering().lower(tree_def, context="invalid")
+        canonicalize_kernel_data(_Invalid("invalid"), context="invalid")
 
 
 def test_ndarrays_and_tensors_are_not_kernel_data_values() -> None:

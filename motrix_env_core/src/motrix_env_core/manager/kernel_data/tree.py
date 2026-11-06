@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, fields, is_dataclass
-from typing import Annotated, Any, get_args, get_origin, get_type_hints
+from typing import Any, get_origin, get_type_hints
 
 import numpy as np
 import torch
@@ -13,8 +13,7 @@ import torch
 from motrix_env_core.manager.kernel_data.map import Map
 from motrix_env_core.sim.read import SimDataQuery
 
-_TREE_SCHEMA_VERSION = 2
-_TREE_DEF_CACHE: dict[type, TreeClassDef] = {}
+_TREE_SCHEMA_VERSION = 3
 
 
 def is_kernel_data_type(value_type: object) -> bool:
@@ -35,6 +34,22 @@ def is_kernel_data(value: object) -> bool:
     )
 
 
+def leaf_value_type(annotation: Any) -> type | None:
+    """Return the concrete value type accepted for one leaf annotation."""
+    if annotation in (np.ndarray, torch.Tensor):
+        return annotation
+    if annotation in {bool, int, float}:
+        return annotation
+    if isinstance(annotation, type) and issubclass(annotation, np.generic):
+        try:
+            dtype = np.dtype(annotation)
+        except TypeError:
+            return None
+        if dtype.type is annotation and dtype.kind in "biuf":
+            return annotation
+    return None
+
+
 class BaseDef:
     """Base class for nodes contained in a ``TreeClassDef`` schema tree."""
 
@@ -45,7 +60,7 @@ class LeafDef(BaseDef):
 
     Attributes:
         path: Field and map-key components from the tree root to this leaf.
-        annotation: Declared leaf annotation, including any ``Annotated`` metadata.
+        annotation: Declared leaf annotation.
     """
 
     path: tuple[str, ...]
@@ -53,7 +68,7 @@ class LeafDef(BaseDef):
 
 
 @dataclass(frozen=True)
-class FieldDef:
+class FieldDef(BaseDef):
     """Named child of a ``TreeClassDef``.
 
     Attributes:
@@ -92,7 +107,7 @@ class TreeClassDef(BaseDef):
 
 
 @dataclass(frozen=True)
-class MapEntryDef:
+class MapEntryDef(BaseDef):
     """Named child of a value-dependent ``KernelMapDef``.
 
     Attributes:
@@ -123,13 +138,7 @@ def flatten_kernel_data(value: Any) -> tuple[tuple[Any, ...], TreeClassDef]:
     """Return zero-copy leaves and the concrete class tree definition for one kernel-data value."""
     if not is_kernel_data(value):
         raise TypeError(f"KernelData tree root must be a dataclass value, got {type(value).__name__}.")
-    tree_def, dynamic = _build_class_def(type(value), value, (), ())
-    if not dynamic:
-        cached = _TREE_DEF_CACHE.get(type(value))
-        if cached is None:
-            _TREE_DEF_CACHE[type(value)] = tree_def
-        else:
-            tree_def = cached
+    tree_def = _build_class_def(type(value), value, (), ())
     return _flatten(value, tree_def), tree_def
 
 
@@ -197,44 +206,26 @@ def _build_class_def(
     value: Any | None,
     path: tuple[str, ...],
     stack: tuple[type, ...],
-) -> tuple[TreeClassDef, bool]:
+) -> TreeClassDef:
     if logical_type in stack:
         chain = " -> ".join(item.__name__ for item in (*stack, logical_type))
         raise TypeError(f"KernelData cycle detected: {chain}.")
     annotations = get_type_hints(logical_type, include_extras=True)
     field_defs: list[FieldDef] = []
     fingerprint_fields: list[Any] = []
-    dynamic = False
     for data_field in fields(logical_type):
         annotation = annotations[data_field.name]
         field_path = (*path, data_field.name)
-        node_annotation = _node_annotation(annotation)
         field_value = getattr(value, data_field.name) if value is not None else None
         child: BaseDef
-        if node_annotation is Map or get_origin(node_annotation) is Map:
-            if get_origin(annotation) is Annotated:
-                raise TypeError(
-                    f"KernelData {logical_type.__name__}.{'.'.join(field_path)} map fields cannot declare metadata."
-                )
+        if annotation is Map or get_origin(annotation) is Map:
             if not isinstance(field_value, Map):
                 raise TypeError(
                     f"KernelData {logical_type.__name__}.{'.'.join(field_path)} requires a concrete Map value."
                 )
-            child, _ = _build_map_def(field_value, field_path, (*stack, logical_type))
-            dynamic = True
-        elif is_kernel_data_type(node_annotation):
-            if get_origin(annotation) is Annotated:
-                raise TypeError(
-                    f"KernelData {logical_type.__name__}.{'.'.join(field_path)} class fields cannot declare "
-                    "leaf metadata."
-                )
-            child, child_dynamic = _build_class_def(
-                node_annotation,
-                field_value,
-                field_path,
-                (*stack, logical_type),
-            )
-            dynamic = dynamic or child_dynamic
+            child = _build_map_def(field_value, field_path, (*stack, logical_type))
+        elif is_kernel_data_type(annotation):
+            child = _build_class_def(annotation, field_value, field_path, (*stack, logical_type))
         else:
             child = LeafDef(field_path, annotation)
         field_defs.append(FieldDef(data_field.name, child))
@@ -242,29 +233,29 @@ def _build_class_def(
     identity = f"{logical_type.__module__}.{logical_type.__qualname__}"
     raw_fingerprint = repr((_TREE_SCHEMA_VERSION, identity, tuple(fingerprint_fields)))
     fingerprint = hashlib.sha256(raw_fingerprint.encode()).hexdigest()
-    return TreeClassDef(logical_type, tuple(field_defs), fingerprint), dynamic
+    return TreeClassDef(logical_type, tuple(field_defs), fingerprint)
 
 
 def _build_map_def(
     value: Map,
     path: tuple[str, ...],
     stack: tuple[type, ...],
-) -> tuple[KernelMapDef, bool]:
+) -> KernelMapDef:
     entries: list[MapEntryDef] = []
     fingerprint_entries: list[Any] = []
     for key, entry_value in zip(value.keys_tuple, value.values_tuple, strict=True):
         entry_path = (*path, key)
         if isinstance(entry_value, Map):
-            child, _ = _build_map_def(entry_value, entry_path, stack)
+            child = _build_map_def(entry_value, entry_path, stack)
         elif is_kernel_data(entry_value):
-            child, _ = _build_class_def(type(entry_value), entry_value, entry_path, stack)
+            child = _build_class_def(type(entry_value), entry_value, entry_path, stack)
         else:
             child = LeafDef(entry_path, type(entry_value))
         entries.append(MapEntryDef(key, child))
         fingerprint_entries.append((key, _tree_fingerprint_part(child)))
     raw_fingerprint = repr((_TREE_SCHEMA_VERSION, "map", path, tuple(fingerprint_entries)))
     fingerprint = hashlib.sha256(raw_fingerprint.encode()).hexdigest()
-    return KernelMapDef(path, tuple(entries), fingerprint), True
+    return KernelMapDef(path, tuple(entries), fingerprint)
 
 
 def _tree_fingerprint_part(tree_def: BaseDef) -> Any:
@@ -285,20 +276,6 @@ def _tree_fingerprint_part(tree_def: BaseDef) -> Any:
 
 
 def _annotation_identity(annotation: Any) -> Any:
-    if get_origin(annotation) is Annotated:
-        value_type, *metadata = get_args(annotation)
-        return "annotated", _annotation_identity(value_type), tuple(_metadata_identity(value) for value in metadata)
     if isinstance(annotation, type):
         return f"{annotation.__module__}.{annotation.__qualname__}"
     return repr(annotation)
-
-
-def _metadata_identity(value: Any) -> Any:
-    value_type = type(value)
-    if hasattr(value, "value"):
-        return f"{value_type.__module__}.{value_type.__qualname__}", value.value
-    return repr(value)
-
-
-def _node_annotation(annotation: Any) -> Any:
-    return get_args(annotation)[0] if get_origin(annotation) is Annotated else annotation

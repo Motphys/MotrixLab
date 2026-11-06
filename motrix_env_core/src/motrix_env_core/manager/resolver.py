@@ -30,22 +30,27 @@ import torch
 
 from motrix_env_core.manager.context import ManagerContext
 from motrix_env_core.manager.env import ManagerEnv, ReadPlan
+from motrix_env_core.manager.fingerprint import function_fingerprint
 from motrix_env_core.manager.kernel_data import (
-    KernelDataLayout,
-    KernelDataLowering,
     Map,
     ResolvedLeaf,
     ResolvedTree,
+    TreeClassDef,
     flatten_kernel_data,
     is_kernel_data,
-    iter_layout_leaves,
+    iter_tree_leaves,
+    leaf_value_type,
 )
+from motrix_env_core.manager.kernel_data.methods import dispatch_methods
+from motrix_env_core.manager.kernel_data.tree import BaseDef, KernelMapDef, LeafDef
 from motrix_env_core.manager.observations import ObservationGroupEntry, ObsTerm
 from motrix_env_core.manager.rewards import RewardTerm
 from motrix_env_core.manager.terminations import TerminationTerm
 from motrix_env_core.sim import PhysicsReadProgram, SimDataQuery
 
 logger = logging.getLogger(__name__)
+
+_PROGRAM_FINGERPRINT_VERSION = 4
 
 # Simulator-backed read-only arena views are wrapped as tensors at resolution
 # time; suppress PyTorch's non-writable-array warning once here instead of
@@ -319,6 +324,44 @@ def _tree_leaf_fingerprint(tree: ResolvedTree) -> tuple[Any, ...]:
     )
 
 
+def _kernel_data_program_fingerprint(tree_def: TreeClassDef) -> str:
+    """Deterministic kernel-data identity for resolved-program invalidation.
+
+    Combines the structural tree fingerprint with per-leaf value types and
+    the code fingerprints of ``@dispatch`` methods on every nested record, so
+    schema, leaf-type, or method-code changes each invalidate compiled
+    program caches.
+    """
+    raw = repr((_PROGRAM_FINGERPRINT_VERSION, _program_fingerprint_part(tree_def)))
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _program_fingerprint_part(tree_def: BaseDef) -> Any:
+    if isinstance(tree_def, LeafDef):
+        value_type = leaf_value_type(tree_def.annotation)
+        return (
+            "leaf",
+            tree_def.path,
+            None if value_type is None else f"{value_type.__module__}.{value_type.__qualname__}",
+        )
+    if isinstance(tree_def, KernelMapDef):
+        return (
+            "map",
+            tree_def.fingerprint,
+            tuple((entry.key, _program_fingerprint_part(entry.tree_def)) for entry in tree_def.entries),
+        )
+    assert isinstance(tree_def, TreeClassDef)
+    return (
+        "record",
+        tree_def.fingerprint,
+        tuple(
+            (name, function_fingerprint(method))
+            for name, method in sorted(dispatch_methods(tree_def.logical_type).items())
+        ),
+        tuple((field.name, _program_fingerprint_part(field.tree_def)) for field in tree_def.fields),
+    )
+
+
 def _carrier_fingerprint(value: Any) -> Any:
     """Structural + content fingerprint of a constant term argument.
 
@@ -365,7 +408,6 @@ class ManagerProgramResolver:
         self._sim_inputs: Mapping[str, ManagerSimInput]
         self._sim_inputs, sim_input_fingerprint = _manager_sim_inputs(env.sim_data)
         self._prepared_trees: list[ResolvedTree] = []
-        self._kernel_data_lowering = KernelDataLowering()
         self._layout_identity: list[Any] = [sim_input_fingerprint]
 
     def build(self) -> ResolvedManagerProgram:
@@ -562,14 +604,11 @@ class ManagerProgramResolver:
             dt=np.float32(self._env.cfg.ctrl_dt),
             sim_reset_requested=torch.from_numpy(self._env._sim_reset_requested),
         )
-        _, tree_def = flatten_kernel_data(value)
-        layout = self._kernel_data_lowering.lower(
-            tree_def,
-            context="ManagerContext",
-        )
-        tree_index = self._register_tree("manager_context", value, layout)
+        tree_index, tree_def = self._register_tree("manager_context", value)
         tree = self._prepared_trees[tree_index]
-        self._layout_identity.append(("manager_context", layout.fingerprint, _tree_leaf_fingerprint(tree)))
+        self._layout_identity.append(
+            ("manager_context", _kernel_data_program_fingerprint(tree_def), _tree_leaf_fingerprint(tree))
+        )
         self._layout_identity.append(
             (
                 "metrics",
@@ -759,33 +798,33 @@ class ManagerProgramResolver:
         self,
         source_name: str,
         value: Any,
-        layout: KernelDataLayout,
-    ) -> int:
-        """Validate one kernel-data value against its layout and record its tree.
+    ) -> tuple[int, TreeClassDef]:
+        """Validate one kernel-data value against its tree schema and record its tree.
 
         Leaves are captured by reference: array leaves are refreshed in place
         by their owning runtime objects and scalar/shared leaves are reused
         unchanged.
         """
         values, tree_def = flatten_kernel_data(value)
-        if tree_def.fingerprint != layout.tree_def.fingerprint:
-            raise TypeError(f"{source_name} value has a different KernelData schema.")
         leaves: dict[tuple[str, ...], ResolvedLeaf] = {}
-        for prepared_field, field_value in zip(iter_layout_leaves(layout), values, strict=True):
-            if prepared_field.value_type in (np.ndarray, torch.Tensor):
-                if not isinstance(field_value, prepared_field.value_type):
-                    raise TypeError(
-                        f"{source_name} field {'.'.join(prepared_field.path)!r} must be "
-                        f"{prepared_field.value_type.__name__}."
-                    )
-            elif type(field_value) is not prepared_field.value_type:
+        for leaf_def, field_value in zip(iter_tree_leaves(tree_def), values, strict=True):
+            value_type = leaf_value_type(leaf_def.annotation)
+            if value_type is None:
                 raise TypeError(
-                    f"{source_name} field {'.'.join(prepared_field.path)!r} must return "
-                    f"{prepared_field.value_type.__name__}, got {type(field_value).__name__}."
+                    f"{source_name} KernelData {'.'.join(leaf_def.path)} expected a tensor, an ndarray, or a numeric "
+                    "scalar."
                 )
-            leaves[prepared_field.path] = ResolvedLeaf(field_value)
+            if value_type in (np.ndarray, torch.Tensor):
+                if not isinstance(field_value, value_type):
+                    raise TypeError(f"{source_name} field {'.'.join(leaf_def.path)!r} must be {value_type.__name__}.")
+            elif type(field_value) is not value_type:
+                raise TypeError(
+                    f"{source_name} field {'.'.join(leaf_def.path)!r} must return "
+                    f"{value_type.__name__}, got {type(field_value).__name__}."
+                )
+            leaves[leaf_def.path] = ResolvedLeaf(field_value)
         self._prepared_trees.append(ResolvedTree(value, leaves))
-        return len(self._prepared_trees) - 1
+        return len(self._prepared_trees) - 1, tree_def
 
     def _validate_observation_spaces(self, groups: dict[str, ObservationGroupEntry]) -> None:
         expected_policy = self._env.policy_observation_space.shape
