@@ -183,7 +183,7 @@ class _InjectedTerminationCfg(TerminationTermCfg):
         del env
         return TerminationTerm(
             _injected_termination,
-            np.float32(self.threshold),
+            float(self.threshold),
             metric_names=("source_at_termination",),
         )
 

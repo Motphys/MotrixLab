@@ -3,7 +3,6 @@
 
 """Observation terms for the humanoid velocity-tracking task."""
 
-import numpy as np
 import torch
 
 from motrix_env_core.config import configclass
@@ -11,7 +10,7 @@ from motrix_env_core.manager.context import BuildContext, ManagerContext
 from motrix_env_core.manager.observations import ObservationTermCfg, ObsTerm
 
 
-def gait_phase_obs(ctx: ManagerContext, out: torch.Tensor, offset: np.int64, size: np.int64) -> None:
+def gait_phase_obs(ctx: ManagerContext, out: torch.Tensor, offset: int, size: int) -> None:
     walk = ctx.commands["walk"]
     out.copy_(walk.sin_cos[:, offset : offset + size])
 
@@ -29,4 +28,4 @@ class GaitPhaseObsCfg(ObservationTermCfg):
     size: int = 2
 
     def __call__(self, ctx: BuildContext) -> ObsTerm:
-        return ObsTerm(self.size, gait_phase_obs, np.int64(self.offset), np.int64(self.size))
+        return ObsTerm(self.size, gait_phase_obs, self.offset, self.size)

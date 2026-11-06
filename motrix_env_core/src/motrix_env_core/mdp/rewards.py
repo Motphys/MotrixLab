@@ -3,7 +3,6 @@
 
 """Reusable reward terms for manager-based environments."""
 
-import numpy as np
 import torch
 
 from motrix_env_core.config import configclass
@@ -70,7 +69,7 @@ class TrackingLinVelXyRewardCfg(RewardTermCfg):
         link = ctx.model.bodies[self.body].base_link_name
         return RewardTerm(
             tracking_lin_vel_xy_reward,
-            np.float32(self.sigma),
+            float(self.sigma),
             LinkQuaternionQuery(link=link),
             LinkLinearVelocityQuery(link=link),
             self.command_name,
@@ -102,7 +101,7 @@ class TrackingAngVelZRewardCfg(RewardTermCfg):
         link = ctx.model.bodies[self.body].base_link_name
         return RewardTerm(
             tracking_ang_vel_z_reward,
-            np.float32(self.sigma),
+            float(self.sigma),
             LinkQuaternionQuery(link=link),
             LinkAngularVelocityQuery(link=link),
             self.command_name,

@@ -1,11 +1,12 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Carrier dataclass term-argument fingerprint contract.
+"""Constant term-argument fingerprint contract.
 
-Carrier dataclasses passed as manager term arguments resolve as constants;
-their structural fingerprint must keep compiled-program caches invalidated by
-any content change (tensor bytes or scalar values).
+Carrier dataclasses and raw tensors/ndarrays passed as manager term
+arguments resolve as constants; their structural fingerprint must keep
+compiled-program caches invalidated by any content change (tensor bytes or
+scalar values).
 """
 
 from dataclasses import dataclass
@@ -45,6 +46,26 @@ def test_fingerprint_stable_for_equal_content() -> None:
     first = _Carrier(torch.ones(3), "a", 1.5, _Nested(True))
     second = _Carrier(torch.ones(3), "a", 1.5, _Nested(True))
     assert _carrier_fingerprint(first) == _carrier_fingerprint(second)
+
+
+def test_raw_tensor_arg_fingerprint_flips_on_content_edit() -> None:
+    arg = torch.arange(4, dtype=torch.float32)
+    base = _carrier_fingerprint(arg)
+    assert _carrier_fingerprint(torch.arange(4, dtype=torch.float32)) == base
+    assert _carrier_fingerprint(torch.arange(4, dtype=torch.float64)) != base
+    assert _carrier_fingerprint(torch.arange(5, dtype=torch.float32)) != base
+    edited = arg.clone()
+    edited[0] += 1.0
+    assert _carrier_fingerprint(edited) != base
+
+
+def test_raw_ndarray_arg_fingerprint_flips_on_content_edit() -> None:
+    arg = np.arange(4, dtype=np.float32)
+    base = _carrier_fingerprint(arg)
+    assert _carrier_fingerprint(np.arange(4, dtype=np.float32)) == base
+    edited = arg.copy()
+    edited[0] += 1.0
+    assert _carrier_fingerprint(edited) != base
 
 
 def test_fingerprint_rejects_unsupported_field_type() -> None:

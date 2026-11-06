@@ -125,8 +125,8 @@ class FeetPhaseRewardCfg(RewardTermCfg):
             raise ValueError("FeetPhaseRewardCfg requires sole_l_site, sole_r_site, and ground_geom.")
         return RewardTerm(
             feet_phase_reward,
-            np.float32(self.swing_height),
-            np.float32(self.feet_phase_sigma),
+            float(self.swing_height),
+            float(self.feet_phase_sigma),
             ground_height_grid(ctx, self.ground_geom),
             SitePositionQuery(site=self.sole_l_site),
             SitePositionQuery(site=self.sole_r_site),
@@ -163,8 +163,8 @@ class PoseRewardCfg(RewardTermCfg):
         # resolved) so it stays aligned with body.init_joint_pos and weights.
         return RewardTerm(
             pose_reward,
-            body.init_joint_pos,
-            weights,
+            torch.from_numpy(body.init_joint_pos),
+            torch.from_numpy(weights),
             JointPositionQuery(joints=body.joint_names),
         )
 
@@ -195,7 +195,7 @@ class PenaltyCloseFeetXyRewardCfg(RewardTermCfg):
         body = ctx.model.bodies["robot"]
         return RewardTerm(
             penalty_close_feet_xy_reward,
-            np.float32(self.close_feet_threshold),
+            float(self.close_feet_threshold),
             LinkQuaternionQuery(link=body.base_link_name),
             BatchLinkPositionQuery(links=ctx.cfg.scene.objs.robot.resolved_foot_link_names),
         )
@@ -209,7 +209,7 @@ def penalty_feet_ori_reward(
     gravity = foot_quat.new_zeros(*foot_quat.shape[:2], 3)
     gravity[..., 2] = -1.0
     gx, gy, gz = rotate_inverse_components(foot_quat.reshape(-1, 4), gravity.reshape(-1, 3))
-    reference = torch.as_tensor(default_foot_gravity)
+    reference = default_foot_gravity
     total = None
     for foot in range(num_feet):
         # Flat layout is lane-major (lane * F + foot): strided slices pick one foot.
@@ -232,7 +232,7 @@ class PenaltyFeetOriRewardCfg(RewardTermCfg):
         robot = ctx.cfg.scene.objs.robot
         # Default foot gravity at the init key pose, from BodyModel's
         # compile-time init-pose FK snapshot.
-        default_foot_gravity = _default_foot_gravity(ctx, robot)
+        default_foot_gravity = torch.from_numpy(_default_foot_gravity(ctx, robot))
         return RewardTerm(
             penalty_feet_ori_reward,
             default_foot_gravity,

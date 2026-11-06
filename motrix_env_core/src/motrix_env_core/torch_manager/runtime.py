@@ -39,7 +39,6 @@ from motrix_env_core.manager.resolver import (
     CommandAdvanceHook,
     CommandResetHook,
     CommandUpdateHook,
-    LeafArg,
     ObservationTermCall,
     RewardTermCall,
     SimArg,
@@ -744,9 +743,7 @@ class TorchManagerRuntime:
         assert self._tree_tensors is not None
         args: list[Any] = []
         for arg in call.args:
-            if isinstance(arg, LeafArg):
-                args.append(self._cache.tensor(inputs, arg.leaf.value))
-            elif isinstance(arg, SimArg):
+            if isinstance(arg, SimArg):
                 assert self._context_tensors is not None
                 args.append(self._context_tensors[self._sim_paths[arg.key]])
             else:

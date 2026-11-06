@@ -3,7 +3,6 @@
 
 """Observation terms for the manager-based ball-balance task."""
 
-import numpy as np
 import torch
 
 from motrix_env_core.config import configclass
@@ -30,7 +29,7 @@ class BallRelativePositionObsCfg(ObservationTermCfg):
     noise: UniformNoiseCfg = UniformNoiseCfg()
 
     def __call__(self, ctx) -> ObsTerm:
-        return ObsTerm(3, ball_relative_position_obs, np.float32(self.noise.amplitude))
+        return ObsTerm(3, ball_relative_position_obs, float(self.noise.amplitude))
 
 
 def ball_relative_velocity_obs(ctx: ManagerContext, out: torch.Tensor, noise_amplitude: float) -> None:
@@ -46,7 +45,7 @@ class BallRelativeVelocityObsCfg(ObservationTermCfg):
     noise: UniformNoiseCfg = UniformNoiseCfg()
 
     def __call__(self, ctx) -> ObsTerm:
-        return ObsTerm(3, ball_relative_velocity_obs, np.float32(self.noise.amplitude))
+        return ObsTerm(3, ball_relative_velocity_obs, float(self.noise.amplitude))
 
 
 def ball_position_obs(ctx: ManagerContext, out: torch.Tensor) -> None:

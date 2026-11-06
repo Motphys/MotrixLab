@@ -3,7 +3,6 @@
 
 """WBT termination terms and raw diagnostic metrics."""
 
-import numpy as np
 import torch
 
 from motrix_env_core.config import configclass
@@ -30,7 +29,7 @@ class BadRefZTerminationCfg(_WbtTerminationCfg):
     def __call__(self, ctx) -> TerminationTerm:
         return TerminationTerm(
             bad_ref_z_termination,
-            np.float32(self.threshold),
+            float(self.threshold),
             metric_names=("ref_z_abs_err",),
         )
 
@@ -50,7 +49,7 @@ class BadRefOrientationTerminationCfg(_WbtTerminationCfg):
     def __call__(self, ctx) -> TerminationTerm:
         return TerminationTerm(
             bad_ref_orientation_termination,
-            np.float32(self.threshold),
+            float(self.threshold),
             metric_names=("ref_ori_abs_err",),
         )
 
@@ -89,7 +88,7 @@ class BadMotionBodyPositionTerminationCfg(_WbtTerminationCfg):
         return TerminationTerm(
             bad_motion_body_position_termination,
             body_indices,
-            np.float32(self.threshold),
+            float(self.threshold),
             metric_names=("motion_body_pos_err",),
         )
 
@@ -120,7 +119,7 @@ class BadBodyZTerminationCfg(_WbtTerminationCfg):
         return TerminationTerm(
             bad_body_z_termination,
             body_indices,
-            np.float32(self.threshold),
+            float(self.threshold),
             metric_names=("body_z_max_err",),
         )
 
@@ -142,6 +141,6 @@ class BadDofPositionTerminationCfg(_WbtTerminationCfg):
     def __call__(self, ctx) -> TerminationTerm:
         return TerminationTerm(
             bad_dof_position_termination,
-            np.float32(self.threshold),
+            float(self.threshold),
             metric_names=("dof_limit_violation_max",),
         )

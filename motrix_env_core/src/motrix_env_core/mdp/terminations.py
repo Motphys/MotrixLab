@@ -3,7 +3,6 @@
 
 """Reusable termination terms for manager-based environments."""
 
-import numpy as np
 import torch
 
 from motrix_env_core.config import configclass
@@ -64,7 +63,7 @@ class BadDofVelocityTerminationCfg(TerminationTermCfg):
         return TerminationTerm(
             bad_dof_velocity_termination,
             BodyJointVelocityQuery(body=body.base_link_name),
-            np.float32(self.threshold),
+            float(self.threshold),
             metric_names=("dof_vel_abs_max",),
         )
 

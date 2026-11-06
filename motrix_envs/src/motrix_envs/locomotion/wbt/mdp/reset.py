@@ -190,6 +190,6 @@ class BodyDofPosResetCfg(ResetTermCfg):
         joints = ctx.cfg.commands.motion.joint_names
         return ResetTerm(
             _reset_body_dof_pos,
-            np.float32(self.noise * self.noise_scale),
+            float(self.noise * self.noise_scale),
             writes={"position": JointPositionWrite(joints), "velocity": JointVelocityWrite(joints)},
         )

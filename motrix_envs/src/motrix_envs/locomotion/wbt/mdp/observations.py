@@ -76,7 +76,7 @@ class MotionReferenceOrientationObsCfg(ObservationTermCfg):
     noise: UniformNoiseCfg = UniformNoiseCfg()
 
     def __call__(self, ctx) -> ObsTerm:
-        return ObsTerm(6, motion_reference_orientation_obs, np.float32(self.noise.amplitude))
+        return ObsTerm(6, motion_reference_orientation_obs, float(self.noise.amplitude))
 
 
 def robot_body_position_in_reference_frame_obs(ctx: ManagerContext, out: torch.Tensor) -> None:
@@ -180,4 +180,4 @@ class DofVelObsCfg(ObservationTermCfg):
 
     def __call__(self, ctx) -> ObsTerm:
         num_joints = len(ctx.model.bodies["robot"].joint_names)
-        return ObsTerm(num_joints, dof_vel_obs, np.float32(self.noise.amplitude))
+        return ObsTerm(num_joints, dof_vel_obs, float(self.noise.amplitude))

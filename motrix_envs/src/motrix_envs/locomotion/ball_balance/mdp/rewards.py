@@ -31,7 +31,7 @@ class UprightRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        return RewardTerm(upright_reward, np.float32(self.sigma))
+        return RewardTerm(upright_reward, float(self.sigma))
 
 
 def base_height_reward(ctx: ManagerContext, target_z: float, sigma: float) -> torch.Tensor:
@@ -47,7 +47,7 @@ class BaseHeightRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        return RewardTerm(base_height_reward, np.float32(self.target_z), np.float32(self.sigma))
+        return RewardTerm(base_height_reward, float(self.target_z), float(self.sigma))
 
 
 def ball_under_feet_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
@@ -68,7 +68,7 @@ class BallUnderFeetRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        return RewardTerm(ball_under_feet_reward, np.float32(self.sigma))
+        return RewardTerm(ball_under_feet_reward, float(self.sigma))
 
 
 @dataclass(frozen=True, slots=True)

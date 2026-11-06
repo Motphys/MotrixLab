@@ -152,20 +152,13 @@ class ConstantArg:
 
 
 @dataclass(frozen=True)
-class LeafArg:
-    """Term argument resolved as one leaf value (numeric/ndarray argument)."""
-
-    leaf: ResolvedLeaf
-
-
-@dataclass(frozen=True)
 class SimArg:
     """Term argument resolving to one sim read-program batched array."""
 
     key: str
 
 
-PreparedArg = ConstantArg | LeafArg | SimArg
+PreparedArg = ConstantArg | SimArg
 
 
 @dataclass(frozen=True)
@@ -273,7 +266,6 @@ __all__ = [
     "CommandResetHook",
     "CommandUpdateHook",
     "ConstantArg",
-    "LeafArg",
     "ManagerLayout",
     "ManagerProgramResolver",
     "MetricFieldLayout",
@@ -328,13 +320,14 @@ def _tree_leaf_fingerprint(tree: ResolvedTree) -> tuple[Any, ...]:
 
 
 def _carrier_fingerprint(value: Any) -> Any:
-    """Structural + content fingerprint of a raw carrier dataclass term argument.
+    """Structural + content fingerprint of a constant term argument.
 
     Recurses over dataclass fields recording field names, concrete types,
     tensor/ndarray dtype+shape+content hashes, and Python scalar values.
     Carriers previously resolved as kernel-data trees contributed no content
-    to the program fingerprint at all; this makes every carrier data change
-    (a grid array value, a scalar) invalidate compiled-program caches.
+    to the program fingerprint at all, and array arguments previously lived
+    as shared leaves outside the fingerprint; this makes every content
+    change (a grid array value, a scalar) invalidate compiled-program caches.
     """
     if isinstance(value, torch.Tensor):
         return (
@@ -359,8 +352,8 @@ def _carrier_fingerprint(value: Any) -> Any:
     if isinstance(value, (bool, int, float, str)):
         return (type(value).__name__, value)
     raise TypeError(
-        f"Carrier dataclass term argument holds field of unsupported type {type(value).__name__}; "
-        "allowed: torch.Tensor, ndarray, Python scalars, str, nested carrier dataclasses."
+        f"Term argument of unsupported type {type(value).__name__}; "
+        "allowed: torch.Tensor, ndarray, Python scalars, str, carrier dataclasses."
     )
 
 
@@ -737,22 +730,24 @@ class ManagerProgramResolver:
     def _resolve_term_arg(self, source_name: str, value: Any) -> PreparedArg:
         """Resolve one manager term argument into a prepared descriptor.
 
-        Carrier dataclass arguments pass through as constants: Dynamo traces
-        their attribute access directly, and a structural fingerprint over
-        their raw fields feeds the program fingerprint for cache
-        invalidation. Float-like scalars and arrays/tensors become shared
-        leaf slots read by reference; simulator queries resolve to their
-        read-program batched array; every other value is a literal constant.
+        Carrier dataclass and tensor/ndarray arguments pass through as
+        constants: Dynamo traces their attribute access and tensor ops
+        directly, and a structural fingerprint over their raw fields (dtype,
+        shape, content hash) feeds the program fingerprint for cache
+        invalidation. Float-like numpy scalars normalize to Python floats;
+        simulator queries resolve to their read-program batched array; every
+        other value is a literal constant.
         """
         if is_kernel_data(value):
             self._layout_identity.append(
                 ("term_arg", source_name, type(value).__qualname__, _carrier_fingerprint(value))
             )
             return ConstantArg(value)
-        if isinstance(value, (float, np.floating)):
-            return LeafArg(ResolvedLeaf(np.float32(value)))
-        if isinstance(value, np.ndarray):
-            return LeafArg(ResolvedLeaf(value))
+        if isinstance(value, (torch.Tensor, np.ndarray)):
+            self._layout_identity.append(("term_arg", source_name, _carrier_fingerprint(value)))
+            return ConstantArg(value)
+        if isinstance(value, np.floating):
+            return ConstantArg(float(value))
         if isinstance(value, SimDataQuery):
             # A query passed as a term argument resolves to its registered
             # read-program batched view; the dispatch receives the array in

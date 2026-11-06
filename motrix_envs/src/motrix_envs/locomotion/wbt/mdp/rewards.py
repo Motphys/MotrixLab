@@ -6,7 +6,6 @@
 from dataclasses import dataclass
 from typing import cast
 
-import numpy as np
 import torch
 
 from motrix_env_core.config import configclass
@@ -27,7 +26,7 @@ class GlobalRefPositionRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        return RewardTerm(global_ref_position_reward, np.float32(self.sigma))
+        return RewardTerm(global_ref_position_reward, float(self.sigma))
 
 
 def global_ref_orientation_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
@@ -44,7 +43,7 @@ class GlobalRefOrientationRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        return RewardTerm(global_ref_orientation_reward, np.float32(self.sigma))
+        return RewardTerm(global_ref_orientation_reward, float(self.sigma))
 
 
 def relative_body_position_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
@@ -59,7 +58,7 @@ class RelativeBodyPositionRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        return RewardTerm(relative_body_position_reward, np.float32(self.sigma))
+        return RewardTerm(relative_body_position_reward, float(self.sigma))
 
 
 def ee_body_pos_reward(ctx: ManagerContext, body_indices: tuple[int, ...], sigma: float) -> torch.Tensor:
@@ -93,7 +92,7 @@ class EeBodyPosRewardCfg(RewardTermCfg):
             )
         tracked_body_names = ctx.cfg.commands.motion.tracked_body_names
         body_indices = tuple(tracked_body_names.index(name) for name in self.body_names)
-        return RewardTerm(ee_body_pos_reward, body_indices, np.float32(self.sigma))
+        return RewardTerm(ee_body_pos_reward, body_indices, float(self.sigma))
 
 
 def relative_body_orientation_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
@@ -109,7 +108,7 @@ class RelativeBodyOrientationRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        return RewardTerm(relative_body_orientation_reward, np.float32(self.sigma))
+        return RewardTerm(relative_body_orientation_reward, float(self.sigma))
 
 
 def global_body_linear_velocity_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
@@ -126,7 +125,7 @@ class GlobalBodyLinearVelocityRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        return RewardTerm(global_body_linear_velocity_reward, np.float32(self.sigma))
+        return RewardTerm(global_body_linear_velocity_reward, float(self.sigma))
 
 
 def global_body_angular_velocity_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
@@ -143,7 +142,7 @@ class GlobalBodyAngularVelocityRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, ctx) -> RewardTerm:
-        return RewardTerm(global_body_angular_velocity_reward, np.float32(self.sigma))
+        return RewardTerm(global_body_angular_velocity_reward, float(self.sigma))
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,4 +188,4 @@ class UndesiredContactsRewardCfg(RewardTermCfg):
     threshold: float
 
     def __call__(self, ctx) -> RewardTerm:
-        return RewardTerm(undesired_contacts_reward, np.float32(self.threshold))
+        return RewardTerm(undesired_contacts_reward, float(self.threshold))

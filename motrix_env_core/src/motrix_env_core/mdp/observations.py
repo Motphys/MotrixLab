@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
 import torch
 
 from motrix_env_core.config import configclass
@@ -118,8 +117,8 @@ class BodyJointVelObsCfg(ObservationTermCfg):
             len(body.joint_names),
             body_joint_vel_obs,
             BodyJointVelocityQuery(body=body.base_link_name),
-            np.float32(self.scale),
-            np.float32(self.noise.amplitude),
+            float(self.scale),
+            float(self.noise.amplitude),
         )
 
 
@@ -151,8 +150,8 @@ class BodyLinearVelocityObsCfg(ObservationTermCfg):
             body_linear_velocity_obs,
             LinkQuaternionQuery(link=body.base_link_name),
             LinkLinearVelocityQuery(link=body.base_link_name),
-            np.float32(self.scale),
-            np.float32(self.noise.amplitude),
+            float(self.scale),
+            float(self.noise.amplitude),
         )
 
 
@@ -184,8 +183,8 @@ class BodyAngularVelocityObsCfg(ObservationTermCfg):
             body_angular_velocity_obs,
             LinkQuaternionQuery(link=body.base_link_name),
             LinkAngularVelocityQuery(link=body.base_link_name),
-            np.float32(self.scale),
-            np.float32(self.noise.amplitude),
+            float(self.scale),
+            float(self.noise.amplitude),
         )
 
 
@@ -211,7 +210,7 @@ class BodyProjectedGravityObsCfg(ObservationTermCfg):
             3,
             body_projected_gravity_obs,
             LinkQuaternionQuery(link=body.base_link_name),
-            np.float32(self.noise.amplitude),
+            float(self.noise.amplitude),
         )
 
 
@@ -247,9 +246,9 @@ class BodyJointPosRelObsCfg(ObservationTermCfg):
             int(body.init_joint_pos.shape[0]),
             body_joint_pos_rel_obs,
             BodyJointPositionQuery(body=body.base_link_name),
-            body.init_joint_pos,
-            np.float32(self.scale),
-            np.float32(self.noise.amplitude),
+            torch.from_numpy(body.init_joint_pos),
+            float(self.scale),
+            float(self.noise.amplitude),
         )
 
 

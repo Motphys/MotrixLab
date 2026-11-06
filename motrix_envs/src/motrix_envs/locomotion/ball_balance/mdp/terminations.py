@@ -3,7 +3,6 @@
 
 """Termination terms for the manager-based ball-balance task."""
 
-import numpy as np
 import torch
 
 from motrix_env_core.config import configclass
@@ -29,7 +28,7 @@ class BadBaseZTerminationCfg(_BallBalanceTerminationCfg):
     def __call__(self, ctx) -> TerminationTerm:
         return TerminationTerm(
             bad_base_z_termination,
-            np.float32(self.threshold),
+            float(self.threshold),
             metric_names=("base_z",),
         )
 
@@ -51,7 +50,7 @@ class BadOrientationTerminationCfg(_BallBalanceTerminationCfg):
     def __call__(self, ctx) -> TerminationTerm:
         return TerminationTerm(
             bad_orientation_termination,
-            np.float32(self.threshold),
+            float(self.threshold),
             metric_names=("base_tilt",),
         )
 
@@ -75,6 +74,6 @@ class BallEscapedTerminationCfg(_BallBalanceTerminationCfg):
     def __call__(self, ctx) -> TerminationTerm:
         return TerminationTerm(
             ball_escaped_termination,
-            np.float32(self.threshold),
+            float(self.threshold),
             metric_names=("ball_feet_distance",),
         )
