@@ -44,6 +44,9 @@ registry.env("my-task")(ManagerEnv)
 ## 生命周期
 
 `ManagerEnv` 同样继承 `ArrayEnv`，step 时序与 auto-reset / truncation 语义与 DirectEnv 一致。
+Manager 前端的公开接口统一使用 torch：`step(actions)` 与 `reset(env_ids)`（含 `sim_reset_ids`）
+接收整数 `torch.Tensor`，例如 `env.reset(torch.tensor([0, 2], dtype=torch.long))`；
+传入 numpy 数组会抛出 `TypeError`。
 下图把各回调整合进流水线：绿色是 manager kernel（`@dispatch`）执行的部分，
 紫色是 manager 的主机侧 Python 回调，蓝色是框架——编排各阶段的宿主与其自身的数据通路：
 

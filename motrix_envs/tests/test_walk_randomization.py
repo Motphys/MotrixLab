@@ -105,7 +105,7 @@ def test_action_reset_clears_only_selected_lane_history_and_keeps_pointer():
         env.apply_action(torch.full(controls.shape, value, dtype=torch.float32), env._state)
     ptr_before_reset = action_state.action_ptr.clone()
     other_lane_history = action_state.action_queue[1].clone()
-    env.reset(np.asarray([0], dtype=np.int64))
+    env.reset(torch.tensor([0], dtype=torch.long))
     assert bool((action_state.action_queue[0] == 0.0).all())
     torch.testing.assert_close(action_state.action_queue[1], other_lane_history, rtol=0, atol=0)
     torch.testing.assert_close(action_state.action_ptr, ptr_before_reset, rtol=0, atol=0)
@@ -113,7 +113,7 @@ def test_action_reset_clears_only_selected_lane_history_and_keeps_pointer():
 
 def test_action_delay_reset_resamples_within_range():
     env, action_state, _ = _tiny_delay_manager(lo=0, hi=2)
-    env.reset(np.arange(action_state.action_queue.shape[0]))
+    env.reset(torch.arange(action_state.action_queue.shape[0], dtype=torch.long))
     assert bool(((action_state.delay_steps >= 0) & (action_state.delay_steps <= 2)).all())
 
 
@@ -153,7 +153,7 @@ def test_walk_env_randomized_reset_samples_within_ranges():
     env = ManagerEnv(cfg, num_envs=2)
     try:
         env.step(torch.zeros((2, env.num_actuators), dtype=torch.float32))
-        env.reset(np.arange(2))
+        env.reset(torch.arange(2, dtype=torch.long))
         walk = env.command_terms["walk"]
         # Phase increments invert the configured gait-period interval.
         command_cfg = cfg.commands.walk

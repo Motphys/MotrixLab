@@ -50,9 +50,11 @@ class FinalObs(Generic[T]):
 
     Rows in ``obs`` align with ``env_ids``. Arrays remain valid across steps;
     consumers must treat them as read-only. ``obs.value`` stays optional.
+    ``env_ids`` follows the frontend's currency: numpy for NumPy-frontend
+    environments, a torch integer tensor for the manager pipeline.
     """
 
-    env_ids: np.ndarray
+    env_ids: np.ndarray | torch.Tensor
     obs: EnvObs[T]
 
 
@@ -277,8 +279,11 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType, T]):
             self.reset(env_ids)
 
     @abc.abstractmethod
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: np.ndarray | torch.Tensor) -> None:
         """Write reset rows for the selected environments.
+
+        ``env_ids`` follows the frontend's currency: numpy arrays for the
+        NumPy frontend (DirectEnv), torch tensors for the manager pipeline.
 
         Subclasses address their simulator's rows themselves. Observation
         generation is deferred until :meth:`compute_observation`, after reset

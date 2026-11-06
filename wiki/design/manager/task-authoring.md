@@ -175,6 +175,10 @@ Observation、reward、termination term 不应通过共享全局 registry 查找
 Reset 配置声明 simulator state 和 term state 的恢复行为。Term 的 `reset(env_ids)` 只修改指定 environment rows；不要在 term 中实现全局 auto-reset、episode step 或 truncation。
 这些职责属于 [Manager Runtime](./runtime.md) 所述的 `ArrayEnv` lifecycle 和 backend reset program。
 
+对外 API 层面，`ManagerEnv.reset(env_ids, sim_reset_ids=None)` 接收整数 `torch.Tensor`
+（例如 `torch.tensor([0, 2], dtype=torch.long)`），传入 numpy 数组抛出 `TypeError`；
+term 侧的 host 回调（command reset、action reset）仍保持 numpy 契约。
+
 ## 8. 开发验收
 
 新增 Manager task 至少应验证：

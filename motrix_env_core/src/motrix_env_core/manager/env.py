@@ -828,4 +828,3 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         except (TypeError, ValueError) as error:
             message = f"Invalid kernel context for {type(self).__name__} task kernel: {error}"
             raise type(error)(message) from error
-

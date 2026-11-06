@@ -48,7 +48,10 @@ term does and how to define it.
 ## Lifecycle
 
 `ManagerEnv` also inherits `ArrayEnv`; the step sequence and the auto-reset / truncation
-semantics match DirectEnv. The figure below integrates the term callbacks into the
+semantics match DirectEnv. The manager frontend's public currency is uniformly torch:
+`step(actions)` and `reset(env_ids)` (including `sim_reset_ids`) take integer
+`torch.Tensor`s, e.g. `env.reset(torch.tensor([0, 2], dtype=torch.long))`; passing a
+numpy array raises a `TypeError`. The figure below integrates the term callbacks into the
 pipeline: green parts run inside manager kernels (`@dispatch`), purple parts are the
 manager's host-side Python callbacks, and blue parts are the framework — the
 orchestrating stages and its own data plumbing:
