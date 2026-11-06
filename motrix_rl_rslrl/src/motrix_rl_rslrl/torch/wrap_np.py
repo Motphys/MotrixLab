@@ -9,6 +9,7 @@ from rsl_rl.env.vec_env import VecEnv
 from tensordict import TensorDict
 
 from motrix_env_core.array.env import ArrayEnv, EnvObs
+from motrix_env_core.manager import ManagerEnv
 from motrix_env_core.renderer import RenderConfig, create_renderer
 
 
@@ -88,11 +89,12 @@ class RslrlNpEnvWrap(VecEnv):
         return self
 
     def step(self, actions: torch.Tensor) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict]:
-        # Convert torch actions to numpy
-        actions_np = actions.cpu().numpy()
-
-        # Step the environment
-        state = self._env.step(actions_np)
+        if isinstance(self._env, ManagerEnv):
+            # Manager environments consume tensor actions; pass through.
+            state = self._env.step(actions.cpu())
+        else:
+            # Convert torch actions to numpy
+            state = self._env.step(actions.cpu().numpy())
         self._state = state
 
         # Update episode length buffer

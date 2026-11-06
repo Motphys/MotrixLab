@@ -4,9 +4,9 @@
 """NumPy-frontend env wrapper for FastSAC.
 
 Wraps a Motrix ``ArrayEnv`` as the torch-tensor vectorized environment consumed
-by FastSAC. Manager environments already expose torch state; the tensors pass
-through zero-copy (only a device move when training off-CPU). NumPy-frontend
-(Direct) environments convert at this boundary.
+by FastSAC. Manager environments already expose torch state and consume torch
+actions; both pass through zero-copy (only a device move when training
+off-CPU). NumPy-frontend (Direct) environments convert at this boundary.
 
 The actor maps its tanh output to the action range declared by the environment;
 the wrapper only clips to that standard contract before stepping. Done
@@ -18,6 +18,7 @@ import numpy as np
 import torch
 
 from motrix_env_core.array.env import ArrayEnv
+from motrix_env_core.manager import ManagerEnv
 from motrix_env_core.renderer import RenderConfig, create_renderer
 from motrix_rl.utils import env_infos
 from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap, FastSacStepResult
@@ -29,6 +30,13 @@ class FastSacNpEnvWrap(FastSacEnvWrap):
     def __init__(self, env: ArrayEnv, device: torch.device, render: RenderConfig | None = None):
         super().__init__(env, device)
         self._env: ArrayEnv = env
+        # Manager environments consume tensor actions: clip with torch ops and
+        # pass the tensor through. Direct (NumPy-frontend) environments keep
+        # the numpy clip-and-convert path.
+        self._torch_actions = isinstance(env, ManagerEnv)
+        if self._torch_actions:
+            self._low_t = torch.as_tensor(self._low, dtype=torch.float32)
+            self._high_t = torch.as_tensor(self._high, dtype=torch.float32)
         self._renderer = create_renderer(env, render)
 
     def _to_torch(self, arr, dtype=torch.float32) -> torch.Tensor:
@@ -41,10 +49,13 @@ class FastSacNpEnvWrap(FastSacEnvWrap):
         return self._to_torch(state.obs.policy), self._to_torch(state.obs.value_or_policy)
 
     def step(self, actions: torch.Tensor) -> FastSacStepResult:
-        # Zero-copy CPU view of the learner's actions; clipping allocates the
-        # buffer handed to the numpy-frontend action path.
-        np_actions = np.clip(actions.detach().cpu().numpy(), self._low, self._high)
-        state = self._env.step(np_actions)
+        if self._torch_actions:
+            env_actions = torch.clamp(actions.detach().cpu(), self._low_t, self._high_t)
+        else:
+            # Zero-copy CPU view of the learner's actions; clipping allocates the
+            # buffer handed to the numpy-frontend action path.
+            env_actions = np.clip(actions.detach().cpu().numpy(), self._low, self._high)
+        state = self._env.step(env_actions)
         return FastSacStepResult(
             obs=self._to_torch(state.obs.policy),
             critic_obs=self._to_torch(state.obs.value_or_policy),

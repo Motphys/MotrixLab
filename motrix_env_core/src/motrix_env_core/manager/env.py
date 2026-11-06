@@ -593,10 +593,10 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState[torch.Tensor]) -> ArrayEnvState[torch.Tensor]:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState[torch.Tensor]) -> ArrayEnvState[torch.Tensor]:
         expected_shape = (self.num_envs, self.action_space.shape[0])
         if actions.shape != expected_shape:
-            raise ValueError(f"Expected action shape {expected_shape}, got {actions.shape}.")
+            raise ValueError(f"Expected action shape {expected_shape}, got {tuple(actions.shape)}.")
         for name, term in self._action_terms.items():
             controls = term.process(actions[:, self._action_slices[name]])
             actuators = self._action_actuators[name]
@@ -604,7 +604,10 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
                 assert controls is None
                 continue
             assert controls is not None
-            self._action_writes.buffer(name)[:] = controls
+            # The compiled write program owns numpy buffers. ``.numpy()`` is a
+            # zero-copy view of the controls tensor; the slice assignment is
+            # the single torch→numpy copy on this path.
+            self._action_writes.buffer(name)[:] = controls.numpy()
         self._action_writes.execute()
         return state
 

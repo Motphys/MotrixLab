@@ -9,6 +9,7 @@ import torch
 from skrl.envs.wrappers.torch import Wrapper as SkrlWrapper
 
 from motrix_env_core.array.env import ArrayEnv
+from motrix_env_core.manager import ManagerEnv
 from motrix_env_core.renderer import RenderConfig, VideoRecorder, create_renderer
 from motrix_env_core.sim.backend import SimRenderer
 from motrix_rl.device import resolve_default_device
@@ -57,8 +58,11 @@ class SkrlNpWrapper(SkrlWrapper):
         torch.Tensor,
         Any,
     ]:
-        actions = actions.cpu().numpy()
-        state = self._env.step(actions)
+        if isinstance(self._env, ManagerEnv):
+            # Manager environments consume tensor actions; pass through.
+            state = self._env.step(actions.detach().cpu())
+        else:
+            state = self._env.step(actions.cpu().numpy())
         return (
             _as_torch(state.obs.policy, torch.float32, self.device),
             _as_torch(state.reward.reshape(-1, 1), torch.float32, self.device),

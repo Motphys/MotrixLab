@@ -61,21 +61,23 @@ class JointPositionActionTerm(ActionTerm):
     def __init__(self, space: gym.spaces.Box, state: JointPositionActionState) -> None:
         super().__init__(space, state)
 
-    def _process(self, actions: np.ndarray) -> np.ndarray:
-        """Map raw policy actions to targets using manager-owned action history."""
+    def _process(self, actions: torch.Tensor) -> torch.Tensor:
+        """Map raw policy actions to targets using manager-owned action history.
+
+        Stays on tensors end to end: the delayed-slot lookup uses
+        ``torch.take_along_dim`` and the affine target map multiplies torch
+        buffers directly, mirroring
+        ``motrix_env_core.torch_manager.actions.process_joint_position_actions``.
+        """
         state = self.state
         ptr = int(state.action_ptr[0])
         target_raw = actions
         if state.delay_hi > 0:
-            queue = state.action_queue.numpy()
+            queue = state.action_queue
             width = queue.shape[1]
-            delay_indices = (ptr - state.delay_steps.numpy()) % width
-            target_raw = np.take_along_axis(
-                queue,
-                delay_indices[:, None, None],
-                axis=1,
-            )[:, 0, :]
-        return target_raw * state.action_scales.numpy() + state.default_angles.numpy()
+            delay_indices = (ptr - state.delay_steps) % width
+            target_raw = torch.take_along_dim(queue, delay_indices[:, None, None], dim=1)[:, 0, :]
+        return target_raw * state.action_scales + state.default_angles
 
     def _reset(self, env_ids: np.ndarray) -> None:
         """Resample per-episode delay after the base term clears raw history."""

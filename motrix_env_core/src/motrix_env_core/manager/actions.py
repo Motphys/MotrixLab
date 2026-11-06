@@ -67,17 +67,17 @@ class ActionTerm(abc.ABC):
         self.action_space = action_space
         self.state = canonicalize_kernel_data(state, context="ActionTerm state")
 
-    def process(self, actions: np.ndarray) -> np.ndarray | None:
-        """Record raw actions and process one batched action slice."""
+    def process(self, actions: torch.Tensor) -> torch.Tensor | None:
+        """Record raw tensor actions and process one batched action slice."""
         state = self.state
         ptr = (int(state.action_ptr[0]) + 1) % state.action_queue.shape[1]
         state.action_ptr[0] = ptr
-        state.action_queue.numpy()[:, ptr] = actions
+        state.action_queue[:, ptr] = actions
         return self._process(actions)
 
     @abc.abstractmethod
-    def _process(self, actions: np.ndarray) -> np.ndarray | None:
-        """Process one batched action slice into route-local controls."""
+    def _process(self, actions: torch.Tensor) -> torch.Tensor | None:
+        """Process one batched tensor action slice into route-local controls."""
 
     def reset(self, env_ids: np.ndarray) -> None:
         """Clear raw history and reset action-specific state for selected rows."""

@@ -49,8 +49,8 @@ def _exercise_process(process: Callable, *, width: int, delayed: bool) -> None:
         actions = torch.from_numpy(raw.copy())
         queue_before, ptr_before = queue.clone(), ptr.clone()
         targets, new_queue, new_ptr, current, previous = process(queue, ptr, actions, delays, scales, defaults)
-        expected = term.process(raw)
-        torch.testing.assert_close(targets, torch.from_numpy(expected))
+        expected = term.process(torch.from_numpy(raw))
+        torch.testing.assert_close(targets, expected)
         torch.testing.assert_close(new_queue, state.action_queue, rtol=0, atol=0)
         torch.testing.assert_close(new_ptr, state.action_ptr, rtol=0, atol=0)
         torch.testing.assert_close(current, state.current(), rtol=0, atol=0)
@@ -97,7 +97,7 @@ def _exercise_reset(reset: Callable, process: Callable) -> None:
             state.action_scales,
             state.default_angles,
         )
-        torch.testing.assert_close(targets, torch.from_numpy(term.process(raw)))
+        torch.testing.assert_close(targets, term.process(torch.from_numpy(raw)))
         torch.testing.assert_close(queue, state.action_queue, rtol=0, atol=0)
         torch.testing.assert_close(current, state.current(), rtol=0, atol=0)
         torch.testing.assert_close(previous, state.previous(), rtol=0, atol=0)

@@ -62,8 +62,8 @@ class _TestActionTerm(ActionTerm):
     def __init__(self, action_space: gym.spaces.Box, state: _TestActionState) -> None:
         super().__init__(action_space, state)
 
-    def _process(self, actions: np.ndarray) -> None:
-        self.state.source.copy_(torch.from_numpy(actions))
+    def _process(self, actions: torch.Tensor) -> None:
+        self.state.source.copy_(actions)
 
     def _reset(self, env_ids: np.ndarray) -> None:
         self.state.reset_flags.fill_(False)
@@ -74,8 +74,8 @@ class _SecondActionTerm(ActionTerm):
     def __init__(self, action_space: gym.spaces.Box, state: _SecondActionState) -> None:
         super().__init__(action_space, state)
 
-    def _process(self, actions: np.ndarray) -> None:
-        self.state.source.copy_(torch.from_numpy(actions))
+    def _process(self, actions: torch.Tensor) -> None:
+        self.state.source.copy_(actions)
 
     def _reset(self, env_ids: np.ndarray) -> None:
         self.state.reset_flags.fill_(False)
@@ -365,7 +365,7 @@ def test_episode_reset_reuses_transition_kernel_inputs(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(env, "_refresh_sim_reads", record_read)
 
-    state = env.step(np.ones((env.num_envs, 1), dtype=np.float32))
+    state = env.step(torch.ones((env.num_envs, 1), dtype=torch.float32))
 
     np.testing.assert_array_equal(state.terminated, True)
     assert read_count == 1
@@ -423,7 +423,7 @@ def test_multiple_action_terms_concatenate_spaces_and_receive_ordered_slices() -
     cfg = _ManagerEnvCfg(actions=_MultipleActionsCfg(), observations=_MultipleActionObservationsCfg())
     env = ManagerEnv(cfg, num_envs=2)
     state = env.init_state()
-    actions = np.asarray([[0.25, 1.0, 2.0], [0.5, -1.0, -2.0]], dtype=np.float32)
+    actions = torch.tensor([[0.25, 1.0, 2.0], [0.5, -1.0, -2.0]], dtype=torch.float32)
 
     env.apply_action(actions, state)
 
@@ -453,7 +453,7 @@ def test_multiple_action_terms_validate_total_action_shape() -> None:
     state = env.init_state()
 
     with pytest.raises(ValueError, match=r"Expected action shape \(2, 1\), got \(2, 2\)"):
-        env.apply_action(np.zeros((2, 2), dtype=np.float32), state)
+        env.apply_action(torch.zeros((2, 2), dtype=torch.float32), state)
 
 
 def test_rand_value_owns_seeded_per_environment_states() -> None:
@@ -473,7 +473,7 @@ def test_step_perf_records_standard_and_manager_phases() -> None:
     state = env.init_state()
     assert state.episode_steps.shape == (env.num_envs,)
     assert set(state.reward_terms) == {"source"}
-    actions = np.zeros((env.num_envs, 1), dtype=np.float32)
+    actions = torch.zeros((env.num_envs, 1), dtype=torch.float32)
 
     env.step(actions)
     assert env.perf.snapshot() == ()
@@ -505,14 +505,14 @@ def test_step_preserves_previous_observation_with_alternating_preallocated_buffe
     initial_policy = initial.obs.policy
     initial_snapshot = initial_policy.clone()
 
-    first = env.step(np.full((env.num_envs, 1), 0.25, dtype=np.float32))
+    first = env.step(torch.full((env.num_envs, 1), 0.25, dtype=torch.float32))
 
     np.testing.assert_array_equal(initial_policy, initial_snapshot)
     assert initial_policy.data_ptr() != first.obs.policy.data_ptr()
     first_policy = first.obs.policy
     first_snapshot = first_policy.clone()
 
-    second = env.step(np.full((env.num_envs, 1), 0.5, dtype=np.float32))
+    second = env.step(torch.full((env.num_envs, 1), 0.5, dtype=torch.float32))
 
     np.testing.assert_array_equal(first_policy, first_snapshot)
     assert first_policy.data_ptr() != second.obs.policy.data_ptr()
@@ -617,7 +617,7 @@ def test_command_term_updates_lifecycle_and_selected_reset_ids() -> None:
 def test_done_envs_reset_before_observation_and_preserve_transition_outputs() -> None:
     env = _ManagerEnv(num_envs=3)
     state = env.init_state()
-    state = env.step(np.asarray([[0.25], [0.75], [0.25]], dtype=np.float32))
+    state = env.step(torch.tensor([[0.25], [0.75], [0.25]], dtype=torch.float32))
 
     np.testing.assert_allclose(state.obs.policy[[0, 2], 0], 1.75)
     np.testing.assert_array_equal(state.obs.policy[1], [3.25, -1.0, 1.5, 1.0])
@@ -629,7 +629,7 @@ def test_done_envs_reset_before_observation_and_preserve_transition_outputs() ->
 def test_truncated_envs_reset_before_observation() -> None:
     env = _ManagerEnv(num_envs=2, max_episode_seconds=0.01)
 
-    state = env.step(np.asarray([[0.25], [0.25]], dtype=np.float32))
+    state = env.step(torch.full((2, 1), 0.25, dtype=torch.float32))
 
     np.testing.assert_array_equal(state.truncated, True)
     np.testing.assert_array_equal(state.episode_steps, 0)
@@ -649,7 +649,7 @@ def test_final_observations_capture_command_before_reset_and_survive_steps(with_
     assert initial.final_obs is None
     initial.episode_steps[:] = [2, 0, 2]
     env.command_terms["counter"].command[:] = 2.0
-    state = env.step(np.full((3, 1), 0.25, dtype=np.float32))
+    state = env.step(torch.full((3, 1), 0.25, dtype=torch.float32))
     final = state.final_obs
     assert final is not None
     np.testing.assert_array_equal(final.env_ids, [0, 2])
@@ -664,10 +664,10 @@ def test_final_observations_capture_command_before_reset_and_survive_steps(with_
         assert final.obs.value_or_policy is final.obs.policy
     assert final.obs.policy.data_ptr() != state.obs.policy.data_ptr()
     saved = final.obs.policy.clone()
-    next_state = env.step(np.full((3, 1), 0.25, dtype=np.float32))
+    next_state = env.step(torch.full((3, 1), 0.25, dtype=torch.float32))
     assert next_state.final_obs is None
     assert state.final_obs is final
-    env.step(np.full((3, 1), 0.25, dtype=np.float32))
+    env.step(torch.full((3, 1), 0.25, dtype=torch.float32))
     np.testing.assert_array_equal(final.obs.policy, saved)
 
 
@@ -809,7 +809,7 @@ def test_dispatch_term_parameter_names_are_not_constrained() -> None:
 
     env = ManagerEnv(_ManagerEnvCfg(rewards=_RenamedRewardsCfg()), num_envs=2)
     state = env.init_state()
-    actions = np.full((env.num_envs, 1), 0.5, dtype=np.float32)
+    actions = torch.full((env.num_envs, 1), 0.5, dtype=torch.float32)
     env.apply_action(actions, state)
     env.compute_transition(state)
 

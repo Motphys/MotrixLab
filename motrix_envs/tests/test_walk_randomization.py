@@ -65,20 +65,20 @@ def _tiny_delay_manager(num_envs: int = 2, num_actuators: int = 3, lo: int = 0, 
 def test_action_delay_applies_delayed_action():
     env, action_state, controls = _tiny_delay_manager(lo=1, hi=2)
     action_state.delay_steps[:] = 2
-    actions = np.full(controls.shape, 1.0, dtype=np.float32)
+    actions = torch.full(controls.shape, 1.0, dtype=torch.float32)
     env.apply_action(actions, env._state)
     # Only the raw action exists so far; unwritten history remains zero.
     assert np.all(controls == 0.0)
     assert bool((action_state.action_queue[:, int(action_state.action_ptr[0])] == 1.0).all())
     for value in (2.0, 3.0, 4.0):
-        env.apply_action(np.full_like(actions, value), env._state)
+        env.apply_action(torch.full_like(actions, value), env._state)
     # Two-step delay: the applied action is the one from two steps ago.
     assert np.all(controls == 2.0)
 
 
 def test_action_delay_disabled_passes_actions_through_and_keeps_history():
     env, action_state, controls = _tiny_delay_manager(lo=0, hi=0)
-    actions = np.full(controls.shape, 0.5, dtype=np.float32)
+    actions = torch.full(controls.shape, 0.5, dtype=torch.float32)
     env.apply_action(actions, env._state)
     assert np.all(controls == 0.5)
     ptr = int(action_state.action_ptr[0])
@@ -91,7 +91,7 @@ def test_action_queue_wraps_and_selects_delay_per_lane():
     action_state.delay_steps[:] = torch.tensor([0, 2])
     width = action_state.action_queue.shape[1]
     for value in range(1, width + 2):
-        actions = np.full(controls.shape, value, dtype=np.float32)
+        actions = torch.full(controls.shape, value, dtype=torch.float32)
         env.apply_action(actions, env._state)
         assert int(action_state.action_ptr[0]) == value % width
         assert controls[0, 0] == value
@@ -102,7 +102,7 @@ def test_action_queue_wraps_and_selects_delay_per_lane():
 def test_action_reset_clears_only_selected_lane_history_and_keeps_pointer():
     env, action_state, controls = _tiny_delay_manager(num_envs=2, lo=0, hi=2)
     for value in (1.0, 2.0, 3.0):
-        env.apply_action(np.full(controls.shape, value, dtype=np.float32), env._state)
+        env.apply_action(torch.full(controls.shape, value, dtype=torch.float32), env._state)
     ptr_before_reset = action_state.action_ptr.clone()
     other_lane_history = action_state.action_queue[1].clone()
     env.reset(np.asarray([0], dtype=np.int64))
@@ -121,9 +121,9 @@ def test_joint_position_term_methods_manage_history_and_specific_state():
     env, action_state, controls = _tiny_delay_manager(lo=0, hi=2)
     term = env._action_terms["joint_position"]
     for value in (1.0, 2.0, 3.0):
-        env.apply_action(np.full(controls.shape, value, dtype=np.float32), env._state)
+        env.apply_action(torch.full(controls.shape, value, dtype=torch.float32), env._state)
     pointer = int(action_state.action_ptr[0])
-    term.process(np.full(controls.shape, 4.0, dtype=np.float32))
+    term.process(torch.full(controls.shape, 4.0, dtype=torch.float32))
     assert int(action_state.action_ptr[0]) == (pointer + 1) % action_state.action_queue.shape[1]
     torch.testing.assert_close(action_state.current(), torch.full_like(action_state.current(), 4.0))
     term.reset(np.asarray([0], dtype=np.int64))
@@ -152,7 +152,7 @@ def test_walk_env_randomized_reset_samples_within_ranges():
     cfg = make_g129dof_walk_flat_cfg()
     env = ManagerEnv(cfg, num_envs=2)
     try:
-        env.step(np.zeros((2, env.num_actuators), dtype=np.float32))
+        env.step(torch.zeros((2, env.num_actuators), dtype=torch.float32))
         env.reset(np.arange(2))
         walk = env.command_terms["walk"]
         # Phase increments invert the configured gait-period interval.

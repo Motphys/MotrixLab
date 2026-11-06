@@ -208,9 +208,9 @@ class _CtrlActionTerm(ActionTerm):
     def __init__(self, action_space: gym.spaces.Box, state: _CtrlActionState) -> None:
         super().__init__(action_space, state)
 
-    def _process(self, actions: np.ndarray) -> np.ndarray:
-        self.state.source.copy_(torch.from_numpy(actions))
-        return actions * np.float32(2.0)
+    def _process(self, actions: torch.Tensor) -> torch.Tensor:
+        self.state.source.copy_(actions)
+        return actions * 2.0
 
     def _reset(self, env_ids: np.ndarray) -> None:
         self.state.source[env_ids] = 0.0
@@ -314,7 +314,7 @@ def test_manager_env_steps_on_fake_backend() -> None:
     env = _make_env()
     runtime = _FakeBackend.last
 
-    state = env.step(np.full((3, 1), 0.5, dtype=np.float32))
+    state = env.step(torch.full((3, 1), 0.5, dtype=torch.float32))
 
     assert runtime.step_calls == [env.cfg.sim_substeps]
     # ctrl routing: only the "routed" actuator receives the doubled action.
@@ -333,7 +333,7 @@ def test_partial_reset_hands_canonical_rows_to_runtime_and_clears_ctrl() -> None
 
     env.init_state()
     runtime.reset_calls.clear()
-    env.step(np.full((3, 1), 0.5, dtype=np.float32))
+    env.step(torch.full((3, 1), 0.5, dtype=torch.float32))
     assert runtime.ctrl_targets[1, 1] == np.float32(1.0)
 
     env._state.terminated[:] = torch.tensor([False, True, False])

@@ -311,12 +311,14 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType, T]):
         """Create the backend-owned renderer bound to this environment."""
 
     @abc.abstractmethod
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState[T]) -> ArrayEnvState[T]:
+    def apply_action(self, actions: T, state: ArrayEnvState[T]) -> ArrayEnvState[T]:
         """
         Apply the action to the environment
 
         Args:
-            actions (np.ndarray): The actions to apply
+            actions (T): The actions to apply — the same array flavor the
+                environment carries end to end (numpy arrays for the NumPy
+                frontend, torch tensors for the manager pipeline)
             state (ArrayEnvState): The environment state to apply the actions.
         """
 
@@ -359,8 +361,11 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType, T]):
         return state
 
     @perf_root("step")
-    def step(self, actions: np.ndarray) -> ArrayEnvState[T]:
+    def step(self, actions: T) -> ArrayEnvState[T]:
         """Advance one control step.
+
+        ``actions`` flows the environment's array flavor: numpy arrays for
+        NumPy-frontend environments, torch tensors for the manager pipeline.
 
         Timing: ``apply_action`` -> ``physics_step`` -> ``compute_transition``
         (the only full simulator-data refresh) -> episode bookkeeping ->

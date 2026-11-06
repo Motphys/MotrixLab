@@ -22,6 +22,7 @@ from motrix_env_core.config import SimCfg, configclass
 from motrix_env_core.config.scene.base import RobotCfg, SceneCfg, SceneObjsCfg, SceneVisualCfg, SystemCameraCfg
 from motrix_env_core.config.scene.geometry import FlatTerrainCfg
 from motrix_env_core.config.scene.light import LightCfg
+from motrix_env_core.manager import ManagerEnv
 from motrix_env_core.renderer import RenderConfig, create_renderer
 from motrix_env_motrixsim.compiler import build_scene_model
 
@@ -56,11 +57,17 @@ def _sample_random_action_np(env: ABEnv) -> np.ndarray:
 
 
 def _run_np(env: ArrayEnv):
+    import torch
+
     renderer = create_renderer(env, RenderConfig())
     env_dt = env.cfg.ctrl_dt
+    # Manager environments consume tensor actions; sample the env's currency.
+    torch_actions = isinstance(env, ManagerEnv)
     while True:
         t0 = time.monotonic()
         actions = _sample_random_action_np(env)
+        if torch_actions:
+            actions = torch.from_numpy(actions)
         env.step(actions)
         renderer.render()
         real_dt = time.monotonic() - t0

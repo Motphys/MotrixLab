@@ -70,7 +70,7 @@ def test_joint_position_action_applies_per_lane_delay() -> None:
     )
     term = JointPositionActionTerm(gym.spaces.Box(-np.inf, np.inf, shape=(1,)), state)
 
-    np.testing.assert_array_equal(term._process(np.asarray([[0.0], [0.0]], dtype=np.float32)), [[140.0], [102.0]])
+    np.testing.assert_array_equal(term._process(torch.zeros(2, 1, dtype=torch.float32)).numpy(), [[140.0], [102.0]])
 
 
 def test_joint_position_action_resamples_delay_on_reset(monkeypatch) -> None:
