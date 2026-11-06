@@ -15,12 +15,11 @@ dispatcher compilation happens here.
 
 from __future__ import annotations
 
-import hashlib
 import inspect
 import logging
 import warnings
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from time import perf_counter
 from types import MappingProxyType
 from typing import Any, get_args, get_origin, get_type_hints
@@ -30,7 +29,6 @@ import torch
 
 from motrix_env_core.manager.context import ManagerContext
 from motrix_env_core.manager.env import ManagerEnv, ReadPlan
-from motrix_env_core.manager.fingerprint import function_fingerprint
 from motrix_env_core.manager.kernel_data import (
     Map,
     ResolvedLeaf,
@@ -41,16 +39,12 @@ from motrix_env_core.manager.kernel_data import (
     leaf_value_type,
     tree_def_for,
 )
-from motrix_env_core.manager.kernel_data.methods import dispatch_methods
-from motrix_env_core.manager.kernel_data.tree import BaseDef, KernelMapDef, LeafDef
 from motrix_env_core.manager.observations import ObservationGroupEntry, ObsTerm
 from motrix_env_core.manager.rewards import RewardTerm
 from motrix_env_core.manager.terminations import TerminationTerm
 from motrix_env_core.sim import PhysicsReadProgram, SimDataQuery
 
 logger = logging.getLogger(__name__)
-
-_PROGRAM_FINGERPRINT_VERSION = 4
 
 # Simulator-backed read-only arena views are wrapped as tensors at resolution
 # time; suppress PyTorch's non-writable-array warning once here instead of
@@ -262,7 +256,6 @@ class ResolvedManagerProgram:
     observations: dict[str, tuple[ObservationTermCall, ...]]
     prepared_trees: tuple[ResolvedTree, ...]
     context: ResolvedManagerContext
-    fingerprint: str
 
 
 __all__ = [
@@ -303,101 +296,9 @@ class ManagerSimInput:
     query: SimDataQuery
 
 
-def _manager_sim_inputs(sim_data: PhysicsReadProgram) -> tuple[Mapping[str, ManagerSimInput], tuple[Any, ...]]:
+def _manager_sim_inputs(sim_data: PhysicsReadProgram) -> Mapping[str, ManagerSimInput]:
     inputs = {key: ManagerSimInput(sim_data.view(key), sim_data.query(key)) for key in sim_data.keys}
-    fingerprint = tuple(
-        (key, repr(binding.query), binding.value.shape[1:], binding.value.strides) for key, binding in inputs.items()
-    )
-    return MappingProxyType(inputs), fingerprint
-
-
-def _tree_leaf_fingerprint(tree: ResolvedTree) -> tuple[Any, ...]:
-    """Per-leaf content fingerprint: array/tensor shape/dtype identity."""
-    return tuple(
-        (
-            path,
-            None
-            if not isinstance(leaf.value, (np.ndarray, torch.Tensor))
-            else (tuple(leaf.value.shape), str(leaf.value.dtype), getattr(leaf.value, "strides", None)),
-        )
-        for path, leaf in tree.leaves.items()
-    )
-
-
-def _kernel_data_program_fingerprint(tree_def: TreeClassDef) -> str:
-    """Deterministic kernel-data identity for resolved-program invalidation.
-
-    Combines the structural tree fingerprint with per-leaf value types and
-    the code fingerprints of ``@dispatch`` methods on every nested record, so
-    schema, leaf-type, or method-code changes each invalidate compiled
-    program caches.
-    """
-    raw = repr((_PROGRAM_FINGERPRINT_VERSION, _program_fingerprint_part(tree_def)))
-    return hashlib.sha256(raw.encode()).hexdigest()
-
-
-def _program_fingerprint_part(tree_def: BaseDef) -> Any:
-    if isinstance(tree_def, LeafDef):
-        value_type = leaf_value_type(tree_def.annotation)
-        return (
-            "leaf",
-            tree_def.path,
-            None if value_type is None else f"{value_type.__module__}.{value_type.__qualname__}",
-        )
-    if isinstance(tree_def, KernelMapDef):
-        return (
-            "map",
-            tree_def.fingerprint,
-            tuple((entry.key, _program_fingerprint_part(entry.tree_def)) for entry in tree_def.entries),
-        )
-    assert isinstance(tree_def, TreeClassDef)
-    return (
-        "record",
-        tree_def.fingerprint,
-        tuple(
-            (name, function_fingerprint(method))
-            for name, method in sorted(dispatch_methods(tree_def.logical_type).items())
-        ),
-        tuple((field.name, _program_fingerprint_part(field.tree_def)) for field in tree_def.fields),
-    )
-
-
-def _carrier_fingerprint(value: Any) -> Any:
-    """Structural + content fingerprint of a constant term argument.
-
-    Recurses over dataclass fields recording field names, concrete types,
-    tensor/ndarray dtype+shape+content hashes, and Python scalar values.
-    Carriers previously resolved as kernel-data trees contributed no content
-    to the program fingerprint at all, and array arguments previously lived
-    as shared leaves outside the fingerprint; this makes every content
-    change (a grid array value, a scalar) invalidate compiled-program caches.
-    """
-    if isinstance(value, torch.Tensor):
-        return (
-            "tensor",
-            str(value.dtype),
-            tuple(value.shape),
-            hashlib.sha256(value.detach().contiguous().numpy().tobytes()).hexdigest(),
-        )
-    if isinstance(value, np.ndarray):
-        return (
-            "ndarray",
-            str(value.dtype),
-            value.shape,
-            hashlib.sha256(np.ascontiguousarray(value).tobytes()).hexdigest(),
-        )
-    if is_kernel_data(value):
-        return (
-            "dataclass",
-            type(value).__qualname__,
-            tuple((field.name, _carrier_fingerprint(getattr(value, field.name))) for field in fields(value)),
-        )
-    if isinstance(value, (bool, int, float, str)):
-        return (type(value).__name__, value)
-    raise TypeError(
-        f"Term argument of unsupported type {type(value).__name__}; "
-        "allowed: torch.Tensor, ndarray, Python scalars, str, carrier dataclasses."
-    )
+    return MappingProxyType(inputs)
 
 
 class ManagerProgramResolver:
@@ -405,14 +306,11 @@ class ManagerProgramResolver:
 
     def __init__(self, env: ManagerEnv):
         self._env = env
-        self._sim_inputs: Mapping[str, ManagerSimInput]
-        self._sim_inputs, sim_input_fingerprint = _manager_sim_inputs(env.sim_data)
+        self._sim_inputs = _manager_sim_inputs(env.sim_data)
         self._prepared_trees: list[ResolvedTree] = []
-        self._layout_identity: list[Any] = [sim_input_fingerprint]
 
     def build(self) -> ResolvedManagerProgram:
         build_started = perf_counter()
-        self._resolve_runtime_terms()
         observation_groups = self._env.observation_groups
         reward_terms = self._env._reward_terms
         termination_terms = self._env.termination_manager.terms
@@ -491,7 +389,6 @@ class ManagerProgramResolver:
             observations=observation_terms,
             prepared_trees=tuple(self._prepared_trees),
             context=context,
-            fingerprint=hashlib.sha256(repr(tuple(self._layout_identity)).encode()).hexdigest(),
         )
 
     # -- resets -------------------------------------------------------------
@@ -541,9 +438,7 @@ class ManagerProgramResolver:
                 "Map[torch.Tensor] (conventionally named sim_writes)."
             )
         dispatcher = function
-        args = tuple(
-            self._resolve_term_arg(f"sim_reset.{name}.args[{index}]", value) for index, value in enumerate(term.args)
-        )
+        args = tuple(self._resolve_term_arg(value) for index, value in enumerate(term.args))
         return ResolvedSimReset(
             SimResetTermCall(dispatcher, args),
             f"sim_reset_{name}_writes",
@@ -552,32 +447,6 @@ class ManagerProgramResolver:
         )
 
     # -- layouts ------------------------------------------------------------
-
-    def _resolve_runtime_terms(self) -> None:
-        for name, action_term in self._env.action_terms.items():
-            tree_def = tree_def_for(action_term.state)
-            self._layout_identity.append(
-                (
-                    "action",
-                    name,
-                    type(action_term).__qualname__,
-                    tree_def.fingerprint,
-                    self._env.action_slices[name],
-                    None
-                    if self._env.action_actuators[name] is None
-                    else tuple(spec.name for spec in self._env.action_actuators[name]),
-                )
-            )
-        for name, command_term in self._env.command_terms.items():
-            tree_def = tree_def_for(command_term)
-            self._layout_identity.append(
-                (
-                    "command",
-                    name,
-                    type(command_term).__qualname__,
-                    tree_def.fingerprint,
-                )
-            )
 
     def _resolve_manager_context(
         self,
@@ -604,17 +473,7 @@ class ManagerProgramResolver:
             dt=np.float32(self._env.cfg.ctrl_dt),
             sim_reset_requested=torch.from_numpy(self._env._sim_reset_requested),
         )
-        tree_index, tree_def = self._register_tree("manager_context", value)
-        tree = self._prepared_trees[tree_index]
-        self._layout_identity.append(
-            ("manager_context", _kernel_data_program_fingerprint(tree_def), _tree_leaf_fingerprint(tree))
-        )
-        self._layout_identity.append(
-            (
-                "metrics",
-                tuple((name, value.shape, value.dtype.str) for name, value in self._env.metrics.items()),
-            )
-        )
+        tree_index = self._register_tree("manager_context", value)[0]
         return ResolvedManagerContext(tree_index)
 
     def _resolve_command_hooks(self, function_name: str) -> tuple[tuple[str, Callable], ...]:
@@ -702,10 +561,7 @@ class ManagerProgramResolver:
                 f"Manager observation {group}.{name} dispatch must annotate its first two parameters as "
                 "ManagerContext and torch.Tensor (conventionally named ctx and out)."
             )
-        args = tuple(
-            self._resolve_term_arg(f"observation.{group}.{name}.args[{index}]", value)
-            for index, value in enumerate(term.args)
-        )
+        args = tuple(self._resolve_term_arg(value) for index, value in enumerate(term.args))
         return ObservationTermCall(group, name, function, args)
 
     # -- rewards and terminations --------------------------------------------
@@ -760,30 +616,22 @@ class ManagerProgramResolver:
                 f"Manager {group} {name} dispatch must annotate its first parameter as ManagerContext "
                 f"(conventionally named ctx)."
             )
-        return tuple(
-            self._resolve_term_arg(f"{group}.{name}.args[{index}]", value) for index, value in enumerate(term.args)
-        )
+        return tuple(self._resolve_term_arg(value) for index, value in enumerate(term.args))
 
     # -- argument resolution ---------------------------------------------------
 
-    def _resolve_term_arg(self, source_name: str, value: Any) -> PreparedArg:
+    def _resolve_term_arg(self, value: Any) -> PreparedArg:
         """Resolve one manager term argument into a prepared descriptor.
 
         Carrier dataclass and tensor/ndarray arguments pass through as
         constants: Dynamo traces their attribute access and tensor ops
-        directly, and a structural fingerprint over their raw fields (dtype,
-        shape, content hash) feeds the program fingerprint for cache
-        invalidation. Float-like numpy scalars normalize to Python floats;
+        directly. Float-like numpy scalars normalize to Python floats;
         simulator queries resolve to their read-program batched array; every
         other value is a literal constant.
         """
         if is_kernel_data(value):
-            self._layout_identity.append(
-                ("term_arg", source_name, type(value).__qualname__, _carrier_fingerprint(value))
-            )
             return ConstantArg(value)
         if isinstance(value, (torch.Tensor, np.ndarray)):
-            self._layout_identity.append(("term_arg", source_name, _carrier_fingerprint(value)))
             return ConstantArg(value)
         if isinstance(value, np.floating):
             return ConstantArg(float(value))
