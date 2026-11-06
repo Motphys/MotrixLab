@@ -360,13 +360,26 @@ def test_same_cfg_class_instances_keep_independent_runtime_state() -> None:
     first.step(torch.full((3, 1), 0.2, dtype=torch.float32))
     second.step(torch.full((3, 1), -0.2, dtype=torch.float32))
     del first_state, second_state
-    first.reset(np.asarray([0]))
-    second.reset(np.asarray([0]))
+    first.reset(torch.tensor([0], dtype=torch.long))
+    second.reset(torch.tensor([0], dtype=torch.long))
 
     np.testing.assert_allclose(_counter_command(first).double.numpy()[:, 0], [0.4, 0.4, 0.4])
     np.testing.assert_allclose(_counter_command(second).double.numpy()[:, 0], [-0.4, -0.4, -0.4])
     np.testing.assert_allclose(_counter_command(first).command.numpy()[:, 0], [-1.0, -1.0 + 2 * dt, -1.0 + 2 * dt])
     np.testing.assert_allclose(_counter_command(second).command.numpy()[:, 0], [-1.0, -1.0 + 2 * dt, -1.0 + 2 * dt])
+
+
+def test_reset_rejects_numpy_ids_and_non_integer_dtype() -> None:
+    """The manager frontend's public reset currency is uniformly torch."""
+    env = _ManagerEnv(num_envs=3)
+    env.init_state()
+
+    with pytest.raises(TypeError, match="torch.tensor"):
+        env.reset(np.asarray([0]))
+    with pytest.raises(TypeError, match="torch.tensor"):
+        env.reset(torch.tensor([0]), sim_reset_ids=np.asarray([1]))
+    with pytest.raises(TypeError, match="integer dtype"):
+        env.reset(torch.tensor([0.0]))
 
 
 def test_command_rematerialization_reuses_transition_kernel_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -590,9 +603,6 @@ def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> 
     np.testing.assert_allclose(state.reward_terms["source"], [0.005, 0.015])
     assert env._compiled_manager_program is not None
 
-    warmup = env.warmup()
-    assert warmup.signatures
-
 
 def test_read_plan_refreshes_resolved_leaves_in_place_without_rebuilding() -> None:
     env = _ManagerEnv(num_envs=3)
@@ -687,6 +697,7 @@ def test_final_observations_capture_command_before_reset_and_survive_steps(with_
     state = env.step(torch.full((3, 1), 0.25, dtype=torch.float32))
     final = state.final_obs
     assert final is not None
+    assert isinstance(final.env_ids, torch.Tensor)
     np.testing.assert_array_equal(final.env_ids, [0, 2])
     # Final observations capture the post-transition (post-advance) command.
     np.testing.assert_allclose(final.obs.policy[:, 1], 2.0 + env.cfg.ctrl_dt)

@@ -22,9 +22,6 @@ from motrix_env_core.manager.actions import ActionCfg, ActionTerm, ManagerAction
 from motrix_env_core.manager.commands import CommandCfg, CommandTerm, ManagerCommandsCfg, ResetContext
 from motrix_env_core.manager.kernel import (
     KernelOutputs,
-    ManagerWarmupResult,
-    clone_kernel_value,
-    clone_resolved_trees,
     validate_kernel_context,
 )
 from motrix_env_core.manager.kernel_data import (
@@ -66,6 +63,25 @@ _CfgT = TypeVar("_CfgT")
 _Q = TypeVar("_Q")
 
 logger = logging.getLogger(__name__)
+
+
+def _env_ids_to_numpy(env_ids: torch.Tensor, label: str) -> np.ndarray:
+    """Convert a public reset id tensor once to the internal numpy plane.
+
+    The manager frontend's public API is uniformly torch; passing a numpy
+    array here is an API misuse, not a supported input.
+    """
+    if not isinstance(env_ids, torch.Tensor):
+        raise TypeError(
+            f"ManagerEnv.reset {label} must be a torch integer tensor, got {type(env_ids).__name__}; "
+            "use torch.tensor([...], dtype=torch.long)."
+        )
+    if env_ids.dtype not in (torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8):
+        raise TypeError(
+            f"ManagerEnv.reset {label} must have an integer dtype, got {env_ids.dtype}; "
+            "use torch.tensor([...], dtype=torch.long)."
+        )
+    return env_ids.detach().cpu().numpy()
 
 
 def _merge_query_declarations(
@@ -490,8 +506,10 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         slot = self._final_obs_slot
         self._task_program.observe_kernel(self._resolved_inputs, slot.kernel_outputs)
         obs = slot.observation
+        # ``env_ids`` is user-facing output of the torch frontend: hand over
+        # an owned tensor while internal indexing stays on the numpy copy.
         return FinalObs(
-            env_ids=env_ids,
+            env_ids=torch.from_numpy(env_ids.copy()),
             obs=EnvObs(
                 policy=obs.policy[env_ids],
                 value=None if obs.value is None else obs.value[env_ids],
@@ -644,10 +662,14 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
             with self.perf.scope("select_done"):
                 np.putmask(state.episode_steps, done, 0)
         with self.perf.scope("reset_envs"):
-            self.reset(env_ids, sim_reset_ids)
+            self._reset_rows(env_ids, sim_reset_ids)
 
-    def reset(self, env_ids: np.ndarray, sim_reset_ids: np.ndarray | None = None) -> None:
+    def reset(self, env_ids: torch.Tensor, sim_reset_ids: torch.Tensor | None = None) -> None:
         """Reset episode lanes fully and sim-reset the rest in one pass.
+
+        ``env_ids`` and ``sim_reset_ids`` are integer torch tensors (the
+        manager frontend's public currency); they are converted once here to
+        the internal numpy control plane.
 
         Episode lanes (``env_ids``) run the host lifecycle resets (command
         ``reset`` with termination statistics, action resets); sim-reset lanes
@@ -657,6 +679,14 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         configured sim reset terms rewrite simulator rows, and kernel inputs
         are reread once for the union.
         """
+        self._reset_rows(
+            _env_ids_to_numpy(env_ids, "env_ids"),
+            None if sim_reset_ids is None else _env_ids_to_numpy(sim_reset_ids, "sim_reset_ids"),
+        )
+
+    def _reset_rows(self, env_ids: np.ndarray, sim_reset_ids: np.ndarray | None = None) -> None:
+        """Numpy-control-plane reset shared by the public wrapper and the
+        internal auto-reset flow."""
         assert self._state is not None
         if env_ids.size:
             with self.perf.scope("command_reset"):
@@ -799,41 +829,3 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
             message = f"Invalid kernel context for {type(self).__name__} task kernel: {error}"
             raise type(error)(message) from error
 
-    def warmup(self) -> ManagerWarmupResult:
-        """Run one isolated evaluate/observe pass to exercise the executor graphs.
-
-        Inputs and buffers are cloned so the warmup cannot perturb live state;
-        the Torch executor compiles lazily on first real use, so only the
-        first-execution time is reported.
-        """
-        if self._state is None:
-            self.init_state()
-        assert self._state is not None
-        assert self._task_program is not None
-        assert self._compiled_manager_program is not None
-        assert self._kernel_buffers is not None
-        assert self._kernel_outputs is not None
-
-        self._refresh_sim_reads()
-        inputs = self._resolved_inputs
-        self._validate_kernel_context(inputs)
-        import torch
-
-        started = perf_counter()
-        warmup_inputs = clone_resolved_trees(inputs)
-        self._task_program.evaluate_kernel(
-            warmup_inputs,
-            self._task_program.reward_weights,
-            clone_kernel_value(self._kernel_buffers),
-            clone_kernel_value(self._kernel_outputs),
-        )
-        self._task_program.observe_kernel(warmup_inputs, clone_kernel_value(self._kernel_outputs))
-        return ManagerWarmupResult(
-            compile_seconds=0.0,
-            signatures=("torch eager",),
-            threading_layer="openmp",
-            num_threads=torch.get_num_threads(),
-            term_compile_seconds=0.0,
-            kernel_compile_seconds=0.0,
-            first_execution_seconds=perf_counter() - started,
-        )
