@@ -4,25 +4,36 @@
 from typing import Any
 
 import gymnasium
+import numpy as np
 import torch
 from skrl.envs.wrappers.torch import Wrapper as SkrlWrapper
 
-from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.array.env import ArrayEnv
 from motrix_env_core.renderer import RenderConfig, VideoRecorder, create_renderer
 from motrix_env_core.sim.backend import SimRenderer
 from motrix_rl.device import resolve_default_device
 from motrix_rl.utils import env_infos
 
 
+def _as_torch(value, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+    """Zero-copy tensor view for both numpy and torch env state."""
+    if isinstance(value, torch.Tensor):
+        return value.to(dtype=dtype, device=device)
+    return torch.as_tensor(np.asarray(value), dtype=dtype, device=device)
+
+
 class SkrlNpWrapper(SkrlWrapper):
     """
     Wrap the numpy-based environment to be compatible with skrl (PyTorch)
+
+    Manager environments already expose torch state and pass through
+    zero-copy; NumPy-frontend (Direct) environments convert here.
     """
 
-    _env: DirectEnv
+    _env: ArrayEnv
     _renderer: SimRenderer | VideoRecorder | None = None
 
-    def __init__(self, env: DirectEnv, render: RenderConfig | None = None):
+    def __init__(self, env: ArrayEnv, render: RenderConfig | None = None):
         super().__init__(env)
         # skrl's fallback for device-less envs is cuda-else-cpu; resolve with
         # the shared cuda -> mps -> cpu policy so Apple Silicon trains on MPS.
@@ -35,7 +46,7 @@ class SkrlNpWrapper(SkrlWrapper):
 
     def reset(self) -> tuple[torch.Tensor, Any]:
         state = self._env.init_state()
-        return torch.tensor(state.obs.policy, dtype=torch.float32, device=self.device), env_infos(state)
+        return _as_torch(state.obs.policy, torch.float32, self.device), env_infos(state)
 
     def step(
         self, actions: torch.Tensor
@@ -49,15 +60,15 @@ class SkrlNpWrapper(SkrlWrapper):
         actions = actions.cpu().numpy()
         state = self._env.step(actions)
         return (
-            torch.tensor(state.obs.policy, dtype=torch.float32, device=self.device),
-            torch.tensor(state.reward.reshape(-1, 1), dtype=torch.float32, device=self.device),
-            torch.tensor(state.terminated.reshape(-1, 1), dtype=torch.bool, device=self.device),
-            torch.tensor(state.truncated.reshape(-1, 1), dtype=torch.bool, device=self.device),
+            _as_torch(state.obs.policy, torch.float32, self.device),
+            _as_torch(state.reward.reshape(-1, 1), torch.float32, self.device),
+            _as_torch(state.terminated.reshape(-1, 1), torch.bool, self.device),
+            _as_torch(state.truncated.reshape(-1, 1), torch.bool, self.device),
             env_infos(state),
         )
 
     def state(self) -> torch.Tensor:
-        return torch.tensor(self._env.state.obs.value_or_policy, dtype=torch.float32, device=self.device)
+        return _as_torch(self._env.state.obs.value_or_policy, torch.float32, self.device)
 
     def render(self, *args, **kwargs) -> bool | None:
         if self._renderer is None:

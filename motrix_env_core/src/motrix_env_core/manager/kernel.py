@@ -13,12 +13,12 @@ T = TypeVar("T")
 
 
 class KernelOutputs(NamedTuple):
-    """Preallocated arrays written by one manager task kernel."""
+    """Preallocated tensors written by one manager task kernel."""
 
-    policy_obs: np.ndarray
-    value_obs: np.ndarray
-    reward: np.ndarray
-    terminated: np.ndarray
+    policy_obs: torch.Tensor
+    value_obs: torch.Tensor
+    reward: torch.Tensor
+    terminated: torch.Tensor
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,7 @@ class ManagerWarmupResult:
 
 def validate_kernel_context(
     trees: Any,
-    reward_weights: np.ndarray,
+    reward_weights: torch.Tensor,
     buffers: Any,
     outputs: KernelOutputs,
     num_envs: int,
@@ -140,9 +140,9 @@ def _validate_value(value: Any, path: str, *, num_envs: int, batched: bool, writ
 
 def _validate_outputs(outputs: KernelOutputs, num_envs: int) -> None:
     _validate_value(outputs, "outputs", num_envs=num_envs, batched=True, writable=True)
-    if outputs.reward.shape != (num_envs,):
-        raise ValueError(f"outputs.reward must have shape ({num_envs},), got {outputs.reward.shape}.")
-    if outputs.terminated.shape != (num_envs,):
-        raise ValueError(f"outputs.terminated must have shape ({num_envs},), got {outputs.terminated.shape}.")
-    if outputs.terminated.dtype != np.bool_:
+    if tuple(outputs.reward.shape) != (num_envs,):
+        raise ValueError(f"outputs.reward must have shape ({num_envs},), got {tuple(outputs.reward.shape)}.")
+    if tuple(outputs.terminated.shape) != (num_envs,):
+        raise ValueError(f"outputs.terminated must have shape ({num_envs},), got {tuple(outputs.terminated.shape)}.")
+    if outputs.terminated.dtype is not torch.bool:
         raise TypeError(f"outputs.terminated must use bool dtype, got {outputs.terminated.dtype}.")

@@ -442,7 +442,7 @@ def test_multiple_action_terms_concatenate_spaces_and_receive_ordered_slices() -
         ("second", slice(1, 3)),
     ]
 
-    state.terminated[:] = [False, True]
+    state.terminated[:] = torch.tensor([False, True])
     env._reset_done_envs()
     np.testing.assert_array_equal(env.action_terms["test"].state.reset_flags[:, 0], [False, True])
     np.testing.assert_array_equal(env.action_terms["second"].state.reset_flags[:, 0], [False, True])
@@ -503,20 +503,20 @@ def test_step_preserves_previous_observation_with_alternating_preallocated_buffe
     env = _ManagerEnv()
     initial = env.init_state()
     initial_policy = initial.obs.policy
-    initial_snapshot = initial_policy.copy()
+    initial_snapshot = initial_policy.clone()
 
     first = env.step(np.full((env.num_envs, 1), 0.25, dtype=np.float32))
 
     np.testing.assert_array_equal(initial_policy, initial_snapshot)
-    assert not np.shares_memory(initial_policy, first.obs.policy)
+    assert initial_policy.data_ptr() != first.obs.policy.data_ptr()
     first_policy = first.obs.policy
-    first_snapshot = first_policy.copy()
+    first_snapshot = first_policy.clone()
 
     second = env.step(np.full((env.num_envs, 1), 0.5, dtype=np.float32))
 
     np.testing.assert_array_equal(first_policy, first_snapshot)
-    assert not np.shares_memory(first_policy, second.obs.policy)
-    assert np.shares_memory(initial_policy, second.obs.policy)
+    assert first_policy.data_ptr() != second.obs.policy.data_ptr()
+    assert initial_policy.data_ptr() == second.obs.policy.data_ptr()
 
 
 def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> None:
@@ -606,7 +606,7 @@ def test_command_term_updates_lifecycle_and_selected_reset_ids() -> None:
 
     command[:] = torch.tensor([[1.0], [2.0], [3.0]])
     action = env.action_terms["test"]
-    state.terminated[:] = [False, True, False]
+    state.terminated[:] = torch.tensor([False, True, False])
     env._reset_done_envs()
 
     np.testing.assert_array_equal(command[:, 0], [1.0, -1.0, 3.0])
@@ -662,8 +662,8 @@ def test_final_observations_capture_command_before_reset_and_survive_steps(with_
     else:
         assert final.obs.value is None
         assert final.obs.value_or_policy is final.obs.policy
-    assert not np.shares_memory(final.obs.policy, state.obs.policy)
-    saved = final.obs.policy.copy()
+    assert final.obs.policy.data_ptr() != state.obs.policy.data_ptr()
+    saved = final.obs.policy.clone()
     next_state = env.step(np.full((3, 1), 0.25, dtype=np.float32))
     assert next_state.final_obs is None
     assert state.final_obs is final
@@ -687,7 +687,7 @@ def test_final_observation_noise_uses_shared_observation_rng() -> None:
     np.testing.assert_array_equal(
         env._rand.state.numpy().view(np.uint64), rng_before.numpy().view(np.uint64) + np.uint64(1)
     )
-    saved_final = final.obs.policy.copy()
+    saved_final = final.obs.policy.clone()
     np.testing.assert_array_equal(
         final.obs.policy[:, 0],
         (rng_before[[0], 0] + 1).to(torch.float32).numpy(),
@@ -704,7 +704,7 @@ def test_post_reset_observation_does_not_run_command_evaluation() -> None:
     action = env.action_terms["test"]
     assert isinstance(action, ActionTerm)
     action.state.source[:, 0] = torch.tensor([0.25, 0.5, 0.75])
-    state.terminated[:] = [False, True, False]
+    state.terminated[:] = torch.tensor([False, True, False])
     env._refresh_sim_reads()
     env._reset_done_envs()
     env.compute_observation(state)

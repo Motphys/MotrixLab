@@ -9,9 +9,10 @@ call records) and executes the manager term schedule — command ``update``
 hooks, rewards, terminations, command ``advance`` hooks for evaluate;
 per-group observation terms for observe; command ``reset_env`` hooks plus
 simulator reset terms for reset — with one batched tensor call per term
-instead of a per-lane loop. All writes go back into the persistent numpy
-buffers the host lifecycle already owns, so ``ManagerEnv`` keeps its current
-API and state surfaces unchanged.
+instead of a per-lane loop. All writes go back into the persistent tensor
+buffers the host lifecycle already owns (reset compact-write buffers stay
+numpy, matching ``SimResetRuntime.buffers``), so ``ManagerEnv`` keeps its
+current API and state surfaces unchanged.
 
 By default each kernel schedule is additionally fused with ``torch.compile``
 into a compiled closure over the captured persistent tensors (one fused
@@ -83,10 +84,10 @@ def _compile_options() -> dict[str, Any]:
 class TorchTaskProgram:
     """Drop-in replacement task program backed by Torch kernels."""
 
-    evaluate_kernel: Callable[[tuple[Any, ...], np.ndarray, tuple[np.ndarray, ...], Any], None]
+    evaluate_kernel: Callable[[tuple[Any, ...], torch.Tensor, tuple[torch.Tensor, ...], Any], None]
     observe_kernel: Callable[[tuple[Any, ...], Any], None]
     reset_kernel: Callable[[tuple[Any, ...], np.ndarray, tuple[np.ndarray, ...]], None]
-    reward_weights: np.ndarray
+    reward_weights: torch.Tensor
 
 
 class _TensorCache:
@@ -447,8 +448,8 @@ class TorchManagerRuntime:
         self.command_reset_hooks: tuple[CommandResetHook, ...] = program.command_reset_hooks
         self.observations: dict[str, tuple[ObservationTermCall, ...]] = program.observations
         reward_cfgs = env.cfg.reward_cfgs()
-        self.reward_weights = np.asarray(
-            [float(reward_cfgs[term.name].weight) for term in self.layout.rewards], dtype=np.float32
+        self.reward_weights = torch.tensor(
+            [float(reward_cfgs[term.name].weight) for term in self.layout.rewards], dtype=torch.float32
         )
         # Reset-term compact-write layout mirrors SimResetRuntime.buffers:
         # one entry per declared write, ordered by term then output name.
@@ -482,15 +483,15 @@ class TorchManagerRuntime:
     def evaluate(
         self,
         inputs: tuple[Any, ...],
-        reward_weights: np.ndarray,
-        buffers: tuple[np.ndarray, np.ndarray, np.ndarray],
+        reward_weights: torch.Tensor,
+        buffers: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
         outputs: KernelOutputs,
     ) -> None:
         kernel = self._compiled_kernels.get(("evaluate", id(inputs), id(buffers)))
         if kernel is None:
             kernel = self._build_compiled_evaluate(inputs, reward_weights, buffers)
             self._compiled_kernels[("evaluate", id(inputs), id(buffers))] = kernel
-        kernel(torch.from_numpy(outputs.reward), torch.from_numpy(outputs.terminated))
+        kernel(outputs.reward, outputs.terminated)
 
     def observe(self, inputs: tuple[Any, ...], outputs: KernelOutputs) -> None:
         kernel = self._compiled_kernels.get(("observe", id(inputs)))
@@ -499,8 +500,8 @@ class TorchManagerRuntime:
             self._compiled_kernels[("observe", id(inputs))] = kernel
         value_obs = outputs.value_obs
         kernel(
-            torch.from_numpy(outputs.policy_obs),
-            torch.from_numpy(value_obs) if value_obs is not None and value_obs.size else None,
+            outputs.policy_obs,
+            value_obs if value_obs is not None and value_obs.numel() else None,
         )
 
     def reset(self, inputs: tuple[Any, ...], env_ids: np.ndarray, reset_buffers: tuple[np.ndarray, ...]) -> None:
@@ -516,14 +517,14 @@ class TorchManagerRuntime:
     def _build_compiled_evaluate(
         self,
         inputs: tuple[Any, ...],
-        reward_weights: np.ndarray,
-        buffers: tuple[np.ndarray, np.ndarray, np.ndarray],
+        reward_weights: torch.Tensor,
+        buffers: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
     ) -> Callable[[torch.Tensor, torch.Tensor], None]:
         ctx = self._context_for(inputs)
-        weights = torch.from_numpy(np.asarray(reward_weights, dtype=np.float32))
-        raw_terms = torch.from_numpy(buffers[0])
-        weighted_terms = torch.from_numpy(buffers[1])
-        termination_masks = torch.from_numpy(buffers[2])
+        weights = reward_weights
+        raw_terms = buffers[0]
+        weighted_terms = buffers[1]
+        termination_masks = buffers[2]
         dt = ctx.dt
         update_hooks = self.command_updates
         advance_hooks = self.command_advances

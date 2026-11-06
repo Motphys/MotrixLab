@@ -1,10 +1,12 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Numpy-backend env wrapper for FastSAC.
+"""NumPy-frontend env wrapper for FastSAC.
 
 Wraps a Motrix ``ArrayEnv`` as the torch-tensor vectorized environment consumed
-by FastSAC.
+by FastSAC. Manager environments already expose torch state; the tensors pass
+through zero-copy (only a device move when training off-CPU). NumPy-frontend
+(Direct) environments convert at this boundary.
 
 The actor maps its tanh output to the action range declared by the environment;
 the wrapper only clips to that standard contract before stepping. Done
@@ -29,7 +31,9 @@ class FastSacNpEnvWrap(FastSacEnvWrap):
         self._env: ArrayEnv = env
         self._renderer = create_renderer(env, render)
 
-    def _to_torch(self, arr: np.ndarray, dtype=torch.float32) -> torch.Tensor:
+    def _to_torch(self, arr, dtype=torch.float32) -> torch.Tensor:
+        if isinstance(arr, torch.Tensor):
+            return arr.to(device=self.device, dtype=dtype)
         return torch.as_tensor(np.asarray(arr), dtype=dtype, device=self.device)
 
     def reset(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -37,8 +41,9 @@ class FastSacNpEnvWrap(FastSacEnvWrap):
         return self._to_torch(state.obs.policy), self._to_torch(state.obs.value_or_policy)
 
     def step(self, actions: torch.Tensor) -> FastSacStepResult:
-        np_actions = actions.detach().cpu().numpy().astype(np.float32)
-        np_actions = np.clip(np_actions, self._low, self._high)
+        # Zero-copy CPU view of the learner's actions; clipping allocates the
+        # buffer handed to the numpy-frontend action path.
+        np_actions = np.clip(actions.detach().cpu().numpy(), self._low, self._high)
         state = self._env.step(np_actions)
         return FastSacStepResult(
             obs=self._to_torch(state.obs.policy),

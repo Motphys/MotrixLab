@@ -8,6 +8,7 @@ from typing import Generic, TypeVar
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core.base import ABEnv, EnvCfg, ObsSpace
 from motrix_env_core.perf import Perf, perf_root
@@ -25,11 +26,14 @@ EnvCfgType = TypeVar("EnvCfgType", bound=EnvCfg)
 
 @dataclass
 class NpObs:
-    policy: np.ndarray
-    value: np.ndarray | None = None
+    """One observation slot; numpy arrays for NumPy-frontend environments,
+    torch tensors for the manager pipeline."""
+
+    policy: "torch.Tensor | np.ndarray"
+    value: "torch.Tensor | np.ndarray | None" = None
 
     @property
-    def value_or_policy(self) -> np.ndarray:
+    def value_or_policy(self) -> "torch.Tensor | np.ndarray":
         return self.policy if self.value is None else self.value
 
 
@@ -47,15 +51,24 @@ class FinalObs:
 
 @dataclass
 class ArrayEnvState:
+    """Environment transition state.
+
+    ``obs``, ``reward``, ``terminated``, ``truncated`` and ``final_obs`` store
+    numpy arrays for NumPy-frontend environments and torch tensors for the
+    manager pipeline; each environment class consistently produces one of the
+    two, so consumers never branch on the element type.
+    """
+
     obs: NpObs
-    reward: np.ndarray
-    terminated: np.ndarray
-    truncated: np.ndarray
+    reward: "torch.Tensor | np.ndarray"
+    terminated: "torch.Tensor | np.ndarray"
+    truncated: "torch.Tensor | np.ndarray"
     episode_steps: np.ndarray
     # Per-term reward breakdown for the latest transition: term name to a
-    # ``(num_envs,)`` array. Freshly written every transition; empty when the
-    # environment does not decompose its reward.
-    reward_terms: dict[str, np.ndarray] = dataclasses.field(default_factory=dict)
+    # ``(num_envs,)`` array (numpy for the NumPy frontend, torch column views
+    # for the manager pipeline). Freshly written every transition; empty when
+    # the environment does not decompose its reward.
+    reward_terms: dict[str, "torch.Tensor | np.ndarray"] = dataclasses.field(default_factory=dict)
     # Live diagnostics view: per-environment quantities stay unreduced as
     # ``(num_envs,)`` arrays and are views into manager buffers that kernels
     # overwrite every step; batch-level gauges are scalars. Values always
@@ -66,11 +79,11 @@ class ArrayEnvState:
     final_obs: FinalObs | None = None
 
     @property
-    def done(self) -> np.ndarray:
+    def done(self) -> "torch.Tensor | np.ndarray":
         """
         Check if the environment is done.
         """
-        return np.logical_or(self.terminated, self.truncated)
+        return self.terminated | self.truncated
 
     def replace(self, **updates) -> "ArrayEnvState":
         return dataclasses.replace(self, **updates)
@@ -163,9 +176,9 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         Create a new environment state
         """
         obs = self._zeros_obs(self.observation_space)
-        reward = np.zeros((self._num_envs,), dtype=np.float32)
-        terminated = np.ones((self._num_envs,), dtype=bool)
-        truncated = np.zeros((self._num_envs,), dtype=bool)
+        reward = self._zeros_reward()
+        terminated = self._zeros_terminated()
+        truncated = self._zeros_truncated()
         episode_steps = np.zeros((self._num_envs,), dtype=np.uint64)
         self._state = self._new_state(obs, reward, terminated, truncated, episode_steps)
         self._reset_done_envs()
@@ -207,6 +220,15 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
     def _zeros_box(self, space: gym.spaces.Box) -> np.ndarray:
         return np.zeros((self._num_envs, *space.shape), dtype=space.dtype)
 
+    def _zeros_reward(self) -> np.ndarray:
+        return np.zeros((self._num_envs,), dtype=np.float32)
+
+    def _zeros_terminated(self) -> np.ndarray:
+        return np.ones((self._num_envs,), dtype=bool)
+
+    def _zeros_truncated(self) -> np.ndarray:
+        return np.zeros((self._num_envs,), dtype=bool)
+
     def _zeros_obs(self, space: gym.Space | ObsSpace) -> NpObs:
         obs_space = _as_obs_space(space)
         value = None if obs_space.value is None else self._zeros_box(obs_space.value)
@@ -227,9 +249,11 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         """
         state = self._state
         with self.perf.scope("done_mask"):
-            done = state.done
+            # np.asarray is a no-op for numpy state and a zero-copy view for
+            # torch-backed manager state; host control flow stays numpy.
+            done = np.asarray(state.done)
             assert done.shape == (self._num_envs,)
-            has_done = np.any(done)
+            has_done = done.any()
         if not has_done:
             return
 
@@ -267,7 +291,14 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         max_episode_steps = self._max_episode_steps()
         if not max_episode_steps:
             return
-        self._state.truncated = self._state.episode_steps >= max_episode_steps
+        # Assignment through the slot works for both numpy arrays and torch
+        # tensors (the latter receive the numpy mask via from_numpy).
+        truncated = self._state.episode_steps >= max_episode_steps
+        storage = self._state.truncated
+        if isinstance(storage, np.ndarray):
+            storage[:] = truncated
+        else:
+            storage[:] = torch.from_numpy(truncated)
 
     @abc.abstractmethod
     def create_renderer(self, config: RenderConfig) -> SimRenderer:
@@ -305,9 +336,9 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         if self._state.final_obs is not None:
             self._state = self._state.replace(final_obs=None)
         state = self._state
-        state.reward.fill(0.0)
-        state.terminated.fill(False)
-        state.truncated.fill(False)
+        state.reward[:] = 0.0
+        state.terminated[:] = False
+        state.truncated[:] = False
 
     def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
         """Compute observations for all environments after reset.
@@ -345,7 +376,7 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
             self._state = self.compute_transition(self._state)
         self._state.episode_steps += 1
         self._update_truncate()
-        trunc_ids = np.flatnonzero(self._state.truncated)
+        trunc_ids = np.flatnonzero(np.asarray(self._state.truncated))
         if trunc_ids.size:
             with self.perf.scope("final_obs"):
                 self._state = self._state.replace(final_obs=self._capture_final_obs(trunc_ids))

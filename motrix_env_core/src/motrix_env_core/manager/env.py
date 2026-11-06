@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core.array.env import ArrayEnv, ArrayEnvState, EnvCfgType, FinalObs, NpObs
 from motrix_env_core.base import EnvCfg, ObsSpace
@@ -205,10 +206,10 @@ class _ObsBufferSlot:
     kernel_outputs: KernelOutputs
 
     @classmethod
-    def bind(cls, observation: NpObs, reward: np.ndarray, terminated: np.ndarray) -> _ObsBufferSlot:
+    def bind(cls, observation: NpObs, reward: torch.Tensor, terminated: torch.Tensor) -> _ObsBufferSlot:
         value = observation.value
         if value is None:
-            value = np.empty((observation.policy.shape[0], 0), dtype=observation.policy.dtype)
+            value = torch.empty((observation.policy.shape[0], 0), dtype=observation.policy.dtype)
         return cls(
             observation=observation,
             kernel_outputs=KernelOutputs(
@@ -225,11 +226,11 @@ class SwapObsBuffer:
     """Alternate two preallocated observation slots without copying.
 
     Each slot binds an exposed ``NpObs`` to ``KernelOutputs`` that write
-    into the same policy/value arrays. Swapping both together before the next
+    into the same policy/value tensors. Swapping both together before the next
     kernel call keeps ``obs_t`` unchanged while a transition consumer retains
     it and the kernel produces ``obs_t+1`` in the other slot.
 
-    Reward and termination arrays are shared because only observations need
+    Reward and termination tensors are shared because only observations need
     the extra step of lifetime. This preserves that lifetime without per-step
     observation allocations or copies.
     """
@@ -242,8 +243,8 @@ class SwapObsBuffer:
         cls,
         first: NpObs,
         second: NpObs,
-        reward: np.ndarray,
-        terminated: np.ndarray,
+        reward: torch.Tensor,
+        terminated: torch.Tensor,
     ) -> SwapObsBuffer:
         return cls((_ObsBufferSlot.bind(first, reward, terminated), _ObsBufferSlot.bind(second, reward, terminated)))
 
@@ -409,6 +410,21 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
 
     def physics_step(self) -> None:
         self.sim.step(self._cfg.sim_substeps)
+
+    # The manager pipeline's transition storage is torch-native: the compiled
+    # kernels write tensors directly and torch consumers pass them through
+    # without copies. Non-torch consumers take zero-copy ``.numpy()`` views.
+    def _zeros_box(self, space: gym.spaces.Box) -> torch.Tensor:
+        return torch.zeros((self.num_envs, *space.shape), dtype=torch.float32)
+
+    def _zeros_reward(self) -> torch.Tensor:
+        return torch.zeros((self.num_envs,), dtype=torch.float32)
+
+    def _zeros_terminated(self) -> torch.Tensor:
+        return torch.ones((self.num_envs,), dtype=torch.bool)
+
+    def _zeros_truncated(self) -> torch.Tensor:
+        return torch.zeros((self.num_envs,), dtype=torch.bool)
 
     def init_state(self) -> ArrayEnvState:
         startup_started = perf_counter()
@@ -623,7 +639,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         """
         state = self._state
         with self.perf.scope("done_mask"):
-            done = state.done
+            done = np.asarray(state.done)
             sim_reset_ids = np.flatnonzero(self._sim_reset_requested[:, 0])
             if sim_reset_ids.size:
                 sim_reset_ids = sim_reset_ids[~done[sim_reset_ids]]
@@ -650,11 +666,13 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         assert self._state is not None
         if env_ids.size:
             with self.perf.scope("command_reset"):
+                # Host command hooks keep the numpy contract: hand them the
+                # zero-copy numpy view of the torch termination state.
                 for command_term in self._command_terms.values():
                     command_term.reset(
                         ResetContext(
                             env_ids=env_ids,
-                            terminated=self._state.terminated,
+                            terminated=self._state.terminated.numpy(),
                             metrics=self._state.metrics,
                         )
                     )
@@ -669,19 +687,18 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
     def _make_metrics_view(self) -> dict[str, Any]:
         """Assemble the persistent live metrics view for the current state.
 
-        Values are views into the kernel reward/termination buffers and the
-        term-owned per-env arrays, so kernels write them in place every step
-        and nothing needs rebuilding per transition. Host-side writers may add
-        batch-level scalar entries (e.g. sampler statistics at reset time).
-        Consumers retain values across steps through
+        Values are numpy views into the kernel reward/termination buffers and
+        the term-owned per-env arrays, so kernels write them in place every
+        step and nothing needs rebuilding per transition. Host-side writers
+        may add batch-level scalar entries (e.g. sampler statistics at reset
+        time). Consumers retain values across steps through
         ``ArrayEnvState.process_metrics()``.
         """
         assert self._compiled_manager_program is not None
         assert self._kernel_buffers is not None
         termination_masks = self._kernel_buffers[2]
-        metrics = {
-            term.name: termination_masks[:, term.index] for term in self._compiled_manager_program.layout.terminations
-        }
+        masks_view = termination_masks.numpy()
+        metrics = {term.name: masks_view[:, term.index] for term in self._compiled_manager_program.layout.terminations}
         metrics.update(
             {
                 name: value[:, 0] if value.ndim == 2 and value.shape[1] == 1 else value
@@ -737,12 +754,12 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         """Return the environment-local runtime observation groups."""
         return self._observation_groups
 
-    def _make_kernel_buffers(self, state: ArrayEnvState) -> tuple[np.ndarray, ...]:
+    def _make_kernel_buffers(self, state: ArrayEnvState) -> tuple[torch.Tensor, ...]:
         assert self._compiled_manager_program is not None
         layout = self._compiled_manager_program.layout
-        reward_terms = np.empty((self.num_envs, len(layout.rewards)), dtype=np.float32)
-        weighted_reward_terms = np.empty_like(reward_terms)
-        termination_masks = np.empty((self.num_envs, len(layout.terminations)), dtype=bool)
+        reward_terms = torch.empty((self.num_envs, len(layout.rewards)), dtype=torch.float32)
+        weighted_reward_terms = torch.empty_like(reward_terms)
+        termination_masks = torch.empty((self.num_envs, len(layout.terminations)), dtype=torch.bool)
         state.reward_terms = {term.name: weighted_reward_terms[:, term.index] for term in layout.rewards}
         buffers = (
             reward_terms,

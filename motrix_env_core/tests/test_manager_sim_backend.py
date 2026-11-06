@@ -336,7 +336,7 @@ def test_partial_reset_hands_canonical_rows_to_runtime_and_clears_ctrl() -> None
     env.step(np.full((3, 1), 0.5, dtype=np.float32))
     assert runtime.ctrl_targets[1, 1] == np.float32(1.0)
 
-    env._state.terminated[:] = [False, True, False]
+    env._state.terminated[:] = torch.tensor([False, True, False])
     env._reset_done_envs()
 
     assert len(runtime.reset_calls) == 1
