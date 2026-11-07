@@ -170,9 +170,9 @@ class BodyDofPosResetCfg(ResetTermCfg):
         return ResetTerm(
             _reset_body_dof_pos,
             DofResetParams(
-                default_pos=torch.from_numpy(default_pos),
-                joint_lower=torch.from_numpy(joint_lower),
-                joint_upper=torch.from_numpy(joint_upper),
+                default_pos=torch.as_tensor(default_pos),
+                joint_lower=torch.as_tensor(joint_lower),
+                joint_upper=torch.as_tensor(joint_upper),
                 noise_scale=float(self.noise * self.noise_scale),
             ),
             writes={"position": JointPositionWrite(joints), "velocity": JointVelocityWrite(joints)},

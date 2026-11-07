@@ -50,13 +50,15 @@ def heightfield_lookup(grid: HeightFieldGrid, x: torch.Tensor, y: torch.Tensor) 
     arrive as zero-copy tensor views of the shared grid arrays.
     """
     if not grid.enabled:
-        return torch.full_like(x.double(), float(grid.constant))
+        return torch.full((x.shape[0],), float(grid.constant), dtype=torch.float64)
     heights = grid.heights
     origin = grid.origin
     spacing = grid.spacing
     z0 = grid.z0
-    fx = ((x.to(torch.float64) - origin[0]) / spacing[0]).clamp(0.0, heights.shape[1] - 1.0 - 1e-6)
-    fy = ((y.to(torch.float64) - origin[1]) / spacing[1]).clamp(0.0, heights.shape[0] - 1.0 - 1e-6)
+    # Grid fields are float64; mixed arithmetic promotes the float32
+    # world coordinates, so the whole mapping stays in float64.
+    fx = ((x - origin[0]) / spacing[0]).clamp(0.0, heights.shape[1] - 1.0 - 1e-6)
+    fy = ((y - origin[1]) / spacing[1]).clamp(0.0, heights.shape[0] - 1.0 - 1e-6)
     col = fx.to(torch.long)
     row = fy.to(torch.long)
     tx = fx - col
