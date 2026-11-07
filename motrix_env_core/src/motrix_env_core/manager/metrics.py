@@ -11,11 +11,21 @@ import torch
 
 _METRIC_METADATA_KEY = "motrix_metric"
 _UNBOUND_METRIC = object()
+_TORCH_DTYPES = {
+    np.dtype(np.bool_): torch.bool,
+    np.dtype(np.int8): torch.int8,
+    np.dtype(np.int16): torch.int16,
+    np.dtype(np.int32): torch.int32,
+    np.dtype(np.int64): torch.int64,
+    np.dtype(np.float16): torch.float16,
+    np.dtype(np.float32): torch.float32,
+    np.dtype(np.float64): torch.float64,
+}
 
 
 @dataclass(frozen=True)
 class Metric:
-    """Export metadata for one per-environment ndarray field on a manager term."""
+    """Export metadata for one per-environment tensor field on a manager term."""
 
     name: str | None = None
     dtype: type[np.generic] | None = None
@@ -56,8 +66,8 @@ def materialize_metrics(value: Any, num_envs: int, *, context: str) -> Any:
         if current is _UNBOUND_METRIC:
             if spec is None:
                 raise TypeError(f"{context} field {data_field.name!r} has an unbound non-metric value.")
-            dtype = np.float32 if spec.dtype is None else spec.dtype
-            current = torch.from_numpy(np.empty(num_envs, dtype=dtype))
+            dtype = _TORCH_DTYPES[np.dtype(np.float32 if spec.dtype is None else spec.dtype)]
+            current = torch.empty(num_envs, dtype=dtype)
             changed = True
         values.append(current)
     return type(value)(*values) if changed else value
@@ -69,12 +79,11 @@ def collect_metrics(
     *,
     context: str,
     context_path: tuple[str, ...],
-) -> tuple[tuple[str, np.ndarray], ...]:
+) -> tuple[tuple[str, torch.Tensor], ...]:
     """Validate direct metric fields on one canonical manager term.
 
-    Tensor fields register their zero-copy numpy views, so kernel writes
-    through the tensor and host reads through ``ArrayEnvState.metrics`` share
-    one backing buffer.
+    Metric fields remain torch tensors for kernel execution. The manager
+    frontend creates zero-copy NumPy views only when exposing host metrics.
     """
     del context_path
     bindings = []
@@ -82,20 +91,20 @@ def collect_metrics(
         spec = _field_metric(data_field)
         if spec is None:
             continue
-        array = getattr(value, data_field.name)
-        if isinstance(array, torch.Tensor):
-            array = array.numpy()
-        if not isinstance(array, np.ndarray):
-            raise TypeError(f"{context} metric field {data_field.name!r} must hold a tensor or an ndarray.")
-        if array.shape not in {(num_envs,), (num_envs, 1)}:
+        tensor = getattr(value, data_field.name)
+        if not isinstance(tensor, torch.Tensor):
+            raise TypeError(f"{context} metric field {data_field.name!r} must hold a torch.Tensor.")
+        if tensor.device.type != "cpu":
+            raise TypeError(f"{context} metric field {data_field.name!r} must be CPU-backed.")
+        if tensor.shape not in {(num_envs,), (num_envs, 1)}:
             raise ValueError(
                 f"{context} metric field {data_field.name!r} must have shape "
-                f"({num_envs},) or ({num_envs}, 1), got {array.shape}."
+                f"({num_envs},) or ({num_envs}, 1), got {tensor.shape}."
             )
-        export_dtype = np.dtype(array.dtype if spec.dtype is None else spec.dtype)
+        export_dtype = np.dtype(tensor.numpy().dtype if spec.dtype is None else spec.dtype)
         if export_dtype.kind not in "bif":
             raise TypeError(f"{context} metric field {data_field.name!r} export dtype must be bool, integer, or float.")
-        bindings.append((data_field.name if spec.name is None else spec.name, array))
+        bindings.append((data_field.name if spec.name is None else spec.name, tensor))
     return tuple(bindings)
 
 

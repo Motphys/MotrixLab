@@ -320,7 +320,7 @@ class ManagerProgramResolver:
         termination_calls, termination_layout = self._resolve_terminations(termination_terms)
         sim_reset_terms = self._resolve_resets()
         per_env_metric_layout = tuple(
-            MetricFieldLayout(name, index, np.dtype(value.dtype))
+            MetricFieldLayout(name, index, np.dtype(value.numpy().dtype))
             for index, (name, value) in enumerate(self._env.metrics.items())
             if value.shape in {(self._env.num_envs,), (self._env.num_envs, 1)}
         )
@@ -440,10 +440,8 @@ class ManagerProgramResolver:
         # Sim views enter the context as zero-copy tensor views over the
         # read-program arena: the read program rewrites the arena contents in
         # place, so the pre-built views stay valid for the program's lifetime.
-        # Metrics keep their numpy contract on the host; terms write them
-        # through the tensor views over the same backing arrays.
         sim = {key: torch.from_numpy(binding.value) for key, binding in self._sim_inputs.items()}
-        metrics = {name: torch.from_numpy(value) for name, value in self._env.metrics.items()}
+        metrics = dict(self._env.metrics)
         commands = dict(self._env.command_terms)
         value = ManagerContext(
             env_id=torch.from_numpy(np.arange(self._env.num_envs, dtype=np.int64)),

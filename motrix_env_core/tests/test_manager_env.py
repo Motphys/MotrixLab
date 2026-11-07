@@ -615,7 +615,7 @@ def test_reset_keeps_command_metric_alias_for_direct_context() -> None:
 
     env._reset_done_envs()
 
-    assert command.double.data_ptr() == torch.from_numpy(env.metrics["double"]).data_ptr()
+    assert command.double.data_ptr() == env.metrics["double"].data_ptr()
     np.testing.assert_allclose(command.command[:, 0], [-1.0, 3.0])
     np.testing.assert_allclose(state.metrics["double"], [0.0, 0.0])
 

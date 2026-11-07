@@ -301,7 +301,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
 
         self._task_program: TorchTaskProgram | None = None
         self._kernel_buffers: tuple[Any, ...] | None = None
-        self.metrics: dict[str, np.ndarray] = {}
+        self.metrics: dict[str, torch.Tensor] = {}
         self._kernel_outputs: KernelOutputs | None = None
         self._observation_buffer: SwapObsBuffer | None = None
         self._final_obs_slot: _ObsBufferSlot | None = None
@@ -701,8 +701,8 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
     def _make_metrics_view(self) -> dict[str, Any]:
         """Assemble the persistent live metrics view for the current state.
 
-        Values are numpy views into the kernel reward/termination buffers and
-        the term-owned per-env arrays, so kernels write them in place every
+        Values are NumPy views into the kernel reward/termination buffers and
+        the term-owned CPU tensor arrays, so kernels write them in place every
         step and nothing needs rebuilding per transition. Host-side writers
         may add batch-level scalar entries (e.g. sampler statistics at reset
         time). Consumers retain values across steps through
@@ -715,7 +715,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         metrics = {term.name: masks_view[:, term.index] for term in self._compiled_manager_program.layout.terminations}
         metrics.update(
             {
-                name: value[:, 0] if value.ndim == 2 and value.shape[1] == 1 else value
+                name: (value.numpy()[:, 0] if value.ndim == 2 and value.shape[1] == 1 else value.numpy())
                 for name, value in self.metrics.items()
             }
         )

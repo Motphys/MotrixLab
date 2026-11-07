@@ -9,6 +9,7 @@ from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager.context import BuildContext
@@ -95,7 +96,7 @@ class TerminationManager:
             for metric_name in created.metric_names:
                 if metric_name in self._env.metrics:
                     raise ValueError(f"Duplicate per-environment metric name: {metric_name!r}")
-                self._env.metrics[metric_name] = np.empty((self._env.num_envs, 1), dtype=np.float32)
+                self._env.metrics[metric_name] = torch.empty((self._env.num_envs, 1), dtype=torch.float32)
             self._terms[name] = TerminationTerm(
                 created.dispatch,
                 *canonical_args,
