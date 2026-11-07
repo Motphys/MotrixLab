@@ -73,7 +73,7 @@ Manager group 的顺序是行为契约的一部分：action slice、observation 
 4. command term 在 host 侧更新 persistent state；
 5. read program 刷新 simulator snapshot；
 6. Torch 执行器执行 command evaluation、observation、reward 和 termination（一次整批调用/term）；
-7. host 折叠 command 统计（`on_transition()`），`ArrayEnv` 处理 truncation 和 done reset；`state.metrics` 是常驻活视图（kernel 原地写），跨步持有走 `process_metrics()` 归约快照。
+7. `ArrayEnv` 处理 truncation 和 done reset；`state.metrics` 是常驻活视图（kernel 原地写），跨步持有走 `process_metrics()` 归约快照。
 
 ### Partial reset
 
@@ -137,7 +137,6 @@ class TerminationTerm:
 
 class CommandTerm:
     def reset(ctx: ResetContext) -> None: ...  # host: prepare shared reset data for episode resets
-    def on_transition() -> None: ...  # host: fold per-step statistics
     @staticmethod
     def reset_env(receiver, ctx) -> None: ...  # @dispatch: batched, lane-gathered reset rows
     @staticmethod
@@ -151,8 +150,8 @@ Command term 的生命周期拆成 batched hooks 与 host 侧方法：`advance(r
 buffer，每次 physics step 前清零）即可请求 sim-only reset：该 lane 与当步的 episode reset
 合并进**同一次** reset 运行（`reset_env` 重采样 → sim reset terms 重写仿真状态 → 按行重读 kernel inputs），但不会
 触发 episode bookkeeping（`episode_steps`、truncation）与 command/action 的 host reset。WBT 在 motion clip wrap 时使用
-该机制。host `reset(ResetContext)` 只在 episode reset 时准备跨 lane 的共享数据（如采样分布）；`on_transition()` 每步折叠
-统计。
+该机制。host `reset(ResetContext)` 只在 episode reset 时准备跨 lane 的共享数据（如采样分布）；per-step 统计折叠
+（如 WBT 的失败计数 EMA）由 term 自行内联进 `advance` 图内。
 
 ActionTerm 是 host 侧描述对象：静态 action space、canonicalized state 和批量 process/reset callback。
 只有 `term.state` 进入 kernel ABI，`ctx.actions[name]` 直接取得 lane-scoped state；host 通过

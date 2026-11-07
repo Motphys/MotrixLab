@@ -66,9 +66,6 @@ class CommandTerm(abc.ABC):
     def reset_env(self, ctx: ManagerContext) -> None:
         """Reset one lane's persistent command state in the reset kernel."""
 
-    def on_transition(self) -> None:
-        """Update host-side command state after a transition kernel."""
-
 
 @configclass(kw_only=True)
 class CommandCfg(abc.ABC):

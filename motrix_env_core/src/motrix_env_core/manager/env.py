@@ -481,7 +481,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         self._task_program.observe_kernel(self._kernel_outputs)
 
     def _capture_final_obs(self, env_ids: torch.Tensor) -> FinalObs:
-        """Observe pre-reset inputs after command on_transition.
+        """Observe pre-reset inputs after the transition kernel.
 
         The compiled observe pass is batch-wide. Dedicated outputs preserve the
         normal swap buffer; advanced indexing creates owned compact snapshots.
@@ -720,9 +720,6 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
             self._refresh_sim_reads()
         with self.perf.scope("evaluate"):
             self._execute_evaluate_kernel()
-        with self.perf.scope("command_on_transition"):
-            for command_term in self._command_terms.values():
-                command_term.on_transition()
         return state
 
     def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:

@@ -540,7 +540,6 @@ def test_step_perf_records_standard_and_manager_phases() -> None:
     assert [child.name for child in step.child("transition").children] == [
         "read_inputs",
         "evaluate",
-        "command_on_transition",
     ]
     assert [child.name for child in step.child("transition").child("read_inputs").children] == ["sim_read"]
     assert [child.name for child in step.child("reset").children] == ["done_mask"]
