@@ -33,19 +33,21 @@ _SIM_DATA_QUERIES = {
 _SIM_MODEL_QUERIES = {"joint_position_limits": BodyJointPositionLimitsQuery(body="torso")}
 
 
-def _quat_to_rotation_mats(quats: np.ndarray) -> np.ndarray:
+def _quat_to_rotation_mats(quats: torch.Tensor) -> torch.Tensor:
     """Convert (x, y, z, w) quaternions, shape (..., 4), to rotation mats (..., 3, 3)."""
-    x, y, z, w = quats[..., 0], quats[..., 1], quats[..., 2], quats[..., 3]
-    mats = np.empty(quats.shape[:-1] + (3, 3), dtype=quats.dtype)
-    mats[..., 0, 0] = 1 - 2 * (y * y + z * z)
-    mats[..., 0, 1] = 2 * (x * y - z * w)
-    mats[..., 0, 2] = 2 * (x * z + y * w)
-    mats[..., 1, 0] = 2 * (x * y + z * w)
-    mats[..., 1, 1] = 1 - 2 * (x * x + z * z)
-    mats[..., 1, 2] = 2 * (y * z - x * w)
-    mats[..., 2, 0] = 2 * (x * z - y * w)
-    mats[..., 2, 1] = 2 * (y * z + x * w)
-    mats[..., 2, 2] = 1 - 2 * (x * x + y * y)
+    x, y, z, w = quats.unbind(-1)
+    entries = (
+        1 - 2 * (y * y + z * z),
+        2 * (x * y - z * w),
+        2 * (x * z + y * w),
+        2 * (x * y + z * w),
+        1 - 2 * (x * x + z * z),
+        2 * (y * z - x * w),
+        2 * (x * z - y * w),
+        2 * (y * z + x * w),
+        1 - 2 * (x * x + y * y),
+    )
+    mats = torch.stack(entries, dim=-1).reshape(quats.shape[:-1] + (3, 3))
     return mats
 
 
@@ -99,9 +101,7 @@ class Walker2DEnv(DirectEnv):
         return self._action_space
 
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
-        actions = actions.detach().cpu().numpy()
-        ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = np.asarray(actions, dtype=np.float32)
+        self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
         return state
 
@@ -112,7 +112,7 @@ class Walker2DEnv(DirectEnv):
         dof_vel = inputs["dof_vel"]
         up_right = link_rotations[:, 0, 2, 2].reshape(num_env, 1)  # 1
         orientations = link_rotations[:, 1:, [0, 0], [2, 0]].reshape(num_env, -1)  # (num_links - 1) * 2
-        obs = np.concatenate([orientations, up_right, dof_vel], axis=-1)
+        obs = torch.cat([orientations, up_right, dof_vel], dim=-1)
         return state.replace(obs=obs)
 
     def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
@@ -127,13 +127,16 @@ class Walker2DEnv(DirectEnv):
         horizontal_velocity = torso_vel[:, 0]
 
         # ==== compute terminated
-        terminated = np.isnan(inputs["dof_pos"]).any(axis=-1) | np.isnan(dof_vel).any(axis=-1)
+        terminated = inputs["dof_pos"].isnan().any(dim=-1) | dof_vel.isnan().any(dim=-1)
 
         # ==== compute reward
-        rwd_height = reward.tolerance(
-            torso_height,
-            bounds=(self._stand_height, float("inf")),
-            margin=self._stand_height * 4 / 5,
+        rwd_height = torch.as_tensor(
+            reward.tolerance(
+                torso_height,
+                bounds=(self._stand_height, float("inf")),
+                margin=self._stand_height * 4 / 5,
+            ),
+            dtype=torch.float32,
         )
         rwd_upright = (1 + torso_upright) / 2
         rwd_stand = (3 * rwd_height + 1 * rwd_upright) / 4
@@ -147,12 +150,15 @@ class Walker2DEnv(DirectEnv):
         }
 
         if self._move_speed > 0.0:
-            rwd_move = reward.tolerance(
-                horizontal_velocity,
-                bounds=(self._move_speed, float("inf")),
-                margin=self._move_speed / 2,
-                value_at_margin=0.5,
-                sigmoid="linear",
+            rwd_move = torch.as_tensor(
+                reward.tolerance(
+                    horizontal_velocity,
+                    bounds=(self._move_speed, float("inf")),
+                    margin=self._move_speed / 2,
+                    value_at_margin=0.5,
+                    sigmoid="linear",
+                ),
+                dtype=torch.float32,
             )
             reward_terms["move"] = rwd_move
             rwd = rwd_stand * (5 * rwd_move + 1) / 6
@@ -160,25 +166,23 @@ class Walker2DEnv(DirectEnv):
         state.reward_terms = reward_terms
         rwd[terminated] = 0.0
 
-        return state.replace(
-            reward=rwd,
-            terminated=terminated,
-        )
+        state.reward[:] = rwd
+        state.terminated[:] = terminated
+        return state
 
     def reset(self, env_ids: torch.Tensor) -> None:
-        env_ids = env_ids.detach().cpu().numpy()
-        num_reset = len(env_ids)
+        num_reset = env_ids.numel()
 
-        dof_pos = np.zeros((num_reset, self._reset_position.shape[1]))
-        dof_pos[:, 2] = np.random.uniform(low=-np.pi, high=np.pi, size=(num_reset,))  # randomize root yaw
-        dof_pos[:, 3:] = np.random.uniform(
-            low=self._joint_pos_lower[3:],
-            high=self._joint_pos_upper[3:],
-            size=(num_reset, self._reset_position.shape[1] - 3),
-        )  # randomize other joint angles
-        dof_vel = np.zeros((num_reset, self._reset_velocity.shape[1]), dtype=np.float32)
+        dof_pos = torch.zeros((num_reset, self._reset_position.shape[1]), dtype=torch.float32)
+        dof_pos[:, 2] = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * np.pi  # randomize root yaw
+        lower = self._joint_pos_lower[3:]
+        upper = self._joint_pos_upper[3:]
+        dof_pos[:, 3:] = torch.rand((num_reset, self._reset_position.shape[1] - 3), dtype=torch.float32) * (
+            upper - lower
+        ) + lower  # randomize other joint angles
+        dof_vel = torch.zeros((num_reset, self._reset_velocity.shape[1]), dtype=torch.float32)
 
-        self._reset_position[env_ids] = np.asarray(dof_pos, np.float32)
+        self._reset_position[env_ids] = dof_pos
         self._reset_velocity[env_ids] = dof_vel
         self._reset_program.execute(env_ids)
-        self.sim_data.execute(np.asarray(env_ids, np.int64))
+        self.sim_data.execute(env_ids)

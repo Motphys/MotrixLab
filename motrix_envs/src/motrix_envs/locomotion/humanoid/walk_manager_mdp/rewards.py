@@ -163,7 +163,7 @@ class PoseRewardCfg(RewardTermCfg):
         # resolved) so it stays aligned with body.init_joint_pos and weights.
         return RewardTerm(
             pose_reward,
-            torch.from_numpy(body.init_joint_pos),
+            body.init_joint_pos,
             torch.from_numpy(weights),
             JointPositionQuery(joints=body.joint_names),
         )

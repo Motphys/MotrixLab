@@ -24,6 +24,15 @@ from motrix_envs.locomotion.quadruped.velocity_command import RandomPlanarVeloci
 from motrix_envs.locomotion.quadruped.walk_np import QuadrupedWalkTask, _sim_data_queries
 
 
+def _all(value) -> bool:
+    """np.all that also accepts torch tensors (numpy delegates .all() with kwargs)."""
+    return bool(np.asarray(value).all())
+
+
+def _any(value) -> bool:
+    return bool(np.asarray(value).any())
+
+
 def _read_param_overrides(env):
     """Read the per-env kp/damping/friction state through native motrixsim getters.
 
@@ -68,7 +77,7 @@ def quadruped_env():
 
 def _swing_reward(quadruped_env, contacts: np.ndarray) -> np.ndarray:
     quadruped_env._feet_phase[:] = 0.75
-    quadruped_env.feet_contact[:] = contacts
+    quadruped_env.feet_contact.copy_(torch.as_tensor(contacts))
     return quadruped_env._reward_swing_feet_z(None, None, None)
 
 
@@ -85,13 +94,13 @@ def test_go2_velocity_commands_remain_constant_before_resampling_interval():
     np.random.seed(7)
     env = registry.make("go2-walk-flat", num_envs=64, mode="train")
     env.init_state()
-    commands = env._commands.copy()
+    commands = env._commands.clone()
     velocity_cfg = env.cfg.commands.velocity
 
     assert commands.shape == (64, 3)
     assert np.unique(commands, axis=0).shape[0] > 1
-    assert np.all(commands >= velocity_cfg.lower)
-    assert np.all(commands <= velocity_cfg.upper)
+    assert bool((commands >= torch.as_tensor(np.asarray(velocity_cfg.lower))).all())
+    assert bool((commands <= torch.as_tensor(np.asarray(velocity_cfg.upper))).all())
 
     env.step(torch.zeros((env.num_envs, *env.action_space.shape), dtype=torch.float32))
 
@@ -129,17 +138,23 @@ def test_go2_reset_randomization_stays_within_configured_ranges(env_name: str):
     joint_pos_diff = env.get_dof_pos() - env.default_angles
     dof_vel = env.sim_data["dof_vel"]
 
-    assert np.all(np.abs(joint_pos_diff) <= randomization.joint_pos_noise + 1e-6)
-    assert np.any(np.abs(joint_pos_diff) > 0.0)
-    assert np.all(np.abs(dof_vel[:, -env._num_action :]) <= randomization.joint_vel_noise + 1e-6)
-    assert np.any(np.abs(dof_vel[:, -env._num_action :]) > 0.0)
-    assert np.all(np.abs(dof_vel[:, :3]) <= np.asarray(randomization.base_lin_vel_noise, dtype=np.float32) + 1e-6)
-    assert np.all(np.abs(dof_vel[:, 3:6]) <= np.asarray(randomization.base_ang_vel_noise, dtype=np.float32) + 1e-6)
+    assert _all(np.abs(joint_pos_diff) <= randomization.joint_pos_noise + 1e-6)
+    assert _any(np.abs(joint_pos_diff) > 0.0)
+    assert _all(np.abs(dof_vel[:, -env._num_action :]) <= randomization.joint_vel_noise + 1e-6)
+    assert _any(np.abs(dof_vel[:, -env._num_action :]) > 0.0)
+    assert _all(
+        torch.abs(dof_vel[:, :3])
+        <= torch.as_tensor(np.asarray(randomization.base_lin_vel_noise, dtype=np.float32)) + 1e-6
+    )
+    assert _all(
+        torch.abs(dof_vel[:, 3:6])
+        <= torch.as_tensor(np.asarray(randomization.base_ang_vel_noise, dtype=np.float32)) + 1e-6
+    )
     assert np.unique(joint_pos_diff, axis=0).shape[0] > 1
     command_interval = env.cfg.commands.velocity.resampling_seconds_range
     if command_interval is not None:
-        assert np.all(env._command_resampling_time >= command_interval[0])
-        assert np.all(env._command_resampling_time <= command_interval[1])
+        assert bool((env._command_resampling_time >= command_interval[0]).all())
+        assert bool((env._command_resampling_time <= command_interval[1]).all())
 
 
 def test_go2_pd_and_friction_randomization_is_per_env_and_episode_constant():
@@ -151,14 +166,14 @@ def test_go2_pd_and_friction_randomization_is_per_env_and_episode_constant():
     kp_scale = kp / nominal_kp
     damping_scale = damping / nominal_damping
 
-    assert np.all(kp_scale >= randomization.kp_scale_range[0])
-    assert np.all(kp_scale <= randomization.kp_scale_range[1])
-    assert np.all(damping_scale >= randomization.damping_scale_range[0])
-    assert np.all(damping_scale <= randomization.damping_scale_range[1])
+    assert _all(kp_scale >= randomization.kp_scale_range[0])
+    assert _all(kp_scale <= randomization.kp_scale_range[1])
+    assert _all(damping_scale >= randomization.damping_scale_range[0])
+    assert _all(damping_scale <= randomization.damping_scale_range[1])
     assert np.unique(kp, axis=0).shape[0] > 1
     assert np.unique(damping, axis=0).shape[0] > 1
-    assert np.all(friction[:, 0] >= randomization.sliding_friction_range[0])
-    assert np.all(friction[:, 0] <= randomization.sliding_friction_range[1])
+    assert _all(friction[:, 0] >= randomization.sliding_friction_range[0])
+    assert _all(friction[:, 0] <= randomization.sliding_friction_range[1])
     np.testing.assert_array_equal(friction[:, 1:], np.broadcast_to(friction[:1, 1:], friction[:, 1:].shape))
 
     env.step(torch.zeros((env.num_envs, env._num_action), dtype=torch.float32))
@@ -180,9 +195,9 @@ def test_go2_base_mass_and_com_randomization_is_per_env_and_episode_constant():
     center_of_mass_offset = center_of_mass - nominal_center_of_mass
     com_noise = np.asarray(randomization.base_com_offset_noise, dtype=np.float32)
 
-    assert np.all(mass_scale >= randomization.base_mass_scale_range[0])
-    assert np.all(mass_scale <= randomization.base_mass_scale_range[1])
-    assert np.all(np.abs(center_of_mass_offset) <= com_noise + 1e-7)
+    assert _all(mass_scale >= randomization.base_mass_scale_range[0])
+    assert _all(mass_scale <= randomization.base_mass_scale_range[1])
+    assert _all(np.abs(center_of_mass_offset) <= com_noise + 1e-7)
     assert np.unique(mass_scale).size > 1
     assert np.unique(center_of_mass_offset, axis=0).shape[0] > 1
 
@@ -198,14 +213,14 @@ def test_go2_action_delay_selects_current_or_previous_action_per_env():
     state = env.init_state()
     previous = np.full((2, env._num_action), -0.2, dtype=np.float32)
     current = np.full((2, env._num_action), 0.3, dtype=np.float32)
-    env._current_actions[:] = previous
-    env._action_delay_steps[:] = (0, 1)
+    env._current_actions.copy_(torch.as_tensor(previous))
+    env._action_delay_steps[:] = torch.tensor((0, 1))
 
     env.apply_action(current, state)
     env.sim_data.execute()
 
     expected_actions = np.stack([current[0], previous[1]])
-    expected_ctrls = expected_actions * env.cfg.control_config.action_scale + env.default_angles
+    expected_ctrls = expected_actions * env.cfg.control_config.action_scale + env.default_angles.numpy()
     np.testing.assert_allclose(env.sim_data["actuator_ctrls"], expected_ctrls)
 
 
@@ -214,8 +229,8 @@ def test_go2_command_resampling_only_updates_due_environments(monkeypatch: pytes
     env.init_state()
     commands = np.array([[0.1, 0.0, 0.0], [0.2, 0.1, 0.0], [0.3, 0.0, -0.1]], dtype=np.float32)
     replacement = np.array([[0.4, -0.2, 0.3], [0.5, 0.2, -0.3]], dtype=np.float32)
-    env._commands[:] = commands
-    env._command_resampling_time[:] = (0.0, 1.0, 0.0)
+    env._commands.copy_(torch.as_tensor(commands))
+    env._command_resampling_time[:] = torch.tensor((0.0, 1.0, 0.0))
     monkeypatch.setattr(env, "resample_commands", lambda num_envs: replacement[:num_envs].copy())
 
     env._update_commands()
@@ -223,7 +238,7 @@ def test_go2_command_resampling_only_updates_due_environments(monkeypatch: pytes
     np.testing.assert_array_equal(env._commands[[0, 2]], replacement)
     np.testing.assert_array_equal(env._commands[[1]], commands[[1]])
     assert env._command_resampling_time[1] == pytest.approx(1.0 - env.cfg.ctrl_dt)
-    assert np.all(env._command_resampling_time[[0, 2]] > 0.0)
+    assert _all(env._command_resampling_time[[0, 2]] > 0.0)
 
 
 def test_random_planar_velocity_binding_is_seeded_vectorized_and_task_specific():
@@ -243,8 +258,8 @@ def test_random_planar_velocity_binding_is_seeded_vectorized_and_task_specific()
     assert first.values.shape == (8, 3)
     assert np.unique(first.values, axis=0).shape[0] > 1
     np.testing.assert_array_equal(first.values, repeated.values)
-    assert np.all(first.values >= [-0.5, -0.4, -1.0])
-    assert np.all(first.values <= [1.0, 0.4, 1.0])
+    assert _all(first.values >= [-0.5, -0.4, -1.0])
+    assert _all(first.values <= [1.0, 0.4, 1.0])
 
 
 def test_random_planar_velocity_binding_can_sample_a_standing_batch():
@@ -269,11 +284,11 @@ def test_go2_partial_reset_only_resamples_finished_environments(monkeypatch: pyt
         ],
         dtype=np.float32,
     )
-    env._commands[:] = commands
-    action_delay_steps = env._action_delay_steps.copy()
+    env._commands.copy_(torch.as_tensor(commands))
+    action_delay_steps = env._action_delay_steps.clone()
     _, kp, damping, friction = _read_param_overrides(env)
     mass, center_of_mass = _read_mass_overrides(env)
-    state.terminated[:] = (False, True, False)
+    state.terminated[:] = torch.tensor((False, True, False))
     replacement = np.array([[0.4, -0.2, 0.3]], dtype=np.float32)
     monkeypatch.setattr(env, "resample_commands", lambda num_envs: np.broadcast_to(replacement, (num_envs, 3)).copy())
 
@@ -379,21 +394,21 @@ def test_quadruped_rough_walk_reset_and_base_height_are_terrain_relative(env_nam
     env = registry.make(env_name, num_envs=8, mode="train")
     env.init_state()
     base_pos = env.sim_data["base_pos"]
-    env_ids = np.arange(env.num_envs, dtype=np.int64)
+    env_ids = torch.arange(env.num_envs, dtype=torch.int64)
     ground_height = env.sim.sample_terrain_height(env.cfg.ground_geom_name, env_ids, base_pos[:, None, :2])[:, 0]
     relative_height = base_pos[:, 2] - ground_height
     height_scale = env.cfg.scene.assets.terrain.generator.height_scale
 
     assert ground_height.shape == (env.num_envs,)
-    assert np.all(np.abs(base_pos[:, :2]) <= env.cfg.spawn_xy_range)
-    assert np.all(relative_height >= env.cfg.initial_base_position[2] - 1e-6)
-    assert np.all(relative_height <= env.cfg.initial_base_position[2] + height_scale + 1e-6)
+    assert bool((torch.abs(base_pos[:, :2]) <= env.cfg.spawn_xy_range).all())
+    assert bool((relative_height >= env.cfg.initial_base_position[2] - 1e-6).all())
+    assert bool((relative_height <= env.cfg.initial_base_position[2] + height_scale + 1e-6).all())
     expected = np.square(relative_height - env.cfg.reward_config.base_height_target)
     np.testing.assert_allclose(env._reward_base_height(None, None, None), expected)
 
     next_state = env.step(torch.zeros((env.num_envs, *env.action_space.shape), dtype=torch.float32))
     assert next_state.reward.shape == (env.num_envs,)
-    assert np.all(np.isfinite(next_state.reward))
+    assert bool(torch.isfinite(next_state.reward).all())
 
 
 def test_foot_position_sensor_names_belong_to_walk_task_config():
@@ -417,8 +432,8 @@ def test_walk_task_gyro_config_compiles_for_each_robot(robot_name):
         {"angular_velocity": BodyAngularVelocityWrite((robot.resolved_base_link_name,))}, reset=True
     )
     velocity = np.asarray([0.4, -0.5, 0.6], dtype=np.float32)
-    reset.buffer("angular_velocity")[0, 0] = velocity
-    reset.execute(np.asarray([0], dtype=np.int64))
+    reset.buffer("angular_velocity")[0, 0] = torch.from_numpy(velocity)
+    reset.execute(torch.asarray([0], dtype=torch.int64))
     reads.execute()
     np.testing.assert_allclose(reads["gyro"][0], velocity, atol=1e-6)
 
@@ -462,8 +477,8 @@ def test_walk_gyro_query_reads_renamed_model_sensor_with_scene_affixes(tmp_path,
         {"angular_velocity": BodyAngularVelocityWrite((robot.resolved_base_link_name,))}, reset=True
     )
     velocity = np.asarray([[0.4, -0.5, 0.6], [-0.7, 0.8, -0.9]], dtype=np.float32)
-    reset.buffer("angular_velocity")[:, 0] = velocity
-    reset.execute(np.arange(2, dtype=np.int64))
+    reset.buffer("angular_velocity")[:, 0] = torch.from_numpy(velocity)
+    reset.execute(torch.arange(2, dtype=torch.int64))
     reads.execute()
     np.testing.assert_allclose(reads["gyro"], velocity, atol=1e-6)
 
@@ -503,8 +518,8 @@ def test_swing_height_reward_prefers_target_height(quadruped_env):
     off_target_reward = _swing_reward(quadruped_env, no_contacts)
 
     np.testing.assert_allclose(target_reward, np.ones((1,), dtype=np.float32))
-    assert np.all(target_reward > off_target_reward)
-    assert np.all(off_target_reward > 0.0)
+    assert bool((target_reward > off_target_reward).all())
+    assert bool((off_target_reward > 0.0).all())
 
 
 def test_swing_contact_penalty_detects_dragging_feet(quadruped_env):
@@ -512,10 +527,10 @@ def test_swing_contact_penalty_detects_dragging_feet(quadruped_env):
     no_contacts = np.zeros((1, quadruped_env._num_feet), dtype=bool)
     all_contacts = np.ones((1, quadruped_env._num_feet), dtype=bool)
 
-    quadruped_env._feet_phase[:] = feet_phase
-    quadruped_env.feet_contact[:] = no_contacts
+    quadruped_env._feet_phase.copy_(torch.as_tensor(feet_phase))
+    quadruped_env.feet_contact.copy_(torch.as_tensor(no_contacts))
     no_drag = quadruped_env._reward_swing_contact(None, None, None)
-    quadruped_env.feet_contact[:] = all_contacts
+    quadruped_env.feet_contact.copy_(torch.as_tensor(all_contacts))
     all_drag = quadruped_env._reward_swing_contact(None, None, None)
 
     np.testing.assert_array_equal(no_drag, np.zeros((1,), dtype=np.float32))

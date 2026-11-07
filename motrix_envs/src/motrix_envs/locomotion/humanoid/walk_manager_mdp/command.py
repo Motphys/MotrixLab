@@ -219,9 +219,9 @@ class WalkCommand(CommandTerm):
         penalty_scale = self.penalty_scale.numpy()
         avg_ep_len = self.avg_ep_len.numpy()
         ctx.metrics["penalty_scale"] = float(penalty_scale[0])
-        if not self.curriculum_enabled or ctx.env_ids.size == 0:
+        if not self.curriculum_enabled or ctx.env_ids.numel() == 0:
             return
-        ep_len = self.steps.numpy()[ctx.env_ids, 0].astype(np.float64) + 1.0
+        ep_len = self.steps[ctx.env_ids, 0].to(torch.float64) + 1.0
         avg_ep_len[0] = np.float32(0.99 * avg_ep_len[0] + 0.01 * float(ep_len.mean()))
         if avg_ep_len[0] < self.level_down_threshold:
             penalty_scale[0] *= np.float32(1.0 - self.degree)

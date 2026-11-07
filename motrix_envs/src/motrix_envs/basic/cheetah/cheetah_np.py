@@ -50,7 +50,7 @@ class CheetahEnv(DirectEnv):
 
     def _init_obs_space(self):
         obs_dim = (self.num_dof_pos - 1) + self.num_dof_vel
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (obs_dim,), dtype=np.float64)
+        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (obs_dim,), dtype=np.float32)
 
     def _init_action_space(self):
         self._action_space = gym.spaces.Box(
@@ -69,57 +69,53 @@ class CheetahEnv(DirectEnv):
         return self._action_space
 
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
-        actions = actions.detach().cpu().numpy()
-        ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = np.asarray(actions, dtype=np.float32)
+        self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
         return state
 
     def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
         inputs = self.sim_data
-        pos = inputs["dof_pos"][:, 1:].copy()  # exclude x position
+        pos = inputs["dof_pos"][:, 1:]  # exclude x position
         vel = inputs["dof_vel"]
-        obs = np.concatenate([pos, vel], axis=-1)
+        obs = torch.cat([pos, vel], dim=-1)
         return state.replace(obs=obs)
 
     def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
         self.sim_data.execute()
         inputs = self.sim_data
         # === Terminated ===
-        terminated = np.zeros(self._num_envs, dtype=bool)
-        terminated |= np.isnan(inputs["dof_pos"]).any(axis=-1)
-        terminated |= np.isnan(inputs["dof_vel"]).any(axis=-1)
+        terminated = inputs["dof_pos"].isnan().any(dim=-1)
+        terminated |= inputs["dof_vel"].isnan().any(dim=-1)
 
         # ==== compute reward ====
         vel = inputs["torso_subtreelinvel"]
-        rwd_speed = reward.tolerance(
-            vel[:, 0],
-            bounds=(self._run_speed, float("inf")),
-            margin=self._run_speed,
-            value_at_margin=0.0,
-            sigmoid="linear",
+        rwd_speed = torch.as_tensor(
+            reward.tolerance(
+                vel[:, 0],
+                bounds=(self._run_speed, float("inf")),
+                margin=self._run_speed,
+                value_at_margin=0.0,
+                sigmoid="linear",
+            ),
+            dtype=torch.float32,
         )
 
         torso_height = inputs["torso_pos"][:, 2]
         rwd_posture = -1.5 * (torso_height - 0.75) ** 2
-        rwd_posture = np.clip(rwd_posture, -1.0, 1.0)
+        rwd_posture = torch.clamp(rwd_posture, -1.0, 1.0)
 
         rwd = rwd_speed + rwd_posture
 
-        return state.replace(
-            reward=rwd,
-            terminated=terminated,
-        )
+        state.reward[:] = rwd
+        state.terminated[:] = terminated
+        return state
 
     def reset(self, env_ids: torch.Tensor) -> None:
-        env_ids = env_ids.detach().cpu().numpy()
-        num = len(env_ids)
+        num = env_ids.numel()
 
-        qpos = np.zeros((num, self._reset_position.shape[1]), dtype=np.float32)
-        dof_vel = np.zeros((num, self._reset_velocity.shape[1]), dtype=np.float32)
+        qpos = torch.zeros((num, self._reset_position.shape[1]), dtype=torch.float32)
+        dof_vel = torch.zeros((num, self._reset_velocity.shape[1]), dtype=torch.float32)
         self._reset_position[env_ids] = qpos
         self._reset_velocity[env_ids] = dof_vel
         self._reset_program.execute(env_ids)
-
-        row_ids = np.asarray(env_ids, np.int64)
-        self.sim_data.execute(row_ids)
+        self.sim_data.execute(env_ids)

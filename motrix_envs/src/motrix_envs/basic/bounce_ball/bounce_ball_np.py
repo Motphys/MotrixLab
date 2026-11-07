@@ -77,30 +77,30 @@ class BounceBallEnv(DirectEnv):
         # Episode-scoped task state: full-batch buffers, reset writes the
         # done rows in place.
         num_envs = self._num_envs
-        self._ball_was_upward = np.zeros(num_envs, dtype=bool)
-        self._consecutive_bounces = np.zeros(num_envs, dtype=np.int32)
-        self._target_heights = np.zeros(num_envs, dtype=np.float32)
-        self._current_actions = np.zeros((num_envs, 6), dtype=np.float32)
-        self._last_actions = np.zeros((num_envs, 6), dtype=np.float32)
+        self._ball_was_upward = torch.zeros(num_envs, dtype=torch.bool)
+        self._consecutive_bounces = torch.zeros(num_envs, dtype=torch.int32)
+        self._target_heights = torch.zeros(num_envs, dtype=torch.float32)
+        self._current_actions = torch.zeros((num_envs, 6), dtype=torch.float32)
+        self._last_actions = torch.zeros((num_envs, 6), dtype=torch.float32)
 
         # Observation space: joint states + paddle position + target height (29D)
         self._observation_space = gym.spaces.Box(-np.inf, np.inf, (29,), dtype=np.float32)
 
         # Initial arm joint positions
-        self._init_arm_qpos = np.array(self._cfg.arm_init_qpos, dtype=np.float32) * np.pi / 180.0
+        self._init_arm_qpos = torch.tensor(self._cfg.arm_init_qpos, dtype=torch.float32) * torch.pi / 180.0
 
         # Action scaling
-        self._action_scale = np.array(self._cfg.action_scale, dtype=np.float32)
-        self._action_bias = np.array(self._cfg.action_bias, dtype=np.float32)
+        self._action_scale = torch.tensor(self._cfg.action_scale, dtype=torch.float32)
+        self._action_bias = torch.tensor(self._cfg.action_bias, dtype=torch.float32)
 
         # Ball initial conditions
-        self._ball_init_pos = np.array(self._cfg.ball_init_pos, dtype=np.float32)
-        self._ball_init_vel = np.array(self._cfg.ball_init_vel, dtype=np.float32)
+        self._ball_init_pos = torch.tensor(self._cfg.ball_init_pos, dtype=torch.float32)
+        self._ball_init_vel = torch.tensor(self._cfg.ball_init_vel, dtype=torch.float32)
 
         # Constants for marker poses
         self._ball_radius = 0.019  # Ball radius in meters
         # Target marker base pose: [x, y, z_placeholder, qx, qy, qz, qw]
-        self._target_marker_base_pose = np.array(
+        self._target_marker_base_pose = torch.tensor(
             [
                 self._cfg.target_ball_x,
                 self._cfg.target_ball_y,
@@ -110,10 +110,10 @@ class BounceBallEnv(DirectEnv):
                 0.0,
                 1.0,  # identity quaternion
             ],
-            dtype=np.float32,
+            dtype=torch.float32,
         )
         # Paddle home marker pose: [x, y, z, qx, qy, qz, qw]
-        self._paddle_home_marker_pose = np.array(
+        self._paddle_home_marker_pose = torch.tensor(
             [
                 self._cfg.target_ball_x,
                 self._cfg.target_ball_y,
@@ -123,7 +123,7 @@ class BounceBallEnv(DirectEnv):
                 0.0,
                 1.0,  # identity quaternion
             ],
-            dtype=np.float32,
+            dtype=torch.float32,
         )
 
     @property
@@ -134,20 +134,20 @@ class BounceBallEnv(DirectEnv):
     def action_space(self):
         return self._action_space
 
-    def _denormalize_action(self, action: np.ndarray) -> np.ndarray:
+    def _denormalize_action(self, action: torch.Tensor) -> torch.Tensor:
         """Denormalize action from [-1, 1] to joint position changes"""
         return self._action_scale * action + self._action_bias
 
     def _compute_reward(
         self,
-        dof_pos: np.ndarray,
-        dof_vel: np.ndarray,
-        paddle_pos: np.ndarray,
-        consecutive_bounces: np.ndarray,
-        bounce_detected: np.ndarray,
-        target_heights: np.ndarray,
-        current_actions: np.ndarray,
-        last_actions: np.ndarray,
+        dof_pos: torch.Tensor,
+        dof_vel: torch.Tensor,
+        paddle_pos: torch.Tensor,
+        consecutive_bounces: torch.Tensor,
+        bounce_detected: torch.Tensor,
+        target_heights: torch.Tensor,
+        current_actions: torch.Tensor,
+        last_actions: torch.Tensor,
     ) -> tuple:
         """
         Compute reward based on ball position, velocity, and paddle alignment.
@@ -181,17 +181,17 @@ class BounceBallEnv(DirectEnv):
         # 1. Horizontal position reward (weighted by vertical distance)
         # Core reward ensuring ball stays directly above paddle
         # ============================================================================
-        x_position_error = np.abs(ball_x - target_ball_x)
-        y_position_error = np.abs(ball_y - target_ball_y)
-        xy_position_error = np.sqrt(x_position_error**2 + y_position_error**2)
+        x_position_error = torch.abs(ball_x - target_ball_x)
+        y_position_error = torch.abs(ball_y - target_ball_y)
+        xy_position_error = torch.sqrt(x_position_error**2 + y_position_error**2)
 
-        vertical_dist = np.abs(ball_z - paddle_z)
-        vertical_weight = np.exp(-vertical_dist / self._cfg.vertical_weight_scale)
+        vertical_dist = torch.abs(ball_z - paddle_z)
+        vertical_weight = torch.exp(-vertical_dist / self._cfg.vertical_weight_scale)
 
         weighted_horizontal_scale = self._cfg.weighted_horizontal_base_scale * (
             1.0 + self._cfg.weighted_horizontal_weight_factor * vertical_weight
         )
-        weighted_position_reward = np.exp(-(xy_position_error**2) / (2 * weighted_horizontal_scale**2))
+        weighted_position_reward = torch.exp(-(xy_position_error**2) / (2 * weighted_horizontal_scale**2))
 
         # ============================================================================
         # 2. Out-of-position penalty
@@ -199,7 +199,9 @@ class BounceBallEnv(DirectEnv):
         # ============================================================================
         out_of_position_penalty = -2.0 / (
             1.0
-            + np.exp(-(xy_position_error - self._cfg.out_of_position_threshold) / self._cfg.out_of_position_sharpness)
+            + torch.exp(
+                -(xy_position_error - self._cfg.out_of_position_threshold) / self._cfg.out_of_position_sharpness
+            )
         )
 
         # ============================================================================
@@ -212,24 +214,26 @@ class BounceBallEnv(DirectEnv):
 
         # Calculate velocity at target height using physics
         upward_below_condition = (ball_vz > 0) & (ball_z < target_height)
-        velocity_squared_at_target_upward = np.where(upward_below_condition, ball_vz**2 - 2 * g * height_diff, 0.0)
-        velocity_at_target_upward = np.sqrt(np.maximum(0, velocity_squared_at_target_upward))
+        velocity_squared_at_target_upward = torch.where(
+            upward_below_condition, ball_vz**2 - 2 * g * height_diff, torch.zeros_like(ball_vz)
+        )
+        velocity_at_target_upward = torch.sqrt(velocity_squared_at_target_upward.clamp(min=0.0))
 
         downward_above_condition = (ball_vz < 0) & (ball_z > target_height)
-        velocity_squared_at_target_downward = np.where(
-            downward_above_condition, ball_vz**2 + 2 * g * np.abs(height_diff), 0.0
+        velocity_squared_at_target_downward = torch.where(
+            downward_above_condition, ball_vz**2 + 2 * g * torch.abs(height_diff), torch.zeros_like(ball_vz)
         )
-        velocity_at_target_downward = -np.sqrt(np.maximum(0, velocity_squared_at_target_downward))
+        velocity_at_target_downward = -torch.sqrt(velocity_squared_at_target_downward.clamp(min=0.0))
 
-        near_target_condition = np.abs(height_diff) < 0.05
-        velocity_at_target_near = np.where(near_target_condition, ball_vz, 0.0)
+        near_target_condition = torch.abs(height_diff) < 0.05
+        velocity_at_target_near = torch.where(near_target_condition, ball_vz, torch.zeros_like(ball_vz))
 
         # Smooth combination
-        upward_motion = 1.0 / (1.0 + np.exp(-ball_vz / 0.2))
-        below_target = 1.0 / (1.0 + np.exp(-height_diff / 0.02))
+        upward_motion = 1.0 / (1.0 + torch.exp(-ball_vz / 0.2))
+        below_target = 1.0 / (1.0 + torch.exp(-height_diff / 0.02))
         downward_motion = 1.0 - upward_motion
         above_target = 1.0 - below_target
-        at_target_weight = np.exp(-(height_diff**2) / (2 * 0.01**2))
+        at_target_weight = torch.exp(-(height_diff**2) / (2 * 0.01**2))
 
         velocity_at_target = (
             velocity_at_target_upward * upward_motion * below_target
@@ -237,19 +241,19 @@ class BounceBallEnv(DirectEnv):
             + velocity_at_target_near * at_target_weight
         )
 
-        velocity_error = np.abs(velocity_at_target - desired_velocity_at_target)
-        velocity_matching_reward = np.exp(-(velocity_error**2) / (2 * self._cfg.velocity_error_sigma**2))
+        velocity_error = torch.abs(velocity_at_target - desired_velocity_at_target)
+        velocity_matching_reward = torch.exp(-(velocity_error**2) / (2 * self._cfg.velocity_error_sigma**2))
 
         # ============================================================================
         # 4. Height reward
         # Directly encourages ball to approach target height, core task objective
         # ============================================================================
-        height_error = np.abs(ball_z - target_height)
-        height_reward = np.exp(-(height_error**2) / (2 * self._cfg.height_error_sigma**2))
+        height_error = torch.abs(ball_z - target_height)
+        height_reward = torch.exp(-(height_error**2) / (2 * self._cfg.height_error_sigma**2))
 
         # Height progress bonus
         height_progress_bonus = (
-            np.maximum(0, ball_z - self._cfg.height_progress_threshold) * self._cfg.height_progress_scale
+            (ball_z - self._cfg.height_progress_threshold).clamp(min=0.0) * self._cfg.height_progress_scale
         )
 
         # ============================================================================
@@ -257,24 +261,24 @@ class BounceBallEnv(DirectEnv):
         # Only rewards upward velocity when ball position is good, avoiding random hitting
         # Guides strategy to learn precise hitting force
         # ============================================================================
-        positioning_quality = np.exp(-(xy_position_error**2) / (2 * self._cfg.positioning_quality_sigma**2))
+        positioning_quality = torch.exp(-(xy_position_error**2) / (2 * self._cfg.positioning_quality_sigma**2))
 
-        ideal_launch_velocity = np.sqrt(2 * g * np.maximum(0, height_diff))
-        ideal_launch_velocity = np.clip(
-            ideal_launch_velocity, self._cfg.ideal_velocity_min, self._cfg.ideal_velocity_max
+        ideal_launch_velocity = torch.sqrt(2 * g * height_diff.clamp(min=0.0))
+        ideal_launch_velocity = ideal_launch_velocity.clamp(
+            self._cfg.ideal_velocity_min, self._cfg.ideal_velocity_max
         )
 
-        upward_velocity_quality = np.exp(
+        upward_velocity_quality = torch.exp(
             -((ball_vz - ideal_launch_velocity) ** 2) / (2 * self._cfg.upward_velocity_sigma**2)
         )
 
-        upward_mask = 1.0 / (1.0 + np.exp(-ball_vz / self._cfg.upward_mask_scale))
+        upward_mask = 1.0 / (1.0 + torch.exp(-ball_vz / self._cfg.upward_mask_scale))
 
         controlled_upward_reward = (
             positioning_quality
             * upward_velocity_quality
             * upward_mask
-            * np.clip(ball_vz * 1.0, 0.0, self._cfg.controlled_upward_clip_max)
+            * (ball_vz * 1.0).clamp(0.0, self._cfg.controlled_upward_clip_max)
         )
 
         # ============================================================================
@@ -283,13 +287,13 @@ class BounceBallEnv(DirectEnv):
         # Ensures ball motion stays within controllable range
         # ============================================================================
         excessive_upward_penalty = -1.0 / (
-            1.0 + np.exp(-(ball_vz - self._cfg.excessive_upward_threshold) / self._cfg.excessive_upward_sharpness)
+            1.0 + torch.exp(-(ball_vz - self._cfg.excessive_upward_threshold) / self._cfg.excessive_upward_sharpness)
         )
 
-        downward_penalty_magnitude = -ball_vz * np.clip(
-            -ball_vz * self._cfg.downward_velocity_scale, 0.0, self._cfg.downward_velocity_clip_max
+        downward_penalty_magnitude = -ball_vz * (-ball_vz * self._cfg.downward_velocity_scale).clamp(
+            0.0, self._cfg.downward_velocity_clip_max
         )
-        downward_penalty_trigger = 1.0 / (1.0 + np.exp((ball_vz - self._cfg.downward_velocity_threshold) / 0.2))
+        downward_penalty_trigger = 1.0 / (1.0 + torch.exp((ball_vz - self._cfg.downward_velocity_threshold) / 0.2))
         downward_velocity_penalty = downward_penalty_magnitude * downward_penalty_trigger
 
         # ============================================================================
@@ -297,23 +301,23 @@ class BounceBallEnv(DirectEnv):
         # Encourages multiple consecutive successful bounces for stable long-term control
         # Uses logarithmic function to avoid infinite reward growth
         # ============================================================================
-        bounce_positioning_quality = np.exp(-(xy_position_error**2) / (2 * self._cfg.bounce_positioning_sigma**2))
+        bounce_positioning_quality = torch.exp(-(xy_position_error**2) / (2 * self._cfg.bounce_positioning_sigma**2))
 
-        bounce_log_reward = np.log(consecutive_bounces.astype(np.float32) + 1.0) * self._cfg.bounce_log_scale
+        bounce_log_reward = torch.log(consecutive_bounces.to(torch.float32) + 1.0) * self._cfg.bounce_log_scale
 
-        bounce_activation = (consecutive_bounces > 0).astype(np.float32) * bounce_positioning_quality
+        bounce_activation = (consecutive_bounces > 0).to(torch.float32) * bounce_positioning_quality
         consecutive_bounces_reward = bounce_log_reward * bounce_activation
 
         # High bounce count bonus
         high_bounce_activation = 1.0 / (
             1.0
-            + np.exp(
-                -(consecutive_bounces.astype(np.float32) - self._cfg.high_bounce_threshold)
+            + torch.exp(
+                -(consecutive_bounces.to(torch.float32) - self._cfg.high_bounce_threshold)
                 / self._cfg.high_bounce_sharpness
             )
         )
         high_bounce_bonus = (
-            consecutive_bounces.astype(np.float32)
+            consecutive_bounces.to(torch.float32)
             * self._cfg.high_bounce_scale
             * bounce_positioning_quality
             * high_bounce_activation
@@ -324,16 +328,16 @@ class BounceBallEnv(DirectEnv):
         # Encourages paddle to actively move directly below ball
         # Extra reward at bounce moment to reinforce correct hitting behavior
         # ============================================================================
-        ball_xy = np.stack([ball_x, ball_y], axis=1)
-        paddle_ball_xy_error = np.linalg.norm(ball_xy - paddle_xy, axis=1)
+        ball_xy = torch.stack([ball_x, ball_y], dim=1)
+        paddle_ball_xy_error = torch.norm(ball_xy - paddle_xy, dim=1)
 
-        vertical_proximity_weight = np.exp(-vertical_dist / self._cfg.vertical_proximity_scale)
+        vertical_proximity_weight = torch.exp(-vertical_dist / self._cfg.vertical_proximity_scale)
 
-        paddle_alignment_quality = np.exp(-(paddle_ball_xy_error**2) / (2 * self._cfg.paddle_alignment_sigma**2)) * (
+        paddle_alignment_quality = torch.exp(-(paddle_ball_xy_error**2) / (2 * self._cfg.paddle_alignment_sigma**2)) * (
             1.0 + self._cfg.paddle_alignment_weight_factor * vertical_proximity_weight
         )
 
-        bounce_boost = bounce_detected.astype(np.float32) * self._cfg.bounce_boost_factor + 1.0
+        bounce_boost = bounce_detected.to(torch.float32) * self._cfg.bounce_boost_factor + 1.0
         paddle_center_reward = paddle_alignment_quality * bounce_boost * self._cfg.paddle_center_scale
 
         # ============================================================================
@@ -342,20 +346,23 @@ class BounceBallEnv(DirectEnv):
         # Makes paddle motion more energy-efficient and natural
         # ============================================================================
         paddle_home_z = self._cfg.paddle_home_position_z
-        paddle_height_deviation = np.abs(paddle_z - paddle_home_z)
+        paddle_height_deviation = torch.abs(paddle_z - paddle_home_z)
 
         # Distance-based dynamic factor
         distance_factor = 1.0 + self._cfg.distance_factor_scale / (
-            1.0 + np.exp(-(vertical_dist - self._cfg.distance_factor_threshold) / self._cfg.distance_factor_sharpness)
+            1.0
+            + torch.exp(
+                -(vertical_dist - self._cfg.distance_factor_threshold) / self._cfg.distance_factor_sharpness
+            )
         )
 
         home_position_reward = (
-            np.exp(-(paddle_height_deviation**2) / (2 * self._cfg.home_position_sigma**2)) * distance_factor
+            torch.exp(-(paddle_height_deviation**2) / (2 * self._cfg.home_position_sigma**2)) * distance_factor
         )
 
         # Height violation penalty
         max_deviation = self._cfg.max_paddle_height_deviation
-        height_violation = np.maximum(0, paddle_height_deviation - max_deviation)
+        height_violation = (paddle_height_deviation - max_deviation).clamp(min=0.0)
         height_violation_penalty = -height_violation * self._cfg.height_violation_scale
 
         # ============================================================================
@@ -364,10 +371,10 @@ class BounceBallEnv(DirectEnv):
         # Encourages smooth and energy-efficient control
         # ============================================================================
         action_diff = current_actions - last_actions
-        action_penalty = np.sum(np.square(action_diff), axis=-1)
+        action_penalty = torch.sum(torch.square(action_diff), dim=-1)
 
         joint_vel = self.sim_data["dof_vel"][:, :6]
-        joint_vel_penalty = np.sum(np.square(joint_vel), axis=-1)
+        joint_vel_penalty = torch.sum(torch.square(joint_vel), dim=-1)
 
         # ============================================================================
         # Total reward
@@ -408,7 +415,7 @@ class BounceBallEnv(DirectEnv):
             "height_diff": height_diff,
             "height_error": height_error,
             "velocity_at_target": velocity_at_target,
-            "desired_velocity_at_target": np.full_like(ball_vz, desired_velocity_at_target),
+            "desired_velocity_at_target": torch.full_like(ball_vz, desired_velocity_at_target),
             "velocity_error": velocity_error,
             "ideal_launch_velocity": ideal_launch_velocity,
             "positioning_quality": positioning_quality,
@@ -416,8 +423,8 @@ class BounceBallEnv(DirectEnv):
             "bounce_positioning_quality": bounce_positioning_quality,
             "paddle_ball_xy_error": paddle_ball_xy_error,
             "vertical_proximity_weight": vertical_proximity_weight,
-            "bounce_detected": bounce_detected.astype(np.float32),
-            "consecutive_bounces": consecutive_bounces.astype(np.float32),
+            "bounce_detected": bounce_detected.to(torch.float32),
+            "consecutive_bounces": consecutive_bounces.to(torch.float32),
             "action_penalty": action_penalty,
             "joint_vel_penalty": joint_vel_penalty,
             "distance_factor": distance_factor,
@@ -442,7 +449,9 @@ class BounceBallEnv(DirectEnv):
 
         return total_reward, reward_details
 
-    def _compute_terminated(self, dof_pos: np.ndarray, dof_vel: np.ndarray, target_heights: np.ndarray) -> np.ndarray:
+    def _compute_terminated(
+        self, dof_pos: torch.Tensor, dof_vel: torch.Tensor, target_heights: torch.Tensor
+    ) -> torch.Tensor:
         """Check if episode should terminate based on DOF states"""
         # Extract ball position from DOF (indices 6-8 for x,y,z)
         ball_x = dof_pos[:, 6]  # Ball x position
@@ -453,22 +462,21 @@ class BounceBallEnv(DirectEnv):
         terminated = (ball_z < 0.05) | (ball_z > target_heights + 1.0)
 
         # Also terminate if ball goes too far horizontally
-        terminated |= (np.abs(ball_x) > 1.5) | (np.abs(ball_y) > 1.5)
+        terminated |= (torch.abs(ball_x) > 1.5) | (torch.abs(ball_y) > 1.5)
 
         # Terminate if joint velocity is too high
         # Limit: 360 degrees/second = 2*pi rad/s ≈ 6.28 rad/s
         joint_vel = dof_vel[:, :6]  # Joint velocities (first 6 DOFs are arm joints)
-        max_joint_vel = 2.0 * np.pi  # 360 degrees/second in radians
-        terminated |= np.abs(joint_vel).max(axis=-1) > max_joint_vel
+        max_joint_vel = 2.0 * torch.pi  # 360 degrees/second in radians
+        terminated |= torch.abs(joint_vel).max(dim=-1).values > max_joint_vel
 
         return terminated
 
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
-        actions = actions.detach().cpu().numpy()
         """Apply action to control paddle position"""
         # Save last actions for penalty calculation
-        self._last_actions[:] = self._current_actions
-        self._current_actions[:] = actions
+        self._last_actions.copy_(self._current_actions)
+        self._current_actions.copy_(actions)
 
         # Get current joint positions
         current_joint_pos = self.sim_data["dof_pos"][:, :6]  # First 6 DOFs are arm joints
@@ -481,7 +489,7 @@ class BounceBallEnv(DirectEnv):
 
         # Apply target positions as actuator controls (position control)
         ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = np.asarray(target_positions, dtype=np.float32)
+        ctrl.copy_(target_positions)
         self._ctrl_writes.execute()
         return state
 
@@ -489,10 +497,10 @@ class BounceBallEnv(DirectEnv):
         inputs = self.sim_data
         # Observation: joint states + paddle position + target height (29D)
         # Concatenate: DOF pos (13) + DOF vel (12) + paddle xyz (3) + target height (1)
-        obs = np.concatenate(
-            [inputs["dof_pos"], inputs["dof_vel"], inputs["paddle_pos"], self._target_heights[:, np.newaxis]], axis=-1
+        obs = torch.cat(
+            [inputs["dof_pos"], inputs["dof_vel"], inputs["paddle_pos"], self._target_heights[:, None]], dim=-1
         )
-        return state.replace(obs=obs.astype(np.float32))
+        return state.replace(obs=obs)
 
     def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
         """Update state with rewards and termination flags"""
@@ -517,13 +525,13 @@ class BounceBallEnv(DirectEnv):
         bounce_detected = ~ball_was_upward & moving_upward & near_paddle
 
         # Update consecutive bounce count
-        consecutive_bounces = np.where(bounce_detected, consecutive_bounces + 1, consecutive_bounces)
+        consecutive_bounces = torch.where(bounce_detected, consecutive_bounces + 1, consecutive_bounces)
 
         # Reset count if ball is falling too much (not bouncing properly)
         falling = (current_ball_vz < -0.5) & (current_ball_z < 0.4)
         consecutive_bounces[falling] = 0
         self._consecutive_bounces = consecutive_bounces
-        self._ball_was_upward = moving_upward
+        self._ball_was_upward = moving_upward.clone()
 
         # Compute reward and termination from simulator quantities
         reward, reward_details = self._compute_reward(
@@ -538,8 +546,8 @@ class BounceBallEnv(DirectEnv):
         )
         terminated = self._compute_terminated(inputs["dof_pos"], inputs["dof_vel"], target_heights=target_heights)
 
-        state.reward = reward
-        state.terminated = terminated
+        state.reward[:] = reward
+        state.terminated[:] = terminated
 
         # Store reward details for debugging
         if self._cfg.store_reward_details:
@@ -548,69 +556,52 @@ class BounceBallEnv(DirectEnv):
         return state
 
     def reset(self, env_ids: torch.Tensor) -> None:
-        env_ids = env_ids.detach().cpu().numpy()
         """Reset environment to initial state with randomized target heights"""
         cfg: BounceBallEnvCfg = self._cfg
-        num_reset = len(env_ids)
+        num_reset = env_ids.numel()
 
         # Randomize target heights for the environments being reset
         if cfg.randomize_target_height:
             min_height, max_height = cfg.target_height_range
-            new_target_heights = np.random.uniform(min_height, max_height, num_reset).astype(np.float32)
+            new_target_heights = (torch.rand(num_reset, dtype=torch.float32) * (max_height - min_height) + min_height)
         else:
             # Use mean of target_height_range when not randomizing
-            default_height = np.mean(cfg.target_height_range)
-            new_target_heights = np.full(num_reset, default_height, dtype=np.float32)
+            default_height = sum(cfg.target_height_range) / 2.0
+            new_target_heights = torch.full((num_reset,), default_height, dtype=torch.float32)
 
         # Add noise to initial arm joint positions only (not ball)
-        arm_noise_pos = np.random.uniform(
-            -cfg.reset_noise_scale,
-            cfg.reset_noise_scale,
-            (num_reset, 6),  # Only 6 arm joints
-        )
-        arm_vel = np.random.uniform(
-            -cfg.reset_noise_scale,
-            cfg.reset_noise_scale,
-            (num_reset, 6),
-        ).astype(np.float32)
+        arm_noise_pos = (torch.rand(num_reset, 6, dtype=torch.float32) * 2.0 - 1.0) * cfg.reset_noise_scale
+        arm_vel = (torch.rand(num_reset, 6, dtype=torch.float32) * 2.0 - 1.0) * cfg.reset_noise_scale
 
-        arm_pos = np.tile(self._init_arm_qpos, (num_reset, 1)) + arm_noise_pos
-        ball_pos = self._ball_init_pos + np.random.uniform(-0.01, 0.01, (num_reset, 3))
+        arm_pos = self._init_arm_qpos.tile((num_reset, 1)) + arm_noise_pos
+        ball_pos = self._ball_init_pos + (torch.rand(num_reset, 3, dtype=torch.float32) * 2.0 - 1.0) * 0.01
 
-        self._arm_reset_position[env_ids] = np.asarray(arm_pos, dtype=np.float32)
+        self._arm_reset_position[env_ids] = arm_pos
         self._arm_reset_velocity[env_ids] = arm_vel
-        self._ball_reset_position[env_ids] = np.asarray(ball_pos, dtype=np.float32)
-        self._ball_reset_rotation[env_ids] = [0.0, 0.0, 0.0, 1.0]
+        self._ball_reset_position[env_ids] = ball_pos
+        self._ball_reset_rotation[env_ids] = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32)
         self._ball_reset_linear_velocity[env_ids] = 0.0
         self._ball_reset_angular_velocity[env_ids] = 0.0
         self._reset_program.execute(env_ids)
 
         # Update target height marker position (thin cylinder disc)
         # Marker center aligns with ball top: marker_z = target_height + ball_radius
-        target_marker_poses = np.tile(self._target_marker_base_pose, (num_reset, 1))
+        target_marker_poses = self._target_marker_base_pose.tile((num_reset, 1)).clone()
         target_marker_poses[:, 2] = new_target_heights + self._ball_radius  # Set z position
 
-        self._marker_writes.buffer("height_pos")[env_ids, 0] = np.ascontiguousarray(
-            target_marker_poses[:, :3], dtype=np.float32
-        )
-        self._marker_writes.buffer("height_rot")[env_ids, 0] = np.ascontiguousarray(
-            target_marker_poses[:, 3:7], dtype=np.float32
-        )
+        self._marker_writes.buffer("height_pos")[env_ids, 0] = target_marker_poses[:, :3]
+        self._marker_writes.buffer("height_rot")[env_ids, 0] = target_marker_poses[:, 3:7]
 
         # Set paddle home marker mocap body pose
-        paddle_home_marker_poses = np.tile(self._paddle_home_marker_pose, (num_reset, 1))
-        self._marker_writes.buffer("paddle_pos")[env_ids, 0] = np.ascontiguousarray(
-            paddle_home_marker_poses[:, :3], dtype=np.float32
-        )
-        self._marker_writes.buffer("paddle_rot")[env_ids, 0] = np.ascontiguousarray(
-            paddle_home_marker_poses[:, 3:7], dtype=np.float32
-        )
+        paddle_home_marker_poses = self._paddle_home_marker_pose.tile((num_reset, 1))
+        self._marker_writes.buffer("paddle_pos")[env_ids, 0] = paddle_home_marker_poses[:, :3]
+        self._marker_writes.buffer("paddle_rot")[env_ids, 0] = paddle_home_marker_poses[:, 3:7]
         # Both markers go to the backend in one crossing.
         self._marker_writes.execute(env_ids)
 
         # Refresh cached reads for the reset rows so the follow-up
         # compute_observation (which never executes) sees post-reset state.
-        self.sim_data.execute(np.asarray(env_ids, dtype=np.int64))
+        self.sim_data.execute(env_ids)
 
         # Write episode-scoped state for the reset rows
         self._consecutive_bounces[env_ids] = 0

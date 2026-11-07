@@ -1,5 +1,4 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
-# SPDX-License-Identifier: Apache-2.0
 
 import gymnasium as gym
 import numpy as np
@@ -52,7 +51,7 @@ class Reacher2DEnv(DirectEnv):
         self._target_velocity = self._reset_program.buffer("target_velocity")
 
         self._target_size = cfg.target_size
-        self._target_xyz = np.zeros((num_envs, 3), dtype=np.float32)
+        self._target_xyz = torch.zeros((num_envs, 3), dtype=torch.float32)
         self._init_obs_space()
         self._init_action_space()
 
@@ -75,9 +74,7 @@ class Reacher2DEnv(DirectEnv):
         return self._action_space
 
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
-        actions = actions.detach().cpu().numpy()
-        ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = np.asarray(actions, dtype=np.float32)
+        self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
         return state
 
@@ -87,49 +84,51 @@ class Reacher2DEnv(DirectEnv):
         qvel = inputs["dof_vel"]
         finger_xy = inputs["finger_pos"][:, :2]
         to_target = self._target_xyz[:, :2] - finger_xy
-        return state.replace(obs=np.concatenate([qpos, to_target, qvel], axis=-1))
+        return state.replace(obs=torch.cat([qpos, to_target, qvel], dim=-1))
 
     def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
         self.sim_data.execute()
         finger_xy = self.sim_data["finger_pos"][:, :2]
-        dist = np.linalg.norm(self._target_xyz[:, :2] - finger_xy, axis=-1)
-        rwd = reward.tolerance(
-            dist, bounds=(0.0, self._target_size), margin=self._target_size, value_at_margin=0.0, sigmoid="linear"
+        dist = torch.linalg.norm(self._target_xyz[:, :2] - finger_xy, dim=-1)
+        rwd = torch.as_tensor(
+            reward.tolerance(
+                dist, bounds=(0.0, self._target_size), margin=self._target_size, value_at_margin=0.0, sigmoid="linear"
+            ),
+            dtype=torch.float32,
         )
         terminated = (
-            np.isnan(self.sim_data["dof_pos"]).any(axis=-1)
-            | np.isnan(self.sim_data["dof_vel"]).any(axis=-1)
-            | np.isnan(finger_xy).any(axis=-1)
-            | np.isnan(rwd)
+            self.sim_data["dof_pos"].isnan().any(dim=-1)
+            | self.sim_data["dof_vel"].isnan().any(dim=-1)
+            | finger_xy.isnan().any(dim=-1)
+            | rwd.isnan()
         )
         rwd[terminated] = 0.0
 
-        state.reward_terms = {"distance": dist, "tolerance": rwd.copy()}
+        state.reward_terms = {"distance": dist, "tolerance": rwd.clone()}
 
-        return state.replace(reward=rwd, terminated=terminated)
+        state.reward[:] = rwd
+        state.terminated[:] = terminated
+        return state
 
     def reset(self, env_ids: torch.Tensor) -> None:
-        env_ids = env_ids.detach().cpu().numpy()
         """Reset environment with randomized target position in xy plane (z=0)."""
-        num_reset = len(env_ids)
+        num_reset = env_ids.numel()
 
-        arm_position = np.zeros((num_reset, 2), dtype=np.float32)
-        arm_position[:, 0] = np.random.uniform(-np.pi, np.pi, size=(num_reset,))
-        arm_position[:, 1] = np.random.uniform(-np.pi, np.pi, size=(num_reset,))
+        arm_position = (torch.rand(num_reset, 2, dtype=torch.float32) * 2.0 - 1.0) * np.pi
 
-        target_x = np.random.uniform(-0.15, 0.15, size=(num_reset,))
-        target_y = np.random.uniform(0.15, 0.15, size=(num_reset,))
+        target_x = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * 0.15
+        target_y = torch.full((num_reset,), 0.15, dtype=torch.float32)
 
-        target_position = np.stack([target_x, target_y], axis=-1).astype(np.float32)
-        arm_velocity = np.zeros((num_reset, 2), dtype=np.float32)
-        target_velocity = np.zeros((num_reset, 2), dtype=np.float32)
+        target_position = torch.stack([target_x, target_y], dim=-1)
+        arm_velocity = torch.zeros((num_reset, 2), dtype=torch.float32)
+        target_velocity = torch.zeros((num_reset, 2), dtype=torch.float32)
 
         self._arm_position[env_ids] = arm_position
         self._arm_velocity[env_ids] = arm_velocity
         self._target_position[env_ids] = target_position
         self._target_velocity[env_ids] = target_velocity
         self._reset_program.execute(env_ids)
-        self.sim_data.execute(np.asarray(env_ids, np.int64))
+        self.sim_data.execute(env_ids)
 
         target_pose = self.sim_data["target_pos"][env_ids]
         self._target_xyz[env_ids] = target_pose

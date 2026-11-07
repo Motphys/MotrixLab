@@ -38,6 +38,8 @@ def test_model_imports_do_not_read_or_scan_assets() -> None:
 
 
 def test_builtin_import_does_not_load_training_or_simulators() -> None:
+    # torch is a declared base dependency of motrix_env_core since the
+    # SimBackend tensor migration, so it no longer counts as heavyweight.
     result = subprocess.run(
         [
             sys.executable,
@@ -45,7 +47,7 @@ def test_builtin_import_does_not_load_training_or_simulators() -> None:
             "from motrix_robots.unitree import UnitreeGo2Robot; "
             "import sys; "
             "assert not any(name in sys.modules for name in "
-            "('motrix_envs', 'motrixsim', 'mujoco', 'torch', 'motrix_deploy', 'unitree_sdk2py')); "
+            "('motrix_envs', 'motrixsim', 'mujoco', 'motrix_deploy', 'unitree_sdk2py')); "
             "UnitreeGo2Robot().validate('robot')",
         ],
         capture_output=True,

@@ -1,5 +1,4 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
-# SPDX-License-Identifier: Apache-2.0
 
 import gymnasium as gym
 import numpy as np
@@ -7,7 +6,6 @@ import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
-from motrix_env_core.direct import reward
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
@@ -24,6 +22,7 @@ from motrix_env_core.sim import (
     SensorValuesQuery,
 )
 from motrix_env_core.sim.write import BodyJointVelocityWrite, CtrlTargetsWrite
+from motrix_env_core.torch import reward
 from motrix_envs.basic.humanoid.cfg import HumanoidWalkCfg
 
 _SIM_DATA_QUERIES = {
@@ -45,10 +44,10 @@ _SIM_DATA_QUERIES = {
 _SIM_MODEL_QUERIES = {"dof_position_limits": DofPositionLimitsQuery()}
 
 
-def _quat_to_rotation_mats(quats: np.ndarray) -> np.ndarray:
+def _quat_to_rotation_mats(quats: torch.Tensor) -> torch.Tensor:
     """Convert (x, y, z, w) quaternions, shape (..., 4), to rotation mats (..., 3, 3)."""
     x, y, z, w = quats[..., 0], quats[..., 1], quats[..., 2], quats[..., 3]
-    mats = np.empty(quats.shape[:-1] + (3, 3), dtype=quats.dtype)
+    mats = quats.new_empty(quats.shape[:-1] + (3, 3))
     mats[..., 0, 0] = 1 - 2 * (y * y + z * z)
     mats[..., 0, 1] = 2 * (x * y - z * w)
     mats[..., 0, 2] = 2 * (x * z + y * w)
@@ -95,23 +94,23 @@ class Humanoid3DEnv(DirectEnv):
 
         self._move_speed = float(cfg.move_speed)
         self._stand_height = float(cfg.stand_height)
-        self._target_direction = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        self._target_direction_xy = self._target_direction[:2].copy()
+        self._target_direction = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
+        self._target_direction_xy = self._target_direction[:2].clone()
 
         self._qpos_low, self._qpos_high = self._build_qpos_limits()
         self._cache_derived_constants(cfg)
         self._init_joint_randomization_config(cfg)
 
-    def _build_qpos_limits(self) -> tuple[np.ndarray, np.ndarray]:
+    def _build_qpos_limits(self) -> tuple[torch.Tensor, torch.Tensor]:
         num_dof_pos = self.num_dof_pos
         lower, upper = self.model.others["dof_position_limits"]
         expected_shape = (num_dof_pos,)
-        if lower.shape != expected_shape or upper.shape != expected_shape:
+        if tuple(lower.shape) != expected_shape or tuple(upper.shape) != expected_shape:
             raise ValueError(
                 "Humanoid DOF position limits must match global DOF positions: "
-                f"lower={lower.shape}, upper={upper.shape}, expected={expected_shape}."
+                f"lower={tuple(lower.shape)}, upper={tuple(upper.shape)}, expected={expected_shape}."
             )
-        return lower, upper
+        return lower.to(torch.float32), upper.to(torch.float32)
 
     def _cache_derived_constants(self, cfg: HumanoidWalkCfg) -> None:
         t_cfg = cfg.termination_config
@@ -159,9 +158,8 @@ class Humanoid3DEnv(DirectEnv):
         return self._action_space
 
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
-        actions = actions.detach().cpu().numpy()
         ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = np.asarray(actions, dtype=np.float32)
+        ctrl.copy_(actions)
         self._ctrl_writes.execute()
         return state
 
@@ -187,9 +185,9 @@ class Humanoid3DEnv(DirectEnv):
         extremities = []
         for p in parts:
             torso_to_limb = p - torso_pos
-            v_body = np.einsum("ni,nij->nj", torso_to_limb, torso_rot)
+            v_body = torch.einsum("ni,nij->nj", torso_to_limb, torso_rot)
             extremities.append(v_body)
-        extremities = np.concatenate(extremities, axis=-1)
+        extremities = torch.cat(extremities, dim=-1)
 
         torso_vertical = torso_rot[:, 2, :]
 
@@ -197,11 +195,11 @@ class Humanoid3DEnv(DirectEnv):
 
         qvel = inputs["dof_vel"]
 
-        target_world = np.ones((self._num_envs, 3), dtype=np.float32) * self._target_direction[None, :]
-        target_direction_local = np.einsum("ni,nij->nj", target_world, torso_rot)
+        target_world = self._target_direction.unsqueeze(0).expand(self._num_envs, 3)
+        target_direction_local = torch.einsum("ni,nij->nj", target_world, torso_rot)
 
-        obs = np.concatenate(
-            [joint_angles, head_height, extremities, torso_vertical, com_vel, qvel, target_direction_local], axis=-1
+        obs = torch.cat(
+            [joint_angles, head_height, extremities, torso_vertical, com_vel, qvel, target_direction_local], dim=-1
         )
         return state.replace(obs=obs)
 
@@ -226,54 +224,53 @@ class Humanoid3DEnv(DirectEnv):
 
     def _apply_termination_mask(
         self,
-        terminated: np.ndarray,
-        rwd: np.ndarray,
+        terminated: torch.Tensor,
+        rwd: torch.Tensor,
         reward_components: dict,
-    ) -> tuple[np.ndarray, dict]:
-        rwd = np.where(terminated, 0.0, rwd).astype(np.float32)
+    ) -> tuple[torch.Tensor, dict]:
+        rwd = torch.where(terminated, torch.zeros_like(rwd), rwd)
         for k, v in reward_components.items():
-            reward_components[k] = np.where(terminated, 0.0, v).astype(np.float32)
+            reward_components[k] = torch.where(terminated, torch.zeros_like(v), v)
         return rwd, reward_components
 
     def reset(self, env_ids: torch.Tensor) -> None:
-        env_ids = env_ids.detach().cpu().numpy()
         self._randomize_joints(env_ids)
 
-    def _get_head_height(self, rows) -> np.ndarray:
+    def _get_head_height(self, rows) -> torch.Tensor:
         return self.sim_data["head_pos"][rows][:, 2]
 
-    def _get_pelvis_height(self, rows) -> np.ndarray:
+    def _get_pelvis_height(self, rows) -> torch.Tensor:
         return self.sim_data["pelvis_pos"][rows][:, 2]
 
-    def _get_torso_upright(self, rows) -> np.ndarray:
+    def _get_torso_upright(self, rows) -> torch.Tensor:
         return _quat_to_rotation_mats(self.sim_data["torso_quat"][rows])[:, 2, 2]
 
     def _compute_reward(
         self,
-        head_height: np.ndarray,
-        torso_upright: np.ndarray,
-        pelvis_height: np.ndarray,
-    ) -> tuple[np.ndarray, dict]:
+        head_height: torch.Tensor,
+        torso_upright: torch.Tensor,
+        pelvis_height: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict]:
         posture_reward = self._compute_posture_reward(head_height, torso_upright, pelvis_height)
         speed_reward, energy_reward = self._compute_speed_and_energy_reward()
         gait_reward = self._compute_gait_reward()
 
-        rwd = (posture_reward * speed_reward * energy_reward * gait_reward).astype(np.float32)
+        rwd = posture_reward * speed_reward * energy_reward * gait_reward
 
         comps = {
-            "energy": energy_reward.astype(np.float32),
-            "speed": speed_reward.astype(np.float32),
-            "posture": posture_reward.astype(np.float32),
-            "gait": gait_reward.astype(np.float32),
+            "energy": energy_reward,
+            "speed": speed_reward,
+            "posture": posture_reward,
+            "gait": gait_reward,
         }
         return rwd, comps
 
     def _compute_posture_reward(
         self,
-        head_height: np.ndarray,
-        torso_upright: np.ndarray,
-        pelvis_height: np.ndarray,
-    ) -> np.ndarray:
+        head_height: torch.Tensor,
+        torso_upright: torch.Tensor,
+        pelvis_height: torch.Tensor,
+    ) -> torch.Tensor:
         stand_reward = reward.tolerance(
             head_height,
             bounds=(self._head_height_min, float("inf")),
@@ -298,15 +295,15 @@ class Humanoid3DEnv(DirectEnv):
 
     def _compute_speed_and_energy_reward(
         self,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         target_dir_xy = self._target_direction_xy
 
         ctrls = self.sim_data["actuator_ctrls"]
         com_vel = self.sim_data["torso_subtreelinvel"]
 
         if self._move_speed <= 0.0:
-            energy_reward = np.exp(-1.0 * np.mean(np.square(ctrls), axis=-1))
-            actual_speed = np.linalg.norm(com_vel[:, :2], axis=-1)
+            energy_reward = torch.exp(-1.0 * torch.mean(torch.square(ctrls), dim=-1))
+            actual_speed = torch.norm(com_vel[:, :2], dim=-1)
             speed_reward = reward.tolerance(
                 actual_speed,
                 bounds=(self._move_speed, self._move_speed),
@@ -314,8 +311,8 @@ class Humanoid3DEnv(DirectEnv):
                 value_at_margin=0.01,
             ).flatten()
         elif self._move_speed <= 3.0:
-            energy_reward = np.exp(-0.5 * np.mean(np.square(ctrls), axis=-1))
-            actual_speed = np.sum(com_vel[:, :2] * target_dir_xy, axis=-1)
+            energy_reward = torch.exp(-0.5 * torch.mean(torch.square(ctrls), dim=-1))
+            actual_speed = torch.sum(com_vel[:, :2] * target_dir_xy, dim=-1)
             speed_reward = reward.tolerance(
                 actual_speed,
                 bounds=(self._move_speed, self._move_speed),
@@ -324,8 +321,8 @@ class Humanoid3DEnv(DirectEnv):
                 sigmoid="linear",
             ).flatten()
         else:
-            energy_reward = np.exp(-0.3 * np.mean(np.square(ctrls), axis=-1))
-            actual_speed = np.sum(com_vel[:, :2] * target_dir_xy, axis=-1)
+            energy_reward = torch.exp(-0.3 * torch.mean(torch.square(ctrls), dim=-1))
+            actual_speed = torch.sum(com_vel[:, :2] * target_dir_xy, dim=-1)
             speed_reward = reward.tolerance(
                 actual_speed,
                 bounds=(self._move_speed, float("inf")),
@@ -338,12 +335,12 @@ class Humanoid3DEnv(DirectEnv):
 
     def _compute_heading_reward(
         self,
-        forward_vec: np.ndarray,
-        target_dir: np.ndarray,
+        forward_vec: torch.Tensor,
+        target_dir: torch.Tensor,
         bounds,
         margin,
-    ) -> np.ndarray:
-        dot = np.sum(forward_vec * target_dir, axis=-1)
+    ) -> torch.Tensor:
+        dot = torch.sum(forward_vec * target_dir, dim=-1)
         return reward.tolerance(
             dot,
             bounds=bounds,
@@ -352,7 +349,7 @@ class Humanoid3DEnv(DirectEnv):
             sigmoid="linear",
         ).flatten()
 
-    def _compute_gait_reward(self) -> np.ndarray:
+    def _compute_gait_reward(self) -> torch.Tensor:
         inputs = self.sim_data
         target_dir = self._target_direction
 
@@ -380,7 +377,7 @@ class Humanoid3DEnv(DirectEnv):
 
         left_foot_pos = inputs["left_foot_pos"]
         right_foot_pos = inputs["right_foot_pos"]
-        max_foot_h = np.maximum(left_foot_pos[:, 2], right_foot_pos[:, 2])
+        max_foot_h = torch.maximum(left_foot_pos[:, 2], right_foot_pos[:, 2])
         feet_height_reward = reward.tolerance(
             max_foot_h,
             bounds=(0.0, 0.3),
@@ -393,16 +390,16 @@ class Humanoid3DEnv(DirectEnv):
 
     def _compute_terminated(
         self,
-        head_height: np.ndarray,
-        torso_upright: np.ndarray,
-    ) -> np.ndarray:
+        head_height: torch.Tensor,
+        torso_upright: torch.Tensor,
+    ) -> torch.Tensor:
         inputs = self.sim_data
         qpos = inputs["dof_pos"]
         qvel = inputs["dof_vel"]
-        bad = ~np.isfinite(qpos).all(axis=-1) | ~np.isfinite(qvel).all(axis=-1)
+        bad = ~torch.isfinite(qpos).all(dim=-1) | ~torch.isfinite(qvel).all(dim=-1)
         too_low = head_height < self._term_head_height_min
         too_tilted = torso_upright < self._term_torso_upright_threshold
-        extreme_vel = np.abs(qvel).max(axis=-1) > self._term_extreme_vel_threshold
+        extreme_vel = torch.abs(qvel).max(dim=-1).values > self._term_extreme_vel_threshold
         return bad | too_low | too_tilted | extreme_vel
 
     def _init_joint_randomization_config(self, cfg: HumanoidWalkCfg) -> None:
@@ -411,12 +408,12 @@ class Humanoid3DEnv(DirectEnv):
         self._reset_qvel_range = init_cfg.reset_qvel_range
         self._reset_actuator_range = init_cfg.reset_actuator_range
 
-        self._hip_yaw_range = tuple(np.deg2rad(x) for x in init_cfg.hip_yaw_range)
-        self._hip_roll_range = tuple(np.deg2rad(x) for x in init_cfg.hip_roll_range)
-        self._hip_pitch_range = tuple(np.deg2rad(x) for x in init_cfg.hip_pitch_range)
+        self._hip_yaw_range = tuple(float(x) * torch.pi / 180.0 for x in init_cfg.hip_yaw_range)
+        self._hip_roll_range = tuple(float(x) * torch.pi / 180.0 for x in init_cfg.hip_roll_range)
+        self._hip_pitch_range = tuple(float(x) * torch.pi / 180.0 for x in init_cfg.hip_pitch_range)
 
         self._symmetric_leg_pairs_rad = [
-            (left_idx, right_idx, tuple(np.deg2rad(x) for x in deg_range))
+            (left_idx, right_idx, tuple(float(x) * torch.pi / 180.0 for x in deg_range))
             for left_idx, right_idx, deg_range in init_cfg.symmetric_leg_pairs
         ]
         self._symmetric_arm_pairs = init_cfg.symmetric_arm_pairs
@@ -426,37 +423,33 @@ class Humanoid3DEnv(DirectEnv):
             self._symmetric_arm_used_indices.add(left_idx)
             self._symmetric_arm_used_indices.add(right_idx)
 
-    def _randomize_joints(self, env_ids: np.ndarray) -> None:
+    def _randomize_joints(self, env_ids: torch.Tensor) -> None:
         # qpos layout (humanoid.xml): 0-6 free (x,y,z,qw,qx,qy,qz), 7=abdomen_z, 8=abdomen_y, 9=abdomen_x,
         # 10-15 right leg (hip_x,z,y, knee, ankle_y,x), 16-21 left leg, 22-24 right arm, 25-27 left arm (num_dof_pos=28)
-        n = len(env_ids)
+        n = env_ids.numel()
         num_dof_pos = int(self.num_dof_pos)
         num_dof_vel = int(self.num_dof_vel)
         num_actuators = int(self.num_actuators)
         low, high = self._qpos_low, self._qpos_high
 
-        qpos = np.zeros((n, num_dof_pos), dtype=np.float32)
+        qpos = torch.zeros((n, num_dof_pos), dtype=torch.float32)
         qpos[:, 2] = self._reset_height
         qpos[:, 3] = 1.0
 
         # qpos 7=abdomen_z (yaw), 8=abdomen_y (pitch), 9=abdomen_x (roll) per humanoid.xml
-        qpos[:, 7] = np.random.uniform(self._hip_yaw_range[0], self._hip_yaw_range[1], size=(n,))
-        qpos[:, 8] = np.random.uniform(self._hip_pitch_range[0], self._hip_pitch_range[1], size=(n,))
-        qpos[:, 9] = np.random.uniform(self._hip_roll_range[0], self._hip_roll_range[1], size=(n,))
+        qpos[:, 7] = torch.empty(n, dtype=torch.float32).uniform_(*self._hip_yaw_range)
+        qpos[:, 8] = torch.empty(n, dtype=torch.float32).uniform_(*self._hip_pitch_range)
+        qpos[:, 9] = torch.empty(n, dtype=torch.float32).uniform_(*self._hip_roll_range)
 
         self._randomize_symmetric_legs(qpos, n, num_dof_pos, low, high)
         self._randomize_symmetric_arms(qpos, n, num_dof_pos, low, high)
         self._randomize_remaining_joints(qpos, n, num_dof_pos, low, high)
 
-        qvel = np.random.uniform(-self._reset_qvel_range, self._reset_qvel_range, size=(n, num_dof_vel)).astype(
-            np.float32
-        )
-        actuator_ctrls = np.random.uniform(
-            -self._reset_actuator_range, self._reset_actuator_range, size=(n, num_actuators)
-        ).astype(np.float32)
+        qvel = (torch.rand(n, num_dof_vel, dtype=torch.float32) * 2.0 - 1.0) * self._reset_qvel_range
+        actuator_ctrls = (torch.rand(n, num_actuators, dtype=torch.float32) * 2.0 - 1.0) * self._reset_actuator_range
 
-        torso_pose = qpos[:, :7].copy()
-        torso_pose[:, 3:7] = np.concatenate([qpos[:, 4:7], qpos[:, 3:4]], axis=1)
+        torso_pose = qpos[:, :7].clone()
+        torso_pose[:, 3:7] = torch.cat([qpos[:, 4:7], qpos[:, 3:4]], dim=1)
         _torso_pose = torso_pose
         self._torso_reset_position[env_ids] = _torso_pose[:, :3]
         self._torso_reset_rotation[env_ids] = _torso_pose[:, 3:7]
@@ -465,44 +458,40 @@ class Humanoid3DEnv(DirectEnv):
         self._joint_reset_position[env_ids] = qpos[:, 7:]
         self._joint_reset_velocity[env_ids] = qvel[:, 6:]
         self._reset_program.execute(env_ids)
-        ctrl_targets = self.sim_data["actuator_ctrls"].copy()
+        ctrl_targets = self.sim_data["actuator_ctrls"].clone()
         ctrl_targets[env_ids] = actuator_ctrls
         ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = ctrl_targets
+        ctrl.copy_(ctrl_targets)
         self._ctrl_writes.execute()
-        self.sim_data.execute(np.asarray(env_ids, dtype=np.int64))
+        self.sim_data.execute(env_ids)
 
     def _randomize_symmetric_legs(
-        self, qpos: np.ndarray, n: int, num_dof_pos: int, low: np.ndarray, high: np.ndarray
+        self, qpos: torch.Tensor, n: int, num_dof_pos: int, low: torch.Tensor, high: torch.Tensor
     ) -> None:
         for left_idx, right_idx, (min_rad, max_rad) in self._symmetric_leg_pairs_rad:
             if left_idx < num_dof_pos:
-                qpos[:, left_idx] = np.random.uniform(
-                    np.clip(min_rad, low[left_idx], high[left_idx]),
-                    np.clip(max_rad, low[left_idx], high[left_idx]),
-                    size=(n,),
-                )
+                lo = float(torch.clamp(torch.tensor(min_rad), low[left_idx], high[left_idx]))
+                hi = float(torch.clamp(torch.tensor(max_rad), low[left_idx], high[left_idx]))
+                qpos[:, left_idx] = torch.empty(n, dtype=torch.float32).uniform_(lo, hi)
             if right_idx < num_dof_pos:
                 right_min_rad = -max_rad
                 right_max_rad = -min_rad
-                qpos[:, right_idx] = np.random.uniform(
-                    np.clip(right_min_rad, low[right_idx], high[right_idx]),
-                    np.clip(right_max_rad, low[right_idx], high[right_idx]),
-                    size=(n,),
-                )
+                lo = float(torch.clamp(torch.tensor(right_min_rad), low[right_idx], high[right_idx]))
+                hi = float(torch.clamp(torch.tensor(right_max_rad), low[right_idx], high[right_idx]))
+                qpos[:, right_idx] = torch.empty(n, dtype=torch.float32).uniform_(lo, hi)
 
     def _randomize_symmetric_arms(
-        self, qpos: np.ndarray, n: int, num_dof_pos: int, low: np.ndarray, high: np.ndarray
+        self, qpos: torch.Tensor, n: int, num_dof_pos: int, low: torch.Tensor, high: torch.Tensor
     ) -> None:
         # Default range when model joint_limits are missing (low/high are ±inf);
-        # np.random.uniform requires finite bounds.
-        default_lo, default_hi = -np.pi, np.pi
+        # sampling requires finite bounds.
+        default_lo, default_hi = -torch.pi, torch.pi
         for left_idx, right_idx in self._symmetric_arm_pairs:
             if left_idx < num_dof_pos and right_idx < num_dof_pos:
-                lo_l = low[left_idx] if np.isfinite(low[left_idx]) else default_lo
-                hi_l = high[left_idx] if np.isfinite(high[left_idx]) else default_hi
-                lo_r = low[right_idx] if np.isfinite(low[right_idx]) else default_lo
-                hi_r = high[right_idx] if np.isfinite(high[right_idx]) else default_hi
+                lo_l = float(low[left_idx]) if torch.isfinite(low[left_idx]) else default_lo
+                hi_l = float(high[left_idx]) if torch.isfinite(high[left_idx]) else default_hi
+                lo_r = float(low[right_idx]) if torch.isfinite(low[right_idx]) else default_lo
+                hi_r = float(high[right_idx]) if torch.isfinite(high[right_idx]) else default_hi
 
                 left_range = hi_l - lo_l
                 left_margin = left_range * self._arm_margin_factor
@@ -517,25 +506,27 @@ class Humanoid3DEnv(DirectEnv):
                 right_max_clipped = min(right_max, hi_r)
 
                 if left_min < left_max:
-                    qpos[:, left_idx] = np.random.uniform(left_min, left_max, size=(n,))
+                    qpos[:, left_idx] = torch.empty(n, dtype=torch.float32).uniform_(left_min, left_max)
                 else:
-                    qpos[:, left_idx] = np.random.uniform(lo_l, hi_l, size=(n,))
+                    qpos[:, left_idx] = torch.empty(n, dtype=torch.float32).uniform_(lo_l, hi_l)
 
                 if right_min_clipped < right_max_clipped:
-                    qpos[:, right_idx] = np.random.uniform(right_min_clipped, right_max_clipped, size=(n,))
+                    qpos[:, right_idx] = torch.empty(n, dtype=torch.float32).uniform_(
+                        right_min_clipped, right_max_clipped
+                    )
                 else:
-                    qpos[:, right_idx] = np.random.uniform(lo_r, hi_r, size=(n,))
+                    qpos[:, right_idx] = torch.empty(n, dtype=torch.float32).uniform_(lo_r, hi_r)
 
     def _randomize_remaining_joints(
-        self, qpos: np.ndarray, n: int, num_dof_pos: int, low: np.ndarray, high: np.ndarray
+        self, qpos: torch.Tensor, n: int, num_dof_pos: int, low: torch.Tensor, high: torch.Tensor
     ) -> None:
         used_indices = self._symmetric_arm_used_indices
-        default_lo, default_hi = -np.pi, np.pi
+        default_lo, default_hi = -torch.pi, torch.pi
 
         # 22 = first arm joint (right_shoulder1) in humanoid.xml qpos order;
         # arms 22-27 are covered by symmetric_arm_pairs
         for i in range(22, num_dof_pos):
             if i not in used_indices:
-                lo = low[i] if np.isfinite(low[i]) else default_lo
-                hi = high[i] if np.isfinite(high[i]) else default_hi
-                qpos[:, i] = np.random.uniform(lo, hi, size=(n,))
+                lo = float(low[i]) if torch.isfinite(low[i]) else default_lo
+                hi = float(high[i]) if torch.isfinite(high[i]) else default_hi
+                qpos[:, i] = torch.empty(n, dtype=torch.float32).uniform_(lo, hi)

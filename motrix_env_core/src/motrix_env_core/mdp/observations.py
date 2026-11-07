@@ -246,7 +246,7 @@ class BodyJointPosRelObsCfg(ObservationTermCfg):
             int(body.init_joint_pos.shape[0]),
             body_joint_pos_rel_obs,
             BodyJointPositionQuery(body=body.base_link_name),
-            torch.from_numpy(body.init_joint_pos),
+            body.init_joint_pos,
             float(self.scale),
             float(self.noise.amplitude),
         )

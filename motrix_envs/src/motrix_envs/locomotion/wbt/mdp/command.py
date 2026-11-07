@@ -128,14 +128,14 @@ class WbtMotionCommand(CommandTerm):
         if cdf.size:
             failed = self.adaptive_bin_failed_count.numpy()
             episode_failed = ctx.terminated[env_ids]
-            if np.any(episode_failed):
-                failed_steps = self.steps.numpy()[env_ids, 0][episode_failed]
+            if bool(episode_failed.any()):
+                failed_steps = self.steps[env_ids, 0][episode_failed]
                 num_bins = failed.size
-                failed_bins = (failed_steps.astype(np.int64) * num_bins) // max(self.clip.joint_pos.shape[0], 1)
-                failed_bins = np.clip(failed_bins, 0, num_bins - 1)
-                self.adaptive_current_bin_failed_count.numpy()[:] += np.bincount(
-                    failed_bins, minlength=num_bins
-                ).astype(np.float32)
+                failed_bins = (failed_steps.to(torch.int64) * num_bins) // max(self.clip.joint_pos.shape[0], 1)
+                failed_bins = torch.clamp(failed_bins, 0, num_bins - 1)
+                self.adaptive_current_bin_failed_count.add_(
+                    torch.bincount(failed_bins, minlength=num_bins).to(torch.float32)
+                )
             probabilities = self._sampling_probabilities()
             entropy = -float(np.sum(probabilities * np.log(probabilities + 1e-12)))
             entropy_norm = entropy / float(np.log(max(probabilities.size, 2)))

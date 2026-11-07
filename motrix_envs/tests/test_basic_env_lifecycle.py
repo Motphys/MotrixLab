@@ -1,8 +1,8 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-import numpy as np
 import pytest
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import EnvObs
@@ -13,9 +13,9 @@ from motrix_env_core.array.env import EnvObs
     "env_name",
     ["point_mass", "stewart-static", "stewart", "stewart-disturb-xy", "franka-open-cabinet"],
 )
-def test_basic_environment_step_preserves_numpy_observation_contract(env_name: str, num_envs: int) -> None:
+def test_basic_environment_step_preserves_observation_contract(env_name: str, num_envs: int) -> None:
     env = registry.make(env_name, num_envs=num_envs)
-    action = np.zeros((num_envs, *env.action_space.shape), dtype=env.action_space.dtype)
+    action = torch.zeros((num_envs, *env.action_space.shape), dtype=torch.float32)
 
     state = None
     for _ in range(10):

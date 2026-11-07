@@ -227,10 +227,8 @@ class WalkStateResetCfg(ResetTermCfg):
             "joints_velocity": JointVelocityWrite(joint_names),
         }
         params = dict(
-            default_joint_angles=torch.from_numpy(np.ascontiguousarray(body.init_joint_pos, dtype=np.float32)),
-            init_pose=torch.from_numpy(
-                np.concatenate([body.init_base_position, body.init_base_quat]).astype(np.float32)
-            ),
+            default_joint_angles=body.init_joint_pos.contiguous(),
+            init_pose=torch.cat([body.init_base_position, body.init_base_quat]),
             heightfield=ground_height_grid(ctx, self.ground_geom),
             spawn_range=float(self.spawn_xy_range),
         )
@@ -250,16 +248,16 @@ class WalkStateResetCfg(ResetTermCfg):
                 com=LinkComWrite((base_link,)),
             )
             others = ctx.model.others
-            link_masses = np.asarray(others["randomize_link_masses"], dtype=np.float32)
+            link_masses = others["randomize_link_masses"]
             params.update(
                 randomization_enabled=True,
-                kp_default=torch.from_numpy(np.asarray(others["actuator_kp"], dtype=np.float32)),
-                damping_default=torch.from_numpy(np.asarray(others["randomize_actuator_kd"], dtype=np.float32)),
-                link_mass_default=torch.from_numpy(link_masses),
+                kp_default=others["actuator_kp"],
+                damping_default=others["randomize_actuator_kd"],
+                link_mass_default=link_masses,
                 base_link_index=base_index,
                 base_mass_default=float(link_masses[base_index]),
-                base_com_default=torch.from_numpy(np.asarray(others["randomize_base_com"], dtype=np.float32)),
-                friction_default=torch.from_numpy(np.asarray(others["randomize_friction_default"], dtype=np.float32)),
+                base_com_default=others["randomize_base_com"],
+                friction_default=others["randomize_friction_default"],
                 kp_range=torch.from_numpy(np.asarray(randomization.kp_scale_range, dtype=np.float32)),
                 damping_range=torch.from_numpy(np.asarray(randomization.damping_scale_range, dtype=np.float32)),
                 friction_range=torch.from_numpy(

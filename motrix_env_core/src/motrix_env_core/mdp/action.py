@@ -153,8 +153,8 @@ class JointPositionActionCfg(ActionCfg):
         state = JointPositionActionState(
             action_queue=torch.from_numpy(action_queue),
             default_angles=torch.from_numpy(default_angles[indices]),
-            joint_lower=torch.from_numpy(joint_lower),
-            joint_upper=torch.from_numpy(joint_upper),
+            joint_lower=joint_lower[indices],
+            joint_upper=joint_upper[indices],
             action_scales=torch.from_numpy(action_scales[indices]),
             delay_steps=torch.from_numpy(delay_steps),
             action_ptr=torch.from_numpy(action_ptr),
@@ -201,7 +201,8 @@ class JointPositionActionCfg(ActionCfg):
 
     @staticmethod
     def _read_position_actuator_kps(env: ManagerEnv) -> np.ndarray:
-        return np.asarray(env.model.others["actuator_kp"], dtype=np.float32)
+        kps = env.model.others["actuator_kp"]
+        return kps.detach().cpu().numpy() if isinstance(kps, torch.Tensor) else np.asarray(kps, dtype=np.float32)
 
     @staticmethod
     def _read_position_actuator_effort_limits(env: ManagerEnv) -> np.ndarray:

@@ -50,7 +50,7 @@ class AcrobotEnv(DirectEnv):
         self._observation_space = gym.spaces.Box(-np.inf, np.inf, (6,), dtype=np.float32)
         self._target_radius = 0.2
 
-        self._step_count = np.zeros(self._num_envs, dtype=np.int32)
+        self._step_count = torch.zeros(self._num_envs, dtype=torch.int64)
         self._max_steps = int(cfg.max_episode_seconds / cfg.ctrl_dt)
 
     @property
@@ -62,10 +62,8 @@ class AcrobotEnv(DirectEnv):
         return self._action_space
 
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
-        actions = actions.detach().cpu().numpy()
-        actions = np.clip(actions, -1.0, 1.0)
-        ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = np.asarray(actions, dtype=np.float32)
+        actions = torch.clamp(actions, -1.0, 1.0)
+        self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
         return state
 
@@ -75,14 +73,14 @@ class AcrobotEnv(DirectEnv):
         shoulder_angle = dof_pos[:, 0]
         elbow_angle = dof_pos[:, 1]
 
-        upper_arm_horizontal = np.cos(shoulder_angle)
-        upper_arm_vertical = np.sin(shoulder_angle)
+        upper_arm_horizontal = torch.cos(shoulder_angle)
+        upper_arm_vertical = torch.sin(shoulder_angle)
 
         total_angle = shoulder_angle + elbow_angle
-        lower_arm_horizontal = np.cos(total_angle)
-        lower_arm_vertical = np.sin(total_angle)
+        lower_arm_horizontal = torch.cos(total_angle)
+        lower_arm_vertical = torch.sin(total_angle)
 
-        obs = np.concatenate(
+        obs = torch.cat(
             [
                 upper_arm_horizontal.reshape(-1, 1),
                 lower_arm_horizontal.reshape(-1, 1),
@@ -90,7 +88,7 @@ class AcrobotEnv(DirectEnv):
                 lower_arm_vertical.reshape(-1, 1),
                 dof_vel,
             ],
-            axis=-1,
+            dim=-1,
         )
         return state.replace(obs=obs)
 
@@ -101,23 +99,26 @@ class AcrobotEnv(DirectEnv):
         dof_vel = inputs["dof_vel"]
         tip_pos = inputs["tip_pos"]
         target_pos = inputs["target_pos"]
-        dist_to_target = np.linalg.norm(tip_pos - target_pos, axis=-1)
+        dist_to_target = torch.linalg.norm(tip_pos - target_pos, dim=-1)
 
-        base_rwd = reward.tolerance(
-            dist_to_target,
-            bounds=(0, self._target_radius),
-            margin=0,
-            value_at_margin=0.0,
-            sigmoid="linear",
+        base_rwd = torch.as_tensor(
+            reward.tolerance(
+                dist_to_target,
+                bounds=(0, self._target_radius),
+                margin=0,
+                value_at_margin=0.0,
+                sigmoid="linear",
+            ),
+            dtype=torch.float32,
         )
 
         in_target = dist_to_target < self._target_radius
-        continuous_reward = 0.1 * in_target
+        continuous_reward = 0.1 * in_target.float()
 
-        distance_reward = 0.3 * (1.0 - np.clip(dist_to_target / 2.0, 0, 1.0))
+        distance_reward = 0.3 * (1.0 - torch.clamp(dist_to_target / 2.0, 0.0, 1.0))
 
-        vel_magnitude = np.mean(np.abs(dof_vel), axis=-1)
-        velocity_penalty = 0.01 * np.maximum(0, vel_magnitude - 2.0)
+        vel_magnitude = dof_vel.abs().mean(dim=-1)
+        velocity_penalty = 0.01 * torch.clamp(vel_magnitude - 2.0, min=0.0)
 
         rwd = base_rwd + continuous_reward + distance_reward - velocity_penalty
 
@@ -125,32 +126,28 @@ class AcrobotEnv(DirectEnv):
 
         self._step_count += 1
 
-        terminated = np.zeros((self._num_envs,), dtype=bool)
+        terminated = self._step_count >= self._max_steps
+        terminated |= dof_pos.isnan().any(dim=-1)
+        terminated |= dof_vel.isnan().any(dim=-1)
+        terminated |= rwd.isnan()
 
-        terminated = np.logical_or(self._step_count >= self._max_steps, terminated)
-
-        terminated = np.logical_or(np.isnan(dof_pos).any(axis=-1), terminated)
-        terminated = np.logical_or(np.isnan(dof_vel).any(axis=-1), terminated)
-        terminated = np.logical_or(np.isnan(rwd), terminated)
-
-        state.reward = rwd
-        state.terminated = terminated
+        state.reward[:] = rwd
+        state.terminated[:] = terminated
         return state
 
     def reset(self, env_ids: torch.Tensor) -> None:
-        env_ids = env_ids.detach().cpu().numpy()
-        num_reset = len(env_ids)
+        num_reset = env_ids.numel()
 
-        shoulder_angle = np.random.uniform(-np.pi, np.pi, size=num_reset).astype(np.float32)
-        elbow_angle = np.random.uniform(-np.pi, np.pi, size=num_reset).astype(np.float32)
+        shoulder_angle = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * np.pi
+        elbow_angle = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * np.pi
 
-        dof_pos = np.stack([shoulder_angle, elbow_angle], axis=-1)
-        dof_vel = np.zeros((num_reset, 2), dtype=np.float32)
+        dof_pos = torch.stack([shoulder_angle, elbow_angle], dim=-1)
+        dof_vel = torch.zeros((num_reset, 2), dtype=torch.float32)
 
         self._reset_position[env_ids] = dof_pos
         self._reset_velocity[env_ids] = dof_vel
         self._reset_program.execute(env_ids)
-        self.sim_data.execute(np.asarray(env_ids, np.int64))
+        self.sim_data.execute(env_ids)
 
     def _reset_done_envs(self):
         """
@@ -159,4 +156,4 @@ class AcrobotEnv(DirectEnv):
         super()._reset_done_envs()
         done = self._state.done
         if bool(done.any()):
-            self._step_count[done.numpy()] = 0
+            self._step_count[done] = 0

@@ -52,7 +52,7 @@ def _tiny_delay_manager(num_envs: int = 2, num_actuators: int = 3, lo: int = 0, 
     env._action_terms = {"joint_position": term}
     env._action_slices = {"joint_position": slice(0, num_actuators)}
     env._action_actuators = {"joint_position": ()}
-    controls = np.empty((num_envs, num_actuators), dtype=np.float32)
+    controls = torch.empty((num_envs, num_actuators), dtype=torch.float32)
     env._action_writes = SimpleNamespace(buffer=lambda name: controls, execute=lambda: None)
     env._command_terms = {}
     env._state = SimpleNamespace()
@@ -68,19 +68,19 @@ def test_action_delay_applies_delayed_action():
     actions = torch.full(controls.shape, 1.0, dtype=torch.float32)
     env.apply_action(actions, env._state)
     # Only the raw action exists so far; unwritten history remains zero.
-    assert np.all(controls == 0.0)
+    assert bool((controls == 0.0).all())
     assert bool((action_state.action_queue[:, int(action_state.action_ptr[0])] == 1.0).all())
     for value in (2.0, 3.0, 4.0):
         env.apply_action(torch.full_like(actions, value), env._state)
     # Two-step delay: the applied action is the one from two steps ago.
-    assert np.all(controls == 2.0)
+    assert bool((controls == 2.0).all())
 
 
 def test_action_delay_disabled_passes_actions_through_and_keeps_history():
     env, action_state, controls = _tiny_delay_manager(lo=0, hi=0)
     actions = torch.full(controls.shape, 0.5, dtype=torch.float32)
     env.apply_action(actions, env._state)
-    assert np.all(controls == 0.5)
+    assert bool((controls == 0.5).all())
     ptr = int(action_state.action_ptr[0])
     assert bool((action_state.action_queue[:, ptr] == 0.5).all())
     assert bool((action_state.action_queue[:, (ptr - 1) % action_state.action_queue.shape[1]] == 0.0).all())

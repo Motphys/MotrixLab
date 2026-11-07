@@ -3,7 +3,6 @@
 
 """Walk-task builder for the shared in-kernel terrain grid."""
 
-import numpy as np
 import torch
 
 from motrix_env_core.mdp.terrain import HeightFieldGrid
@@ -19,10 +18,10 @@ def ground_height_grid(ctx, ground_geom: str) -> HeightFieldGrid:
     if cfg.ground_heightfield_geom is not None:
         hf = ctx.model.others["ground_heightfield"]
         return HeightFieldGrid(
-            heights=torch.from_numpy(np.ascontiguousarray(hf["heights"], dtype=np.float32)),
-            origin=torch.from_numpy(np.ascontiguousarray(hf["origin"], dtype=np.float32)),
-            spacing=torch.from_numpy(np.ascontiguousarray(hf["spacing"], dtype=np.float32)),
-            z0=torch.from_numpy(np.ascontiguousarray(hf["z0"], dtype=np.float32)),
+            heights=hf["heights"].contiguous(),
+            origin=hf["origin"].contiguous(),
+            spacing=hf["spacing"].contiguous(),
+            z0=hf["z0"].contiguous(),
             constant=0.0,
             enabled=True,
         )

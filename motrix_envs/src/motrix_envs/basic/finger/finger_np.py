@@ -63,9 +63,9 @@ def _sim_model_queries(cfg: FingerBaseCfg):
     }
 
 
-def _sanitize_joint_limits(low: np.ndarray, high: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    low = np.where(np.isfinite(low), low, -np.pi)
-    high = np.where(np.isfinite(high), high, np.pi)
+def _sanitize_joint_limits(low: torch.Tensor, high: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    low = torch.where(torch.isfinite(low), low, torch.full_like(low, -np.pi))
+    high = torch.where(torch.isfinite(high), high, torch.full_like(high, np.pi))
     return low, high
 
 
@@ -104,7 +104,7 @@ class FingerEnv(DirectEnv):
             else None
         )
 
-        self._target_xyz = np.zeros((num_envs, 3), dtype=np.float32)
+        self._target_xyz = torch.zeros((num_envs, 3), dtype=torch.float32)
         self._target_radius = float(cfg.target_radius)
         self._spin_vel_threshold = float(cfg.spin_velocity_threshold)
 
@@ -122,8 +122,8 @@ class FingerEnv(DirectEnv):
 
         # Episode-scoped action history: full-batch buffers, reset writes the
         # done rows in place.
-        self._actions = np.zeros((self._num_envs, self.num_actuators), dtype=np.float32)
-        self._last_actions = np.zeros((self._num_envs, self.num_actuators), dtype=np.float32)
+        self._actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32)
+        self._last_actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32)
 
     @property
     def observation_space(self) -> gym.spaces.Box:
@@ -134,69 +134,63 @@ class FingerEnv(DirectEnv):
         return self._action_space
 
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
-        actions = actions.detach().cpu().numpy()
         # Keep track of actions for reward shaping (e.g., smoothness penalties)
-        self._last_actions[:] = self._actions
-        self._actions[:] = actions
-        ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = np.asarray(actions, dtype=np.float32)
+        self._last_actions.copy_(self._actions)
+        self._actions.copy_(actions)
+        self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
         return state
 
-    def _dist_to_target(self, rows) -> np.ndarray:
+    def _dist_to_target(self, rows) -> torch.Tensor:
         # Signed distance to the target surface. Negative means inside.
         tip_xyz = self.sim_data["tip_pos"][rows]
-        dist = np.linalg.norm((self._target_xyz[rows] - tip_xyz)[:, [0, 2]], axis=-1)
+        dist = torch.linalg.norm((self._target_xyz[rows] - tip_xyz)[:, [0, 2]], dim=-1)
         return dist - self._target_radius
 
     def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
         raise NotImplementedError
 
-    def _reset_target(self, env_ids: np.ndarray, positions: np.ndarray) -> None:
+    def _reset_target(self, env_ids: torch.Tensor, positions: torch.Tensor) -> None:
         if self._target_reset is None:
             return
         self._target_reset.buffer("target_position")[env_ids, 0] = positions
-        self._target_reset.buffer("target_rotation")[env_ids, 0] = [0.0, 0.0, 0.0, 1.0]
+        self._target_reset.buffer("target_rotation")[env_ids, 0] = torch.tensor([0.0, 0.0, 0.0, 1.0])
         self._target_reset.buffer("target_linear_velocity")[env_ids, 0] = 0.0
         self._target_reset.buffer("target_angular_velocity")[env_ids, 0] = 0.0
         self._target_reset.execute(env_ids)
 
-    def _reset_collision_free_joint_angles(self, env_ids: np.ndarray):
+    def _reset_collision_free_joint_angles(self, env_ids: torch.Tensor):
         # Randomize joint angles with a collision-free rejection sampler (dm_control-style).
         # The joint bounds are per-joint, so we explicitly fill each DOF.
-        num = len(env_ids)
+        num = env_ids.numel()
         max_attempts = int(getattr(self._cfg, "reset_collision_free_attempts", 200))
         positions = self._joint_resets.buffer("joints_position")
         velocities = self._joint_resets.buffer("joints_velocity")
         velocities[env_ids] = 0.0
-        row_ids = np.asarray(env_ids, np.int64)
-        pending = np.ones((num,), dtype=bool)
+        pending = torch.ones((num,), dtype=torch.bool)
         for _ in range(max_attempts):
-            if not pending.any():
+            if not bool(pending.any()):
                 break
 
             num_pending = int(pending.sum())
             for column in range(2):
                 low = float(self._joint_limit_low[column])
                 high = float(self._joint_limit_high[column])
-                positions[env_ids[pending], column] = np.random.uniform(low=low, high=high, size=(num_pending,)).astype(
-                    np.float32
-                )
+                positions[env_ids[pending], column] = (torch.rand(num_pending, dtype=torch.float32) * 2.0 - 1.0) * (
+                    (high - low) / 2.0
+                ) + (high + low) / 2.0
 
-            positions[env_ids[pending], 2] = np.random.uniform(low=-np.pi, high=np.pi, size=(num_pending,)).astype(
-                np.float32
-            )
+            positions[env_ids[pending], 2] = (torch.rand(num_pending, dtype=torch.float32) * 2.0 - 1.0) * np.pi
 
             self._joint_resets.execute(env_ids)
             if self._target_reset is not None:
-                self._reset_target(env_ids, np.tile([0.0, 0.0, 0.4], (num, 1)))
-            self.sim_data.execute(row_ids)
+                self._reset_target(env_ids, torch.tile(torch.tensor([0.0, 0.0, 0.4]), (num, 1)))
+            self.sim_data.execute(env_ids)
             # Contact iff any declared collidable geom pair is colliding; this
             # reproduces the legacy global ``num_contacts > 0`` check exactly.
-            pending = self.sim_data["colliding"][env_ids].max(axis=-1) > 0
+            pending = self.sim_data["colliding"][env_ids].max(dim=-1).values > 0
 
     def reset(self, env_ids: torch.Tensor) -> None:
-        env_ids = env_ids.detach().cpu().numpy()
         raise NotImplementedError
 
 
@@ -211,78 +205,77 @@ class FingerSpinEnv(FingerEnv):
         inputs = self.sim_data
         joint_pos = inputs["joint_pos"]
         tip_xz = (inputs["tip_pos"] - inputs["spinner_pos"])[:, [0, 2]]
-        position = np.concatenate([joint_pos[:, :2], tip_xz], axis=-1)
+        position = torch.cat([joint_pos[:, :2], tip_xz], dim=-1)
         velocity = inputs["joint_vel"]
-        touch = np.log1p(inputs["touch"])
-        obs = np.concatenate([position, velocity, touch], axis=-1)
-        return state.replace(obs=obs.astype(np.float32))
+        touch = torch.log1p(inputs["touch"])
+        obs = torch.cat([position, velocity, touch], dim=-1)
+        return state.replace(obs=obs)
 
     def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
         self.sim_data.execute()
         inputs = self.sim_data
-        terminated = np.isnan(inputs["joint_pos"]).any(axis=-1) | np.isnan(inputs["joint_vel"]).any(axis=-1)
+        terminated = inputs["joint_pos"].isnan().any(dim=-1) | inputs["joint_vel"].isnan().any(dim=-1)
 
         hinge_velocity = inputs["joint_vel"][:, 2]
-        spin_sparse = (hinge_velocity <= -self._spin_vel_threshold).astype(np.float32)
+        spin_sparse = (hinge_velocity <= -self._spin_vel_threshold).float()
 
         if self._cfg.reward_mode == "shaped":
             # Dense reward to help PPO learn: encourage fast negative hinge velocity.
             # Range: [0, 1] roughly, with 1 around reaching the threshold.
-            spin = np.clip((-hinge_velocity) / self._spin_vel_threshold, 0.0, 1.0).astype(np.float32)
+            spin = torch.clamp((-hinge_velocity) / self._spin_vel_threshold, 0.0, 1.0)
             if self._cfg.shaped_reward_beta != 1.0:
-                spin = np.power(spin, self._cfg.shaped_reward_beta, dtype=np.float32)
+                spin = spin.pow(self._cfg.shaped_reward_beta)
         else:
             spin = spin_sparse
 
-        touch_raw = np.zeros((self._num_envs,), dtype=np.float32)
-        touch_bonus = np.zeros((self._num_envs,), dtype=np.float32)
-        approach_dist = np.zeros((self._num_envs,), dtype=np.float32)
-        approach_reward = np.zeros((self._num_envs,), dtype=np.float32)
+        touch_raw = torch.zeros((self._num_envs,), dtype=torch.float32)
+        touch_bonus = torch.zeros((self._num_envs,), dtype=torch.float32)
+        approach_dist = torch.zeros((self._num_envs,), dtype=torch.float32)
+        approach_reward = torch.zeros((self._num_envs,), dtype=torch.float32)
 
         if self._cfg.reward_mode == "shaped":
             if float(getattr(self._cfg, "spin_touch_bonus_scale", 0.0)) > 0.0:
                 touch_values = inputs["touch"]
-                touch_raw = (touch_values[:, 0] + touch_values[:, 1]).astype(np.float32)
+                touch_raw = touch_values[:, 0] + touch_values[:, 1]
                 touch_bonus = (
                     float(self._cfg.spin_touch_bonus_scale)
-                    * np.tanh(touch_raw / float(max(self._cfg.spin_touch_bonus_tanh_scale, 1e-6)))
-                ).astype(np.float32)
+                    * torch.tanh(touch_raw / float(max(self._cfg.spin_touch_bonus_tanh_scale, 1e-6)))
+                )
 
             if float(getattr(self._cfg, "spin_approach_reward_scale", 0.0)) > 0.0:
                 spinner_xyz = inputs["spinner_pos"]
                 top_xyz = inputs["touchtop_pos"]
                 bottom_xyz = inputs["touchbottom_pos"]
-                top_dist = np.linalg.norm((top_xyz - spinner_xyz)[:, [0, 2]], axis=-1)
-                bottom_dist = np.linalg.norm((bottom_xyz - spinner_xyz)[:, [0, 2]], axis=-1)
-                approach_dist = np.minimum(top_dist, bottom_dist).astype(np.float32)
+                top_dist = torch.linalg.norm((top_xyz - spinner_xyz)[:, [0, 2]], dim=-1)
+                bottom_dist = torch.linalg.norm((bottom_xyz - spinner_xyz)[:, [0, 2]], dim=-1)
+                approach_dist = torch.minimum(top_dist, bottom_dist)
                 sigma = float(max(self._cfg.spin_approach_sigma, 1e-6))
-                approach_reward = (float(self._cfg.spin_approach_reward_scale) * np.exp(-approach_dist / sigma)).astype(
-                    np.float32
-                )
+                approach_reward = float(self._cfg.spin_approach_reward_scale) * torch.exp(-approach_dist / sigma)
 
-            spin = np.clip(spin + touch_bonus + approach_reward, 0.0, 1.0).astype(np.float32)
+            spin = torch.clamp(spin + touch_bonus + approach_reward, 0.0, 1.0)
 
         rwd = spin
         state.reward_terms = {
-            "hinge_velocity": hinge_velocity.copy(),
-            "spin": spin.copy(),
-            "spin_sparse": spin_sparse.copy(),
-            "touch_raw": touch_raw.copy(),
-            "touch_bonus": touch_bonus.copy(),
-            "approach_dist": approach_dist.copy(),
-            "approach_reward": approach_reward.copy(),
+            "hinge_velocity": hinge_velocity.clone(),
+            "spin": spin.clone(),
+            "spin_sparse": spin_sparse.clone(),
+            "touch_raw": touch_raw.clone(),
+            "touch_bonus": touch_bonus.clone(),
+            "approach_dist": approach_dist.clone(),
+            "approach_reward": approach_reward.clone(),
         }
 
         rwd[terminated] = 0.0
-        return state.replace(reward=rwd, terminated=terminated)
+        state.reward[:] = rwd
+        state.terminated[:] = terminated
+        return state
 
     def reset(self, env_ids: torch.Tensor) -> None:
-        env_ids = env_ids.detach().cpu().numpy()
         self._reset_collision_free_joint_angles(env_ids)
 
         self._actions[env_ids] = 0.0
         self._last_actions[env_ids] = 0.0
-        self.sim_data.execute(np.asarray(env_ids, np.int64))
+        self.sim_data.execute(env_ids)
 
 
 @registry.env("dm-finger-turn-easy")
@@ -297,67 +290,69 @@ class FingerTurnEnv(FingerEnv):
         inputs = self.sim_data
         joint_pos = inputs["joint_pos"]
         tip_xz = (inputs["tip_pos"] - inputs["spinner_pos"])[:, [0, 2]]
-        position = np.concatenate([joint_pos[:, :2], tip_xz], axis=-1)
+        position = torch.cat([joint_pos[:, :2], tip_xz], dim=-1)
         velocity = inputs["joint_vel"]
-        touch = np.log1p(inputs["touch"])
+        touch = torch.log1p(inputs["touch"])
         target_position = (self._target_xyz - inputs["spinner_pos"])[:, [0, 2]]
         dist_to_target = self._dist_to_target(slice(None)).reshape(-1, 1)
-        obs = np.concatenate([position, velocity, touch, target_position, dist_to_target], axis=-1)
-        return state.replace(obs=obs.astype(np.float32))
+        obs = torch.cat([position, velocity, touch, target_position, dist_to_target], dim=-1)
+        return state.replace(obs=obs)
 
     def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
         self.sim_data.execute()
         inputs = self.sim_data
-        terminated = np.isnan(inputs["joint_pos"]).any(axis=-1) | np.isnan(inputs["joint_vel"]).any(axis=-1)
+        terminated = inputs["joint_pos"].isnan().any(dim=-1) | inputs["joint_vel"].isnan().any(dim=-1)
 
         dist_to_target = self._dist_to_target(slice(None))
-        turn_sparse = (dist_to_target <= 0.0).astype(np.float32)
+        turn_sparse = (dist_to_target <= 0.0).float()
 
-        touch_raw = np.zeros((self._num_envs,), dtype=np.float32)
-        touch_bonus = np.zeros((self._num_envs,), dtype=np.float32)
-        approach_dist = np.zeros((self._num_envs,), dtype=np.float32)
-        approach_reward = np.zeros((self._num_envs,), dtype=np.float32)
-        action_l2 = np.zeros((self._num_envs,), dtype=np.float32)
-        action_delta_l2 = np.zeros((self._num_envs,), dtype=np.float32)
+        touch_raw = torch.zeros((self._num_envs,), dtype=torch.float32)
+        touch_bonus = torch.zeros((self._num_envs,), dtype=torch.float32)
+        approach_dist = torch.zeros((self._num_envs,), dtype=torch.float32)
+        approach_reward = torch.zeros((self._num_envs,), dtype=torch.float32)
+        action_l2 = torch.zeros((self._num_envs,), dtype=torch.float32)
+        action_delta_l2 = torch.zeros((self._num_envs,), dtype=torch.float32)
 
         if self._cfg.reward_mode == "shaped":
             # Encourage approaching the spinner so the agent actually makes contact and can rotate it.
             spinner_xyz = inputs["spinner_pos"]
             top_xyz = inputs["touchtop_pos"]
             bottom_xyz = inputs["touchbottom_pos"]
-            top_dist = np.linalg.norm((top_xyz - spinner_xyz)[:, [0, 2]], axis=-1)
-            bottom_dist = np.linalg.norm((bottom_xyz - spinner_xyz)[:, [0, 2]], axis=-1)
-            approach_dist = np.minimum(top_dist, bottom_dist).astype(np.float32)
+            top_dist = torch.linalg.norm((top_xyz - spinner_xyz)[:, [0, 2]], dim=-1)
+            bottom_dist = torch.linalg.norm((bottom_xyz - spinner_xyz)[:, [0, 2]], dim=-1)
+            approach_dist = torch.minimum(top_dist, bottom_dist)
             sigma = max(float(self._cfg.turn_approach_sigma), 1e-6)
-            approach_reward = (self._cfg.turn_approach_reward_scale * np.exp(-approach_dist / sigma)).astype(np.float32)
+            approach_reward = self._cfg.turn_approach_reward_scale * torch.exp(-approach_dist / sigma)
 
-            dist_pos = np.maximum(dist_to_target, 0.0).astype(np.float32)
+            dist_pos = torch.clamp(dist_to_target, min=0.0)
             if getattr(self._cfg, "turn_reward_shape", "linear") == "exp":
                 sigma = float(
                     max(self._cfg.turn_reward_sigma_scale * self._target_radius, self._cfg.turn_reward_sigma_min)
                 )
                 sigma = max(sigma, 1e-6)
-                turn = np.exp(-dist_pos / sigma).astype(np.float32)
+                turn = torch.exp(-dist_pos / sigma)
             else:
                 margin = float(
                     max(self._cfg.turn_reward_margin_scale * self._target_radius, self._cfg.turn_reward_min_margin)
                 )
                 margin = max(margin, 1e-6)
                 # Dense reward: 1 inside target sphere, decays to 0 at `margin` outside.
-                turn = np.clip(1.0 - dist_pos / margin, 0.0, 1.0).astype(np.float32)
+                turn = torch.clamp(1.0 - dist_pos / margin, 0.0, 1.0)
             if self._cfg.turn_shaped_reward_beta != 1.0:
-                turn = np.power(turn, self._cfg.turn_shaped_reward_beta, dtype=np.float32)
+                turn = turn.pow(self._cfg.turn_shaped_reward_beta)
 
             # Encourage making contact (to actually be able to rotate the spinner)
             touch_values = inputs["touch"]
-            touch_raw = (touch_values[:, 0] + touch_values[:, 1]).astype(np.float32)
-            touch_bonus = self._cfg.turn_touch_bonus_scale * np.tanh(touch_raw / self._cfg.turn_touch_bonus_tanh_scale)
+            touch_raw = touch_values[:, 0] + touch_values[:, 1]
+            touch_bonus = self._cfg.turn_touch_bonus_scale * torch.tanh(
+                touch_raw / self._cfg.turn_touch_bonus_tanh_scale
+            )
 
             # Reduce jitter: penalize large actions and action changes
             actions = self._actions
             last_actions = self._last_actions
-            action_l2 = np.mean(np.square(actions), axis=-1).astype(np.float32)
-            action_delta_l2 = np.mean(np.square(actions - last_actions), axis=-1).astype(np.float32)
+            action_l2 = torch.mean(torch.square(actions), dim=-1)
+            action_delta_l2 = torch.mean(torch.square(actions - last_actions), dim=-1)
 
             turn = (
                 turn
@@ -365,40 +360,42 @@ class FingerTurnEnv(FingerEnv):
                 + touch_bonus
                 - self._cfg.turn_action_l2_penalty_scale * action_l2
                 - self._cfg.turn_action_delta_l2_penalty_scale * action_delta_l2
-            ).astype(np.float32)
-            turn = np.clip(turn, 0.0, 1.0).astype(np.float32)
+            )
+            turn = torch.clamp(turn, 0.0, 1.0)
         else:
             turn = turn_sparse
 
         rwd = turn
         state.reward_terms = {
-            "dist_to_target": dist_to_target.copy(),
-            "turn": turn.copy(),
-            "turn_sparse": turn_sparse.copy(),
-            "touch_raw": touch_raw.copy(),
-            "touch_bonus": touch_bonus.copy(),
-            "approach_dist": approach_dist.copy(),
-            "approach_reward": approach_reward.copy(),
-            "action_l2": action_l2.copy(),
-            "action_delta_l2": action_delta_l2.copy(),
+            "dist_to_target": dist_to_target.clone(),
+            "turn": turn.clone(),
+            "turn_sparse": turn_sparse.clone(),
+            "touch_raw": touch_raw.clone(),
+            "touch_bonus": touch_bonus.clone(),
+            "approach_dist": approach_dist.clone(),
+            "approach_reward": approach_reward.clone(),
+            "action_l2": action_l2.clone(),
+            "action_delta_l2": action_delta_l2.clone(),
         }
 
         rwd[terminated] = 0.0
-        return state.replace(reward=rwd, terminated=terminated)
+        state.reward[:] = rwd
+        state.terminated[:] = terminated
+        return state
 
     def reset(self, env_ids: torch.Tensor) -> None:
-        env_ids = env_ids.detach().cpu().numpy()
-        num = len(env_ids)
+        num = env_ids.numel()
         self._reset_collision_free_joint_angles(env_ids)
 
-        self.sim_data.execute(np.asarray(env_ids, np.int64))
+        self.sim_data.execute(env_ids)
         hinge_xyz = self.sim_data["spinner_pos"][env_ids]
         # Match dm_control: radius = cap1.geom_size.sum() for capsule (radius + half-length).
-        radius = float(np.sum(self.model.others["geoms"]["cap1"].size[:2]))
-        target_angle = np.random.uniform(-np.pi, np.pi, size=(num,))
-        target_x = hinge_xyz[:, 0] + radius * np.sin(target_angle)
-        target_z = hinge_xyz[:, 2] + radius * np.cos(target_angle)
-        self._target_xyz[env_ids] = np.stack([target_x, hinge_xyz[:, 1], target_z], axis=-1).astype(np.float32)
+        cap1_size = self.model.others["geoms"]["cap1"].size
+        radius = float(sum(cap1_size[:2]))
+        target_angle = (torch.rand(num, dtype=torch.float32) * 2.0 - 1.0) * np.pi
+        target_x = hinge_xyz[:, 0] + radius * torch.sin(target_angle)
+        target_z = hinge_xyz[:, 2] + radius * torch.cos(target_angle)
+        self._target_xyz[env_ids] = torch.stack([target_x, hinge_xyz[:, 1], target_z], dim=-1)
 
         # NOTE: the legacy num_envs==1 visualization hack mutated the shared
         # "target" site's local position and marker size on the simulator
@@ -410,7 +407,7 @@ class FingerTurnEnv(FingerEnv):
         # If we have a freejoint-backed visual target (geom), set its pose in the state.
         if self._target_reset is not None:
             self._reset_target(env_ids, self._target_xyz[env_ids])
-            self.sim_data.execute(np.asarray(env_ids, np.int64))
+            self.sim_data.execute(env_ids)
 
         self._actions[env_ids] = 0.0
         self._last_actions[env_ids] = 0.0
