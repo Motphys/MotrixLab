@@ -189,10 +189,10 @@ def test_robot_observation_noise_uses_one_stateful_sequence_per_environment() ->
     dof_vel = torch.from_numpy(np.tile(np.asarray([1.0, 2.0], dtype=np.float32), (2, 1)))
     term = BodyJointVelObsCfg(noise=UniformNoiseCfg(amplitude=0.25)).__call__(_env())
 
-    def evaluate(rng_states: np.ndarray) -> np.ndarray:
+    def evaluate(rng_states: torch.Tensor) -> np.ndarray:
         out = torch.empty((2, dof_vel.shape[1]), dtype=torch.float32)
         # The batch context shares (and advances) the per-env RNG state in place.
-        rand = RandValue(torch.from_numpy(rng_states.view(np.int64)))
+        rand = RandValue(rng_states)
         term.dispatch(SimpleNamespace(rand=rand), out, dof_vel, *term.args[1:])
         return out.numpy()
 

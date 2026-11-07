@@ -5,41 +5,40 @@ import numpy as np
 import pytest
 import torch
 
-from motrix_env_core.manager.rand import initialize_rand_states, next_uniform
+from motrix_env_core.manager.rand import initialize_rand_states
 from motrix_env_core.torch_manager.rand import draw_uniform
 
 
-def _oracle(states: np.ndarray, count: int) -> tuple[np.ndarray, np.ndarray]:
-    samples = np.empty((len(states), count), dtype=np.float32)
-    updated = states.copy()
-    for row, state in enumerate(updated):
-        state_ref = np.array([state], dtype=np.uint64)
-        for column in range(count):
-            samples[row, column] = next_uniform(state_ref)
-        updated[row] = state_ref[0]
+def _oracle(states: torch.Tensor, count: int) -> tuple[torch.Tensor, torch.Tensor]:
+    samples = torch.empty((states.shape[0], count), dtype=torch.float32)
+    updated = states.clone()
+    for row in range(states.shape[0]):
+        row_samples, row_state = draw_uniform(updated[row : row + 1], count)
+        samples[row] = row_samples[0]
+        updated[row : row + 1] = row_state
     return samples, updated
 
 
 def _states() -> torch.Tensor:
     boundaries = np.array([0, 1, 2**64 - 1, 2**63, 2**63 - 1], dtype=np.uint64)
     seeded = initialize_rand_states(11, 12345).ravel()
-    bits = np.concatenate((boundaries, seeded))
-    return torch.from_numpy(bits.view(np.int64))[:, None]
+    bits = torch.from_numpy(np.concatenate((boundaries, seeded.numpy().view(np.uint64))))
+    return bits.view(torch.int64)[:, None]
 
 
 @pytest.mark.parametrize("count", [1, 7, 67])
 def test_draw_uniform_matches_host_oracle(count: int) -> None:
     state = _states()
     original = state.clone()
-    expected_samples, expected_state = _oracle(state.numpy().ravel().view(np.uint64), count)
+    expected_samples, expected_state = _oracle(state, count)
     samples, updated = draw_uniform(state, count)
-    np.testing.assert_array_equal(samples.numpy().view(np.uint32), expected_samples.view(np.uint32))
-    np.testing.assert_array_equal(updated.numpy().ravel().view(np.uint64), expected_state)
+    torch.testing.assert_close(samples, expected_samples, rtol=0, atol=0)
+    torch.testing.assert_close(updated, expected_state, rtol=0, atol=0)
     torch.testing.assert_close(state, original)
     following_samples, following_state = draw_uniform(updated, count)
     expected_samples, expected_state = _oracle(expected_state, count)
-    np.testing.assert_array_equal(following_samples.numpy().view(np.uint32), expected_samples.view(np.uint32))
-    np.testing.assert_array_equal(following_state.numpy().ravel().view(np.uint64), expected_state)
+    torch.testing.assert_close(following_samples, expected_samples, rtol=0, atol=0)
+    torch.testing.assert_close(following_state, expected_state, rtol=0, atol=0)
 
 
 def test_draw_uniform_zero_count_preserves_state() -> None:
@@ -56,6 +55,6 @@ def test_draw_uniform_compiles_with_fullgraph_inductor(count: int) -> None:
     state = _states()
     compiled = torch.compile(draw_uniform, backend="inductor", fullgraph=True)
     actual_samples, actual_state = compiled(state, count)
-    expected_samples, expected_state = _oracle(state.numpy().ravel().view(np.uint64), count)
-    np.testing.assert_array_equal(actual_samples.numpy().view(np.uint32), expected_samples.view(np.uint32))
-    np.testing.assert_array_equal(actual_state.numpy().ravel().view(np.uint64), expected_state)
+    expected_samples, expected_state = _oracle(state, count)
+    torch.testing.assert_close(actual_samples, expected_samples, rtol=0, atol=0)
+    torch.testing.assert_close(actual_state, expected_state, rtol=0, atol=0)
