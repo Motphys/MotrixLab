@@ -16,15 +16,15 @@ from motrix_env_core.sim.read import SimDataQuery
 
 # Static term-argument leaves accepted as-is; anything else is a cfg-authoring
 # error caught at term construction.
-_STATIC_LEAVES = (bool, int, float, str, np.generic, np.ndarray, torch.Tensor, SimDataQuery)
+_STATIC_LEAVES = (bool, int, float, str, np.generic, torch.Tensor, SimDataQuery)
 
 
 def canonicalize_term_args(args: tuple[Any, ...], *, context: str) -> tuple[Any, ...]:
     """Validate and canonicalize positional term arguments.
 
     Accepted leaves are scalars (including strings for compile-time Map-name
-    lookups), scalar tuples, ndarrays, tensors, simulator data queries, and
-    kernel-data dataclass carriers (which are normalized in place).
+    lookups), scalar tuples, tensors, simulator data queries, and kernel-data
+    dataclass carriers (which are normalized in place).
     """
     values: list[Any] = []
     for index, value in enumerate(args):
@@ -36,7 +36,7 @@ def canonicalize_term_args(args: tuple[Any, ...], *, context: str) -> tuple[Any,
             values.append(value)
         else:
             raise TypeError(
-                f"{context} args[{index}] must be a scalar, a scalar tuple, an ndarray, a tensor, "
+                f"{context} args[{index}] must be a scalar, a scalar tuple, a tensor, "
                 f"a kernel-data dataclass, or a simulator data query; got {type(value).__name__}."
             )
     return tuple(values)

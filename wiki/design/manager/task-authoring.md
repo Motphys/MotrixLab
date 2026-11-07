@@ -92,8 +92,8 @@ class TrackingErrorTermination:
 kernel-data record 的字段必须有类型标注，结构在构造期固定。Term record 不可替换字段，但 owner 可以按契约原地更新 backing（tensor 写入或经 `tensor.numpy()` 视图写入）。
 支持的 leaf 类型为：
 
-- `torch.Tensor`：term 拥有字段的默认类型，是宿主 numpy arena 上的零拷贝视图；lane 形状张量第一维为 `num_envs`，模型参数、查表数据和 motion clip 等共享张量则没有 batch 维；
-- 普通 `np.ndarray`（SimBackend 读侧数组与 metric backing）与 Python 标量、固定 dtype NumPy scalar；
+- `torch.Tensor`：term 拥有字段的默认且唯一的数组类型，是宿主 numpy arena 上的零拷贝视图；lane 形状张量第一维为 `num_envs`，模型参数、查表数据和 motion clip 等共享张量则没有 batch 维（宿主侧 numpy 代码通过 `tensor.numpy()` 视图读写同一 backing）；
+- Python 标量与固定 dtype NumPy scalar；
 - 另一个 kernel-data record 类型。
 
 需要对外发布逐环境指标时使用 `metric()` 字段。框架为其分配 `(num_envs, 1)` backing，term 在当前 lane 写入 `[0]`。

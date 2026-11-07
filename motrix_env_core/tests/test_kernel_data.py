@@ -18,13 +18,13 @@ from motrix_env_core.manager.kernel_data import (
 
 @dataclass(frozen=True, slots=True)
 class _Pose:
-    position: np.ndarray
-    orientation: np.ndarray
+    position: torch.Tensor
+    orientation: torch.Tensor
 
 
 @dataclass(frozen=True, slots=True)
 class _RobotBase:
-    velocity: np.ndarray
+    velocity: torch.Tensor
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +45,7 @@ class _Cyclic:
 
 def test_kernel_data_is_frozen_and_compiles_nested_inherited_leaves() -> None:
     value = _Tracking(
-        _Robot(np.asarray([[1.0, 2.0]], dtype=np.float32), _Pose(np.asarray([[3.0]]), np.asarray([4.0]))),
+        _Robot(torch.asarray([[1.0, 2.0]], dtype=torch.float32), _Pose(torch.asarray([[3.0]]), torch.asarray([4.0]))),
         np.float32(0.5),
     )
     with pytest.raises(FrozenInstanceError):
@@ -59,7 +59,7 @@ def test_kernel_data_is_frozen_and_compiles_nested_inherited_leaves() -> None:
         ("phase",),
     ]
     annotations = [annotation for _, annotation, _ in iter_leaves(value)]
-    assert leaf_value_type(annotations[0]) is np.ndarray
+    assert leaf_value_type(annotations[0]) is torch.Tensor
     assert leaf_value_type(annotations[-1]) is np.float32
 
 
@@ -75,10 +75,19 @@ def test_kernel_data_accepts_tensor_leaves() -> None:
     assert leaf_value_type(leaves[0][1]) is torch.Tensor
 
 
+def test_kernel_data_rejects_ndarray_leaves() -> None:
+    @dataclass(frozen=True, slots=True)
+    class _Numpy:
+        position: np.ndarray
+
+    with pytest.raises(TypeError, match="expected a tensor or a numeric scalar"):
+        validate_kernel_data(_Numpy(np.zeros(2)), context="numpy")
+
+
 def test_iter_leaves_rejects_wrong_class_field() -> None:
     @dataclass(frozen=True, slots=True)
     class _Inner:
-        x: np.ndarray
+        x: torch.Tensor
 
     @dataclass(frozen=True, slots=True)
     class _Outer:
@@ -86,10 +95,10 @@ def test_iter_leaves_rejects_wrong_class_field() -> None:
 
     @dataclass(frozen=True, slots=True)
     class _Impostor:
-        x: np.ndarray
+        x: torch.Tensor
 
     with pytest.raises(TypeError, match="must be _Inner, got _Impostor"):
-        list(iter_leaves(_Outer(_Impostor(np.zeros(1)))))  # type: ignore[arg-type]
+        list(iter_leaves(_Outer(_Impostor(torch.zeros(1)))))  # type: ignore[arg-type]
 
 
 def test_iter_leaves_rejects_class_cycle() -> None:
@@ -122,4 +131,4 @@ def test_kernel_data_rejects_unsupported_leaf() -> None:
 def test_ndarrays_and_tensors_are_not_kernel_data_values() -> None:
     assert not is_kernel_data(np.zeros(2))
     assert not is_kernel_data(torch.zeros(2))
-    assert is_kernel_data(_Pose(np.zeros(2), np.zeros(2)))
+    assert is_kernel_data(_Pose(torch.zeros(2), torch.zeros(2)))

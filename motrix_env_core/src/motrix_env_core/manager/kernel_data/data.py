@@ -4,8 +4,8 @@
 """Structured values passed directly to manager kernels.
 
 Kernel data is made of frozen dataclasses, :class:`Map` containers, tensors,
-NumPy arrays, and numeric scalar leaves. This module validates that structure
-at construction time; it does not build a runtime lookup or resolved tree.
+and numeric scalar leaves. This module validates that structure at
+construction time; it does not build a runtime lookup or resolved tree.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def is_kernel_data(value: object) -> bool:
 
 def leaf_value_type(annotation: Any) -> type | None:
     """Return the concrete value type accepted for one leaf annotation."""
-    if annotation in (np.ndarray, torch.Tensor):
+    if annotation is torch.Tensor:
         return annotation
     if annotation in {bool, int, float}:
         return annotation
@@ -115,9 +115,7 @@ def validate_kernel_data(value: KernelDataType, *, context: str) -> KernelDataTy
         raise TypeError(f"{context} must return a concrete kernel-data dataclass, got {type(value).__name__}.")
     for leaf_path, annotation, _leaf_value in iter_leaves(value):
         if leaf_value_type(annotation) is None:
-            raise TypeError(
-                f"{context} KernelData {'.'.join(leaf_path)} expected a tensor, an ndarray, or a numeric scalar."
-            )
+            raise TypeError(f"{context} KernelData {'.'.join(leaf_path)} expected a tensor or a numeric scalar.")
     return value
 
 

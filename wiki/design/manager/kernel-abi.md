@@ -61,8 +61,7 @@ dof_pos = ctx.sim["robot_dof_pos"]
 
 | 类型 | term 访问语义 |
 | --- | --- |
-| `torch.Tensor` | term 拥有字段的默认类型。张量是宿主 numpy arena 之上的零拷贝视图（`torch.from_numpy`）；host 侧代码可通过 `tensor.numpy()` 读写同一 backing |
-| `np.ndarray` | 完整 ndarray 引用，term 按自己的契约决定第 0 维是否为 batch 维；SimBackend 读侧 arena（`ctx.sim`）与 metric backing 保持 ndarray |
+| `torch.Tensor` | term 拥有字段的默认且唯一的数组类型。张量是宿主 numpy arena 之上的零拷贝视图（`torch.from_numpy`）；host 侧代码可通过 `tensor.numpy()` 读写同一 backing。ndarray 不再是合法 leaf——宿主侧 numpy 代码通过 tensor 的 `.numpy()` 视图消费 |
 | Python scalar | 所有环境使用同一个标量 |
 | 固定 dtype NumPy scalar | 所有环境使用同一个定 dtype 标量 |
 
