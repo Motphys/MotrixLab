@@ -5,8 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from motrix_env_core.manager.rand import initialize_rand_states
-from motrix_env_core.torch_manager.rand import draw_uniform
+from motrix_env_core.manager.rand import draw_uniform, initialize_rand_states
 
 
 def _oracle(states: torch.Tensor, count: int) -> tuple[torch.Tensor, torch.Tensor]:

@@ -11,18 +11,18 @@ import torch
 
 _METRIC_METADATA_KEY = "motrix_metric"
 _UNBOUND_METRIC = object()
-_TORCH_DTYPES = {
-    np.dtype(np.bool_): torch.bool,
-    np.dtype(np.int8): torch.int8,
-    np.dtype(np.int16): torch.int16,
-    np.dtype(np.int32): torch.int32,
-    np.dtype(np.int64): torch.int64,
-    np.dtype(np.uint8): torch.uint8,
-    np.dtype(np.uint16): torch.uint16,
-    np.dtype(np.uint32): torch.uint32,
-    np.dtype(np.float16): torch.float16,
-    np.dtype(np.float32): torch.float32,
-    np.dtype(np.float64): torch.float64,
+_NUMPY_DTYPES = {
+    torch.bool: np.dtype(np.bool_),
+    torch.int8: np.dtype(np.int8),
+    torch.int16: np.dtype(np.int16),
+    torch.int32: np.dtype(np.int32),
+    torch.int64: np.dtype(np.int64),
+    torch.uint8: np.dtype(np.uint8),
+    torch.uint16: np.dtype(np.uint16),
+    torch.uint32: np.dtype(np.uint32),
+    torch.float16: np.dtype(np.float16),
+    torch.float32: np.dtype(np.float32),
+    torch.float64: np.dtype(np.float64),
 }
 
 
@@ -31,13 +31,13 @@ class Metric:
     """Export metadata for one per-environment tensor field on a manager term."""
 
     name: str | None = None
-    dtype: type[np.generic] | None = None
+    dtype: torch.dtype | None = None
 
 
 def metric(
     *,
     name: str | None = None,
-    dtype: type[np.generic] | None = None,
+    dtype: torch.dtype | None = None,
 ) -> Any:
     """Declare one per-environment metric field with compiler-managed default backing."""
 
@@ -69,7 +69,7 @@ def materialize_metrics(value: Any, num_envs: int, *, context: str) -> Any:
         if current is _UNBOUND_METRIC:
             if spec is None:
                 raise TypeError(f"{context} field {data_field.name!r} has an unbound non-metric value.")
-            dtype = _TORCH_DTYPES[np.dtype(np.float32 if spec.dtype is None else spec.dtype)]
+            dtype = torch.float32 if spec.dtype is None else spec.dtype
             current = torch.empty(num_envs, dtype=dtype)
             changed = True
         values.append(current)
@@ -104,7 +104,7 @@ def collect_metrics(
                 f"{context} metric field {data_field.name!r} must have shape "
                 f"({num_envs},) or ({num_envs}, 1), got {tensor.shape}."
             )
-        export_dtype = np.dtype(tensor.numpy().dtype if spec.dtype is None else spec.dtype)
+        export_dtype = tensor.numpy().dtype if spec.dtype is None else _NUMPY_DTYPES[spec.dtype]
         if export_dtype.kind not in "bif":
             raise TypeError(f"{context} metric field {data_field.name!r} export dtype must be bool, integer, or float.")
         bindings.append((data_field.name if spec.name is None else spec.name, tensor))

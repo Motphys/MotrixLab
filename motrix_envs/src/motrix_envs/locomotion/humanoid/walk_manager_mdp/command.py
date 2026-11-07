@@ -148,7 +148,7 @@ class WalkCommand(CommandTerm):
     sin_cos: torch.Tensor
     phase: torch.Tensor
     phase_step: torch.Tensor
-    steps: torch.Tensor = metric(name="command_steps", dtype=np.float32)
+    steps: torch.Tensor = metric(name="command_steps", dtype=torch.float32)
 
     @staticmethod
     @dispatch

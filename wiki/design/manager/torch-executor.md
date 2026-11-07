@@ -40,7 +40,7 @@ compile=False)` 或 `runtime.compile_enabled = False` 回到逐 term eager 执�
   command `advance`（rewards/terminations 读 pre-advance command state）；
   observe 按 group/term 顺序写 obs 切片；reset = command `reset_env`
   （masked）→ sim-reset terms 写 compact 行。
-- RNG：per-lane SplitMix64（`torch_manager.rand.draw_uniform`），批量语义为
+- RNG：per-lane SplitMix64（`manager.rand.draw_uniform`），批量语义为
   term 一次 draw `count=k` 等价于 per-lane 连续调用 k 次。
 - 常驻 context：三个 kernel 共用同一 `ManagerContext` 实例；simulator-backed
   tensor 视图由 read program 原地重写 arena 保持有效，term 实例与标量字段即

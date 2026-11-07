@@ -21,7 +21,8 @@ class HeightFieldGrid:
     Attributes:
         heights: ``torch.Tensor`` of shape ``(nrow, ncol)`` holding the
             height-field sample values (row = y 方向, column = x 方向)，
-            单位与引擎导出的 hfield 数据一致。
+            单位与引擎导出的 hfield 数据一致；存储为 float64，
+            插值直接在存储精度上进行。
         origin: 长度为 2 的 ``torch.Tensor``，网格首个采样点 ``(x, y)`` 的
             世界坐标，是 bilinear 插值前的平移原点。
         spacing: 长度为 2 的 ``torch.Tensor``，相邻采样点在世界坐标系下的
@@ -50,13 +51,12 @@ def heightfield_lookup(grid: HeightFieldGrid, x: torch.Tensor, y: torch.Tensor) 
     """
     if not grid.enabled:
         return torch.full_like(x.double(), float(grid.constant))
-    heights = grid.heights.to(torch.float64)
-    origin = grid.origin.to(torch.float64)
-    spacing = grid.spacing.to(torch.float64)
-    z0 = grid.z0.to(torch.float64)
-    nrow, ncol = heights.shape
-    fx = ((x.to(torch.float64) - origin[0]) / spacing[0]).clamp(0.0, ncol - 1.0 - 1e-6)
-    fy = ((y.to(torch.float64) - origin[1]) / spacing[1]).clamp(0.0, nrow - 1.0 - 1e-6)
+    heights = grid.heights
+    origin = grid.origin
+    spacing = grid.spacing
+    z0 = grid.z0
+    fx = ((x.to(torch.float64) - origin[0]) / spacing[0]).clamp(0.0, heights.shape[1] - 1.0 - 1e-6)
+    fy = ((y.to(torch.float64) - origin[1]) / spacing[1]).clamp(0.0, heights.shape[0] - 1.0 - 1e-6)
     col = fx.to(torch.long)
     row = fy.to(torch.long)
     tx = fx - col

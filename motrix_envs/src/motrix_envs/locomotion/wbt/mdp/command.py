@@ -21,7 +21,7 @@ from motrix_env_core.manager import (
 from motrix_env_core.manager.commands import ResetContext
 from motrix_env_core.manager.dispatch import dispatch
 from motrix_env_core.math.quaternion_array import align_targets
-from motrix_env_core.torch_manager.rand import draw_uniform
+from motrix_env_core.manager.rand import draw_uniform
 from motrix_envs.motion import MotionLibrary, WbtMotionClip
 
 
@@ -118,7 +118,7 @@ class WbtMotionCommand(CommandTerm):
     # Kept as ``(num_envs, 1)`` per-env arrays: the kernel lowering hands each
     # lane a writable row view, so advance/reset_env can update the lane's
     # frame in place without a shared backing.
-    steps: torch.Tensor = metric(name="motion_step", dtype=np.float32)
+    steps: torch.Tensor = metric(name="motion_step", dtype=torch.float32)
     clip_ended: torch.Tensor = metric()
 
     def reset(self, ctx: ResetContext) -> None:
