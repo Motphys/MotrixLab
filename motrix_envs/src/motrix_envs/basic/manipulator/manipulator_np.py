@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -168,7 +169,8 @@ class ManipulatorBase(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+        actions = actions.detach().cpu().numpy()
         actions = np.asarray(actions, dtype=np.float32)
         # Enforce actuator control limits to avoid out-of-range impulses.
         actions = np.clip(actions, self._action_space.low, self._action_space.high).astype(np.float32)
@@ -342,7 +344,8 @@ class ManipulatorBase(DirectEnv):
         self._set_target_mocap(env_ids, target_x, target_z, target_angle)
         self.sim_data.execute(row_ids)
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         self.initialize_episode(env_ids)
 
         # Write episode-scoped state for the reset rows

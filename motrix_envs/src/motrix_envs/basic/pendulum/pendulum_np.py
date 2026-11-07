@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -57,7 +58,8 @@ class PendulumEnv(DirectEnv):
     def action_space(self):
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState):
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        actions = actions.detach().cpu().numpy()
         actions = np.clip(actions, -1.0, 1.0)
         scaled = self._action_low + (actions + 1.0) * 0.5 * (self._action_high - self._action_low)
         ctrl = self._ctrl_writes.buffer("ctrl")
@@ -110,7 +112,8 @@ class PendulumEnv(DirectEnv):
         self._prev_ctrl[:] = ctrl
         return state
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         cfg: PendulumEnvCfg = self._cfg
         reset_noise_scale = getattr(cfg, "reset_noise_scale", 0.0)
         num_reset = len(env_ids)

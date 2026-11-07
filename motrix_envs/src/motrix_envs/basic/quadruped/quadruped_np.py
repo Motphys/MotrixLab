@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -248,7 +249,8 @@ class QuadrupedEnv(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+        actions = actions.detach().cpu().numpy()
         if self._cfg.clip_env_actions:
             actions = np.clip(actions, self._action_space.low, self._action_space.high)
         actions = actions.astype(np.float32)
@@ -698,7 +700,8 @@ class QuadrupedLocomotionEnv(QuadrupedEnv):
 
         return state.replace(reward=rwd, terminated=terminated)
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         num = len(env_ids)
         dof_pos = np.tile(self._init_dof_pos, (num, 1))
         dof_vel = np.zeros((num, self.num_dof_vel), dtype=np.float32)
@@ -921,7 +924,8 @@ class QuadrupedFetchEnv(QuadrupedEnv):
 
         return state.replace(reward=rwd, terminated=terminated)
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         num = len(env_ids)
         dof_pos = np.tile(self._init_dof_pos, (num, 1))
         dof_vel = np.zeros((num, self.num_dof_vel), dtype=np.float32)

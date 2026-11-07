@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -64,7 +65,8 @@ class PointMassEnv(DirectEnv):
     def action_space(self):
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState):
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        actions = actions.detach().cpu().numpy()
         actions = np.clip(actions, -1.0, 1.0)
         ctrl = self._ctrl_writes.buffer("ctrl")
         ctrl[:] = np.asarray(actions, dtype=np.float32)
@@ -149,7 +151,8 @@ class PointMassEnv(DirectEnv):
         state.terminated = terminated
         return state
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         num_reset = len(env_ids)
 
         # Random initial position within a range for the point mass (only x, y)

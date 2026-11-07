@@ -97,7 +97,7 @@ def test_rl_trainer_supports_sim_backend(monkeypatch, trainer: str, sim_backend:
         assert all(isinstance(array, jax.Array) for array in (obs, *result[:4]))
         assert all(array.device == wrapped.device for array in (obs, *result[:4]))
     actions = env.step.call_args.args[0]
-    assert isinstance(actions, np.ndarray if sim_backend == "np" else torch.Tensor)
+    assert isinstance(actions, torch.Tensor)
     if sim_backend == "torch":
         assert actions.device == env.device
 

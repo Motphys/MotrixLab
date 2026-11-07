@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -97,7 +98,8 @@ class Walker2DEnv(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions, state: ArrayEnvState):
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        actions = actions.detach().cpu().numpy()
         ctrl = self._ctrl_writes.buffer("ctrl")
         ctrl[:] = np.asarray(actions, dtype=np.float32)
         self._ctrl_writes.execute()
@@ -163,7 +165,8 @@ class Walker2DEnv(DirectEnv):
             terminated=terminated,
         )
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         num_reset = len(env_ids)
 
         dof_pos = np.zeros((num_reset, self._reset_position.shape[1]))

@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -73,7 +74,8 @@ class Reacher2DEnv(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions, state: ArrayEnvState):
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        actions = actions.detach().cpu().numpy()
         ctrl = self._ctrl_writes.buffer("ctrl")
         ctrl[:] = np.asarray(actions, dtype=np.float32)
         self._ctrl_writes.execute()
@@ -106,7 +108,8 @@ class Reacher2DEnv(DirectEnv):
 
         return state.replace(reward=rwd, terminated=terminated)
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         """Reset environment with randomized target position in xy plane (z=0)."""
         num_reset = len(env_ids)
 

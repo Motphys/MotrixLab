@@ -211,11 +211,11 @@ class ReadPlan:
 
 @dataclass(frozen=True)
 class _ObsBufferSlot:
-    observation: EnvObs[torch.Tensor]
+    observation: EnvObs
     kernel_outputs: KernelOutputs
 
     @classmethod
-    def bind(cls, observation: EnvObs[torch.Tensor], reward: torch.Tensor, terminated: torch.Tensor) -> _ObsBufferSlot:
+    def bind(cls, observation: EnvObs, reward: torch.Tensor, terminated: torch.Tensor) -> _ObsBufferSlot:
         value = observation.value
         if value is None:
             value = torch.empty((observation.policy.shape[0], 0), dtype=observation.policy.dtype)
@@ -250,8 +250,8 @@ class SwapObsBuffer:
     @classmethod
     def create(
         cls,
-        first: EnvObs[torch.Tensor],
-        second: EnvObs[torch.Tensor],
+        first: EnvObs,
+        second: EnvObs,
         reward: torch.Tensor,
         terminated: torch.Tensor,
     ) -> SwapObsBuffer:
@@ -261,13 +261,13 @@ class SwapObsBuffer:
     def current(self) -> _ObsBufferSlot:
         return self._slots[self._index]
 
-    def swap(self) -> tuple[EnvObs[torch.Tensor], KernelOutputs]:
+    def swap(self) -> tuple[EnvObs, KernelOutputs]:
         self._index = 1 - self._index
         slot = self.current
         return slot.observation, slot.kernel_outputs
 
 
-class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
+class ManagerEnv(ArrayEnv[EnvCfgType]):
     """NumPy environment whose task program is generated from manager config."""
 
     def __init__(
@@ -425,7 +425,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
     # without copies. Non-torch consumers take zero-copy ``.numpy()`` views.
     _xp = array_namespace_torch
 
-    def init_state(self) -> ArrayEnvState[torch.Tensor]:
+    def init_state(self) -> ArrayEnvState:
         startup_started = perf_counter()
         env_name = type(self).__name__
         if self._task_program is None:
@@ -484,7 +484,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         assert self._kernel_outputs is not None
         self._task_program.observe_kernel(self._kernel_outputs)
 
-    def _capture_final_obs(self, env_ids: np.ndarray) -> FinalObs[torch.Tensor]:
+    def _capture_final_obs(self, env_ids: torch.Tensor | np.ndarray) -> FinalObs:
         """Observe pre-reset inputs after command on_transition.
 
         The compiled observe pass is batch-wide. Dedicated outputs preserve the
@@ -497,11 +497,13 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         obs = slot.observation
         # ``env_ids`` is user-facing output of the torch frontend: hand over
         # an owned tensor while internal indexing stays on the numpy copy.
+        env_ids = torch.as_tensor(env_ids, dtype=torch.long)
+        rows = env_ids.cpu().numpy()
         return FinalObs(
-            env_ids=torch.from_numpy(env_ids.copy()),
+            env_ids=env_ids.clone(),
             obs=EnvObs(
-                policy=obs.policy[env_ids],
-                value=None if obs.value is None else obs.value[env_ids],
+                policy=obs.policy[rows],
+                value=None if obs.value is None else obs.value[rows],
             ),
         )
 
@@ -591,7 +593,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState[torch.Tensor]) -> ArrayEnvState[torch.Tensor]:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
         expected_shape = (self.num_envs, self.action_space.shape[0])
         if actions.shape != expected_shape:
             raise ValueError(f"Expected action shape {expected_shape}, got {tuple(actions.shape)}.")
@@ -640,18 +642,20 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         """
         state = self._state
         with self.perf.scope("done_mask"):
-            done = np.asarray(state.done)
-            sim_reset_ids = np.flatnonzero(self._sim_reset_requested[:, 0])
-            if sim_reset_ids.size:
-                sim_reset_ids = sim_reset_ids[~done[sim_reset_ids]]
-            env_ids = np.flatnonzero(done)
-        if not env_ids.size and not sim_reset_ids.size:
+            done = state.done
+            sim_reset_mask = torch.from_numpy(self._sim_reset_requested[:, 0])
+            sim_reset_ids = torch.nonzero(sim_reset_mask & ~done, as_tuple=False).flatten()
+            env_ids = torch.nonzero(done, as_tuple=False).flatten()
+        if not env_ids.numel() and not sim_reset_ids.numel():
             return
-        if env_ids.size:
+        if env_ids.numel():
             with self.perf.scope("select_done"):
-                np.putmask(state.episode_steps, done, 0)
+                state.episode_steps[env_ids] = 0
         with self.perf.scope("reset_envs"):
-            self._reset_rows(env_ids, sim_reset_ids)
+            self._reset_rows(
+                env_ids.detach().cpu().numpy(),
+                None if not sim_reset_ids.numel() else sim_reset_ids.detach().cpu().numpy(),
+            )
 
     def reset(self, env_ids: torch.Tensor, sim_reset_ids: torch.Tensor | None = None) -> None:
         """Reset episode lanes fully and sim-reset the rest in one pass.
@@ -721,7 +725,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         )
         return metrics
 
-    def compute_transition(self, state: ArrayEnvState[torch.Tensor]) -> ArrayEnvState[torch.Tensor]:
+    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
         with self.perf.scope("read_inputs"):
             self._refresh_sim_reads()
         with self.perf.scope("evaluate"):
@@ -731,7 +735,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
                 command_term.on_transition()
         return state
 
-    def compute_observation(self, state: ArrayEnvState[torch.Tensor]) -> ArrayEnvState[torch.Tensor]:
+    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
         # During initialisation, ArrayEnv computes the first observation
         # before the manager's kernel outputs exist. The manager-specific
         # init_state() performs that first kernel pass itself.
@@ -768,7 +772,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         """Return the environment-local runtime observation groups."""
         return self._observation_groups
 
-    def _make_kernel_buffers(self, state: ArrayEnvState[torch.Tensor]) -> tuple[torch.Tensor, ...]:
+    def _make_kernel_buffers(self, state: ArrayEnvState) -> tuple[torch.Tensor, ...]:
         assert self._compiled_manager_program is not None
         layout = self._compiled_manager_program.layout
         reward_terms = torch.empty((self.num_envs, len(layout.rewards)), dtype=torch.float32)

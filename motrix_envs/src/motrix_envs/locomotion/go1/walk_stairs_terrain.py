@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -188,7 +189,8 @@ class Go1WalkStairsTask(DirectEnv):
             offsets.append([x, y, z])
         self.offsets = np.array(offsets)
 
-    def apply_action(self, actions, state):
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        actions = actions.detach().cpu().numpy()
         # Copy values: the read buffer is a view that the upcoming physics-step
         # read overwrites in place.
         self._last_dof_vel[:] = self.get_dof_vel()
@@ -300,7 +302,8 @@ class Go1WalkStairsTask(DirectEnv):
 
         return state.replace(reward=rwd)
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         num_reset = len(env_ids)
 
         base_pose = np.tile(self._init_base_pose, (num_reset, 1))

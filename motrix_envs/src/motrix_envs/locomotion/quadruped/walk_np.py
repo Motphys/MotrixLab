@@ -5,6 +5,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 from motrix_robots.quadruped import QuadrupedRobotCfg
 
 from motrix_env_core.array.env import ArrayEnvState, EnvObs
@@ -328,7 +329,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
 
     # ---- env loop ---------------------------------------------------------
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+        actions = actions.detach().cpu().numpy()
         actions = np.asarray(actions, dtype=np.float32)
         self._last_actions[:] = self._current_actions
         self._current_actions[:] = actions
@@ -418,7 +420,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         state.reward_terms = reward_items
         return reward * self.cfg.ctrl_dt
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         num_reset = len(env_ids)
         base_pose = np.tile(self._init_base_pose, (num_reset, 1))
         base_linear_velocity = np.zeros((num_reset, 3), dtype=np.float32)

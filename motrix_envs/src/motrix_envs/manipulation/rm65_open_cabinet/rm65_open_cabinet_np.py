@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState, EnvObs
@@ -445,7 +446,8 @@ class RM65OpenCabinetEnv(DirectEnv):
         self._current_gripper_action[:] = gripper_pos
         return gripper_pos[:, None]
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState):
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        actions = actions.detach().cpu().numpy()
         assert not np.isnan(actions).any(), "actions contain nan"
 
         raw_actions = np.array(actions, copy=True)
@@ -506,8 +508,8 @@ class RM65OpenCabinetEnv(DirectEnv):
             dof_vel_rel = np.zeros_like(dof_pos_abs_raw, dtype=np.float32)
 
         reset_mask = episode_steps == 0
-        if np.any(reset_mask):
-            dof_vel_rel[reset_mask] = 0.0
+        if bool(reset_mask.any()):
+            dof_vel_rel[reset_mask.numpy()] = 0.0
         self._obs_prev_dof_pos_abs_raw = dof_pos_abs_raw.astype(np.float32, copy=True)
 
         if obs_noise_cfg.enabled and obs_noise_cfg.joint_noise_enabled and obs_noise_cfg.joint_vel_std > 0.0:
@@ -592,7 +594,8 @@ class RM65OpenCabinetEnv(DirectEnv):
         self._grasped[:] = grasped
         self._phase2_mask |= grasped
 
-    def reset(self, env_ids) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         num_reset = len(env_ids)
         row_ids = np.asarray(env_ids, dtype=np.int64)
 

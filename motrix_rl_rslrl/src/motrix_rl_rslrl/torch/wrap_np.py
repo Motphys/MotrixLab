@@ -89,12 +89,7 @@ class RslrlNpEnvWrap(VecEnv):
         return self
 
     def step(self, actions: torch.Tensor) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict]:
-        if isinstance(self._env, ManagerEnv):
-            # Manager environments consume tensor actions; pass through.
-            state = self._env.step(actions.cpu())
-        else:
-            # Convert torch actions to numpy
-            state = self._env.step(actions.cpu().numpy())
+        state = self._env.step(actions.detach().cpu())
         self._state = state
 
         # Update episode length buffer

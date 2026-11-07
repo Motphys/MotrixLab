@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState, EnvObs
@@ -161,7 +162,8 @@ class PegInsertEnv(DirectEnv):
     def action_space(self):
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState):
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        actions = actions.detach().cpu().numpy()
         self._last_actions[:] = self._current_actions
         self._current_actions[:] = actions
 
@@ -347,7 +349,8 @@ class PegInsertEnv(DirectEnv):
 
         return state
 
-    def reset(self, env_ids) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         num_reset = len(env_ids)
         row_ids = np.asarray(env_ids, dtype=np.int64)
 

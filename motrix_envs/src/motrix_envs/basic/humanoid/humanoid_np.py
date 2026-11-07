@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -157,7 +158,8 @@ class Humanoid3DEnv(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+        actions = actions.detach().cpu().numpy()
         ctrl = self._ctrl_writes.buffer("ctrl")
         ctrl[:] = np.asarray(actions, dtype=np.float32)
         self._ctrl_writes.execute()
@@ -233,7 +235,8 @@ class Humanoid3DEnv(DirectEnv):
             reward_components[k] = np.where(terminated, 0.0, v).astype(np.float32)
         return rwd, reward_components
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         self._randomize_joints(env_ids)
 
     def _get_head_height(self, rows) -> np.ndarray:

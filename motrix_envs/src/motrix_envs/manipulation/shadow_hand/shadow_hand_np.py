@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState, EnvObs
@@ -179,7 +180,8 @@ class ShadowHandReposeEnv(DirectEnv):
         velocities = np.concatenate((inputs["fingertip_lin_vel"][rows], inputs["fingertip_ang_vel"][rows]), axis=-1)
         return positions, quaternions, velocities
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState):
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        actions = actions.detach().cpu().numpy()
         """Apply actions to the hand actuators."""
         cfg = self._cfg
 
@@ -361,7 +363,8 @@ class ShadowHandReposeEnv(DirectEnv):
         self._target_writes.buffer("target_rot")[all_ids, 0] = np.asarray(self._goal_rot, dtype=np.float32)
         self._target_writes.execute(all_ids)
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         """Reset environments."""
         cfg = self._cfg
 

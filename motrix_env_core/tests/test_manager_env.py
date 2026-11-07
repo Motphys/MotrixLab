@@ -705,7 +705,7 @@ def test_final_observations_capture_command_before_reset_and_survive_steps(with_
     env.physics_step = lambda: None
     initial = env.init_state()
     assert initial.final_obs is None
-    initial.episode_steps[:] = [2, 0, 2]
+    initial.episode_steps[:] = torch.tensor([2, 0, 2])
     env.command_terms["counter"].command[:] = 2.0
     state = env.step(torch.full((3, 1), 0.25, dtype=torch.float32))
     final = state.final_obs
@@ -738,7 +738,7 @@ def test_final_observation_noise_uses_shared_observation_rng() -> None:
 
     def noisy_observe(outputs):
         observe(outputs)
-        env._rand.state[:] += np.uint64(1)
+        env._rand.state[:] += 1
         outputs.policy_obs[:, 0] = env._rand.state[:, 0].to(torch.float32)
 
     env._task_program = replace(env._task_program, observe_kernel=noisy_observe)

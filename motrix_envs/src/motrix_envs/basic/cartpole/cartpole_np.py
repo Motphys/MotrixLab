@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -52,7 +53,8 @@ class CartPoleEnv(DirectEnv):
     def action_space(self):
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState):
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        actions = actions.detach().cpu().numpy()
         ctrl = self._ctrl_writes.buffer("ctrl")
         ctrl[:] = actions.astype(np.float32, copy=False)
         self._ctrl_writes.execute()
@@ -82,7 +84,8 @@ class CartPoleEnv(DirectEnv):
         assert obs.shape == (self._num_envs, 4)
         return state.replace(obs=obs)
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         cfg: CartPoleEnvCfg = self._cfg
         rows = len(env_ids)
         noise_pos = np.random.uniform(

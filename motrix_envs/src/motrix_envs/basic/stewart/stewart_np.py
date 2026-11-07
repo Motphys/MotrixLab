@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -206,7 +207,8 @@ class StewartEnv(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+        actions = actions.detach().cpu().numpy()
         self._policy_action[:] = _normalize_actions(actions, self._num_envs, self._action_dim)
         return state
 
@@ -604,7 +606,7 @@ class StewartEnv(DirectEnv):
         # terminated/truncated bookkeeping.
         timeout = np.zeros((self._num_envs,), dtype=bool)
         if self._cfg.max_episode_steps is not None and self._cfg.max_episode_steps > 0:
-            timeout = (state.episode_steps + 1) >= self._cfg.max_episode_steps
+            timeout = (state.episode_steps.numpy() + 1) >= self._cfg.max_episode_steps
             timeout &= ~(fallen | success)
 
         terminated = (fallen | success).astype(bool)
@@ -632,7 +634,8 @@ class StewartEnv(DirectEnv):
 
         return state.replace(reward=reward, terminated=terminated)
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         num = len(env_ids)
         row_ids = np.asarray(env_ids, dtype=np.int64)
         zeros3 = np.zeros((num, 3), dtype=np.float32)

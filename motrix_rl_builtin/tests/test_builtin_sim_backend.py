@@ -100,7 +100,7 @@ def test_rl_trainer_supports_sim_backend(monkeypatch, sim_backend: str) -> None:
     assert isinstance(result.info, dict)
 
     actions = env.step.call_args.args[0]
-    assert isinstance(actions, np.ndarray if sim_backend == "np" else torch.Tensor)
+    assert isinstance(actions, torch.Tensor)
     if sim_backend == "torch":
         assert actions.device == env.device
 

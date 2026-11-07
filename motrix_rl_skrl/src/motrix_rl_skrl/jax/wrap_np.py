@@ -7,6 +7,7 @@ import gymnasium
 import jax
 import jax.numpy as jnp
 import numpy as np
+import torch
 from skrl.envs.wrappers.jax import Wrapper as SkrlWrapper
 
 from motrix_env_core.array.env import ArrayEnv
@@ -48,8 +49,7 @@ class SkrlNpWrapper(SkrlWrapper):
         jax.Array,
         Any,
     ]:
-        actions = np.asarray(actions)
-        state = self._env.step(actions)
+        state = self._env.step(torch.from_dlpack(actions))
         return (
             _as_jnp(state.obs.policy, jnp.float32),
             _as_jnp(state.reward.reshape(-1, 1), jnp.float32),

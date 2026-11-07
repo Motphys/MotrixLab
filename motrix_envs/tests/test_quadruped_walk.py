@@ -3,6 +3,7 @@
 
 import numpy as np
 import pytest
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.config import configclass
@@ -92,7 +93,7 @@ def test_go2_velocity_commands_remain_constant_before_resampling_interval():
     assert np.all(commands >= velocity_cfg.lower)
     assert np.all(commands <= velocity_cfg.upper)
 
-    env.step(np.zeros((env.num_envs, *env.action_space.shape), dtype=np.float32))
+    env.step(torch.zeros((env.num_envs, *env.action_space.shape), dtype=torch.float32))
 
     np.testing.assert_array_equal(env._commands, commands)
 
@@ -160,7 +161,7 @@ def test_go2_pd_and_friction_randomization_is_per_env_and_episode_constant():
     assert np.all(friction[:, 0] <= randomization.sliding_friction_range[1])
     np.testing.assert_array_equal(friction[:, 1:], np.broadcast_to(friction[:1, 1:], friction[:, 1:].shape))
 
-    env.step(np.zeros((env.num_envs, env._num_action), dtype=np.float32))
+    env.step(torch.zeros((env.num_envs, env._num_action), dtype=torch.float32))
 
     _, kp_after, damping_after, friction_after = _read_param_overrides(env)
     np.testing.assert_array_equal(kp_after, kp)
@@ -185,7 +186,7 @@ def test_go2_base_mass_and_com_randomization_is_per_env_and_episode_constant():
     assert np.unique(mass_scale).size > 1
     assert np.unique(center_of_mass_offset, axis=0).shape[0] > 1
 
-    env.step(np.zeros((env.num_envs, env._num_action), dtype=np.float32))
+    env.step(torch.zeros((env.num_envs, env._num_action), dtype=torch.float32))
 
     mass_after, com_after = _read_mass_overrides(env)
     np.testing.assert_array_equal(mass_after, mass)
@@ -390,7 +391,7 @@ def test_quadruped_rough_walk_reset_and_base_height_are_terrain_relative(env_nam
     expected = np.square(relative_height - env.cfg.reward_config.base_height_target)
     np.testing.assert_allclose(env._reward_base_height(None, None, None), expected)
 
-    next_state = env.step(np.zeros((env.num_envs, *env.action_space.shape), dtype=np.float32))
+    next_state = env.step(torch.zeros((env.num_envs, *env.action_space.shape), dtype=torch.float32))
     assert next_state.reward.shape == (env.num_envs,)
     assert np.all(np.isfinite(next_state.reward))
 

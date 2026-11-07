@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -462,7 +463,8 @@ class BounceBallEnv(DirectEnv):
 
         return terminated
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+        actions = actions.detach().cpu().numpy()
         """Apply action to control paddle position"""
         # Save last actions for penalty calculation
         self._last_actions[:] = self._current_actions
@@ -545,7 +547,8 @@ class BounceBallEnv(DirectEnv):
 
         return state
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         """Reset environment to initial state with randomized target heights"""
         cfg: BounceBallEnvCfg = self._cfg
         num_reset = len(env_ids)

@@ -58,11 +58,7 @@ class SkrlNpWrapper(SkrlWrapper):
         torch.Tensor,
         Any,
     ]:
-        if isinstance(self._env, ManagerEnv):
-            # Manager environments consume tensor actions; pass through.
-            state = self._env.step(actions.detach().cpu())
-        else:
-            state = self._env.step(actions.cpu().numpy())
+        state = self._env.step(torch.as_tensor(actions).detach().cpu())
         return (
             _as_torch(state.obs.policy, torch.float32, self.device),
             _as_torch(state.reward.reshape(-1, 1), torch.float32, self.device),

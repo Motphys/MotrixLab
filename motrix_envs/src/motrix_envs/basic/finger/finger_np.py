@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -132,7 +133,8 @@ class FingerEnv(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+        actions = actions.detach().cpu().numpy()
         # Keep track of actions for reward shaping (e.g., smoothness penalties)
         self._last_actions[:] = self._actions
         self._actions[:] = actions
@@ -193,7 +195,8 @@ class FingerEnv(DirectEnv):
             # reproduces the legacy global ``num_contacts > 0`` check exactly.
             pending = self.sim_data["colliding"][env_ids].max(axis=-1) > 0
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         raise NotImplementedError
 
 
@@ -273,7 +276,8 @@ class FingerSpinEnv(FingerEnv):
         rwd[terminated] = 0.0
         return state.replace(reward=rwd, terminated=terminated)
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         self._reset_collision_free_joint_angles(env_ids)
 
         self._actions[env_ids] = 0.0
@@ -382,7 +386,8 @@ class FingerTurnEnv(FingerEnv):
         rwd[terminated] = 0.0
         return state.replace(reward=rwd, terminated=terminated)
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
+        env_ids = env_ids.detach().cpu().numpy()
         num = len(env_ids)
         self._reset_collision_free_joint_angles(env_ids)
 

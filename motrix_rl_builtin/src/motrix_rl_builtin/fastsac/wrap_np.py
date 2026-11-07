@@ -30,13 +30,8 @@ class FastSacNpEnvWrap(FastSacEnvWrap):
     def __init__(self, env: ArrayEnv, device: torch.device, render: RenderConfig | None = None):
         super().__init__(env, device)
         self._env: ArrayEnv = env
-        # Manager environments consume tensor actions: clip with torch ops and
-        # pass the tensor through. Direct (NumPy-frontend) environments keep
-        # the numpy clip-and-convert path.
-        self._torch_actions = isinstance(env, ManagerEnv)
-        if self._torch_actions:
-            self._low_t = torch.as_tensor(self._low, dtype=torch.float32)
-            self._high_t = torch.as_tensor(self._high, dtype=torch.float32)
+        self._low_t = torch.as_tensor(self._low, dtype=torch.float32)
+        self._high_t = torch.as_tensor(self._high, dtype=torch.float32)
         self._renderer = create_renderer(env, render)
 
     def _to_torch(self, arr, dtype=torch.float32) -> torch.Tensor:
@@ -49,12 +44,7 @@ class FastSacNpEnvWrap(FastSacEnvWrap):
         return self._to_torch(state.obs.policy), self._to_torch(state.obs.value_or_policy)
 
     def step(self, actions: torch.Tensor) -> FastSacStepResult:
-        if self._torch_actions:
-            env_actions = torch.clamp(actions.detach().cpu(), self._low_t, self._high_t)
-        else:
-            # Zero-copy CPU view of the learner's actions; clipping allocates the
-            # buffer handed to the numpy-frontend action path.
-            env_actions = np.clip(actions.detach().cpu().numpy(), self._low, self._high)
+        env_actions = torch.clamp(actions.detach().cpu(), self._low_t, self._high_t)
         state = self._env.step(env_actions)
         return FastSacStepResult(
             obs=self._to_torch(state.obs.policy),
