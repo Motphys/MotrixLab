@@ -106,6 +106,13 @@ def _as_obs(obs: EnvObs | torch.Tensor) -> EnvObs:
     return EnvObs(policy=obs)
 
 
+def _as_obs_space(space: gym.spaces.Box | ObsSpace) -> ObsSpace:
+    """Normalize an observation space; a bare policy Box is adopted as such."""
+    if isinstance(space, ObsSpace):
+        return space
+    return ObsSpace(policy=space)
+
+
 class ArrayEnv(ABEnv, Generic[EnvCfgType]):
     """Simulator-agnostic environment lifecycle with a torch-only public state.
 
@@ -182,23 +189,22 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
 
     @property
     def policy_observation_space(self) -> gym.spaces.Box:
-        return self.observation_space.policy if isinstance(self.observation_space, ObsSpace) else self.observation_space
+        return _as_obs_space(self.observation_space).policy
 
     @property
     def value_observation_space(self) -> gym.spaces.Box:
-        space = self.observation_space
-        return space.value_or_policy if isinstance(space, ObsSpace) else space
+        return _as_obs_space(self.observation_space).value_or_policy
 
     @property
     def has_value_observation(self) -> bool:
-        return isinstance(self.observation_space, ObsSpace) and self.observation_space.value is not None
+        return _as_obs_space(self.observation_space).value is not None
 
     def _zeros_box(self, space: gym.spaces.Box) -> torch.Tensor:
         dtype = torch.from_numpy(np.empty((), dtype=space.dtype)).dtype
         return torch.zeros((self._num_envs, *space.shape), dtype=dtype)
 
     def _zeros_obs(self, space) -> EnvObs:
-        obs_space = space if isinstance(space, ObsSpace) else ObsSpace(policy=space)
+        obs_space = _as_obs_space(space)
         value = None if obs_space.value is None else self._zeros_box(obs_space.value)
         return EnvObs(policy=self._zeros_box(obs_space.policy), value=value)
 
