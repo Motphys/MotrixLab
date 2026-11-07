@@ -3,6 +3,7 @@
 
 """Generic joint-position action terms for manager-based environments."""
 
+import math
 from dataclasses import dataclass
 
 import gymnasium as gym
@@ -169,7 +170,7 @@ class JointPositionActionCfg(ActionCfg):
                 raise ValueError(f"position actuator {spec.name!r} must define or inherit ctrl_range")
             ctrl_ranges.append(spec.ctrl_range)
         space = joint_position_action_space_from_ctrl_ranges(
-            np.asarray(ctrl_ranges, dtype=np.float32), state.default_angles.numpy(), state.action_scales.numpy()
+            torch.tensor(ctrl_ranges, dtype=torch.float32), state.default_angles, state.action_scales
         )
         term = JointPositionActionTerm(space, state)
         # Reset-time delay resampling is reproducible per environment seed.
@@ -204,26 +205,25 @@ class JointPositionActionCfg(ActionCfg):
         return torch.as_tensor(env.model.others["actuator_kp"]).detach().cpu()
 
     @staticmethod
-    def _read_position_actuator_effort_limits(env: ManagerEnv) -> np.ndarray:
-        actuators = env.model.actuators
-        effort_limits = np.empty(len(actuators), dtype=np.float32)
-        for index, spec in enumerate(actuators):
-            if spec.force_range is None:
-                raise ValueError(f"actuator '{spec.name}' must define force_range")
-            force_range = np.asarray(spec.force_range, dtype=np.float32)
-            if force_range.shape != (2,) or not np.all(np.isfinite(force_range)):
+    def _read_position_actuator_effort_limits(env: ManagerEnv) -> torch.Tensor:
+        effort_limits = []
+        for spec in env.model.actuators:
+            if spec.force_range is None or len(spec.force_range) != 2:
+                raise ValueError(f"actuator '{spec.name}' must define a two-valued force_range")
+            low, high = float(spec.force_range[0]), float(spec.force_range[1])
+            if not (math.isfinite(low) and math.isfinite(high)):
                 raise ValueError(f"actuator '{spec.name}' force_range must contain two finite values")
-            effort_limit = float(np.max(np.abs(force_range)))
+            effort_limit = max(abs(low), abs(high))
             if effort_limit <= 0.0:
                 raise ValueError(f"actuator '{spec.name}' force_range must define a positive effort limit")
-            effort_limits[index] = effort_limit
-        return effort_limits
+            effort_limits.append(effort_limit)
+        return torch.tensor(effort_limits, dtype=torch.float32)
 
     def _init_action_scales(self, env: ManagerEnv, kps: torch.Tensor) -> torch.Tensor:
-        if not np.isfinite(self.action_scale) or self.action_scale <= 0.0:
+        if not math.isfinite(self.action_scale) or self.action_scale <= 0.0:
             raise ValueError(f"action_scale must be positive and finite, got {self.action_scale}")
         if self.action_scales_by_effort_limit_over_p_gain:
-            effort = torch.as_tensor(self._read_position_actuator_effort_limits(env), dtype=kps.dtype)
+            effort = self._read_position_actuator_effort_limits(env)
             safe_kp = torch.where(kps == 0.0, torch.ones_like(kps), kps)
             return torch.where(kps == 0.0, torch.zeros_like(kps), self.action_scale * effort / safe_kp)
         return torch.full((env.num_actuators,), self.action_scale, dtype=torch.float32)

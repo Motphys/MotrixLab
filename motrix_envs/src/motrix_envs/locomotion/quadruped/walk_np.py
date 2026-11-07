@@ -250,11 +250,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
 
     def _init_action_space(self):
         self._action_space = asymmetric_residual_action_space(
-            np.asarray(
-                [self._joint_position_lower.numpy(), self._joint_position_upper.numpy()],
-                dtype=np.float32,
-            ),
-            self.default_angles.numpy(),
+            torch.stack((self._joint_position_lower, self._joint_position_upper)),
+            self.default_angles,
             self.cfg.control_config.action_scale,
         )
 
@@ -432,9 +429,11 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         spawn_range = self.cfg.spawn_xy_range
         if spawn_range > 0.0:
             xy = (torch.rand(num_reset, 2, dtype=torch.float32) * 2.0 - 1.0) * spawn_range
-            ground_height = self.sim.sample_terrain_height(
-                self.cfg.ground_geom_name, env_ids, xy[:, None, :] + _FOOTPRINT
-            ).max(dim=1).values
+            ground_height = (
+                self.sim.sample_terrain_height(self.cfg.ground_geom_name, env_ids, xy[:, None, :] + _FOOTPRINT)
+                .max(dim=1)
+                .values
+            )
             base_pose[:, :2] = xy
             base_pose[:, 2] = self._init_base_pose[2] + ground_height
 
@@ -606,9 +605,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         del linvel, gyro, dof_pos
         base_pos = self.sim_data["base_pos"]
         env_ids = torch.arange(self._num_envs, dtype=torch.int64)
-        ground_height = self.sim.sample_terrain_height(self.cfg.ground_geom_name, env_ids, base_pos[:, None, :2])[
-            :, 0
-        ]
+        ground_height = self.sim.sample_terrain_height(self.cfg.ground_geom_name, env_ids, base_pos[:, None, :2])[:, 0]
         base_height = base_pos[:, 2] - ground_height
         return torch.square(base_height - self.cfg.reward_config.base_height_target)
 
