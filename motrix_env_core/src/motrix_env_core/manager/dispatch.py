@@ -12,9 +12,8 @@ def dispatch(function: _Dispatchable) -> _Dispatchable:
     """Mark one shared MDP function as a compiler dispatch entry.
 
     The decorator is intentionally transparent: it preserves the original Python
-    function so NumPy/Numba and Torch compilers can inspect the same signature and
-    annotations. Backend compilation remains owned by the selected manager
-    compiler.
+    function so the torch executor can inspect the original signature and
+    annotations while dispatching through the layout method proxy table.
     """
     setattr(function, _DISPATCH_MARKER, True)
     return function

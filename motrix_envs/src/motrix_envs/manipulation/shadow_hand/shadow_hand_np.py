@@ -8,7 +8,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.direct.env import DirectEnv
-from motrix_env_core.math import quaternion_array
+from motrix_env_core.math import quaternion
 from motrix_env_core.sim import (
     BatchLinkAngularVelocityQuery,
     BatchLinkLinearVelocityQuery,
@@ -255,7 +255,7 @@ class ShadowHandReposeEnv(DirectEnv):
         )  # Total: 65
 
         # Compute relative quaternion
-        relative_quat = quaternion_array.mul(cube_quat, quaternion_array.inverse(self._goal_rot))
+        relative_quat = quaternion.mul(cube_quat, quaternion.inverse(self._goal_rot))
         scaled_hand_pos = (
             2.0
             * (hand_dof_pos - self._hand_dof_lower_limits)
@@ -331,7 +331,7 @@ class ShadowHandReposeEnv(DirectEnv):
         goal_dist = torch.linalg.norm(cube_pos - self._goal_pos, dim=-1)
 
         # Rotation distance
-        rot_dist = quaternion_array.rotation_distance(cube_quat, self._goal_rot)
+        rot_dist = quaternion.rotation_distance(cube_quat, self._goal_rot)
 
         # Core reward components
         dist_rew = goal_dist * cfg.dist_reward_scale

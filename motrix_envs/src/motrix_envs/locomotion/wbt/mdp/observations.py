@@ -15,8 +15,8 @@ from motrix_env_core.manager import (
     ObservationTermCfg,
     ObsTerm,
 )
-from motrix_env_core.math import quaternion_array
-from motrix_env_core.math.quaternion_array import relative_orientation, rotate_inverse
+from motrix_env_core.math import quaternion
+from motrix_env_core.math.quaternion import relative_orientation, rotate_inverse
 from motrix_env_core.mdp.observations import (
     UniformNoiseCfg,
     add_uniform_noise,
@@ -105,10 +105,8 @@ def robot_body_orientation_obs(ctx: ManagerContext, out: torch.Tensor) -> None:
     # explicitly.
     tracked_body_quat = ctx.sim["tracked_body_quat"]
     reference_quat = tracked_body_quat[:, ctx.commands["motion"].reference_index]
-    first = quaternion_array.matrix6d(
-        quaternion_array.mul(quaternion_array.inverse(reference_quat), tracked_body_quat[:, 0, :])
-    )
-    rest = quaternion_array.matrix6d(quaternion_array.mul(first[:, None, :4], tracked_body_quat[:, 1:, :]))
+    first = quaternion.matrix6d(quaternion.mul(quaternion.inverse(reference_quat), tracked_body_quat[:, 0, :]))
+    rest = quaternion.matrix6d(quaternion.mul(first[:, None, :4], tracked_body_quat[:, 1:, :]))
     out.copy_(torch.cat((first[:, None, :], rest), dim=1).reshape(tracked_body_quat.shape[0], -1))
 
 

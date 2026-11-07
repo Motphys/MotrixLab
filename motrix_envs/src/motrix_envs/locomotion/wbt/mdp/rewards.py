@@ -10,7 +10,7 @@ import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, RewardTerm, RewardTermCfg
-from motrix_env_core.math.quaternion_array import rotation_distance
+from motrix_env_core.math.quaternion import rotation_distance
 from motrix_env_core.mdp.action import JointPositionActionState
 
 

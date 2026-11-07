@@ -17,7 +17,7 @@ from motrix_env_core.manager import (
     ResetTermCfg,
 )
 from motrix_env_core.manager.kernel_data import Map
-from motrix_env_core.math.quaternion_array import from_euler
+from motrix_env_core.math.quaternion import from_euler
 from motrix_env_core.sim import (
     BodyAngularVelocityWrite,
     BodyLinearVelocityWrite,

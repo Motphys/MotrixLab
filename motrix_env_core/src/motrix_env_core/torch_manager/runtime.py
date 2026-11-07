@@ -26,9 +26,8 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, fields, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
-import numpy as np
 import torch
 
 from motrix_env_core.manager.context import ManagerContext
@@ -77,8 +76,34 @@ class TorchTaskProgram:
 
     evaluate_kernel: Callable[[torch.Tensor, tuple[torch.Tensor, ...], Any], None]
     observe_kernel: Callable[[Any], None]
-    reset_kernel: Callable[[np.ndarray, tuple[np.ndarray, ...]], None]
+    reset_kernel: Callable[[torch.Tensor, tuple[torch.Tensor, ...]], None]
     reward_weights: torch.Tensor
+
+
+_K = TypeVar("_K")
+
+
+class CompiledKernels:
+    """Memo of compiled kernels keyed by kind and captured-tensor identity.
+
+    A compiled kernel is bound to the specific tensor objects it captured at
+    build time, so the cache key includes the identity (``id``) of the
+    captured buffer tuple alongside the kernel kind. Entries are created
+    lazily on first call and stay valid as long as the caller keeps passing
+    the same buffer objects; a rebuilt buffer tuple misses the cache and
+    compiles a fresh graph bound to the new tensors.
+    """
+
+    def __init__(self) -> None:
+        self._kernels: dict[Any, _K] = {}
+
+    def get_or_build(self, key: Any, build: Callable[[], _K]) -> _K:
+        """Return the cached kernel for ``key``, compiling it on first use."""
+        kernel = self._kernels.get(key)
+        if kernel is None:
+            kernel = build()
+            self._kernels[key] = kernel
+        return kernel
 
 
 def _lane_clone(
@@ -149,7 +174,7 @@ class TorchManagerRuntime:
             for name, reset in zip(env.sim_reset_terms, program.sim_reset_terms, strict=True)
         )
 
-        self._compiled_kernels: dict[Any, Any] = {}
+        self._compiled_kernels = CompiledKernels()
 
     # -- kernel API ---------------------------------------------------------
 
@@ -167,17 +192,13 @@ class TorchManagerRuntime:
         buffers: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
         outputs: KernelOutputs,
     ) -> None:
-        kernel = self._compiled_kernels.get(("evaluate", id(buffers)))
-        if kernel is None:
-            kernel = self._build_compiled_evaluate(reward_weights, buffers)
-            self._compiled_kernels[("evaluate", id(buffers))] = kernel
+        kernel = self._compiled_kernels.get_or_build(
+            ("evaluate", id(buffers)), lambda: self._build_compiled_evaluate(reward_weights, buffers)
+        )
         kernel(outputs.reward, outputs.terminated)
 
     def observe(self, outputs: KernelOutputs) -> None:
-        kernel = self._compiled_kernels.get("observe")
-        if kernel is None:
-            kernel = self._build_compiled_observe()
-            self._compiled_kernels["observe"] = kernel
+        kernel = self._compiled_kernels.get_or_build("observe", self._build_compiled_observe)
         value_obs = outputs.value_obs
         kernel(
             outputs.policy_obs,
@@ -187,11 +208,13 @@ class TorchManagerRuntime:
     def reset(self, env_ids: torch.Tensor, reset_buffers: tuple[torch.Tensor, ...]) -> None:
         if not self.command_reset_hooks and not self._reset_terms:
             return
-        ids = env_ids.detach().cpu().contiguous().to(torch.int64)
-        kernel = self._compiled_kernels.get(("reset", id(reset_buffers)))
-        if kernel is None:
-            kernel = self._build_compiled_reset(reset_buffers)
-            self._compiled_kernels[("reset", id(reset_buffers))] = kernel
+        # Normalize ids onto the kernel tensors' device (via the context
+        # anchor) so the cached static graph sees one form regardless of the
+        # caller's device, dtype, layout, or autograd history.
+        ids = env_ids.detach().to(device=self.ctx.env_id.device, dtype=torch.int64).contiguous()
+        kernel = self._compiled_kernels.get_or_build(
+            ("reset", id(reset_buffers)), lambda: self._build_compiled_reset(reset_buffers)
+        )
         kernel(ids)
 
     def _build_compiled_evaluate(
@@ -290,7 +313,7 @@ class TorchManagerRuntime:
 
         return kernel
 
-    def _build_compiled_reset(self, reset_buffers: tuple[np.ndarray, ...]) -> Callable[[torch.Tensor], None]:
+    def _build_compiled_reset(self, reset_buffers: tuple[torch.Tensor, ...]) -> Callable[[torch.Tensor], None]:
         """Compile the reset schedule as a static full-batch masked graph.
 
         The reset math runs for ALL lanes with the selected lanes chosen by a
@@ -370,10 +393,7 @@ class TorchManagerRuntime:
 
         if self.compile_enabled:
             kernel = torch.compile(kernel, dynamic=False, options=_compile_options())
-        compact_plan = tuple(
-            (buffers, staging)
-            for _invocation, buffers, staging, _fields, _args in write_plan
-        )
+        compact_plan = tuple((buffers, staging) for _invocation, buffers, staging, _fields, _args in write_plan)
 
         def wrapper(ids: torch.Tensor) -> None:
             mask.fill_(False)

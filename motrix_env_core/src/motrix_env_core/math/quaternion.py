@@ -1,39 +1,155 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+"""Quaternion helpers in ``[x, y, z, w]`` convention.
+
+The batch operations accept NumPy arrays and Torch tensors through the
+array API (a single ``isinstance`` check keeps Dynamo specialization
+possible inside compiled graphs); the remaining helpers are NumPy-only
+host utilities.
+"""
+
+import array_api_compat.numpy as _numpy_namespace
+import array_api_compat.torch as _torch_namespace
 import numpy as np
+import torch as _torch  # noqa: F401  (namespace check only)
 
 from . import utils
 
 
-def mul(q1, q2):
+def _array_namespace(value, *others):
+    # A single isinstance check keeps Dynamo specialization possible inside
+    # compiled graphs; array_api_compat's own dispatcher is too dynamic here.
+    return _torch_namespace if isinstance(value, _torch.Tensor) else _numpy_namespace
+
+
+def inverse(q):
+    """Inverse of ``(..., 4)`` quaternion(s); conjugate over squared norm."""
+    xp = _array_namespace(q)
+    norm = xp.maximum(xp.sum(q * q, axis=-1, keepdims=True), xp.full_like(q[..., :1], 1e-12))
+    return xp.concat((-q[..., :3], q[..., 3:]), axis=-1) / norm
+
+
+def mul(lhs, rhs):
+    """Hamilton product of two ``(..., 4)`` quaternion batches."""
+    xp = _array_namespace(lhs, rhs)
+    x1, y1, z1, w1 = (lhs[..., i] for i in range(4))
+    x2, y2, z2, w2 = (rhs[..., i] for i in range(4))
+    return xp.stack(
+        (
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        ),
+        axis=-1,
+    )
+
+
+def rotate_inverse(q, vector):
+    """Rotate ``(..., 3)`` vectors by the inverse of ``(..., 4)`` quaternions."""
+    xp = _array_namespace(q, vector)
+    x, y, z, w = (q[..., i] for i in range(4))
+    vx, vy, vz = (vector[..., i] for i in range(3))
+    cx = y * vz - z * vy - w * vx
+    cy = z * vx - x * vz - w * vy
+    cz = x * vy - y * vx - w * vz
+    return xp.stack((vx + 2 * (y * cz - z * cy), vy + 2 * (z * cx - x * cz), vz + 2 * (x * cy - y * cx)), axis=-1)
+
+
+def matrix6d(q):
+    """First two rows of the rotation matrix as a ``(..., 6)`` 6D representation."""
+    xp = _array_namespace(q)
+    x, y, z, w = (q[..., i] for i in range(4))
+    s = 2 / xp.sum(q * q, axis=-1)
+    return xp.stack(
+        (
+            1 - s * (y * y + z * z),
+            s * (x * y - z * w),
+            s * (x * z + y * w),
+            s * (x * y + z * w),
+            1 - s * (x * x + z * z),
+            s * (y * z - x * w),
+        ),
+        axis=-1,
+    )
+
+
+def relative_orientation(reference, target):
+    """6D orientation of ``target`` expressed in the ``reference`` frame."""
+    return matrix6d(mul(inverse(reference), target))
+
+
+def align_targets(robot_position, robot_quat, reference_position, reference_quat, body_position, body_quat):
+    """Yaw-align corpus bodies, anchoring robot XY and corpus reference Z."""
+    xp = _array_namespace(robot_position)
+    delta = mul(robot_quat, inverse(reference_quat))
+    x, y, z, w = (delta[..., i] for i in range(4))
+    yaw = xp.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    zero = xp.zeros_like(yaw)
+    yaw_quat = xp.stack((zero, zero, xp.sin(yaw / 2), xp.cos(yaw / 2)), axis=-1)
+    anchor = xp.concat((robot_position[..., :2], reference_position[..., 2:]), axis=-1)
+    # Forward rotation uses the same unit-quaternion algebra as scalar helper.
+    conjugate_quat = xp.concat((-yaw_quat[..., :3], yaw_quat[..., 3:]), axis=-1)
+    aligned_position = rotate_inverse(conjugate_quat[:, None, :], body_position - reference_position[:, None, :])
+    return aligned_position + anchor[:, None, :], mul(yaw_quat[:, None, :], body_quat)
+
+
+def rotation_distance(lhs, rhs):
+    """Geodesic angle between unit quaternions, without normalization."""
+    xp = _array_namespace(lhs, rhs)
+    x1, y1, z1, w1 = (lhs[..., i] for i in range(4))
+    x2, y2, z2, w2 = (rhs[..., i] for i in range(4))
+    dx = -w1 * x2 + x1 * w2 - y1 * z2 + z1 * y2
+    dy = -w1 * y2 + x1 * z2 + y1 * w2 - z1 * x2
+    dz = -w1 * z2 - x1 * y2 + y1 * x2 + z1 * w2
+    imaginary_norm = xp.sqrt(dx * dx + dy * dy + dz * dz)
+    imaginary_norm = xp.where(imaginary_norm < 0.0, 0.0, xp.where(imaginary_norm > 1.0, 1.0, imaginary_norm))
+    return 2.0 * xp.asin(imaginary_norm)
+
+
+def from_euler(euler):
+    """Quaternion (xyzw) from ``(..., 3)`` roll/pitch/yaw angles; trig keeps the input dtype."""
+    xp = _array_namespace(euler)
+    roll, pitch, yaw = (euler[..., i] for i in range(3))
+    cy = xp.cos(yaw * 0.5)
+    sy = xp.sin(yaw * 0.5)
+    cp = xp.cos(pitch * 0.5)
+    sp = xp.sin(pitch * 0.5)
+    cr = xp.cos(roll * 0.5)
+    sr = xp.sin(roll * 0.5)
+    return xp.stack(
+        (
+            sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+            cr * cp * cy + sr * sp * cy,
+        ),
+        axis=-1,
+    )
+
+
+def rotate_inverse_components(quaternion, vector):
+    """Rotate vectors by the inverse of ``[x, y, z, w]`` quaternions, batched.
+
+    ``quaternion`` is ``(..., 4)`` and ``vector`` is ``(..., 3)``; the rotated
+    components are returned as three tensors of the leading shape.
     """
-    Multiply two quaternions.
-
-    Quaternion format: (x, y, z, w)
-
-    Args:
-        q1: First quaternion(s). Shape: (..., 4)
-        q2: Second quaternion(s). Shape: (..., 4)
-
-    Returns:
-        Product quaternion(s). Shape: (..., 4)
-    """
-    x1, y1, z1, w1 = q1[..., 0], q1[..., 1], q1[..., 2], q1[..., 3]
-    x2, y2, z2, w2 = q2[..., 0], q2[..., 1], q2[..., 2], q2[..., 3]
-
-    # Standard quaternion multiplication formula
-    w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
-    x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
-    y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
-    z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
-
-    return np.stack([x, y, z, w], axis=-1)
+    x, y, z, w = (quaternion[..., i] for i in range(4))
+    vx, vy, vz = (vector[..., i] for i in range(3))
+    cx = y * vz - z * vy - w * vx
+    cy = z * vx - x * vz - w * vy
+    cz = x * vy - y * vx - w * vz
+    return (
+        vx + 2.0 * (y * cz - z * cy),
+        vy + 2.0 * (z * cx - x * cz),
+        vz + 2.0 * (x * cy - y * cx),
+    )
 
 
 def conjugate(q):
     """
-    Compute the conjugate of a quaternion.
+    Compute the conjugate of a quaternion (NumPy).
 
     For q = (x, y, z, w), conjugate is (-x, -y, -z, w)
 
@@ -46,46 +162,9 @@ def conjugate(q):
     return q * np.array([-1, -1, -1, 1], dtype=q.dtype)
 
 
-def inverse(q):
-    """
-    Compute the inverse of a quaternion.
-
-    For unit quaternions, this is equal to the conjugate. For non-unit
-    quaternions, divide the conjugate by the squared norm.
-
-    Args:
-        q: Input quaternion(s). Shape: (..., 4)
-
-    Returns:
-        Inverse quaternion(s). Shape: (..., 4)
-    """
-    q = np.asarray(q)
-    norm_sq = np.sum(np.square(q), axis=-1, keepdims=True)
-    return conjugate(q) / np.maximum(norm_sq, 1e-12)
-
-
-def from_euler(roll: np.ndarray, pitch: np.ndarray, yaw: np.ndarray):
-    """
-    Euler convert to quaternion, with [x, y, z, w] format
-    """
-    cy = np.cos(yaw * 0.5)
-    sy = np.sin(yaw * 0.5)
-    cp = np.cos(pitch * 0.5)
-    sp = np.sin(pitch * 0.5)
-    cr = np.cos(roll * 0.5)
-    sr = np.sin(roll * 0.5)
-
-    qw = cr * cp * cy + sr * sp * sy
-    qx = sr * cp * cy - cr * sp * sy
-    qy = cr * sp * cy + sr * cp * sy
-    qz = cr * cp * sy - sr * sp * cy
-
-    return np.stack([qx, qy, qz, qw], dtype=np.float32, axis=-1)
-
-
 def from_angle_axis(angle, axis):
     """
-    Create quaternion from angle-axis representation.
+    Create quaternion from angle-axis representation (NumPy).
 
     Args:
         angle: Rotation angle in radians. Shape: (batch,) or scalar
@@ -108,21 +187,13 @@ def from_angle_axis(angle, axis):
     sin_half = np.sin(half_angle)
     cos_half = np.cos(half_angle)
 
-    # Handle broadcasting
-    if axis.ndim == 1:
-        # Single axis
-        w = cos_half
-        xyz = axis * sin_half[..., np.newaxis]
-    else:
-        # Multiple axes
-        w = cos_half
-        xyz = axis * sin_half[..., np.newaxis]
+    xyz = axis * sin_half[..., np.newaxis]
 
-    return utils.normalize(np.concatenate([xyz, w[..., np.newaxis]], axis=-1))
+    return utils.normalize(np.concatenate([xyz, cos_half[..., np.newaxis]], axis=-1))
 
 
 def rotate_vector(quats: np.ndarray, v: np.ndarray):
-    """Rotate vectors ``v`` by quaternions ``quats`` (``[x, y, z, w]`` format).
+    """Rotate vectors ``v`` by quaternions ``quats`` (``[x, y, z, w]`` format, NumPy).
 
     Both inputs broadcast on their leading dims:
 
@@ -144,26 +215,9 @@ def rotate_vector(quats: np.ndarray, v: np.ndarray):
     return vec + w[..., None] * t + np.cross(im, t)
 
 
-def rotate_inverse(quats, v):
-    """Inverse-rotate vectors ``v`` by quaternions ``quats``.
-
-    Same broadcasting contract as :func:`rotate_vector`.
-    """
-    batch = np.broadcast_shapes(quats.shape[:-1], v.shape[:-1])
-    q = np.broadcast_to(quats, batch + (4,))
-    vec = np.broadcast_to(v, batch + (3,))
-
-    w = q[..., -1]
-    im = q[..., :3]
-
-    # v' = v + 2 * r × (r × v - w * v)
-    term = np.cross(im, vec) - w[..., None] * vec
-    return vec + 2.0 * np.cross(im, term)
-
-
 def similarity(q_current, q_target):
     """
-    Use NumPy to compute attitude alignment reward between two batches of quaternions.
+    Compute attitude alignment reward between two batches of quaternions (NumPy).
 
     Parameters:
         q_current (np.ndarray): Quaternion of current pose, shape (num_envs, 4).
@@ -173,62 +227,32 @@ def similarity(q_current, q_target):
     Returns:
         np.ndarray: Reward value for each environment, shape (num_envs,). Reward value range is [-1, 1].
     """
-    # Ensure input is float array
-    q_current = q_current.astype(np.float32)
-    q_target = q_target.astype(np.float32)
-
     # If q_target is a single quaternion, broadcast to all environments
     if q_target.ndim == 1:
-        # Use np.tile for broadcasting
         q_target = np.tile(q_target, (q_current.shape[0], 1))
 
-    # Step 1: Compute conjugate of q_current
-    # Conjugate of quaternion (x, y, z, w) is (-x, -y, -z, w)
-    q_current_conj = np.copy(q_current)
-    q_current_conj[..., :3] *= -1  # Negate x, y, z components
-
-    # Step 2: Compute relative quaternion q_rel = q_target * q_current_conj
-    # Unpack quaternion components for computation
+    # Relative quaternion q_rel = q_target * conjugate(q_current); its real
+    # part gives the rotation angle, clamped for numerical stability.
     x1, y1, z1, w1 = q_target[..., 0], q_target[..., 1], q_target[..., 2], q_target[..., 3]
-    x2, y2, z2, w2 = q_current_conj[..., 0], q_current_conj[..., 1], q_current_conj[..., 2], q_current_conj[..., 3]
+    q_current_conj = np.copy(q_current)
+    q_current_conj[..., :3] *= -1
+    x2, y2, z2, w2 = (
+        q_current_conj[..., 0],
+        q_current_conj[..., 1],
+        q_current_conj[..., 2],
+        q_current_conj[..., 3],
+    )
 
-    # Apply quaternion multiplication formula
     w_rel = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
-
-    # For numerical stability, clamp w_rel to [-1.0, 1.0] range
     w_rel_clamped = np.clip(w_rel, -1.0, 1.0)
 
-    # Step 3: Compute rotation angle theta
     theta = 2.0 * np.arccos(w_rel_clamped)
-
-    # Step 4: Compute reward
-    reward = np.cos(theta)
-
-    return reward
-
-
-def rotation_distance(q1, q2):
-    """
-    Compute the rotation distance between two quaternions in radians.
-
-    Args:
-        q1: First quaternion(s). Shape: (..., 4)
-        q2: Second quaternion(s). Shape: (..., 4)
-
-    Returns:
-        Rotation distance in radians. Shape: (...)
-    """
-    quat_diff = mul(q1, conjugate(q2))
-    # Extract imaginary part (x, y, z) and compute norm
-    imaginary_norm = np.linalg.norm(quat_diff[..., :3], axis=-1)
-    # Clamp to valid range for arcsin
-    imaginary_norm = np.clip(imaginary_norm, 0.0, 1.0)
-    return 2.0 * np.arcsin(imaginary_norm)
+    return np.cos(theta)
 
 
 def get_euler_xyz(q: np.ndarray):
     """
-    Convert quaternion to Euler angles (roll, pitch, yaw).
+    Convert quaternion to Euler angles (roll, pitch, yaw) (NumPy).
 
     Args:
         q: Quaternion(s) in (x, y, z, w) format. Shape: (..., 4)
@@ -261,7 +285,7 @@ def get_yaw(quat: np.ndarray) -> np.ndarray:
 
 
 def from_yaw(yaw: np.ndarray) -> np.ndarray:
-    """Build a yaw-only (z-axis) quaternion from a yaw angle.
+    """Build a yaw-only (z-axis) quaternion from a yaw angle (NumPy).
 
     Args:
         yaw: yaw angle(s) in radians, any shape (including scalar).
@@ -279,7 +303,7 @@ def from_yaw(yaw: np.ndarray) -> np.ndarray:
 
 
 def to_matrix(q: np.ndarray) -> np.ndarray:
-    """Convert quaternion(s) to row-major 3x3 rotation matrix(ices).
+    """Convert quaternion(s) to row-major 3x3 rotation matrix(ices) (NumPy).
 
     Uses the Shepperd-style closed form with ``2/|q|^2`` normalization, so
     non-unit inputs are handled too. Output shape: ``q.shape[:-1] + (3, 3)``.
@@ -306,7 +330,7 @@ def to_matrix(q: np.ndarray) -> np.ndarray:
 
 def generate_random_shoemake(size):
     """
-    Generate uniformly distributed random quaternions using Shoemake's method.
+    Generate uniformly distributed random quaternions using Shoemake's method (NumPy).
 
     This ensures uniform distribution over SO(3) rotation space.
 

@@ -9,7 +9,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
-from motrix_env_core.math.quaternion_array import rotate_inverse
+from motrix_env_core.math.quaternion import rotate_inverse
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     BodyAngularVelocityWrite,
@@ -516,9 +516,7 @@ class AnymalCEnv(DirectEnv):
         num_envs = pose_commands.shape[0]
         arrow_pos = pose_commands.clone()
         arrow_pos[:, 2] = 0.05
-        arrow_pos = torch.stack(
-            [pose_commands[:, 0], pose_commands[:, 1], torch.full((num_envs,), 0.5)], dim=1
-        )
+        arrow_pos = torch.stack([pose_commands[:, 0], pose_commands[:, 1], torch.full((num_envs,), 0.5)], dim=1)
         arrow_quat = _yaw_quaternion(pose_commands[:, 2])
         self._target_writes.buffer("target_pos")[env_ids, 0] = arrow_pos
         self._target_writes.buffer("target_rot")[env_ids, 0] = arrow_quat

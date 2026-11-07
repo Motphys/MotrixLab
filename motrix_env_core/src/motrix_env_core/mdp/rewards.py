@@ -8,7 +8,7 @@ import torch
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import RewardTerm, RewardTermCfg
 from motrix_env_core.manager.context import BuildContext, ManagerContext
-from motrix_env_core.math.quaternion_array import rotate_inverse_components
+from motrix_env_core.math.quaternion import rotate_inverse_components
 from motrix_env_core.sim import (
     LinkAngularVelocityQuery,
     LinkLinearVelocityQuery,

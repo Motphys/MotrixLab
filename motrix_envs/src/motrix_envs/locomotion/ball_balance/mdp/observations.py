@@ -11,7 +11,7 @@ from motrix_env_core.manager import (
     ObservationTermCfg,
     ObsTerm,
 )
-from motrix_env_core.math.quaternion_array import rotate_inverse as rotate_inverse_batch
+from motrix_env_core.math.quaternion import rotate_inverse as rotate_inverse_batch
 from motrix_env_core.mdp.observations import UniformNoiseCfg
 
 

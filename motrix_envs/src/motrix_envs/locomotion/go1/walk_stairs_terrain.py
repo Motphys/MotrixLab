@@ -7,7 +7,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
-from motrix_env_core.math.quaternion_array import rotate_inverse
+from motrix_env_core.math.quaternion import rotate_inverse
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     BodyAngularVelocityWrite,
@@ -430,7 +430,7 @@ class Go1WalkStairsTask(DirectEnv):
         is_stumble = torch.zeros((self._num_envs,), dtype=torch.float32)
         for k in range(len(self.cfg.sensor.feet)):
             contact_force = foot_forces[:, 3 * k : 3 * k + 3]
-            is_stumble += (
-                torch.linalg.vector_norm(contact_force, dim=1) > 5 * torch.abs(contact_force[:, 2])
-            ).to(torch.float32)
+            is_stumble += (torch.linalg.vector_norm(contact_force, dim=1) > 5 * torch.abs(contact_force[:, 2])).to(
+                torch.float32
+            )
         return is_stumble

@@ -8,7 +8,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.direct.env import DirectEnv
-from motrix_env_core.math import quaternion_array
+from motrix_env_core.math import quaternion
 from motrix_env_core.sim import (
     BodyJointPositionQuery,
     BodyJointPositionWrite,
@@ -526,7 +526,7 @@ class RM65OpenCabinetEnv(DirectEnv):
         pos_delta = drawer_grasp_pose[:, :3] - robot_grasp_pose[:, :3]
         quat_target = drawer_grasp_pose[:, 3:]
         quat_current = robot_grasp_pose[:, 3:]
-        q_rel = quaternion_array.mul(quat_target, quaternion_array.inverse(quat_current))
+        q_rel = quaternion.mul(quat_target, quaternion.inverse(quat_current))
         q_norm = torch.linalg.norm(q_rel, dim=-1, keepdim=True)
         q_rel = q_rel / torch.clamp(q_norm, min=1e-6)
         # Enforce a consistent hemisphere to avoid sign flips.
@@ -669,7 +669,7 @@ class RM65OpenCabinetEnv(DirectEnv):
         sin_half = torch.sin(half_angles)
         cos_half = torch.cos(half_angles)
         delta_q = torch.cat([axes * sin_half.unsqueeze(-1), cos_half.unsqueeze(-1)], dim=-1)
-        noisy_quat = quaternion_array.mul(delta_q, quat)
+        noisy_quat = quaternion.mul(delta_q, quat)
         quat_norm = torch.linalg.norm(noisy_quat, dim=-1, keepdim=True)
         return noisy_quat / torch.clamp(quat_norm, min=1e-6)
 
@@ -704,7 +704,7 @@ class RM65OpenCabinetEnv(DirectEnv):
                 if bool(resample_mask.any()):
                     bias_quat[resample_mask] = self._sample_quat_bias(int(resample_mask.sum()), cfg.target_rot_bias_std)
             self._obs_handle_bias_quat = bias_quat
-            noisy_pose[:, 3:] = quaternion_array.mul(bias_quat, noisy_pose[:, 3:])
+            noisy_pose[:, 3:] = quaternion.mul(bias_quat, noisy_pose[:, 3:])
 
         if cfg.target_pos_std > 0.0:
             noisy_pose[:, :3] = noisy_pose[:, :3] + (torch.randn(num_envs, 3, dtype=torch.float32) * cfg.target_pos_std)

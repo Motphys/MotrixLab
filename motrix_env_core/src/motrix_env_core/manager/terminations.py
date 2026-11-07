@@ -47,7 +47,7 @@ class TerminationTermCfg(abc.ABC):
 
     @abc.abstractmethod
     def __call__(self, ctx: BuildContext) -> TerminationTerm:
-        """Assemble the current NumPy/Numba runtime term."""
+        """Assemble the runtime term dispatched by the torch executor."""
 
 
 @configclass

@@ -15,7 +15,7 @@ from motrix_env_core.manager import (
     RewardTermCfg,
 )
 from motrix_env_core.manager.context import BuildContext
-from motrix_env_core.math.quaternion_array import rotate_inverse_components
+from motrix_env_core.math.quaternion import rotate_inverse_components
 from motrix_env_core.mdp.terrain import HeightFieldGrid, heightfield_lookup
 from motrix_env_core.sim import (
     BatchLinkPositionQuery,

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True, init=False)
 class RewardTerm(BaseTerm):
-    """Host-side reward dispatch and its static Numba-compatible arguments."""
+    """Host-side reward dispatch and its static canonicalized arguments."""
 
     def __init__(self, dispatch: Callable[..., float], *args: Any) -> None:
         BaseTerm.__init__(self, dispatch, *args)
@@ -30,7 +30,7 @@ class RewardTermCfg(abc.ABC):
 
     @abc.abstractmethod
     def __call__(self, ctx: BuildContext) -> RewardTerm:
-        """Assemble the current NumPy/Numba runtime term."""
+        """Assemble the runtime term dispatched by the torch executor."""
 
 
 @configclass

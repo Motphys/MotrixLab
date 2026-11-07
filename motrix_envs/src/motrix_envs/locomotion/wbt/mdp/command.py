@@ -20,8 +20,8 @@ from motrix_env_core.manager import (
 )
 from motrix_env_core.manager.commands import ResetContext
 from motrix_env_core.manager.dispatch import dispatch
-from motrix_env_core.math.quaternion_array import align_targets
 from motrix_env_core.manager.rand import draw_uniform
+from motrix_env_core.math.quaternion import align_targets
 from motrix_envs.motion import MotionLibrary, WbtMotionClip
 
 

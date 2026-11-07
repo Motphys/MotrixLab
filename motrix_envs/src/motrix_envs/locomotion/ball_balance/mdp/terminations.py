@@ -7,7 +7,7 @@ import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, TerminationTerm, TerminationTermCfg
-from motrix_env_core.math.quaternion_array import rotate_inverse as rotate_inverse_batch
+from motrix_env_core.math.quaternion import rotate_inverse as rotate_inverse_batch
 
 
 @configclass(kw_only=True)
