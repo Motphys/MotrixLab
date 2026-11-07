@@ -9,12 +9,12 @@ from typing import TypeAlias
 
 import motrixsim as mtx
 import numpy as np
-import numpy.typing as npt
+import torch
 
 from motrix_env_core.perf import active_perf_scope
 from motrix_env_core.sim import PhysicsReadProgram, SimDataQuery, SimDataQueryCompiler
 
-FloatArray: TypeAlias = npt.NDArray[np.float32]
+FloatArray: TypeAlias = np.ndarray
 
 
 def _c_element_strides(shape: tuple[int, ...]) -> tuple[int, ...]:
@@ -396,6 +396,13 @@ class _MotrixSimReadProgram(PhysicsReadProgram):
                     f"Program view for simulator query {key!r} must have "
                     f"leading dimension {num_envs}, got {view.shape}."
                 )
+        # Public views are torch tensors aliasing the same arena storage; the
+        # numpy arena stays private to the backend bridge. Aliased keys
+        # (duplicate declarations) share one tensor object.
+        self._tensors: dict[str, torch.Tensor] = {}
+        tensors_by_view: dict[int, torch.Tensor] = {}
+        for key, view in self._views.items():
+            self._tensors[key] = tensors_by_view.setdefault(id(view), torch.from_numpy(view))
 
     @property
     def arena_bytes(self) -> int:
@@ -408,17 +415,18 @@ class _MotrixSimReadProgram(PhysicsReadProgram):
     def query(self, key: str) -> SimDataQuery:
         return self._declared[key]
 
-    def view(self, key: str) -> FloatArray:
-        return self._views[key]
+    def view(self, key: str) -> torch.Tensor:
+        return self._tensors[key]
 
-    def execute(self, env_ids: npt.NDArray[np.int64] | None = None) -> None:
-        if env_ids is not None and (env_ids.dtype != np.int64 or env_ids.ndim != 1):
-            raise TypeError("Partial simulator read env_ids must be a one-dimensional int64 ndarray.")
+    def execute(self, env_ids: torch.Tensor | None = None) -> None:
+        if env_ids is not None and (env_ids.dtype not in (torch.int32, torch.int64) or env_ids.ndim != 1):
+            raise TypeError("Partial simulator read env_ids must be a one-dimensional integer tensor.")
+        ids = None if env_ids is None else env_ids.detach().cpu().contiguous().to(torch.int64).numpy()
         # One native call writes the authoritative arena — the full batch, or
         # only the rows selected by env_ids. The perf scope nests under the
         # caller's stage (e.g. transition/reset in the console timing tree).
         with active_perf_scope("read"):
-            self._read.program.execute(self._source, env_ids=env_ids)
+            self._read.program.execute(self._source, env_ids=ids)
 
 
 def compile_read_program(

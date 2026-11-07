@@ -6,7 +6,7 @@ ArrayEnv 在时间截断自动 reset 前捕获当前 transition 的终态观测�
 
 ## 结果结构与生命周期
 
-`FinalObs` 为普通 dataclass，包含 `env_ids: np.ndarray` 和 `obs: NpObs`。观测行顺序与 env_ids 一致，policy/value 保持原始观测结构；没有独立 value 时仍为 None，消费者使用 `value_or_policy`。行数组为独立快照，可跨 step 保留；不需要重复复制 policy 作为 value。消费者不得修改共享结果。
+`FinalObs` 为普通 dataclass，包含 `env_ids: np.ndarray` 和 `obs: EnvObs`。观测行顺序与 env_ids 一致，policy/value 保持原始观测结构；没有独立 value 时仍为 None，消费者使用 `value_or_policy`。行数组为独立快照，可跨 step 保留；不需要重复复制 policy 作为 value。消费者不得修改共享结果。
 
 `ArrayEnvState.final_obs` 为可选字段。初始化为 None，每次 step 在推进环境前通过 replace 清空当前结果；此前返回的 state 持有的终态快照不因此清空。step 在 compute_transition、episode_steps 和 truncation 更新后、任何 auto-reset 写入前调用 `_capture_final_obs(env_ids)`。仅有 truncated 行时调用；没有截断或实现不支持捕获时为 None。读取无消费副作用。
 

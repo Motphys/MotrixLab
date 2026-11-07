@@ -4,9 +4,10 @@
 """Velocity-command and gait-phase command term."""
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
-from numba import njit
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import (
@@ -14,56 +15,76 @@ from motrix_env_core.manager import (
     CommandTerm,
     ManagerContext,
     ManagerEnv,
-    SharedArray,
-    kernel_data,
     metric,
 )
-from motrix_env_core.numba.manager.commands import ResetContext
-from motrix_env_core.numba.manager.dispatch import dispatch
+from motrix_env_core.manager.commands import ResetContext
+from motrix_env_core.manager.dispatch import dispatch
 
 
-@njit(inline="always")
-def _lane_phase(
-    cmd: np.ndarray,
-    phase_out: np.ndarray,
-    sin_cos_out: np.ndarray,
-    phase_offset: np.ndarray,
-    steps: float,
-    phase_step: float,
+def _phase(
+    command: torch.Tensor,
+    phase_out: torch.Tensor,
+    sin_cos_out: torch.Tensor,
+    phase_offset: torch.Tensor,
+    steps: torch.Tensor,
+    phase_step: torch.Tensor,
 ) -> None:
-    """Refresh both lanes' phase clocks, pinning standing commands to ``pi``."""
+    """Refresh both lanes' phase clocks over whole batches, pinning standing commands to ``pi``.
+
+    The clock arithmetic runs in float64 (the kernel's ``math.pi``
+    promotion) and is stored back as float32; standing commands pin both
+    lanes to ``pi`` per lane.
+    """
     tau = 2.0 * math.pi
-    for i in range(2):
-        phase_out[i] = (steps * phase_step + phase_offset[i] + math.pi) % tau - math.pi
-    speed = math.sqrt(cmd[0] * cmd[0] + cmd[1] * cmd[1])
-    if speed < 0.01 and abs(cmd[2]) < 0.01:
-        # Standing commands pin both lanes, matching the direct env's
-        # ``phase[stand] = pi``: the gait clock must freeze for both feet.
-        phase_out[:] = math.pi
-    for i in range(2):
-        sin_cos_out[i] = math.sin(phase_out[i])
-        sin_cos_out[2 + i] = math.cos(phase_out[i])
+    steps = steps.to(torch.float64)[:, None]
+    phase_step = phase_step.to(torch.float64)[:, None]
+    raw = (steps * phase_step + phase_offset.to(torch.float64) + math.pi) % tau - math.pi
+    speed = torch.sqrt(command[:, 0] * command[:, 0] + command[:, 1] * command[:, 1])
+    stand = (speed.to(torch.float64) < 0.01) & (command[:, 2].abs().to(torch.float64) < 0.01)
+    phase = raw.to(torch.float32)
+    phase = torch.where(stand[:, None], torch.full_like(phase, np.float32(math.pi)), phase)
+    sin = torch.sin(phase.to(torch.float64)).to(torch.float32)
+    cos = torch.cos(phase.to(torch.float64)).to(torch.float32)
+    sin_cos_out[:, 0] = sin[:, 0]
+    sin_cos_out[:, 1] = sin[:, 1]
+    sin_cos_out[:, 2] = cos[:, 0]
+    sin_cos_out[:, 3] = cos[:, 1]
+    phase_out.copy_(phase)
 
 
-@njit(inline="always")
-def _lane_resample_phase_offset(ctx: ManagerContext, phase_offset: np.ndarray) -> None:
-    first = ctx.rand.uniform_range(np.float32(-math.pi), np.float32(math.pi))
-    phase_offset[0] = first
-    phase_offset[1] = (first + 2.0 * math.pi) % (2.0 * math.pi) - math.pi
+def _uniform_range(u: torch.Tensor, low, high) -> torch.Tensor:
+    """Float32 ``low + (high - low) * 0.5 * (u + 1)`` matching the kernel convention."""
+    return low + (high - low) * np.float32(0.5) * (u + np.float32(1.0))
 
 
-@njit(inline="always")
-def _lane_resample_command(
-    ctx: ManagerContext, commands: np.ndarray, low: np.ndarray, high: np.ndarray, stand_prob: np.float32
+def _resample_command(
+    ctx: ManagerContext,
+    commands: torch.Tensor,
+    low: torch.Tensor,
+    high: torch.Tensor,
+    stand_prob,
+    resample: torch.Tensor,
 ) -> None:
-    rand = ctx.rand
-    for index in range(3):
-        commands[index] = rand.uniform_range(low[index], high[index])
-    if (rand.next_uniform() + 1.0) * 0.5 < stand_prob:
-        commands[:] = 0.0
+    """Resample velocity commands on ``resample`` lanes, preserving other lanes' RNG rows.
+
+    The draw counts and per-lane order are fixed: one 3-draw uniform batch
+    then one stand-probability draw; lanes that do not resample keep their
+    pre-draw RNG state.
+    """
+    if not bool(resample.any()):
+        return
+    previous_state = ctx.rand.state.clone()
+    u = ctx.rand.next_uniform(3)
+    sampled = _uniform_range(u, low, high)
+    stand_u = ctx.rand.next_uniform(1)[:, 0]
+    stand = (stand_u.to(torch.float64) + 1.0) * 0.5 < float(stand_prob)
+    sampled = torch.where(stand[:, None], torch.zeros_like(sampled), sampled)
+    keep_state = ~resample[:, None]
+    ctx.rand.state.copy_(torch.where(keep_state, previous_state, ctx.rand.state))
+    commands.copy_(torch.where(resample[:, None], sampled, commands))
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class WalkCommand(CommandTerm):
     """Per-environment velocity command and gait-phase clock.
 
@@ -104,65 +125,88 @@ class WalkCommand(CommandTerm):
             the ``command_steps`` metric).
     """
 
-    vel_limit_low: SharedArray
-    vel_limit_high: SharedArray
-    stand_prob: np.float32
-    resample_steps: np.float32
-    gait_period_base: np.float32
-    gait_period_width: np.float32
+    vel_limit_low: torch.Tensor
+    vel_limit_high: torch.Tensor
+    stand_prob: float
+    resample_steps: float
+    gait_period_base: float
+    gait_period_width: float
     curriculum_enabled: bool
-    penalty_scale: SharedArray
-    avg_ep_len: SharedArray
-    level_down_threshold: np.float32
-    level_up_threshold: np.float32
-    degree: np.float32
-    min_scale: np.float32
-    max_scale: np.float32
+    penalty_scale: torch.Tensor
+    avg_ep_len: torch.Tensor
+    level_down_threshold: float
+    level_up_threshold: float
+    degree: float
+    min_scale: float
+    max_scale: float
 
     # Per-environment state. ``phase`` and ``steps`` are published as metrics;
     # the kernel lowering hands each lane a writable row view.
     # Contract goal vector (inherited CommandTerm.command row view).
-    # command: np.ndarray
-    phase_offset: np.ndarray
-    sin_cos: np.ndarray
-    phase: np.ndarray
-    phase_step: np.ndarray
-    steps: np.ndarray = metric(name="command_steps", dtype=np.float32)
+    # command: torch.Tensor
+    phase_offset: torch.Tensor
+    sin_cos: torch.Tensor
+    phase: torch.Tensor
+    phase_step: torch.Tensor
+    steps: torch.Tensor = metric(name="command_steps", dtype=torch.float32)
 
+    @staticmethod
     @dispatch
-    def update(self, ctx: ManagerContext) -> None:
-        _lane_phase(
-            self.command,
-            self.phase,
-            self.sin_cos,
-            self.phase_offset,
-            self.steps[0],
-            self.phase_step[0],
+    def update(receiver, ctx: ManagerContext) -> None:
+        _phase(
+            receiver.command,
+            receiver.phase,
+            receiver.sin_cos,
+            receiver.phase_offset,
+            receiver.steps[:, 0],
+            receiver.phase_step[:, 0],
         )
 
+    @staticmethod
     @dispatch
-    def advance(self, ctx: ManagerContext) -> None:
-        self.steps[0] += 1.0
-        if self.steps[0] % self.resample_steps == 0.0:
-            _lane_resample_command(ctx, self.command, self.vel_limit_low, self.vel_limit_high, self.stand_prob)
+    def advance(receiver, ctx: ManagerContext) -> None:
+        steps = receiver.steps
+        steps[:, 0] += np.float32(1.0)
+        resample = torch.remainder(steps[:, 0], float(receiver.resample_steps)) == 0.0
+        _resample_command(
+            ctx,
+            receiver.command,
+            receiver.vel_limit_low,
+            receiver.vel_limit_high,
+            receiver.stand_prob,
+            resample,
+        )
 
+    @staticmethod
     @dispatch
-    def reset_env(self, ctx: ManagerContext) -> None:
-        self.steps[0] = 0.0
-        if self.gait_period_width > np.float32(0.0):
-            period = float(self.gait_period_base) + ctx.rand.uniform_range(
-                -self.gait_period_width, self.gait_period_width
-            )
-            self.phase_step[0] = np.float32(2.0 * math.pi * ctx.dt / max(period, 0.1))
-        _lane_resample_phase_offset(ctx, self.phase_offset)
-        _lane_resample_command(ctx, self.command, self.vel_limit_low, self.vel_limit_high, self.stand_prob)
-        _lane_phase(
-            self.command,
-            self.phase,
-            self.sin_cos,
-            self.phase_offset,
-            self.steps[0],
-            self.phase_step[0],
+    def reset_env(receiver, ctx: ManagerContext) -> None:
+        receiver.steps[:, 0] = 0.0
+        width = float(receiver.gait_period_width)
+        if width > 0.0:
+            u = ctx.rand.next_uniform(1)[:, 0]
+            jitter = _uniform_range(u, np.float32(-width), np.float32(width))
+            period = float(receiver.gait_period_base) + jitter.to(torch.float64)
+            receiver.phase_step[:, 0] = (2.0 * math.pi * ctx.dt / period.clamp(min=0.1)).to(torch.float32)
+        first = _uniform_range(ctx.rand.next_uniform(1)[:, 0], np.float32(-math.pi), np.float32(math.pi))
+        offsets = torch.empty_like(receiver.phase_offset)
+        offsets[:, 0] = first
+        offsets[:, 1] = ((first.to(torch.float64) + 2.0 * math.pi) % (2.0 * math.pi) - math.pi).to(torch.float32)
+        receiver.phase_offset.copy_(offsets)
+        _resample_command(
+            ctx,
+            receiver.command,
+            receiver.vel_limit_low,
+            receiver.vel_limit_high,
+            receiver.stand_prob,
+            torch.ones_like(first, dtype=torch.bool),
+        )
+        _phase(
+            receiver.command,
+            receiver.phase,
+            receiver.sin_cos,
+            receiver.phase_offset,
+            receiver.steps[:, 0],
+            receiver.phase_step[:, 0],
         )
 
     def reset(self, ctx: ResetContext) -> None:
@@ -172,18 +216,18 @@ class WalkCommand(CommandTerm):
         truncated), so the EMA sample matches the direct env's
         ``done = terminated | truncated``.
         """
-        ctx.metrics["penalty_scale"] = float(self.penalty_scale[0])
-        if not self.curriculum_enabled or ctx.env_ids.size == 0:
+        penalty_scale = self.penalty_scale.numpy()
+        avg_ep_len = self.avg_ep_len.numpy()
+        ctx.metrics["penalty_scale"] = float(penalty_scale[0])
+        if not self.curriculum_enabled or ctx.env_ids.numel() == 0:
             return
-        ep_len = self.steps[ctx.env_ids, 0].astype(np.float64) + 1.0
-        self.avg_ep_len[0] = np.float32(0.99 * self.avg_ep_len[0] + 0.01 * float(ep_len.mean()))
-        if self.avg_ep_len[0] < self.level_down_threshold:
-            self.penalty_scale[0] *= np.float32(1.0 - self.degree)
-        elif self.avg_ep_len[0] > self.level_up_threshold:
-            self.penalty_scale[0] *= np.float32(1.0 + self.degree)
-        self.penalty_scale[0] = np.float32(
-            min(max(float(self.penalty_scale[0]), float(self.min_scale)), float(self.max_scale))
-        )
+        ep_len = self.steps[ctx.env_ids, 0].to(torch.float64) + 1.0
+        avg_ep_len[0] = np.float32(0.99 * avg_ep_len[0] + 0.01 * float(ep_len.mean()))
+        if avg_ep_len[0] < self.level_down_threshold:
+            penalty_scale[0] *= np.float32(1.0 - self.degree)
+        elif avg_ep_len[0] > self.level_up_threshold:
+            penalty_scale[0] *= np.float32(1.0 + self.degree)
+        penalty_scale[0] = np.float32(min(max(float(penalty_scale[0]), float(self.min_scale)), float(self.max_scale)))
 
 
 @configclass(kw_only=True)
@@ -211,32 +255,36 @@ class WalkCommandCfg(CommandCfg):
     def __call__(self, env: ManagerEnv) -> WalkCommand:
         num_envs = env.num_envs
         return WalkCommand(
-            vel_limit_low=np.asarray(self.vel_limit[0], dtype=np.float32),
-            vel_limit_high=np.asarray(self.vel_limit[1], dtype=np.float32),
-            stand_prob=np.float32(self.stand_prob),
-            resample_steps=np.float32(max(int(round(self.resampling_time / self.ctrl_dt)), 1)),
-            phase_step=np.full(
-                (num_envs, 1),
-                np.float32(2.0 * math.pi * self.ctrl_dt / self.gait_period),
-                dtype=np.float32,
+            vel_limit_low=torch.from_numpy(np.asarray(self.vel_limit[0], dtype=np.float32)),
+            vel_limit_high=torch.from_numpy(np.asarray(self.vel_limit[1], dtype=np.float32)),
+            stand_prob=float(self.stand_prob),
+            resample_steps=float(max(int(round(self.resampling_time / self.ctrl_dt)), 1)),
+            phase_step=torch.from_numpy(
+                np.full(
+                    (num_envs, 1),
+                    np.float32(2.0 * math.pi * self.ctrl_dt / self.gait_period),
+                    dtype=np.float32,
+                )
             ),
-            gait_period_base=np.float32(self.gait_period),
-            gait_period_width=np.float32(self.gait_period_randomization_width),
+            gait_period_base=float(self.gait_period),
+            gait_period_width=float(self.gait_period_randomization_width),
             curriculum_enabled=self.curriculum_enabled,
-            penalty_scale=np.full(
-                (1,),
-                self.initial_scale if self.curriculum_enabled else 1.0,
-                dtype=np.float32,
+            penalty_scale=torch.from_numpy(
+                np.full(
+                    (1,),
+                    self.initial_scale if self.curriculum_enabled else 1.0,
+                    dtype=np.float32,
+                )
             ),
-            avg_ep_len=np.zeros((1,), dtype=np.float32),
-            level_down_threshold=np.float32(self.level_down_threshold),
-            level_up_threshold=np.float32(self.level_up_threshold),
-            degree=np.float32(self.degree),
-            min_scale=np.float32(self.min_scale),
-            max_scale=np.float32(self.max_scale),
-            command=np.zeros((num_envs, 3), dtype=np.float32),
-            phase_offset=np.zeros((num_envs, 2), dtype=np.float32),
-            sin_cos=np.zeros((num_envs, 4), dtype=np.float32),
-            phase=np.zeros((num_envs, 2), dtype=np.float32),
-            steps=np.zeros((num_envs, 1), dtype=np.float32),
+            avg_ep_len=torch.from_numpy(np.zeros((1,), dtype=np.float32)),
+            level_down_threshold=float(self.level_down_threshold),
+            level_up_threshold=float(self.level_up_threshold),
+            degree=float(self.degree),
+            min_scale=float(self.min_scale),
+            max_scale=float(self.max_scale),
+            command=torch.zeros((num_envs, 3), dtype=torch.float32),
+            phase_offset=torch.zeros((num_envs, 2), dtype=torch.float32),
+            sin_cos=torch.zeros((num_envs, 4), dtype=torch.float32),
+            phase=torch.zeros((num_envs, 2), dtype=torch.float32),
+            steps=torch.zeros((num_envs, 1), dtype=torch.float32),
         )

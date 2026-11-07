@@ -44,6 +44,9 @@ registry.env("my-task")(ManagerEnv)
 ## 生命周期
 
 `ManagerEnv` 同样继承 `ArrayEnv`，step 时序与 auto-reset / truncation 语义与 DirectEnv 一致。
+Manager 前端的公开接口统一使用 torch：`step(actions)` 与 `reset(env_ids)`（含 `sim_reset_ids`）
+接收整数 `torch.Tensor`，例如 `env.reset(torch.tensor([0, 2], dtype=torch.long))`；
+传入 numpy 数组会抛出 `TypeError`。
 下图把各回调整合进流水线：绿色是 manager kernel（`@dispatch`）执行的部分，
 紫色是 manager 的主机侧 Python 回调，蓝色是框架——编排各阶段的宿主与其自身的数据通路：
 
@@ -72,8 +75,8 @@ step 循环内不再编译。
 1. `ActionCfg` 子类：声明静态参数与执行器路由，`__call__(env, actuators)` 返回运行时 term。
    `actuator_names` 为空元组 `()` 时控制全部执行器，写显式名称时只控制列出的执行器；
    一个执行器只能归属一项。设为 `None` 表示本项不写执行器目标。
-2. `@kernel_data` 装饰的 `ActionTerm` 子类：持有持久状态（`np.ndarray` 字段，按环境行）与
-   共享模型数据（`SharedArray` 字段），实现三个方法：`action_space()` 给出本项的动作空间、
+2. plain frozen dataclass 的 `ActionTerm` 子类：持有持久状态（`torch.Tensor` 字段，按环境行）与
+   共享模型数据（无 batch 维的 tensor / 标量字段），实现三个方法：`action_space()` 给出本项的动作空间、
    `process(actions)` 把动作批次变换为路由执行器的控制量、`reset(env_ids)` 清理持久状态。
 
 ```python
@@ -87,10 +90,10 @@ class MyJointActionCfg(ActionCfg):
                              actuators=actuators)
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class MyJointAction(ActionTerm):
-    current: np.ndarray              # 持久状态：上一动作缓存（num_envs 行）
-    scale: SharedArray               # 静态参数：由 __call__ 传入
+    current: torch.Tensor            # 持久状态：上一动作缓存（num_envs 行）
+    scale: np.float32                # 静态参数：由 __call__ 传入
 
     def action_space(self, env, actuators) -> gym.spaces.Box:
         ...  # 由执行器 ctrl_range 推导
@@ -225,7 +228,7 @@ class BodyPosResetCfg(ResetTermCfg):
 不需要自定义。
 
 **如何定义**：一个命令 term 是 `CommandCfg` 子类，`__call__(env)` 返回
-`@kernel_data` 的 `CommandTerm` 子类，实现四个回调：
+plain frozen dataclass 的 `CommandTerm` 子类，实现四个回调：
 
 | 回调                     | 执行位置          | 职责                                       |
 | ------------------------ | ----------------- | ------------------------------------------ |

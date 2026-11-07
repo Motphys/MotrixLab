@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import motrixsim as mtx
 import numpy as np
 import pytest
+import torch
 
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
@@ -320,10 +321,11 @@ def test_motrixsim_provider_compiles_stable_aliases_and_one_batch_query_plan() -
     source = _Data([0.0, 1.0, 2.0, 3.0])
     compiled = compile_read_program(model, source, _queries())
 
-    assert compiled["dof_pos"] is compiled["dof_pos_alias"]
+    # Aliases serve the same arena storage as one physical read.
+    assert compiled["dof_pos"].data_ptr() == compiled["dof_pos_alias"].data_ptr()
     assert not hasattr(compiled, "arena")
-    assert not compiled["dof_pos"].flags.writeable
-    assert np.shares_memory(compiled["tracked_pos"], model.plans[0].programs[0].buffer)
+    assert compiled["dof_pos"].dtype == torch.float32
+    assert np.shares_memory(compiled["tracked_pos"].numpy(), model.plans[0].programs[0].buffer)
     assert compiled.arena_bytes == 4 * 34 * 4
     assert compiled["tracked_pos"].shape[1:] == (2, 3)
     assert compiled["tracked_quat"].shape[1:] == (2, 4)
@@ -345,11 +347,11 @@ def test_motrixsim_provider_partial_read_scatter_preserves_other_rows_and_view_i
     compiled = compile_read_program(model, source, _queries())
     compiled.execute()
     dof_pos = compiled["dof_pos"]
-    before = dof_pos.copy()
-    tracked_before = compiled["tracked_pos"].copy()
+    before = dof_pos.clone()
+    tracked_before = compiled["tracked_pos"].clone()
 
     source.values[[3, 1]] = [100.0, 200.0]
-    compiled.execute(np.asarray([3, 1], dtype=np.int64))
+    compiled.execute(torch.tensor([3, 1], dtype=torch.int64))
 
     assert compiled["dof_pos"] is dof_pos
     np.testing.assert_array_equal(dof_pos[0], before[0])
@@ -379,7 +381,7 @@ def test_motrixsim_provider_uses_one_batch_query_as_zero_copy_authoritative_stor
 
     assert compiled.arena_bytes == 4 * 30 * 4
     assert compiled["root_quat"].shape[1:] == (4,)
-    assert all(np.shares_memory(compiled[key], model.plans[0].programs[0].buffer) for key in compiled.keys)
+    assert all(np.shares_memory(compiled[key].numpy(), model.plans[0].programs[0].buffer) for key in compiled.keys)
 
     compiled.execute()
 
@@ -400,7 +402,7 @@ def test_motrixsim_provider_aliases_identical_native_sources() -> None:
 
     assert compiled.arena_bytes == 2 * 4 * 4
     compiled.execute()
-    assert np.shares_memory(compiled["root_quat"], compiled["root_quat_batch"])
+    assert np.shares_memory(compiled["root_quat"].numpy(), compiled["root_quat_batch"].numpy())
     assert compiled["root_quat"].shape == (2, 4)
     assert compiled["root_quat_batch"].shape == (2, 1, 4)
     np.testing.assert_array_equal(compiled["root_quat"], compiled["root_quat_batch"].reshape(2, 4))
@@ -415,16 +417,19 @@ def test_motrixsim_provider_validates_query_and_read_contracts() -> None:
             {"empty": BatchLinkPositionQuery(links=())},
         )
 
+    model = _Model()
     compiled = compile_read_program(
-        _Model(),
+        model,
         _Data([0.0, 1.0]),
         {"dof_pos": BodyJointPositionQuery(body="robot")},
     )
-    with pytest.raises(TypeError, match="int64"):
+    with pytest.raises(TypeError, match="integer tensor"):
         compiled.execute(np.asarray([0], dtype=np.int32))
-    compiled.execute(np.asarray([0, 0], dtype=np.int64))  # native duplicates are idempotent
-    with pytest.raises(ValueError):
-        compiled["dof_pos"][0, 0] = 1.0
+    compiled.execute(torch.tensor([0, 0], dtype=torch.int64))  # native duplicates are idempotent
+    assert compiled["dof_pos"].dtype == torch.float32
+    # Torch views have no enforced read-only flag; the protected invariant is
+    # that views alias the native arena storage instead of owning a copy.
+    assert np.shares_memory(compiled["dof_pos"].numpy(), model.plans[0].programs[0].buffer)
 
 
 def test_query_compiler_is_abstract() -> None:
@@ -456,7 +461,7 @@ def test_whole_space_reads_compile_and_execute() -> None:
     np.testing.assert_allclose(compiled["actuator_ctrls"], data.actuator_ctrls)
 
     data.dof_pos[1] = [99.0, 99.0]
-    compiled.execute(np.asarray([1], dtype=np.int64))
+    compiled.execute(torch.tensor([1], dtype=torch.int64))
 
     np.testing.assert_allclose(compiled["dof_pos"][1], [99.0, 99.0])
     np.testing.assert_allclose(compiled["dof_pos"][0], [10.0, 11.0])
@@ -489,7 +494,7 @@ def test_site_and_geom_pose_queries_group_getter_fills() -> None:
     # Site and geom pose queries all ride the native batch query.
     assert model.calls == []
 
-    compiled.execute(np.asarray([2], dtype=np.int64))
+    compiled.execute(torch.tensor([2], dtype=torch.int64))
     np.testing.assert_allclose(compiled["tip_pos"][2], [42, 43, 44])
     np.testing.assert_allclose(compiled["tip_pos"][0], [40, 41, 42])
     assert model.calls == []
@@ -508,9 +513,9 @@ def test_geom_linear_velocity_query_reads_world_frame_velocity() -> None:
     compiled.execute()
 
     np.testing.assert_allclose(compiled["ball_lin_vel"], [[53, 54, 55], [54, 55, 56], [55, 56, 57]])
-    assert np.shares_memory(compiled["ball_lin_vel"], model.plans[0].programs[0].buffer)
+    assert np.shares_memory(compiled["ball_lin_vel"].numpy(), model.plans[0].programs[0].buffer)
 
-    compiled.execute(np.asarray([2], dtype=np.int64))
+    compiled.execute(torch.tensor([2], dtype=torch.int64))
     np.testing.assert_allclose(compiled["ball_lin_vel"][2], [55, 56, 57])
     np.testing.assert_allclose(compiled["ball_lin_vel"][0], [53, 54, 55])
 
@@ -535,10 +540,10 @@ def test_geom_pair_colliding_reads_boolean_pairs_as_float() -> None:
     compiled.execute()
 
     np.testing.assert_allclose(compiled["colliding"], [[0.0, 0.0], [1.0, 0.0]])
-    assert compiled["colliding"].dtype == np.float32
+    assert compiled["colliding"].dtype == torch.float32
     assert "contact_query" not in model.calls
 
-    compiled.execute(np.asarray([0], dtype=np.int64))
+    compiled.execute(torch.tensor([0], dtype=torch.int64))
     np.testing.assert_allclose(compiled["colliding"], [[0.0, 0.0], [1.0, 0.0]])
 
 

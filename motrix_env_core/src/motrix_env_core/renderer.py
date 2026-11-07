@@ -11,7 +11,7 @@ encodes frames.
 from pathlib import Path
 from typing import Protocol
 
-import numpy as np
+import torch
 
 from motrix_env_core.base import EnvCfg
 from motrix_env_core.sim.backend import (
@@ -101,7 +101,7 @@ class VideoRecorder:
         finally:
             self._frames.close()
 
-    def _write_frame(self, frame: np.ndarray) -> None:
+    def _write_frame(self, frame: torch.Tensor) -> None:
         if self._writer is None:
             # imageio is an optional dependency (``motrix-env-core[video]``):
             # importing it lazily keeps this module importable in installs
@@ -125,7 +125,9 @@ class VideoRecorder:
                 pixelformat="yuv420p",
                 macro_block_size=None,
             )
-        self._writer.append_data(frame)
+        # The renderer contract hands over torch uint8 frames; imageio
+        # consumes the zero-copy numpy view.
+        self._writer.append_data(frame.numpy())
 
 
 def create_renderer(env: RendererHost, config: RenderConfig | None) -> SimRenderer | VideoRecorder | None:

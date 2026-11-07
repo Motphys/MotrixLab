@@ -48,7 +48,10 @@ term does and how to define it.
 ## Lifecycle
 
 `ManagerEnv` also inherits `ArrayEnv`; the step sequence and the auto-reset / truncation
-semantics match DirectEnv. The figure below integrates the term callbacks into the
+semantics match DirectEnv. The manager frontend's public currency is uniformly torch:
+`step(actions)` and `reset(env_ids)` (including `sim_reset_ids`) take integer
+`torch.Tensor`s, e.g. `env.reset(torch.tensor([0, 2], dtype=torch.long))`; passing a
+numpy array raises a `TypeError`. The figure below integrates the term callbacks into the
 pipeline: green parts run inside manager kernels (`@dispatch`), purple parts are the
 manager's host-side Python callbacks, and blue parts are the framework — the
 orchestrating stages and its own data plumbing:
@@ -83,9 +86,9 @@ distributed to the terms.
    tuple `()` controls all actuators, explicit names control only the listed ones, and
    one actuator may belong to a single term. `None` means the term writes no actuator
    targets.
-2. An `ActionTerm` subclass decorated with `@kernel_data`: it holds persistent state
-   (`np.ndarray` fields, one row per environment) and shared model data (`SharedArray`
-   fields), and implements three methods — `action_space()` returns this term's action
+2. An `ActionTerm` subclass — a plain frozen dataclass: it holds persistent state
+   (`torch.Tensor` fields, one row per environment) and shared model data (scalar or
+   batch-free tensor fields), and implements three methods — `action_space()` returns this term's action
    space, `process(actions)` transforms the action batch into routed actuator controls,
    and `reset(env_ids)` clears persistent state.
 
@@ -100,10 +103,10 @@ class MyJointActionCfg(ActionCfg):
                              actuators=actuators)
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class MyJointAction(ActionTerm):
-    current: np.ndarray              # persistent state: previous action (num_envs rows)
-    scale: SharedArray               # static parameter: passed in by __call__
+    current: torch.Tensor            # persistent state: previous action (num_envs rows)
+    scale: np.float32                # static parameter: passed in by __call__
 
     def action_space(self, env, actuators) -> gym.spaces.Box:
         ...  # derived from the actuators' ctrl_range
@@ -248,7 +251,7 @@ through `env.state.metrics` / `env.metrics`. Most tasks can reuse built-in comma
 never need a custom one.
 
 **How to define one**: a command term is a `CommandCfg` subclass whose `__call__(env)`
-returns a `CommandTerm` subclass decorated with `@kernel_data`, implementing four
+returns a `CommandTerm` subclass — a plain frozen dataclass — implementing four
 callbacks:
 
 | Callback          | Runs in           | Responsibility                                              |

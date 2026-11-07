@@ -6,12 +6,13 @@
 import gymnasium as gym
 import numpy as np
 import pytest
+import torch
 
-from motrix_env_core.array.env import ArrayEnv, ArrayEnvState, FinalObs, NpObs
+from motrix_env_core.array.env import ArrayEnv, ArrayEnvState, EnvObs, FinalObs
 from motrix_env_core.base import EnvCfg, ObsSpace
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv
-from motrix_env_core.numba.manager.env import ManagerEnv
+from motrix_env_core.manager.env import ManagerEnv
 from motrix_env_core.registry import _infer_sim_backend
 from motrix_env_core.sim.backend import RenderConfig, SimRenderer
 
@@ -27,7 +28,7 @@ class _CounterEnv(ArrayEnv):
         self._action_space = gym.spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32)
         self.counters = np.zeros(self.num_envs, dtype=np.float32)
         self.next_terminated = np.zeros(self.num_envs, dtype=bool)
-        self.reset_rows: list[np.ndarray] = []
+        self.reset_rows: list[torch.Tensor] = []
         self.physics_steps = 0
         self.observation_calls = 0
 
@@ -39,11 +40,11 @@ class _CounterEnv(ArrayEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def reset(self, env_ids: np.ndarray) -> None:
-        self.reset_rows.append(env_ids.copy())
-        self.counters[env_ids] = 0.0
+    def reset(self, env_ids: torch.Tensor) -> None:
+        self.reset_rows.append(env_ids.clone())
+        self.counters[env_ids.numpy()] = 0.0
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
         return state
 
     def physics_step(self) -> None:
@@ -51,16 +52,17 @@ class _CounterEnv(ArrayEnv):
         self.counters += 1.0
 
     def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
-        state.reward[:] = self.counters
-        state.terminated[:] = self.next_terminated
+        state.reward[:] = torch.from_numpy(self.counters)
+        state.terminated[:] = torch.from_numpy(self.next_terminated)
         return state
 
     def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
         self.observation_calls += 1
-        state.obs.policy[:, 0] = self.counters
+        counters = torch.from_numpy(self.counters)
+        state.obs.policy[:, 0] = counters
         if state.obs.value is not None:
-            state.obs.value[:, 0] = self.counters
-            state.obs.value[:, 1] = -self.counters
+            state.obs.value[:, 0] = counters
+            state.obs.value[:, 1] = -counters
         return state
 
     def create_renderer(self, config: RenderConfig) -> SimRenderer:
@@ -70,21 +72,21 @@ class _CounterEnv(ArrayEnv):
 class _FinalCounterEnv(_CounterEnv):
     def __init__(self, *, with_value: bool = False):
         super().__init__(with_value=with_value)
-        self.capture_rows: list[np.ndarray] = []
-        self.capture_episode_steps: list[np.ndarray] = []
-        self.capture_rewards: list[np.ndarray] = []
+        self.capture_rows: list[torch.Tensor] = []
+        self.capture_episode_steps: list[torch.Tensor] = []
+        self.capture_rewards: list[torch.Tensor] = []
 
-    def _capture_final_obs(self, env_ids: np.ndarray) -> FinalObs:
-        self.capture_rows.append(env_ids.copy())
-        self.capture_episode_steps.append(self.state.episode_steps[env_ids].copy())
-        self.capture_rewards.append(self.state.reward[env_ids].copy())
-        policy = self.counters[env_ids, None].copy()
-        value = np.concatenate((policy, -policy), axis=1) if self.has_value_observation else None
-        return FinalObs(env_ids=env_ids.copy(), obs=NpObs(policy=policy, value=value))
+    def _capture_final_obs(self, env_ids: torch.Tensor) -> FinalObs:
+        self.capture_rows.append(env_ids.clone())
+        self.capture_episode_steps.append(self.state.episode_steps[env_ids].clone())
+        self.capture_rewards.append(self.state.reward[env_ids].clone())
+        policy = torch.from_numpy(self.counters[env_ids.numpy(), None].copy())
+        value = torch.cat((policy, -policy), dim=1) if self.has_value_observation else None
+        return FinalObs(env_ids=env_ids.clone(), obs=EnvObs(policy=policy, value=value))
 
 
 def _step(env: _CounterEnv) -> ArrayEnvState:
-    return env.step(np.zeros((env.num_envs, 1), dtype=np.float32))
+    return env.step(torch.zeros((env.num_envs, 1), dtype=torch.float32))
 
 
 def test_np_env_inherits_array_env() -> None:
@@ -130,7 +132,7 @@ def test_final_obs_absent_on_init_and_nontruncated_step(with_value: bool) -> Non
 def test_final_obs_contains_only_truncated_rows_before_auto_reset(with_value: bool) -> None:
     env = _FinalCounterEnv(with_value=with_value)
     env.init_state()
-    env.state.episode_steps[:] = [2, 0, 2, 0]
+    env.state.episode_steps[:] = torch.tensor([2, 0, 2, 0])
     env.counters[:] = [10, 20, 30, 40]
     env.next_terminated[1] = True
 
@@ -138,7 +140,7 @@ def test_final_obs_contains_only_truncated_rows_before_auto_reset(with_value: bo
 
     final = state.final_obs
     assert isinstance(final, FinalObs)
-    assert isinstance(final.obs, NpObs)
+    assert isinstance(final.obs, EnvObs)
     np.testing.assert_array_equal(state.truncated, [True, False, True, False])
     np.testing.assert_array_equal(state.terminated, [False, True, False, False])
     np.testing.assert_array_equal(final.env_ids, [0, 2])
@@ -167,7 +169,7 @@ def test_final_obs_contains_only_truncated_rows_before_auto_reset(with_value: bo
 def test_retained_final_obs_survives_later_steps_and_init_state(with_value: bool) -> None:
     env = _FinalCounterEnv(with_value=with_value)
     env.init_state()
-    env.state.episode_steps[:] = [2, 0, 2, 0]
+    env.state.episode_steps[:] = torch.tensor([2, 0, 2, 0])
     env.counters[:] = [10, 20, 30, 40]
     retained = _step(env)
     final = retained.final_obs

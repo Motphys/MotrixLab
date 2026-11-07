@@ -76,11 +76,14 @@ README 从宏观上说明 package：它提供什么能力、如何安装与使�
 框架级契约（Runtime/ControlSession/Controller 语义、rollout result 口径等）只在一处维护——对应框架 package 的
 README 或教程；插件与任务 package 的 README 不重复这些内容，只描述本 package 特有的部分。
 
-### Manager Kernel 入口方法
+### Manager term 入口方法
 
-Manager fused-kernel 入口方法必须用 `@dispatch` 装饰，绝不使用 `@njit`——Numba 编译、缓存和内联由 manager
-编译器统一管理。`@njit` 只用于被编译 kernel 调用的独立 Numba 兼容 helper。哪些方法是 kernel 入口、哪些是普通
-Python 方法，由 manager 运行时契约定义（`wiki/design/manager/runtime.md`）。
+Manager 数值 term 是普通 Python 函数，契约由签名注解表达并由 resolver 校验（首参数注解
+`ManagerContext`，observation 的 `out` 注解 `torch.Tensor`，reset 的 `sim_writes` 注解
+`Map[torch.Tensor]`）；数值执行由 Torch 执行器按整批张量调度。`@dispatch` 仅用于标记 kernel_data
+类上需要进入布局方法代理表的方法（如 `ActionState.current/previous`、CommandTerm 的
+`update`/`advance`/`reset_env` hooks，后者为 `@staticmethod`，签名为 `(receiver, ctx)`）。运行时
+契约见 `wiki/design/manager/runtime.md`。
 
 ### 环境配置与注册规范
 
@@ -238,10 +241,10 @@ tensorboard --logdir runs/{env-name}
 ### 测试
 
 ```bash
-# 与 PR CI 一致的快速测试（不执行集成、慢速或 Numba 编译测试）
-python -m pytest -m "not slow and not integration and not numba"
-# CPU 编译回归、跨模块/进程集成分别执行
-python -m pytest -m "not integration and (slow or numba)"
+# 与 PR CI 一致的快速测试（不执行集成、慢速测试）
+python -m pytest -m "not slow and not integration"
+# 慢速回归、跨模块/进程集成分别执行
+python -m pytest -m "not integration and slow"
 python -m pytest -m integration
 ```
 

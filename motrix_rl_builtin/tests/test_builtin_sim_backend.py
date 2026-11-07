@@ -17,7 +17,7 @@ from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import HostWe
 from motrix_rl_builtin.fastsac.async_impl.worker import actor_param_numel, run_collector_process
 from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap, FastSacStepResult
 
-from motrix_env_core.array.env import ArrayEnvState, NpObs
+from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.base import EnvCfg
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv
@@ -48,7 +48,7 @@ def _make_env(sim_backend: str):
     if sim_backend == "np":
         env = Mock(spec=DirectEnv)
         state = ArrayEnvState(
-            obs=NpObs(np.zeros((_NUM_ENVS, _OBS_DIM), dtype=np.float32)),
+            obs=EnvObs(np.zeros((_NUM_ENVS, _OBS_DIM), dtype=np.float32)),
             reward=np.ones(_NUM_ENVS, dtype=np.float32),
             terminated=np.zeros(_NUM_ENVS, dtype=bool),
             truncated=np.zeros(_NUM_ENVS, dtype=bool),
@@ -100,7 +100,7 @@ def test_rl_trainer_supports_sim_backend(monkeypatch, sim_backend: str) -> None:
     assert isinstance(result.info, dict)
 
     actions = env.step.call_args.args[0]
-    assert isinstance(actions, np.ndarray if sim_backend == "np" else torch.Tensor)
+    assert isinstance(actions, torch.Tensor)
     if sim_backend == "torch":
         assert actions.device == env.device
 
@@ -169,7 +169,7 @@ class _AsyncNpEnv(_AsyncEnv, DirectEnv):
 
     def _make_state(self, value: float) -> ArrayEnvState:
         return ArrayEnvState(
-            obs=NpObs(np.full((self.num_envs, _OBS_DIM), value, dtype=np.float32)),
+            obs=EnvObs(np.full((self.num_envs, _OBS_DIM), value, dtype=np.float32)),
             reward=np.full(self.num_envs, value, dtype=np.float32),
             terminated=np.zeros(self.num_envs, dtype=bool),
             truncated=np.zeros(self.num_envs, dtype=bool),

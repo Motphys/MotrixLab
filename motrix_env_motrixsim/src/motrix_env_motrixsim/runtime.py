@@ -11,7 +11,7 @@ from typing import Any, TypeAlias
 
 import motrixsim as mtx
 import numpy as np
-import numpy.typing as npt
+import torch
 
 from motrix_env_core.config import SimCfg
 from motrix_env_core.config.scene import SceneCfg, SystemCameraCfg
@@ -32,8 +32,8 @@ from motrix_env_motrixsim.renderer import MotrixSimRenderer
 from motrix_env_motrixsim.sim_data import compile_read_program
 from motrix_env_motrixsim.write_compiler import MotrixSimWriteCompiler
 
-FloatArray: TypeAlias = npt.NDArray[np.float32]
-IntArray: TypeAlias = npt.NDArray[np.int64]
+FloatArray: TypeAlias = np.ndarray
+IntArray: TypeAlias = np.ndarray
 
 
 class MotrixSimModelCompiler(SimModelCompiler):
@@ -50,7 +50,12 @@ class MotrixSimModelCompiler(SimModelCompiler):
         actuators = _actuator_specs(self._model.actuators)
         init_dof_pos = np.asarray(self._model.compute_init_dof_pos(), dtype=np.float32)
         bodies = _build_body_models(self._model, scene, actuators, init_dof_pos)
-        return SimModel(actuators=actuators, init_dof_pos=init_dof_pos, others=self._others, bodies=bodies)
+        return SimModel(
+            actuators=actuators,
+            init_dof_pos=torch.from_numpy(init_dof_pos),
+            others=self._others,
+            bodies=bodies,
+        )
 
     def compile_geom_specs(self, key: str, geom_names: tuple[str, ...]) -> None:
         self._others[key] = _geom_specs(self._model, geom_names)
@@ -79,23 +84,25 @@ class MotrixSimModelCompiler(SimModelCompiler):
         )
         origin = np.asarray([float(pose[0]) - extent_x, float(pose[1]) - extent_y], dtype=np.float32)
         self._others[key] = {
-            "heights": heights,
-            "origin": origin,
-            "spacing": spacing,
-            "z0": np.asarray([pose[2]], dtype=np.float32),
+            "heights": torch.from_numpy(heights),
+            "origin": torch.from_numpy(origin),
+            "spacing": torch.from_numpy(spacing),
+            "z0": torch.from_numpy(np.asarray([pose[2]], dtype=np.float32)),
         }
 
     def compile_body_joint_position_limits(self, key: str, body: str) -> None:
-        self._others[key] = _body_joint_position_limits(self._model, body)
+        lower, upper = _body_joint_position_limits(self._model, body)
+        self._others[key] = (torch.from_numpy(lower), torch.from_numpy(upper))
 
     def compile_dof_position_limits(self, key: str) -> None:
-        self._others[key] = _dof_position_limits(self._model)
+        lower, upper = _dof_position_limits(self._model)
+        self._others[key] = (torch.from_numpy(lower), torch.from_numpy(upper))
 
     def compile_actuator_kp(self, key: str, actuator_names: tuple[str, ...] | None) -> None:
-        self._others[key] = _nominal_actuator_kp(self._model, actuator_names)
+        self._others[key] = torch.from_numpy(_nominal_actuator_kp(self._model, actuator_names))
 
     def compile_actuator_kd(self, key: str, actuator_names: tuple[str, ...] | None) -> None:
-        self._others[key] = _nominal_actuator_kd(self._model, actuator_names)
+        self._others[key] = torch.from_numpy(_nominal_actuator_kd(self._model, actuator_names))
 
     def compile_link_mass(self, key: str, body: str) -> None:
         self._others[key] = float(_named_link(self._model, body).mass)
@@ -115,13 +122,15 @@ class MotrixSimModelCompiler(SimModelCompiler):
                 masses = [body_links[name].mass for name in links]
             except KeyError as exc:
                 raise KeyError(f"Link {exc.args[0]!r} is not part of body {body!r}.") from None
-        self._others[key] = np.asarray(masses, dtype=np.float32)
+        self._others[key] = torch.from_numpy(np.asarray(masses, dtype=np.float32))
 
     def compile_link_center_of_mass(self, key: str, body: str) -> None:
-        self._others[key] = np.asarray(_named_link(self._model, body).center_of_mass, dtype=np.float32).reshape(3)
+        self._others[key] = torch.from_numpy(
+            np.asarray(_named_link(self._model, body).center_of_mass, dtype=np.float32).reshape(3)
+        )
 
     def compile_geom_friction(self, key: str, geom: str) -> None:
-        self._others[key] = np.asarray(_named_geom(self._model, geom).friction, dtype=np.float32)
+        self._others[key] = torch.from_numpy(np.asarray(_named_geom(self._model, geom).friction, dtype=np.float32))
 
 
 def _nominal_actuator_kp(model: mtx.SceneModel, actuator_names: tuple[str, ...] | None) -> FloatArray:
@@ -372,16 +381,18 @@ class MotrixSimBackend(SimBackend):
     def step(self, substeps: int) -> None:
         self._model.step_n(self._data, substeps)
 
-    def sample_terrain_height(self, geom_name: str, env_ids: IntArray, xy: FloatArray) -> FloatArray:
+    def sample_terrain_height(self, geom_name: str, env_ids: torch.Tensor, xy: torch.Tensor) -> torch.Tensor:
+        """Sample terrain height; torch public contract bridged to numpy at the engine edge."""
         geom = self._model.get_geom(geom_name)
         if geom is None:
             raise KeyError(f"Unknown terrain geom {geom_name!r}.")
         if hasattr(geom, "sample_height"):
             mask = np.zeros((self._data.shape[0],), dtype=bool)
-            mask[env_ids] = True
-            points = np.ascontiguousarray(xy, dtype=np.float32)
-            return np.asarray(geom.sample_height(self._data[mask], points), dtype=np.float32)
-        return np.full(xy.shape[:-1], float(geom.local_pose[2]), dtype=np.float32)
+            mask[env_ids.detach().cpu().numpy()] = True
+            points = np.ascontiguousarray(xy.detach().cpu().numpy(), dtype=np.float32)
+            return torch.from_numpy(np.asarray(geom.sample_height(self._data[mask], points), dtype=np.float32))
+        height = float(geom.local_pose[2])
+        return torch.full(xy.shape[:-1], height, dtype=torch.float32)
 
     @property
     def write_compiler(self) -> MotrixSimWriteCompiler:

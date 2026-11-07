@@ -3,16 +3,12 @@
 
 """Reusable reward terms for manager-based environments."""
 
-import math
-
-import numpy as np
-from numba import literally
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import RewardTerm, RewardTermCfg
-from motrix_env_core.numba.manager.context import BuildContext, ManagerContext
-from motrix_env_core.numba.manager.dispatch import dispatch
-from motrix_env_core.numba.math.quaternion import rotate_inverse_components
+from motrix_env_core.manager.context import BuildContext, ManagerContext
+from motrix_env_core.math.quaternion_array import rotate_inverse_components
 from motrix_env_core.sim import (
     LinkAngularVelocityQuery,
     LinkLinearVelocityQuery,
@@ -20,9 +16,8 @@ from motrix_env_core.sim import (
 )
 
 
-@dispatch
-def alive_reward(_ctx: ManagerContext) -> float:
-    return 1.0
+def alive_reward(ctx: ManagerContext) -> torch.Tensor:
+    return torch.ones_like(ctx.env_id, dtype=torch.float32)
 
 
 @configclass(kw_only=True)
@@ -30,16 +25,13 @@ class AliveRewardCfg(RewardTermCfg):
     """Constant alive bonus; zero weight disables it."""
 
     def __call__(self, ctx) -> RewardTerm:
-        del ctx
         return RewardTerm(alive_reward)
 
 
-@dispatch
-def action_rate_reward(ctx: ManagerContext, action_name: str) -> float:
-    action_name = literally(action_name)
+def action_rate_reward(ctx: ManagerContext, action_name: str) -> torch.Tensor:
     action = ctx.actions[action_name]
     delta = action.current() - action.previous()
-    return float(np.dot(delta, delta))
+    return (delta * delta).sum(dim=1)
 
 
 @configclass(kw_only=True)
@@ -49,23 +41,20 @@ class ActionRateRewardCfg(RewardTermCfg):
     action_name: str = "joint_position"
 
     def __call__(self, ctx) -> RewardTerm:
-        del ctx
         return RewardTerm(action_rate_reward, self.action_name)
 
 
-@dispatch
 def tracking_lin_vel_xy_reward(
     ctx: ManagerContext,
-    sigma: np.float32,
-    base_quat: np.ndarray,
-    base_lin_vel: np.ndarray,
+    sigma: float,
+    base_quat: torch.Tensor,
+    base_lin_vel: torch.Tensor,
     command_name: str,
-) -> float:
-    command_name = literally(command_name)
+) -> torch.Tensor:
     command = ctx.commands[command_name].command
     vx, vy, _ = rotate_inverse_components(base_quat, base_lin_vel)
-    error = (command[0] - vx) * (command[0] - vx) + (command[1] - vy) * (command[1] - vy)
-    return math.exp(-error / sigma)
+    error = (command[:, 0] - vx) * (command[:, 0] - vx) + (command[:, 1] - vy) * (command[:, 1] - vy)
+    return torch.exp(-error / sigma)
 
 
 @configclass(kw_only=True)
@@ -80,26 +69,24 @@ class TrackingLinVelXyRewardCfg(RewardTermCfg):
         link = ctx.model.bodies[self.body].base_link_name
         return RewardTerm(
             tracking_lin_vel_xy_reward,
-            np.float32(self.sigma),
+            float(self.sigma),
             LinkQuaternionQuery(link=link),
             LinkLinearVelocityQuery(link=link),
             self.command_name,
         )
 
 
-@dispatch
 def tracking_ang_vel_z_reward(
     ctx: ManagerContext,
-    sigma: np.float32,
-    base_quat: np.ndarray,
-    base_ang_vel: np.ndarray,
+    sigma: float,
+    base_quat: torch.Tensor,
+    base_ang_vel: torch.Tensor,
     command_name: str,
-) -> float:
-    command_name = literally(command_name)
+) -> torch.Tensor:
     command = ctx.commands[command_name].command
     _, _, wz = rotate_inverse_components(base_quat, base_ang_vel)
-    error = (command[2] - wz) * (command[2] - wz)
-    return math.exp(-error / sigma)
+    error = (command[:, 2] - wz) * (command[:, 2] - wz)
+    return torch.exp(-error / sigma)
 
 
 @configclass(kw_only=True)
@@ -114,7 +101,7 @@ class TrackingAngVelZRewardCfg(RewardTermCfg):
         link = ctx.model.bodies[self.body].base_link_name
         return RewardTerm(
             tracking_ang_vel_z_reward,
-            np.float32(self.sigma),
+            float(self.sigma),
             LinkQuaternionQuery(link=link),
             LinkAngularVelocityQuery(link=link),
             self.command_name,

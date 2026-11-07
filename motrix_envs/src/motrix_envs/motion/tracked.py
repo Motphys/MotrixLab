@@ -5,9 +5,12 @@
 
 from __future__ import annotations
 
-import numpy as np
+from dataclasses import dataclass
 
-from motrix_env_core.numba.kernel_data import Map, SharedArray, kernel_data
+import numpy as np
+import torch
+
+from motrix_env_core.manager.kernel_data import Map
 from motrix_envs.motion.loader import MotionFormatError, MotrixMotion
 
 
@@ -38,18 +41,18 @@ def load_extension_channel(motion: MotrixMotion, name: str) -> np.ndarray:
     return channel
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class MotionChannel:
     """One declared ``ext_`` channel, aligned with the clip's frame axis.
 
-    Map leaves cannot carry ``SharedArray`` annotations directly, so each
+    Map leaves are flattened by value type, so each
     channel is wrapped in this record whose field is shared across lanes.
     """
 
-    data: SharedArray
+    data: torch.Tensor
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class WbtMotionClip:
     """Numeric whole-body-tracking views over one clip or a concatenated corpus.
 
@@ -80,19 +83,19 @@ class WbtMotionClip:
             axis; empty when the task declares none.
     """
 
-    joint_pos: SharedArray
-    joint_vel: SharedArray
-    tracked_bodies_pos_w: SharedArray
-    tracked_bodies_quat_w: SharedArray
-    tracked_bodies_lin_vel_w: SharedArray
-    tracked_bodies_ang_vel_w: SharedArray
-    root_body_pos_w: SharedArray
-    root_body_quat_w: SharedArray
-    root_body_lin_vel_w: SharedArray
-    root_body_ang_vel_w: SharedArray
-    reference_body_pos_w: SharedArray
-    reference_body_quat_w: SharedArray
-    frame_clip_end: SharedArray
+    joint_pos: torch.Tensor
+    joint_vel: torch.Tensor
+    tracked_bodies_pos_w: torch.Tensor
+    tracked_bodies_quat_w: torch.Tensor
+    tracked_bodies_lin_vel_w: torch.Tensor
+    tracked_bodies_ang_vel_w: torch.Tensor
+    root_body_pos_w: torch.Tensor
+    root_body_quat_w: torch.Tensor
+    root_body_lin_vel_w: torch.Tensor
+    root_body_ang_vel_w: torch.Tensor
+    reference_body_pos_w: torch.Tensor
+    reference_body_quat_w: torch.Tensor
+    frame_clip_end: torch.Tensor
     extensions: Map
 
     @staticmethod
@@ -129,18 +132,23 @@ class WbtMotionClip:
         reference_index = motion.body_index(reference_body_name)
 
         return WbtMotionClip(
-            joint_pos=np.ascontiguousarray(motion.joint_pos[:, joint_motion_idx]),
-            joint_vel=np.ascontiguousarray(motion.joint_vel[:, joint_motion_idx]),
-            tracked_bodies_pos_w=np.ascontiguousarray(motion.body_pos_w[:, tracked_idx]),
-            tracked_bodies_quat_w=np.ascontiguousarray(motion.body_quat_w[:, tracked_idx]),
-            tracked_bodies_lin_vel_w=np.ascontiguousarray(motion.body_lin_vel_w[:, tracked_idx]),
-            tracked_bodies_ang_vel_w=np.ascontiguousarray(motion.body_ang_vel_w[:, tracked_idx]),
-            root_body_pos_w=np.ascontiguousarray(motion.body_pos_w[:, root_index]),
-            root_body_quat_w=np.ascontiguousarray(motion.body_quat_w[:, root_index]),
-            root_body_lin_vel_w=np.ascontiguousarray(motion.body_lin_vel_w[:, root_index]),
-            root_body_ang_vel_w=np.ascontiguousarray(motion.body_ang_vel_w[:, root_index]),
-            reference_body_pos_w=np.ascontiguousarray(motion.body_pos_w[:, reference_index]),
-            reference_body_quat_w=np.ascontiguousarray(motion.body_quat_w[:, reference_index]),
-            frame_clip_end=np.full(motion.num_frames, motion.num_frames - 1, dtype=np.int64),
-            extensions=Map({name: MotionChannel(load_extension_channel(motion, name)) for name in extension_channels}),
+            joint_pos=torch.from_numpy(np.ascontiguousarray(motion.joint_pos[:, joint_motion_idx])),
+            joint_vel=torch.from_numpy(np.ascontiguousarray(motion.joint_vel[:, joint_motion_idx])),
+            tracked_bodies_pos_w=torch.from_numpy(np.ascontiguousarray(motion.body_pos_w[:, tracked_idx])),
+            tracked_bodies_quat_w=torch.from_numpy(np.ascontiguousarray(motion.body_quat_w[:, tracked_idx])),
+            tracked_bodies_lin_vel_w=torch.from_numpy(np.ascontiguousarray(motion.body_lin_vel_w[:, tracked_idx])),
+            tracked_bodies_ang_vel_w=torch.from_numpy(np.ascontiguousarray(motion.body_ang_vel_w[:, tracked_idx])),
+            root_body_pos_w=torch.from_numpy(np.ascontiguousarray(motion.body_pos_w[:, root_index])),
+            root_body_quat_w=torch.from_numpy(np.ascontiguousarray(motion.body_quat_w[:, root_index])),
+            root_body_lin_vel_w=torch.from_numpy(np.ascontiguousarray(motion.body_lin_vel_w[:, root_index])),
+            root_body_ang_vel_w=torch.from_numpy(np.ascontiguousarray(motion.body_ang_vel_w[:, root_index])),
+            reference_body_pos_w=torch.from_numpy(np.ascontiguousarray(motion.body_pos_w[:, reference_index])),
+            reference_body_quat_w=torch.from_numpy(np.ascontiguousarray(motion.body_quat_w[:, reference_index])),
+            frame_clip_end=torch.from_numpy(np.full(motion.num_frames, motion.num_frames - 1, dtype=np.int64)),
+            extensions=Map(
+                {
+                    name: MotionChannel(torch.from_numpy(load_extension_channel(motion, name)))
+                    for name in extension_channels
+                }
+            ),
         )

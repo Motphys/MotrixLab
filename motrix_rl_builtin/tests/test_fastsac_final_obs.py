@@ -27,13 +27,13 @@ from motrix_rl_builtin.fastsac.async_impl.transport.ring import (
 from motrix_rl_builtin.fastsac.buffer import SimpleReplayBuffer
 from motrix_rl_builtin.fastsac.wrap_np import FastSacNpEnvWrap
 
-from motrix_env_core.array.env import ArrayEnvState, FinalObs, NpObs
+from motrix_env_core.array.env import ArrayEnvState, EnvObs, FinalObs
 
 
 def test_numpy_adapter_reads_final_result_without_consuming_environment_state():
-    final = FinalObs(np.array([0]), NpObs(np.array([[7.0]], dtype=np.float32)))
+    final = FinalObs(np.array([0]), EnvObs(np.array([[7.0]], dtype=np.float32)))
     state = ArrayEnvState(
-        obs=NpObs(np.zeros((1, 1), dtype=np.float32)),
+        obs=EnvObs(np.zeros((1, 1), dtype=np.float32)),
         reward=np.zeros(1, dtype=np.float32),
         terminated=np.zeros(1, dtype=bool),
         truncated=np.ones(1, dtype=bool),

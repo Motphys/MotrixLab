@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import motrixsim as mtx
 import numpy as np
+import torch
 from motrixsim import write as mtx_write
 
 from motrix_env_core.sim.write import (
@@ -343,23 +344,31 @@ class _MotrixSimWriteProgram(WriteProgram):
     ) -> None:
         self._data = data
         self._buffers = buffers
+        # Public buffers are torch tensors aliasing the same storage; writes
+        # through them reach the native program's numpy buffers.
+        self._tensors = {name: torch.from_numpy(buffer) for name, buffer in buffers.items()}
         self._native_program = native_program
 
-    def buffer(self, name: str) -> np.ndarray:
-        return self._buffers[name]
+    def buffer(self, name: str) -> torch.Tensor:
+        return self._tensors[name]
 
-    def execute(self, env_ids: np.ndarray | None = None) -> None:
+    def execute(self, env_ids: torch.Tensor | None = None) -> None:
         if env_ids is not None:
-            if not isinstance(env_ids, np.ndarray) or env_ids.dtype != np.int64 or env_ids.ndim != 1:
-                raise TypeError("Simulator write env_ids must be a one-dimensional int64 ndarray.")
-            if np.any(env_ids < 0) or np.any(env_ids >= self._data.shape[0]):
+            if not isinstance(env_ids, torch.Tensor) or env_ids.dtype not in (torch.int32, torch.int64):
+                raise TypeError("Simulator write env_ids must be an integer tensor.")
+            ids = env_ids.detach().cpu().contiguous().to(torch.int64).numpy()
+            if ids.ndim != 1:
+                raise TypeError("Simulator write env_ids must be one-dimensional.")
+            if np.any(ids < 0) or np.any(ids >= self._data.shape[0]):
                 raise IndexError("Simulator write env_ids are out of range.")
-            if np.unique(env_ids).size != env_ids.size:
+            if np.unique(ids).size != ids.size:
                 raise ValueError("Simulator write env_ids must not contain duplicates.")
-            if env_ids.size == 0:
+            if ids.size == 0:
                 return
+        else:
+            ids = None
         if self._native_program is not None:
-            self._native_program.execute(self._data, env_ids=None if env_ids is None else np.sort(env_ids))
+            self._native_program.execute(self._data, env_ids=None if ids is None else np.sort(ids))
 
 
 def _named_body(model: mtx.SceneModel, body_name: str):

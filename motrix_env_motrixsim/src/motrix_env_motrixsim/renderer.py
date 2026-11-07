@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 
 import motrixsim as mtx
 import numpy as np
+import torch
 from motrixsim.render import RenderApp, RenderSettings
 
 from motrix_env_core.config.scene import SystemCameraCfg
@@ -79,7 +80,7 @@ class MotrixSimRenderer(SimRenderer):
             self._sync_render_data = not self._sync_render_data
             self._render.system_camera.active = self._sync_render_data
 
-    def capture(self) -> np.ndarray:
+    def capture(self) -> torch.Tensor:
         if not self._headless:
             raise NotImplementedError(
                 "Windowed renderers set no system render target; pass headless=True to capture frames."
@@ -93,7 +94,7 @@ class MotrixSimRenderer(SimRenderer):
         image = task.take_image()
         if image is None:
             raise RuntimeError("system camera capture did not return an image")
-        return _normalize_rgb_frame(image.pixels)
+        return torch.from_numpy(_normalize_rgb_frame(image.pixels))
 
     def close(self) -> None:
         if self._closed:

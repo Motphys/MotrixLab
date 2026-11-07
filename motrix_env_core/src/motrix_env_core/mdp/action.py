@@ -3,17 +3,20 @@
 
 """Generic joint-position action terms for manager-based environments."""
 
+from dataclasses import dataclass
+
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import RobotCfg
-from motrix_env_core.manager import ActionCfg, ActionState, ActionTerm, ManagerEnv, SharedArray, kernel_data
+from motrix_env_core.manager import ActionCfg, ActionState, ActionTerm, ManagerEnv
 from motrix_env_core.mdp.action_space import joint_position_action_space_from_ctrl_ranges
 from motrix_env_core.sim.model import ActuatorSpec, ActuatorType
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class JointPositionActionState(ActionState):
     """Persistent joint-position action pipeline, history, and shared model data.
 
@@ -41,11 +44,11 @@ class JointPositionActionState(ActionState):
             path entirely.
     """
 
-    default_angles: SharedArray
-    joint_lower: SharedArray
-    joint_upper: SharedArray
-    action_scales: SharedArray
-    delay_steps: np.ndarray
+    default_angles: torch.Tensor
+    joint_lower: torch.Tensor
+    joint_upper: torch.Tensor
+    action_scales: torch.Tensor
+    delay_steps: torch.Tensor
     delay_lo: int
     delay_hi: int
 
@@ -57,27 +60,38 @@ class JointPositionActionTerm(ActionTerm):
 
     def __init__(self, space: gym.spaces.Box, state: JointPositionActionState) -> None:
         super().__init__(space, state)
+        # Seeded generator driving reset-time delay resampling; lives on the
+        # term (not the kernel-data state) because it is host-only.
+        self.generator = torch.Generator()
 
-    def _process(self, actions: np.ndarray) -> np.ndarray:
-        """Map raw policy actions to targets using manager-owned action history."""
+    def _process(self, actions: torch.Tensor) -> torch.Tensor:
+        """Map raw policy actions to targets using manager-owned action history.
+
+        Stays on tensors end to end: the delayed-slot lookup uses
+        ``torch.take_along_dim`` and the affine target map multiplies torch
+        buffers directly, mirroring
+        ``motrix_env_core.torch_manager.actions.process_joint_position_actions``.
+        """
         state = self.state
         ptr = int(state.action_ptr[0])
         target_raw = actions
         if state.delay_hi > 0:
-            width = state.action_queue.shape[1]
+            queue = state.action_queue
+            width = queue.shape[1]
             delay_indices = (ptr - state.delay_steps) % width
-            target_raw = np.take_along_axis(
-                state.action_queue,
-                delay_indices[:, None, None],
-                axis=1,
-            )[:, 0, :]
+            target_raw = torch.take_along_dim(queue, delay_indices[:, None, None], dim=1)[:, 0, :]
         return target_raw * state.action_scales + state.default_angles
 
-    def _reset(self, env_ids: np.ndarray) -> None:
+    def _reset(self, env_ids: torch.Tensor) -> None:
         """Resample per-episode delay after the base term clears raw history."""
         state = self.state
         if state.delay_hi > 0:
-            state.delay_steps[env_ids] = np.random.randint(state.delay_lo, state.delay_hi + 1, size=env_ids.size)
+            state.delay_steps[env_ids] = torch.randint(
+                state.delay_lo,
+                state.delay_hi + 1,
+                (env_ids.numel(),),
+                generator=self.generator,
+            )
 
 
 @configclass(kw_only=True)
@@ -137,13 +151,13 @@ class JointPositionActionCfg(ActionCfg):
         delay_steps = np.zeros(env.num_envs, dtype=np.int64)
         action_ptr = np.zeros(1, dtype=np.int64)
         state = JointPositionActionState(
-            action_queue=action_queue,
-            default_angles=default_angles[indices],
-            joint_lower=joint_lower,
-            joint_upper=joint_upper,
-            action_scales=action_scales[indices],
-            delay_steps=delay_steps,
-            action_ptr=action_ptr,
+            action_queue=torch.from_numpy(action_queue),
+            default_angles=torch.from_numpy(default_angles[indices]),
+            joint_lower=joint_lower[indices],
+            joint_upper=joint_upper[indices],
+            action_scales=torch.from_numpy(action_scales[indices]),
+            delay_steps=torch.from_numpy(delay_steps),
+            action_ptr=torch.from_numpy(action_ptr),
             delay_lo=int(lo),
             delay_hi=int(hi),
         )
@@ -155,9 +169,12 @@ class JointPositionActionCfg(ActionCfg):
                 raise ValueError(f"position actuator {spec.name!r} must define or inherit ctrl_range")
             ctrl_ranges.append(spec.ctrl_range)
         space = joint_position_action_space_from_ctrl_ranges(
-            np.asarray(ctrl_ranges, dtype=np.float32), state.default_angles, state.action_scales
+            np.asarray(ctrl_ranges, dtype=np.float32), state.default_angles.numpy(), state.action_scales.numpy()
         )
-        return JointPositionActionTerm(space, state)
+        term = JointPositionActionTerm(space, state)
+        # Reset-time delay resampling is reproducible per environment seed.
+        term.generator.manual_seed(int(getattr(env, "_rand_seed", 0)) + 0x5EED)
+        return term
 
     @staticmethod
     def _resolve_default_pose(
@@ -184,7 +201,8 @@ class JointPositionActionCfg(ActionCfg):
 
     @staticmethod
     def _read_position_actuator_kps(env: ManagerEnv) -> np.ndarray:
-        return np.asarray(env.model.others["actuator_kp"], dtype=np.float32)
+        kps = env.model.others["actuator_kp"]
+        return kps.detach().cpu().numpy() if isinstance(kps, torch.Tensor) else np.asarray(kps, dtype=np.float32)
 
     @staticmethod
     def _read_position_actuator_effort_limits(env: ManagerEnv) -> np.ndarray:

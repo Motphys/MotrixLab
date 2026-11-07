@@ -121,7 +121,6 @@ sh install.sh --docs
 | `--rslrl` | 添加 RSL-RL provider |
 | `--skrl-jax` | 添加 SKRL JAX runtime，仅 Linux |
 | `--skrl-torch` | 兼容性参数；SKRL Torch 已是仓库必需依赖 |
-| `--tbb` | 显式启用 Intel TBB；Linux 安装脚本默认启用 |
 | `--docs` | 添加文档工具链 |
 | `--all` | 完整开发环境，仅 Python 3.10 |
 | `--help` | 查看脚本的完整参数说明 |

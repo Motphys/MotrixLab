@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import gymnasium as gym
 import numpy as np
 import pytest
+import torch
 
 from motrix_env_core.manager import ManagerEnv
 from motrix_env_core.mdp.action import JointPositionActionCfg, JointPositionActionState, JointPositionActionTerm
@@ -29,13 +30,13 @@ def test_walk_randomization_cfg_rejects_invalid_ranges():
 
 def _tiny_delay_manager(num_envs: int = 2, num_actuators: int = 3, lo: int = 0, hi: int = 2):
     action_state = JointPositionActionState(
-        action_queue=np.zeros((num_envs, max(hi + 1, 2), num_actuators), dtype=np.float32),
-        default_angles=np.zeros(num_actuators, dtype=np.float32),
-        joint_lower=np.zeros(num_actuators, dtype=np.float32),
-        joint_upper=np.ones(num_actuators, dtype=np.float32),
-        action_scales=np.ones(num_actuators, dtype=np.float32),
-        delay_steps=np.full(num_envs, hi, dtype=np.int64),
-        action_ptr=np.zeros(1, dtype=np.int64),
+        action_queue=torch.from_numpy(np.zeros((num_envs, max(hi + 1, 2), num_actuators), dtype=np.float32)),
+        default_angles=torch.from_numpy(np.zeros(num_actuators, dtype=np.float32)),
+        joint_lower=torch.from_numpy(np.zeros(num_actuators, dtype=np.float32)),
+        joint_upper=torch.from_numpy(np.ones(num_actuators, dtype=np.float32)),
+        action_scales=torch.from_numpy(np.ones(num_actuators, dtype=np.float32)),
+        delay_steps=torch.from_numpy(np.full(num_envs, hi, dtype=np.int64)),
+        action_ptr=torch.from_numpy(np.zeros(1, dtype=np.int64)),
         delay_lo=lo,
         delay_hi=hi,
     )
@@ -51,46 +52,46 @@ def _tiny_delay_manager(num_envs: int = 2, num_actuators: int = 3, lo: int = 0, 
     env._action_terms = {"joint_position": term}
     env._action_slices = {"joint_position": slice(0, num_actuators)}
     env._action_actuators = {"joint_position": ()}
-    controls = np.empty((num_envs, num_actuators), dtype=np.float32)
+    controls = torch.empty((num_envs, num_actuators), dtype=torch.float32)
     env._action_writes = SimpleNamespace(buffer=lambda name: controls, execute=lambda: None)
     env._command_terms = {}
     env._state = SimpleNamespace()
-    env._compiled_manager_program = SimpleNamespace(read_plan=SimpleNamespace(flat_inputs=()))
+    env._compiled_manager_program = SimpleNamespace()
     env.perf = SimpleNamespace(scope=lambda name: nullcontext())
-    env._reset_sim_rows = lambda env_ids, inputs: None
+    env._reset_sim_rows = lambda env_ids: None
     return env, term.state, controls
 
 
 def test_action_delay_applies_delayed_action():
     env, action_state, controls = _tiny_delay_manager(lo=1, hi=2)
     action_state.delay_steps[:] = 2
-    actions = np.full(controls.shape, 1.0, dtype=np.float32)
+    actions = torch.full(controls.shape, 1.0, dtype=torch.float32)
     env.apply_action(actions, env._state)
     # Only the raw action exists so far; unwritten history remains zero.
-    assert np.all(controls == 0.0)
-    assert np.all(action_state.action_queue[:, action_state.action_ptr[0]] == 1.0)
+    assert bool((controls == 0.0).all())
+    assert bool((action_state.action_queue[:, int(action_state.action_ptr[0])] == 1.0).all())
     for value in (2.0, 3.0, 4.0):
-        env.apply_action(np.full_like(actions, value), env._state)
+        env.apply_action(torch.full_like(actions, value), env._state)
     # Two-step delay: the applied action is the one from two steps ago.
-    assert np.all(controls == 2.0)
+    assert bool((controls == 2.0).all())
 
 
 def test_action_delay_disabled_passes_actions_through_and_keeps_history():
     env, action_state, controls = _tiny_delay_manager(lo=0, hi=0)
-    actions = np.full(controls.shape, 0.5, dtype=np.float32)
+    actions = torch.full(controls.shape, 0.5, dtype=torch.float32)
     env.apply_action(actions, env._state)
-    assert np.all(controls == 0.5)
+    assert bool((controls == 0.5).all())
     ptr = int(action_state.action_ptr[0])
-    assert np.all(action_state.action_queue[:, ptr] == 0.5)
-    assert np.all(action_state.action_queue[:, (ptr - 1) % action_state.action_queue.shape[1]] == 0.0)
+    assert bool((action_state.action_queue[:, ptr] == 0.5).all())
+    assert bool((action_state.action_queue[:, (ptr - 1) % action_state.action_queue.shape[1]] == 0.0).all())
 
 
 def test_action_queue_wraps_and_selects_delay_per_lane():
     env, action_state, controls = _tiny_delay_manager(num_envs=2, lo=0, hi=2)
-    action_state.delay_steps[:] = [0, 2]
+    action_state.delay_steps[:] = torch.tensor([0, 2])
     width = action_state.action_queue.shape[1]
     for value in range(1, width + 2):
-        actions = np.full(controls.shape, value, dtype=np.float32)
+        actions = torch.full(controls.shape, value, dtype=torch.float32)
         env.apply_action(actions, env._state)
         assert int(action_state.action_ptr[0]) == value % width
         assert controls[0, 0] == value
@@ -101,33 +102,33 @@ def test_action_queue_wraps_and_selects_delay_per_lane():
 def test_action_reset_clears_only_selected_lane_history_and_keeps_pointer():
     env, action_state, controls = _tiny_delay_manager(num_envs=2, lo=0, hi=2)
     for value in (1.0, 2.0, 3.0):
-        env.apply_action(np.full(controls.shape, value, dtype=np.float32), env._state)
-    ptr_before_reset = action_state.action_ptr.copy()
-    other_lane_history = action_state.action_queue[1].copy()
-    env.reset(np.asarray([0], dtype=np.int64))
-    assert np.all(action_state.action_queue[0] == 0.0)
-    np.testing.assert_array_equal(action_state.action_queue[1], other_lane_history)
-    np.testing.assert_array_equal(action_state.action_ptr, ptr_before_reset)
+        env.apply_action(torch.full(controls.shape, value, dtype=torch.float32), env._state)
+    ptr_before_reset = action_state.action_ptr.clone()
+    other_lane_history = action_state.action_queue[1].clone()
+    env.reset(torch.tensor([0], dtype=torch.long))
+    assert bool((action_state.action_queue[0] == 0.0).all())
+    torch.testing.assert_close(action_state.action_queue[1], other_lane_history, rtol=0, atol=0)
+    torch.testing.assert_close(action_state.action_ptr, ptr_before_reset, rtol=0, atol=0)
 
 
 def test_action_delay_reset_resamples_within_range():
     env, action_state, _ = _tiny_delay_manager(lo=0, hi=2)
-    env.reset(np.arange(action_state.action_queue.shape[0]))
-    assert np.all((action_state.delay_steps >= 0) & (action_state.delay_steps <= 2))
+    env.reset(torch.arange(action_state.action_queue.shape[0], dtype=torch.long))
+    assert bool(((action_state.delay_steps >= 0) & (action_state.delay_steps <= 2)).all())
 
 
 def test_joint_position_term_methods_manage_history_and_specific_state():
     env, action_state, controls = _tiny_delay_manager(lo=0, hi=2)
     term = env._action_terms["joint_position"]
     for value in (1.0, 2.0, 3.0):
-        env.apply_action(np.full(controls.shape, value, dtype=np.float32), env._state)
+        env.apply_action(torch.full(controls.shape, value, dtype=torch.float32), env._state)
     pointer = int(action_state.action_ptr[0])
-    term.process(np.full(controls.shape, 4.0, dtype=np.float32))
+    term.process(torch.full(controls.shape, 4.0, dtype=torch.float32))
     assert int(action_state.action_ptr[0]) == (pointer + 1) % action_state.action_queue.shape[1]
-    np.testing.assert_array_equal(action_state.current(), 4.0)
-    term.reset(np.asarray([0], dtype=np.int64))
-    np.testing.assert_array_equal(action_state.action_queue[0], 0.0)
-    np.testing.assert_array_equal(action_state.action_queue[1, 0], 3.0)
+    torch.testing.assert_close(action_state.current(), torch.full_like(action_state.current(), 4.0))
+    term.reset(torch.tensor([0], dtype=torch.long))
+    assert bool((action_state.action_queue[0] == 0.0).all())
+    assert bool((action_state.action_queue[1, 0] == 3.0).all())
 
 
 def test_flat_cfg_randomization_settings_are_wired():
@@ -151,8 +152,8 @@ def test_walk_env_randomized_reset_samples_within_ranges():
     cfg = make_g129dof_walk_flat_cfg()
     env = ManagerEnv(cfg, num_envs=2)
     try:
-        env.step(np.zeros((2, env.num_actuators), dtype=np.float32))
-        env.reset(np.arange(2))
+        env.step(torch.zeros((2, env.num_actuators), dtype=torch.float32))
+        env.reset(torch.arange(2, dtype=torch.long))
         walk = env.command_terms["walk"]
         # Phase increments invert the configured gait-period interval.
         command_cfg = cfg.commands.walk
@@ -160,10 +161,10 @@ def test_walk_env_randomized_reset_samples_within_ranges():
         max_period = max(command_cfg.gait_period + command_cfg.gait_period_randomization_width, 0.1)
         min_phase_step = 2.0 * np.pi * cfg.ctrl_dt / max_period
         max_phase_step = 2.0 * np.pi * cfg.ctrl_dt / min_period
-        assert np.all(walk.phase_step >= min_phase_step - 1e-6)
-        assert np.all(walk.phase_step <= max_phase_step + 1e-6)
+        assert bool((walk.phase_step.numpy() >= min_phase_step - 1e-6).all())
+        assert bool((walk.phase_step.numpy() <= max_phase_step + 1e-6).all())
         action_state = env.action_terms["joint_position"].state
         delay_lo, delay_hi = cfg.actions.joint_position.action_delay_steps
-        assert np.all((action_state.delay_steps >= delay_lo) & (action_state.delay_steps <= delay_hi))
+        assert bool(((action_state.delay_steps >= delay_lo) & (action_state.delay_steps <= delay_hi)).all())
     finally:
         del env

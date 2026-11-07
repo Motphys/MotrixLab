@@ -81,13 +81,6 @@ def _device_context() -> dict:
         "num_numa_nodes": _detect_num_nodes(),
         "binding": _current_binding(),
     }
-    try:
-        import numba as _numba
-
-        ctx["numba_threads"] = _numba.get_num_threads()
-        ctx["numba_layer"] = _numba.threading_layer()
-    except Exception:
-        pass
     return ctx
 
 

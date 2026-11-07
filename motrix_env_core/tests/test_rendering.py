@@ -10,8 +10,8 @@ Simulator-owned renderer internals are covered by each backend package
 from pathlib import Path
 from unittest.mock import MagicMock, Mock
 
-import numpy as np
 import pytest
+import torch
 
 from motrix_env_core.renderer import VideoRecorder, create_renderer
 from motrix_env_core.sim.backend import RenderConfig, SimRenderer
@@ -54,7 +54,7 @@ def test_render_config_rejects_invalid_settings():
 
 def test_video_recorder_paces_frames_and_closes_frame_source(tmp_path, monkeypatch):
     frames = MagicMock(spec=SimRenderer)
-    frames.capture.return_value = np.zeros((4, 4, 3), dtype=np.uint8)
+    frames.capture.return_value = torch.zeros((4, 4, 3), dtype=torch.uint8)
     writer = MagicMock()
     get_writer = MagicMock(return_value=writer)
     # renderer imports imageio lazily inside _write_frame, so patch the real

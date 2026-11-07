@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import gymnasium as gym
 import numpy as np
 import pytest
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -16,7 +17,7 @@ from motrix_env_core.base import ABEnv
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import MjcfFileCfg, RobotCfg, SceneCfg
 from motrix_env_core.direct.env import DirectEnv, DirectEnvCfg
-from motrix_env_core.numba.manager.env import ManagerBasedEnvCfg, ManagerEnv
+from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
 from motrix_env_core.sim import ModelQuery
 from motrix_env_core.sim.backend import SimBackend
 from motrix_env_core.sim.model import SimModel
@@ -195,13 +196,13 @@ def test_custom_environment_can_be_registered_and_created_without_builtins():
         def action_space(self) -> gym.spaces.Box:
             return gym.spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32)
 
-        def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+        def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
             return state
 
         def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
             return state
 
-        def reset(self, env_ids: np.ndarray) -> None:
+        def reset(self, env_ids: torch.Tensor) -> None:
             pass
 
     env = registry.make(env_name, num_envs=2, sim="fake-registry")
@@ -254,13 +255,13 @@ def test_direct_env_resolves_sim_backend_through_registry():
         def action_space(self) -> gym.spaces.Box:
             return gym.spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32)
 
-        def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+        def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
             return state
 
         def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
             return state
 
-        def reset(self, env_ids: np.ndarray) -> None:
+        def reset(self, env_ids: torch.Tensor) -> None:
             pass
 
     env = registry.make(env_name, num_envs=2, sim="fake-registry")
