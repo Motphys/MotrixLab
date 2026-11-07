@@ -79,12 +79,12 @@ class JointPositionActionTerm(ActionTerm):
             target_raw = torch.take_along_dim(queue, delay_indices[:, None, None], dim=1)[:, 0, :]
         return target_raw * state.action_scales + state.default_angles
 
-    def _reset(self, env_ids: np.ndarray) -> None:
+    def _reset(self, env_ids: torch.Tensor) -> None:
         """Resample per-episode delay after the base term clears raw history."""
         state = self.state
         if state.delay_hi > 0:
-            state.delay_steps.numpy()[env_ids] = np.random.randint(
-                state.delay_lo, state.delay_hi + 1, size=env_ids.size
+            state.delay_steps[env_ids] = torch.from_numpy(
+                np.random.randint(state.delay_lo, state.delay_hi + 1, size=env_ids.numel())
             )
 
 

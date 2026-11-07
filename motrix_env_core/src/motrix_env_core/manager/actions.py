@@ -85,13 +85,13 @@ class ActionTerm(abc.ABC):
     def _process(self, actions: torch.Tensor) -> torch.Tensor | None:
         """Process one batched tensor action slice into route-local controls."""
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
         """Clear raw history and reset action-specific state for selected rows."""
-        self.state.action_queue.numpy()[env_ids] = 0.0
+        self.state.action_queue[env_ids] = 0.0
         self._reset(env_ids)
 
     @abc.abstractmethod
-    def _reset(self, env_ids: np.ndarray) -> None:
+    def _reset(self, env_ids: torch.Tensor) -> None:
         """Reset action-specific state for selected environment rows."""
 
 

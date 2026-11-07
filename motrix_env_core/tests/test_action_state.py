@@ -88,7 +88,7 @@ def test_joint_position_action_resamples_delay_on_reset(monkeypatch) -> None:
     term = JointPositionActionTerm(gym.spaces.Box(-np.inf, np.inf, shape=(1,)), state)
     monkeypatch.setattr(np.random, "randint", lambda lo, hi, size: np.full(size, lo + 1, dtype=np.int64))
 
-    term._reset(np.asarray([0, 2], dtype=np.int64))
+    term._reset(torch.tensor([0, 2], dtype=torch.long))
 
     np.testing.assert_array_equal(term.state.delay_steps.numpy(), [2, 0, 2])
 

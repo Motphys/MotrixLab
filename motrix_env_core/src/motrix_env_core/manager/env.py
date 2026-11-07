@@ -690,8 +690,9 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
                         )
                     )
             with self.perf.scope("action_reset"):
+                action_env_ids = torch.from_numpy(env_ids)
                 for action_term in self._action_terms.values():
-                    action_term.reset(env_ids)
+                    action_term.reset(action_env_ids)
         if sim_reset_ids is not None and sim_reset_ids.size:
             env_ids = np.concatenate([env_ids, sim_reset_ids])
         if env_ids.size:

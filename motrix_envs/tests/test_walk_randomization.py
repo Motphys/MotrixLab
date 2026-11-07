@@ -126,7 +126,7 @@ def test_joint_position_term_methods_manage_history_and_specific_state():
     term.process(torch.full(controls.shape, 4.0, dtype=torch.float32))
     assert int(action_state.action_ptr[0]) == (pointer + 1) % action_state.action_queue.shape[1]
     torch.testing.assert_close(action_state.current(), torch.full_like(action_state.current(), 4.0))
-    term.reset(np.asarray([0], dtype=np.int64))
+    term.reset(torch.tensor([0], dtype=torch.long))
     assert bool((action_state.action_queue[0] == 0.0).all())
     assert bool((action_state.action_queue[1, 0] == 3.0).all())
 

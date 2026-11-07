@@ -65,7 +65,7 @@ class _TestActionTerm(ActionTerm):
     def _process(self, actions: torch.Tensor) -> None:
         self.state.source.copy_(actions)
 
-    def _reset(self, env_ids: np.ndarray) -> None:
+    def _reset(self, env_ids: torch.Tensor) -> None:
         self.state.reset_flags.fill_(False)
         self.state.reset_flags[env_ids] = True
 
@@ -77,7 +77,7 @@ class _SecondActionTerm(ActionTerm):
     def _process(self, actions: torch.Tensor) -> None:
         self.state.source.copy_(actions)
 
-    def _reset(self, env_ids: np.ndarray) -> None:
+    def _reset(self, env_ids: torch.Tensor) -> None:
         self.state.reset_flags.fill_(False)
         self.state.reset_flags[env_ids] = True
 

@@ -82,7 +82,7 @@ def _exercise_reset(reset: Callable, process: Callable) -> None:
         before = queue.clone()
         pointer_before = ptr.clone()
         queue_after = reset(queue, torch.from_numpy(mask))
-        term.reset(np.flatnonzero(mask))
+        term.reset(torch.from_numpy(np.flatnonzero(mask)))
         torch.testing.assert_close(queue_after, state.action_queue, rtol=0, atol=0)
         torch.testing.assert_close(queue, before, rtol=0, atol=0)
         torch.testing.assert_close(ptr, pointer_before, rtol=0, atol=0)
