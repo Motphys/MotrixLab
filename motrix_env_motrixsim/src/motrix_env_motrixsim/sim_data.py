@@ -397,8 +397,12 @@ class _MotrixSimReadProgram(PhysicsReadProgram):
                     f"leading dimension {num_envs}, got {view.shape}."
                 )
         # Public views are torch tensors aliasing the same arena storage; the
-        # numpy arena stays private to the backend bridge.
-        self._tensors = {key: torch.from_numpy(view) for key, view in self._views.items()}
+        # numpy arena stays private to the backend bridge. Aliased keys
+        # (duplicate declarations) share one tensor object.
+        self._tensors: dict[str, torch.Tensor] = {}
+        tensors_by_view: dict[int, torch.Tensor] = {}
+        for key, view in self._views.items():
+            self._tensors[key] = tensors_by_view.setdefault(id(view), torch.from_numpy(view))
 
     @property
     def arena_bytes(self) -> int:

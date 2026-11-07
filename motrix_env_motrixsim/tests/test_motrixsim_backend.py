@@ -6,6 +6,7 @@
 import motrixsim as mtx
 import numpy as np
 import pytest
+import torch
 
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config.scene import SceneCfg, SceneCompiler
@@ -100,7 +101,8 @@ def test_motrixsim_runtime_reset_restores_default_state():
     assert model.actuators == ()
 
     # A scene without DOF resets to backend defaults without any value channels.
-    backend.write_compiler.compile({"ctrl": CtrlTargetsWrite()}, reset=True).execute(np.asarray([0, 1], dtype=np.int64))
+    program = backend.write_compiler.compile({"ctrl": CtrlTargetsWrite()}, reset=True)
+    program.execute(torch.tensor([0, 1], dtype=torch.int64))
 
 
 def test_body_joint_position_limits_follow_body_joint_dof_order():
@@ -168,8 +170,8 @@ def test_dof_position_limits_follow_global_dof_position_order():
     lower, upper = model.others["limits"]
 
     assert lower.shape == upper.shape == (backend.num_dof_pos,)
-    assert np.all(np.isneginf(lower[:7]))
-    assert np.all(np.isposinf(upper[:7]))
+    assert bool(torch.isneginf(lower[:7]).all())
+    assert bool(torch.isposinf(upper[:7]).all())
     for joint in backend._model.joints:
         limits = np.asarray(joint.range, dtype=np.float32).reshape(-1, 2)
         position_slice = slice(joint.dof_pos_index, joint.dof_pos_index + joint.num_dof_pos)
@@ -261,10 +263,10 @@ def test_named_joint_reset_follows_declared_order_and_partial_selection():
             "velocity": JointVelocityQuery(joints=joints),
         }
     )
-    reset.buffer("joints_position")[1] = [0.1, 0.2, 0.3]
-    reset.buffer("joints_velocity")[1] = [0.4, 0.5, 0.6]
+    reset.buffer("joints_position")[1] = torch.tensor([0.1, 0.2, 0.3])
+    reset.buffer("joints_velocity")[1] = torch.tensor([0.4, 0.5, 0.6])
 
-    reset.execute(np.asarray([1], dtype=np.int64))
+    reset.execute(torch.tensor([1], dtype=torch.int64))
     read.execute()
 
     np.testing.assert_allclose(read["position"][1], [0.1, 0.2, 0.3])
@@ -284,10 +286,10 @@ def test_full_dof_reset_preserves_unsorted_environment_id_values():
     read = backend.compile_reads({"position": DofPositionQuery()})
     hinge_dof = backend._model.get_joint("hinge").dof_pos_index
     position = reset.buffer("joint_position")
-    position[2] = [0.4]
-    position[0] = [-0.4]
+    position[2] = torch.tensor([0.4])
+    position[0] = torch.tensor([-0.4])
 
-    reset.execute(np.asarray([2, 0], dtype=np.int64))
+    reset.execute(torch.tensor([2, 0], dtype=torch.int64))
     read.execute()
 
     np.testing.assert_allclose(read["position"][2, hinge_dof], [0.4])
@@ -311,11 +313,11 @@ def test_body_dof_reset_matches_body_query_layout():
     )
     position = reset.buffer("body_position")
     velocity = reset.buffer("body_velocity")
-    position[0] = np.linspace(-0.2, 0.2, position.shape[1], dtype=np.float32)
-    velocity[0] = np.linspace(0.3, -0.3, velocity.shape[1], dtype=np.float32)
+    position[0] = torch.linspace(-0.2, 0.2, position.shape[1], dtype=torch.float32)
+    velocity[0] = torch.linspace(0.3, -0.3, velocity.shape[1], dtype=torch.float32)
 
-    reset.execute(np.asarray([0], dtype=np.int64))
-    read.execute(np.asarray([0], dtype=np.int64))
+    reset.execute(torch.tensor([0], dtype=torch.int64))
+    read.execute(torch.tensor([0], dtype=torch.int64))
 
     np.testing.assert_allclose(read["position"][0], position[0])
     np.testing.assert_allclose(read["velocity"][0], velocity[0])
@@ -361,12 +363,12 @@ def test_body_state_reset_is_visible_to_link_queries():
     )
     assert reset.buffer("body_position").shape == (1, 1, 3)
     assert reset.buffer("body_rotation").shape == (1, 1, 4)
-    reset.buffer("body_position")[0, 0] = [1.0, 2.0, 3.0]
-    reset.buffer("body_rotation")[0, 0] = [0.0, 0.0, 0.0, 1.0]
-    reset.buffer("body_linear_velocity")[0, 0] = [0.1, 0.2, 0.3]
-    reset.buffer("body_angular_velocity")[0, 0] = [0.4, 0.5, 0.6]
+    reset.buffer("body_position")[0, 0] = torch.tensor([1.0, 2.0, 3.0])
+    reset.buffer("body_rotation")[0, 0] = torch.tensor([0.0, 0.0, 0.0, 1.0])
+    reset.buffer("body_linear_velocity")[0, 0] = torch.tensor([0.1, 0.2, 0.3])
+    reset.buffer("body_angular_velocity")[0, 0] = torch.tensor([0.4, 0.5, 0.6])
 
-    reset.execute(np.asarray([0], dtype=np.int64))
+    reset.execute(torch.tensor([0], dtype=torch.int64))
     read.execute()
 
     np.testing.assert_allclose(read["position"][0], [1.0, 2.0, 3.0])
@@ -388,12 +390,12 @@ def test_motrixsim_reset_program_validates_environment_ids():
     backend = _make_backend(SceneCfg(), SimCfg(), num_envs=2)
     program = backend.write_compiler.compile({"ctrl": CtrlTargetsWrite()}, reset=True)
 
-    with pytest.raises(TypeError, match="int64 ndarray"):
+    with pytest.raises(TypeError, match="integer tensor"):
         program.execute(np.asarray([0], dtype=np.int32))
     with pytest.raises(IndexError, match="out of range"):
-        program.execute(np.asarray([2], dtype=np.int64))
+        program.execute(torch.tensor([2], dtype=torch.int64))
     with pytest.raises(ValueError, match="duplicates"):
-        program.execute(np.asarray([0, 0], dtype=np.int64))
+        program.execute(torch.tensor([0, 0], dtype=torch.int64))
 
 
 def test_sim_cfg_preserves_unspecified_solver_options():
@@ -418,8 +420,8 @@ def test_ctrl_targets_write_routes_named_actuators_through_native_plan():
     ctrl = backend.write_compiler.compile({"ctrl": CtrlTargetsWrite(reordered)})
 
     assert ctrl.buffer("ctrl").shape == (3, 2)
-    ctrl.buffer("ctrl")[:] = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
-    ctrl.execute(np.asarray([1], dtype=np.int64))
+    ctrl.buffer("ctrl")[:] = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    ctrl.execute(torch.tensor([1], dtype=torch.int64))
 
     read = backend.compile_reads({"ctrl_values": ActuatorCtrlQuery()})
     read.execute()
@@ -444,10 +446,10 @@ def test_partial_env_ids_leave_other_rows_untouched_with_native_writes():
         }
     )
     read = backend.compile_reads({"position": LinkPositionQuery(link=body), "rotation": LinkQuaternionQuery(link=body)})
-    program.buffer("body_position")[1, 0] = [1.0, 2.0, 3.0]
-    program.buffer("body_rotation")[1, 0] = [0.0, 0.0, 0.0, 1.0]
+    program.buffer("body_position")[1, 0] = torch.tensor([1.0, 2.0, 3.0])
+    program.buffer("body_rotation")[1, 0] = torch.tensor([0.0, 0.0, 0.0, 1.0])
 
-    program.execute(np.asarray([1], dtype=np.int64))
+    program.execute(torch.tensor([1], dtype=torch.int64))
     read.execute()
 
     np.testing.assert_allclose(read["position"][1], [1.0, 2.0, 3.0])
@@ -486,10 +488,10 @@ def test_mixed_dof_and_native_writes_execute_in_one_program():
         {"joint_pos": BodyJointPositionQuery(body=body), "position": LinkPositionQuery(link=body)}
     )
     program.buffer("joint_position")[0] = 0.0
-    program.buffer("base_position")[0, 0] = [0.5, -0.5, 1.5]
+    program.buffer("base_position")[0, 0] = torch.tensor([0.5, -0.5, 1.5])
 
-    program.execute(np.asarray([0], dtype=np.int64))
-    read.execute(np.asarray([0], dtype=np.int64))
+    program.execute(torch.tensor([0], dtype=torch.int64))
+    read.execute(torch.tensor([0], dtype=torch.int64))
 
     # Legacy DOF-channel scatter and the native body write land in the same
     # step, and forward kinematics still refreshes link poses once.

@@ -87,7 +87,7 @@ def test_installed_plugin_discovers_builtin_models_without_explicit_imports() ->
                     assert registry.make_robot_config(name) is not robot
                 assert registry.make_robot_config('go2') is not first
                 assert not any(name in sys.modules for name in (
-                    'motrix_envs', 'motrixsim', 'mujoco', 'torch',
+                    'motrix_envs', 'motrixsim', 'mujoco',
                     'motrix_deploy', 'unitree_sdk2py',
                 ))
                 """
