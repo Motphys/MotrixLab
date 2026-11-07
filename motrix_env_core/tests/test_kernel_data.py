@@ -35,7 +35,7 @@ class _Robot(_RobotBase):
 @dataclass(frozen=True, slots=True)
 class _Tracking:
     robot: _Robot
-    phase: np.float32
+    phase: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,10 +46,10 @@ class _Cyclic:
 def test_kernel_data_is_frozen_and_compiles_nested_inherited_leaves() -> None:
     value = _Tracking(
         _Robot(torch.asarray([[1.0, 2.0]], dtype=torch.float32), _Pose(torch.asarray([[3.0]]), torch.asarray([4.0]))),
-        np.float32(0.5),
+        0.5,
     )
     with pytest.raises(FrozenInstanceError):
-        value.phase = np.float32(1.0)  # type: ignore[misc]
+        value.phase = 1.0  # type: ignore[misc]
 
     leaves = [(path, leaf_value) for path, _, leaf_value in iter_leaves(value)]
     assert [path for path, _ in leaves] == [
@@ -60,7 +60,7 @@ def test_kernel_data_is_frozen_and_compiles_nested_inherited_leaves() -> None:
     ]
     annotations = [annotation for _, annotation, _ in iter_leaves(value)]
     assert leaf_value_type(annotations[0]) is torch.Tensor
-    assert leaf_value_type(annotations[-1]) is np.float32
+    assert leaf_value_type(annotations[-1]) is float
 
 
 def test_kernel_data_accepts_tensor_leaves() -> None:
@@ -116,7 +116,7 @@ def test_iter_leaves_rejects_map_annotation_without_map_value() -> None:
         values: Map
 
     with pytest.raises(TypeError, match="requires a concrete Map value"):
-        list(iter_leaves(_HoldsMap({"a": np.float32(1.0)})))  # type: ignore[arg-type]
+        list(iter_leaves(_HoldsMap({"a": 1.0})))  # type: ignore[arg-type]
 
 
 def test_kernel_data_rejects_unsupported_leaf() -> None:

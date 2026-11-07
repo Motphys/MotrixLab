@@ -43,13 +43,6 @@ def leaf_value_type(annotation: Any) -> type | None:
         return annotation
     if annotation in {bool, int, float}:
         return annotation
-    if isinstance(annotation, type) and issubclass(annotation, np.generic):
-        try:
-            dtype = np.dtype(annotation)
-        except TypeError:
-            return None
-        if dtype.type is annotation and dtype.kind in "biuf":
-            return annotation
     return None
 
 

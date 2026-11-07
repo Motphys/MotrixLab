@@ -43,7 +43,6 @@ from motrix_env_core.manager.resolver import (
     SimResetTermCall,
     TerminationTermCall,
 )
-from motrix_env_core.torch_manager import merged_omp
 
 if TYPE_CHECKING:
     from motrix_env_core.manager.env import ManagerEnv
@@ -64,9 +63,6 @@ def _compile_options() -> dict[str, Any]:
     # ``#pragma omp single``). Manager term loops are exactly that size, so
     # lower the threshold to let them parallelize.
     chunk = int(os.environ.get("MOTRIX_TORCH_MIN_CHUNK", "256"))
-    # Experiment: barrier-free OpenMP loops in the generated C++ (no-op
-    # unless MOTRIX_TORCH_MERGED_OMP is set).
-    merged_omp.maybe_install()
     return {"cpp.threads": threads, "cpp.min_chunk_size": chunk}
 
 

@@ -3,6 +3,8 @@
 
 """Generic quadruped walk task with joystick velocity tracking."""
 
+import math
+
 import gymnasium as gym
 import numpy as np
 import torch
@@ -42,6 +44,13 @@ from motrix_env_core.sim.write import (
 )
 from motrix_envs.locomotion.quadruped.cfg import QuadrupedWalkEnvCfg
 from motrix_envs.locomotion.quadruped.velocity_command import RandomPlanarVelocityBinding
+
+
+def _torch_uniform(rng: torch.Generator, low, high, size) -> torch.Tensor:
+    """Sample float32 uniform values in ``[low, high)`` from one torch stream."""
+    low = torch.as_tensor(low, dtype=torch.float32)
+    high = torch.as_tensor(high, dtype=torch.float32)
+    return low + (high - low) * torch.rand(size, generator=rng)
 
 
 def _sim_data_queries(cfg: QuadrupedWalkEnvCfg):
@@ -167,17 +176,21 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         )
         self._feet_position_sensors = foot_position_sensors
         velocity_cfg = cfg.commands.velocity
-        root_seed = int(np.random.randint(0, np.iinfo(np.uint32).max, dtype=np.uint32))
-        command_seed, randomization_seed = np.random.SeedSequence(root_seed).spawn(2)
-        self._command_rng = np.random.default_rng(command_seed)
-        self._randomization_rng = np.random.default_rng(randomization_seed)
+        # Two independent torch streams derived from one root seed drawn from
+        # the global torch RNG (training frameworks seed torch, so runs stay
+        # reproducible under their seeding).
+        root_seed = int(torch.randint(0, 2**32 - 1, (1,)).item())
+        self._command_rng = torch.Generator()
+        self._command_rng.manual_seed(root_seed)
+        self._randomization_rng = torch.Generator()
+        self._randomization_rng.manual_seed(root_seed + 1)
         self._velocity_command_binding = RandomPlanarVelocityBinding(
             velocity_cfg.lower,
             velocity_cfg.upper,
             rng=self._command_rng,
             standing_probability=velocity_cfg.standing_probability,
         )
-        if not np.isfinite(velocity_cfg.standing_threshold) or velocity_cfg.standing_threshold < 0.0:
+        if not math.isfinite(velocity_cfg.standing_threshold) or velocity_cfg.standing_threshold < 0.0:
             raise ValueError(
                 f"standing_threshold must be finite and non-negative, got {velocity_cfg.standing_threshold}"
             )
@@ -494,12 +507,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         num_action = self._num_action
 
         if randomization.joint_pos_noise > 0.0:
-            joint_position[:, -num_action:] += torch.from_numpy(
-                rng.uniform(
-                    -randomization.joint_pos_noise,
-                    randomization.joint_pos_noise,
-                    size=(num_reset, num_action),
-                ).astype(np.float32)
+            joint_position[:, -num_action:] += _torch_uniform(
+                rng, -randomization.joint_pos_noise, randomization.joint_pos_noise, (num_reset, num_action)
             )
             joint_position[:, -num_action:] = torch.clamp(
                 joint_position[:, -num_action:],
@@ -507,24 +516,16 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
                 max=self._joint_position_upper,
             )
         if randomization.joint_vel_noise > 0.0:
-            joint_velocity[:, -num_action:] += torch.from_numpy(
-                rng.uniform(
-                    -randomization.joint_vel_noise,
-                    randomization.joint_vel_noise,
-                    size=(num_reset, num_action),
-                ).astype(np.float32)
+            joint_velocity[:, -num_action:] += _torch_uniform(
+                rng, -randomization.joint_vel_noise, randomization.joint_vel_noise, (num_reset, num_action)
             )
 
         if any(randomization.base_lin_vel_noise):
-            base_lin_vel_noise = np.asarray(randomization.base_lin_vel_noise, dtype=np.float32)
-            base_linear_velocity += torch.from_numpy(
-                rng.uniform(-base_lin_vel_noise, base_lin_vel_noise, size=(num_reset, 3)).astype(np.float32)
-            )
+            noise = torch.as_tensor(randomization.base_lin_vel_noise, dtype=torch.float32)
+            base_linear_velocity += _torch_uniform(rng, -noise, noise, (num_reset, 3))
         if any(randomization.base_ang_vel_noise):
-            base_ang_vel_noise = np.asarray(randomization.base_ang_vel_noise, dtype=np.float32)
-            base_angular_velocity += torch.from_numpy(
-                rng.uniform(-base_ang_vel_noise, base_ang_vel_noise, size=(num_reset, 3)).astype(np.float32)
-            )
+            noise = torch.as_tensor(randomization.base_ang_vel_noise, dtype=torch.float32)
+            base_angular_velocity += _torch_uniform(rng, -noise, noise, (num_reset, 3))
 
     def _randomize_params(self, env_ids: torch.Tensor) -> None:
         num_reset = env_ids.numel()
@@ -539,8 +540,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             if delay_low == delay_high:
                 self._action_delay_steps[env_ids] = delay_low
             else:
-                self._action_delay_steps[env_ids] = torch.from_numpy(
-                    rng.integers(delay_low, delay_high + 1, size=num_reset).astype(np.int64)
+                self._action_delay_steps[env_ids] = torch.randint(
+                    delay_low, delay_high + 1, (num_reset,), generator=rng
                 )
 
         # All override writes for this reset batch into one program execution.
@@ -549,33 +550,21 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             return
 
         if self._randomize_kp:
-            kp_scale = torch.from_numpy(
-                rng.uniform(*self.cfg.randomization.kp_scale_range, size=(num_reset, num_action)).astype(np.float32)
-            )
+            kp_scale = _torch_uniform(rng, *self.cfg.randomization.kp_scale_range, (num_reset, num_action))
             program.buffer("kp")[env_ids] = self.model.others["actuator_kp"][None, :] * kp_scale
         if self._randomize_damping:
-            damping_scale = torch.from_numpy(
-                rng.uniform(*self.cfg.randomization.damping_scale_range, size=(num_reset, num_action)).astype(
-                    np.float32
-                )
-            )
+            damping_scale = _torch_uniform(rng, *self.cfg.randomization.damping_scale_range, (num_reset, num_action))
             program.buffer("damping")[env_ids] = self.model.others["actuator_kd"][None, :] * damping_scale
         if self._randomize_friction:
             friction = self.model.others["ground_friction"].repeat(num_reset, 1)
-            friction[:, 0] = torch.from_numpy(
-                rng.uniform(*self.cfg.randomization.sliding_friction_range, size=num_reset).astype(np.float32)
-            )
+            friction[:, 0] = _torch_uniform(rng, *self.cfg.randomization.sliding_friction_range, (num_reset,))
             program.buffer("friction")[env_ids, 0] = friction
         if self._randomize_base_mass:
-            base_mass_scale = torch.from_numpy(
-                rng.uniform(*self.cfg.randomization.base_mass_scale_range, size=num_reset).astype(np.float32)
-            )
+            base_mass_scale = _torch_uniform(rng, *self.cfg.randomization.base_mass_scale_range, (num_reset,))
             program.buffer("mass")[env_ids, 0] = self.model.others["base_mass"] * base_mass_scale
         if self._randomize_base_com:
-            base_com_noise = np.asarray(self.cfg.randomization.base_com_offset_noise, dtype=np.float32)
-            base_com_offset = torch.from_numpy(
-                rng.uniform(-base_com_noise, base_com_noise, size=(num_reset, 3)).astype(np.float32)
-            )
+            noise = torch.as_tensor(self.cfg.randomization.base_com_offset_noise, dtype=torch.float32)
+            base_com_offset = _torch_uniform(rng, -noise, noise, (num_reset, 3))
             program.buffer("com")[env_ids, 0] = self.model.others["base_com"] + base_com_offset
         program.execute(env_ids)
 

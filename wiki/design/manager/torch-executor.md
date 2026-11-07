@@ -114,11 +114,4 @@ ActionTerm 的 `process/_reset` 也保持 numpy host 路径不变。
   0.59ms（Numba 因单小并行区天然免疫）。
 - **已知残余**。EPYC 上相对 Numba 约 1ms 残余 = 冷缓存惩罚 + reset 静态全批布尔掩码设计
   （RNG 状态 `where(mask, ...)` 门控）带来的约 3x lane 计算结构性成本；本机持平 16.8–17.0ms。
-- **merged-OMP 实验（默认关闭，`MOTRIX_TORCH_MERGED_OMP=1`）**。Inductor 2.7 生成的 CPU 图
-  本就是单 `#pragma omp parallel` 区，无 per-loop fork/join；成本在每个 `#pragma omp for` 的
-  隐式 barrier（四个编译 kernel 分别含 30/23/13/11 个循环）。该实验在 `CppCodeCache.load_async`
-  处后处理生成 C++：按循环的指针读写集（含 `auto out_ptrN = in_out_ptrM` 别名归一）做依赖
-  分析，仅保留跨循环 RAW/WAR 确需的 barrier（25/30、21/23、11/13、7/11 个循环获得
-  `nowait`）。obs 与 RNG 流 on/off 逐位一致；EPYC 默认 8 线程图内上限下约 5–8% 提速，
-  `MOTRIX_TORCH_COMPILE_THREADS=$T` 不封顶时 128t 崩塌 27.6→20.4ms（-26%）、192t
-  33.0→29.8ms（-10%）；拉平 192t 仍需跨图 region 融合或持久 lane kernel（future work）。
+  拉平高线程数仍需跨图 region 融合或持久 lane kernel（future work）。

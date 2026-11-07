@@ -91,7 +91,7 @@ def test_quadruped_reward_scales_are_structured_and_not_shared():
 
 
 def test_go2_velocity_commands_remain_constant_before_resampling_interval():
-    np.random.seed(7)
+    torch.manual_seed(7)
     env = registry.make("go2-walk-flat", num_envs=64, mode="train")
     env.init_state()
     commands = env._commands.clone()
@@ -245,13 +245,13 @@ def test_random_planar_velocity_binding_is_seeded_vectorized_and_task_specific()
     first = RandomPlanarVelocityBinding(
         np.array([-0.5, -0.4, -1.0], dtype=np.float32),
         np.array([1.0, 0.4, 1.0], dtype=np.float32),
-        rng=np.random.default_rng(7),
+        rng=torch.Generator().manual_seed(7),
         standing_probability=0.0,
     ).read_command(batch_size=8)
     repeated = RandomPlanarVelocityBinding(
         np.array([-0.5, -0.4, -1.0], dtype=np.float32),
         np.array([1.0, 0.4, 1.0], dtype=np.float32),
-        rng=np.random.default_rng(7),
+        rng=torch.Generator().manual_seed(7),
         standing_probability=0.0,
     ).read_command(batch_size=8)
 
@@ -266,7 +266,7 @@ def test_random_planar_velocity_binding_can_sample_a_standing_batch():
     binding = RandomPlanarVelocityBinding(
         np.full(3, -1.0, dtype=np.float32),
         np.full(3, 1.0, dtype=np.float32),
-        rng=np.random.default_rng(3),
+        rng=torch.Generator().manual_seed(3),
         standing_probability=1.0,
     )
 

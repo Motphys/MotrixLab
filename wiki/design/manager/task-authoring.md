@@ -93,7 +93,7 @@ kernel-data record 的字段必须有类型标注，结构在构造期固定。T
 支持的 leaf 类型为：
 
 - `torch.Tensor`：term 拥有字段的默认且唯一的数组类型，是宿主 numpy arena 上的零拷贝视图；lane 形状张量第一维为 `num_envs`，模型参数、查表数据和 motion clip 等共享张量则没有 batch 维（宿主侧 numpy 代码通过 `tensor.numpy()` 视图读写同一 backing）；
-- Python 标量与固定 dtype NumPy scalar；
+- Python 标量（bool/int/float；NumPy 标量与 ndarray 均不是合法 leaf）；
 - 另一个 kernel-data record 类型。
 
 需要对外发布逐环境指标时使用 `metric()` 字段。框架为其分配 `(num_envs, 1)` backing，term 在当前 lane 写入 `[0]`。

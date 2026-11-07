@@ -8,7 +8,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 import torch
 
 from motrix_env_core.manager.kernel_data import is_kernel_data, validate_kernel_data
@@ -16,7 +15,7 @@ from motrix_env_core.sim.read import SimDataQuery
 
 # Static term-argument leaves accepted as-is; anything else is a cfg-authoring
 # error caught at term construction.
-_STATIC_LEAVES = (bool, int, float, str, np.generic, torch.Tensor, SimDataQuery)
+_STATIC_LEAVES = (bool, int, float, str, torch.Tensor, SimDataQuery)
 
 
 def canonicalize_term_args(args: tuple[Any, ...], *, context: str) -> tuple[Any, ...]:
@@ -32,7 +31,7 @@ def canonicalize_term_args(args: tuple[Any, ...], *, context: str) -> tuple[Any,
             values.append(validate_kernel_data(value, context=f"{context} args[{index}]"))
         elif isinstance(value, _STATIC_LEAVES):
             values.append(value)
-        elif isinstance(value, tuple) and all(isinstance(item, (bool, int, float, np.generic)) for item in value):
+        elif isinstance(value, tuple) and all(isinstance(item, (bool, int, float)) for item in value):
             values.append(value)
         else:
             raise TypeError(

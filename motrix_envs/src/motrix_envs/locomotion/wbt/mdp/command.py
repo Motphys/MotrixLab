@@ -3,9 +3,9 @@
 
 """Command terms for manager-based whole-body tracking."""
 
+import math
 from dataclasses import dataclass
 
-import numpy as np
 import torch
 from omegaconf import MISSING
 
@@ -100,9 +100,9 @@ class WbtMotionCommand(CommandTerm):
     target_body_position_relative: torch.Tensor
     target_body_orientation_relative: torch.Tensor
 
-    # Host-side adaptive frame-sampling state and parameters. Host hooks read
-    # and write them through zero-copy ``.numpy()`` views; kernels write the
-    # per-env members through the tensors themselves.
+    # Host-side adaptive frame-sampling state and parameters. Host hooks
+    # operate on the tensors directly; kernels write the per-env members
+    # through the tensors themselves.
     adaptive_bin_failed_count: torch.Tensor
     adaptive_current_bin_failed_count: torch.Tensor
     sampling_cdf: torch.Tensor
@@ -124,64 +124,67 @@ class WbtMotionCommand(CommandTerm):
     def reset(self, ctx: ResetContext) -> None:
         """Update adaptive statistics and prepare sampling for selected environments."""
         env_ids = ctx.env_ids
-        cdf = self.sampling_cdf.numpy()
-        if cdf.size:
-            failed = self.adaptive_bin_failed_count.numpy()
+        cdf = self.sampling_cdf
+        if cdf.numel():
+            failed = self.adaptive_bin_failed_count
             episode_failed = ctx.terminated[env_ids]
             if bool(episode_failed.any()):
                 failed_steps = self.steps[env_ids, 0][episode_failed]
-                num_bins = failed.size
+                num_bins = failed.numel()
                 failed_bins = (failed_steps.to(torch.int64) * num_bins) // max(self.clip.joint_pos.shape[0], 1)
                 failed_bins = torch.clamp(failed_bins, 0, num_bins - 1)
                 self.adaptive_current_bin_failed_count.add_(
                     torch.bincount(failed_bins, minlength=num_bins).to(torch.float32)
                 )
             probabilities = self._sampling_probabilities()
-            entropy = -float(np.sum(probabilities * np.log(probabilities + 1e-12)))
-            entropy_norm = entropy / float(np.log(max(probabilities.size, 2)))
-            top_bin = int(np.argmax(probabilities))
+            entropy = -float((probabilities * torch.log(probabilities + 1e-12)).sum())
+            entropy_norm = entropy / math.log(max(probabilities.numel(), 2))
+            top_bin = int(torch.argmax(probabilities))
             ctx.metrics["adaptive_sampling_entropy"] = entropy_norm
             ctx.metrics["adaptive_sampling_top1_prob"] = float(probabilities[top_bin])
-            ctx.metrics["adaptive_sampling_top1_bin"] = float(top_bin) / float(probabilities.size)
-            ctx.metrics["adaptive_failure_mass"] = float(np.sum(failed))
+            ctx.metrics["adaptive_sampling_top1_bin"] = float(top_bin) / float(probabilities.numel())
+            ctx.metrics["adaptive_failure_mass"] = float(failed.sum())
             num_frames = self.clip.joint_pos.shape[0]
             max_step = num_frames - 1
-            max_bin = int(np.clip(np.ceil(max_step * probabilities.size / max(num_frames, 1)), 1, probabilities.size))
-            probabilities = probabilities.copy()
+            max_bin = int(
+                torch.clamp(
+                    torch.ceil(torch.tensor(max_step * probabilities.numel() / max(num_frames, 1))),
+                    1,
+                    probabilities.numel(),
+                )
+            )
+            probabilities = probabilities.clone()
             probabilities[max_bin:] = 0.0
-            total = np.sum(probabilities)
-            if total <= 0.0:
+            total = probabilities.sum()
+            if float(total) <= 0.0:
                 probabilities[:max_bin] = 1.0 / max_bin
             else:
                 probabilities /= total
-            cdf[:] = np.cumsum(probabilities, dtype=np.float32)
+            cdf.copy_(torch.cumsum(probabilities, dim=0).to(torch.float32))
             cdf[-1] = 1.0
 
     def on_transition(self) -> None:
         """Fold accumulated failures into the adaptive sampler once per step."""
-        failed = self.adaptive_bin_failed_count.numpy()
-        if failed.size:
-            failed[:] = self.alpha * self.adaptive_current_bin_failed_count.numpy() + (1.0 - self.alpha) * (failed)
-            self.adaptive_current_bin_failed_count.numpy().fill(0.0)
+        failed = self.adaptive_bin_failed_count
+        if failed.numel():
+            failed.mul_(1.0 - self.alpha).add_(self.adaptive_current_bin_failed_count, alpha=self.alpha)
+            self.adaptive_current_bin_failed_count.zero_()
 
-    def _sampling_probabilities(self) -> np.ndarray:
+    def _sampling_probabilities(self) -> torch.Tensor:
         """Build normalized frame-bin probabilities from failure history."""
-        failed = self.adaptive_bin_failed_count.numpy()
-        num_bins = failed.size
+        failed = self.adaptive_bin_failed_count
+        num_bins = failed.numel()
         probability = failed + self.uniform_ratio / num_bins
         kernel_size = max(self.kernel_size, 1)
         if kernel_size > 1:
-            kernel = np.asarray([self.kernel_lambda**i for i in range(kernel_size)], dtype=np.float32)
-            kernel /= np.sum(kernel)
-            padded = np.pad(probability, (0, kernel_size - 1), mode="edge")
-            probability = np.asarray(
-                [np.sum(padded[index : index + kernel_size] * kernel) for index in range(num_bins)],
-                dtype=np.float32,
-            )
-        total = np.sum(probability)
-        if total <= 0.0:
-            return np.full((num_bins,), 1.0 / num_bins, dtype=np.float32)
-        return (probability / total).astype(np.float32)
+            kernel = torch.tensor([self.kernel_lambda**i for i in range(kernel_size)], dtype=torch.float32)
+            kernel /= kernel.sum()
+            padded = torch.nn.functional.pad(probability[None, None, :], (0, kernel_size - 1), mode="rep")
+            probability = (padded.unfold(2, kernel_size, 1) @ kernel)[0, 0]
+        total = probability.sum()
+        if float(total) <= 0.0:
+            return torch.full((num_bins,), 1.0 / num_bins, dtype=torch.float32)
+        return probability / total
 
     # -- Kernel hooks ----------------------------------------------------------
     # These static hooks receive a batched context (all tensors whole-batch)
