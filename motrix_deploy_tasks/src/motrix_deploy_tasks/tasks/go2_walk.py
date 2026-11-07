@@ -139,7 +139,7 @@ class Go2WalkPolicyProcessor(PolicyProcessor[PlanarVelocityCommand]):
 
     def build_observation(self, state: RobotState, context: ControlContext[PlanarVelocityCommand]) -> FloatArray:
         """Consume runtime-validated state and PolicyController-validated input commands."""
-        velocity = context.command.values[0, :]
+        velocity = context.command.values[0, :].numpy()
         phase = np.zeros(4, dtype=np.float32)
         if np.linalg.norm(velocity) < self._standing_threshold:
             self._phase = np.float32(0.0)
@@ -179,7 +179,7 @@ class Go2WalkPolicyProcessor(PolicyProcessor[PlanarVelocityCommand]):
             raise ValidationError("command.type", "PlanarVelocityCommand", type(command).__name__)
         if command.batch_size != 1:
             raise ValidationError("command.batch_size", "1", command.batch_size)
-        velocity = command.values[0, :]
+        velocity = command.values[0, :].numpy()
         if np.any(velocity < self._command_lower) or np.any(velocity > self._command_upper):
             raise ValidationError(
                 "command.velocity",

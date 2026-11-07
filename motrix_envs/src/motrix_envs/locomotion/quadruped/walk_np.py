@@ -185,8 +185,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._randomization_rng = torch.Generator()
         self._randomization_rng.manual_seed(root_seed + 1)
         self._velocity_command_binding = RandomPlanarVelocityBinding(
-            velocity_cfg.lower,
-            velocity_cfg.upper,
+            torch.as_tensor(velocity_cfg.lower, dtype=torch.float32),
+            torch.as_tensor(velocity_cfg.upper, dtype=torch.float32),
             rng=self._command_rng,
             standing_probability=velocity_cfg.standing_probability,
         )
@@ -471,7 +471,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._last_actions[env_ids] = 0.0
 
     def resample_commands(self, num_envs: int) -> torch.Tensor:
-        return torch.from_numpy(self._velocity_command_binding.read_command(batch_size=num_envs).values)
+        return self._velocity_command_binding.read_command(batch_size=num_envs).values
 
     def _sample_command_resampling_time(self, num_envs: int) -> torch.Tensor:
         interval = self.cfg.commands.velocity.resampling_seconds_range

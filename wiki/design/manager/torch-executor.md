@@ -83,8 +83,9 @@ float，数组参数为批量张量）：
 Command hooks（`update`/`advance`/`reset_env`）是 CommandTerm 类上的
 `@staticmethod` + `@dispatch` 函数，签名为 `(receiver, ctx)`；`receiver` 是该
 command 的 `CommandTerm` 实例本身（reset 场景为其 lane-shape 字段替换为 clone
-的重建实例）。host 侧 `reset(ResetContext)` 与 `on_transition()` 保持 numpy host 实现，
-ActionTerm 的 `process/_reset` 也保持 numpy host 路径不变。
+的重建实例）。host 侧 `reset(ResetContext)` 与 `on_transition()` 保持宿主实现
+（wbt 的 per-step 失败计数折叠已内联进 `advance` 图内）；ActionTerm 的
+`process/_reset` 也保持宿主路径不变。
 
 标量参数（float）以 Python float 传入；字符串参数直接传入。
 

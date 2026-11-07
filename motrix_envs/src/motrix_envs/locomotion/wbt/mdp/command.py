@@ -163,13 +163,6 @@ class WbtMotionCommand(CommandTerm):
             cdf.copy_(torch.cumsum(probabilities, dim=0).to(torch.float32))
             cdf[-1] = 1.0
 
-    def on_transition(self) -> None:
-        """Fold accumulated failures into the adaptive sampler once per step."""
-        failed = self.adaptive_bin_failed_count
-        if failed.numel():
-            failed.mul_(1.0 - self.alpha).add_(self.adaptive_current_bin_failed_count, alpha=self.alpha)
-            self.adaptive_current_bin_failed_count.zero_()
-
     def _sampling_probabilities(self) -> torch.Tensor:
         """Build normalized frame-bin probabilities from failure history."""
         failed = self.adaptive_bin_failed_count
@@ -215,6 +208,13 @@ class WbtMotionCommand(CommandTerm):
     @dispatch
     def advance(receiver: "WbtMotionCommand", ctx: ManagerContext) -> None:
         """Advance every lane one frame."""
+        # Fold the transition's failure mass into the adaptive sampler here
+        # (first, so every branch below runs it): whole-batch shared state,
+        # previously a separate host on_transition phase.
+        failed = receiver.adaptive_bin_failed_count
+        if failed.numel():
+            failed.mul_(1.0 - receiver.alpha).add_(receiver.adaptive_current_bin_failed_count, alpha=receiver.alpha)
+            receiver.adaptive_current_bin_failed_count.zero_()
         steps = receiver.steps
         clip_end = receiver.clip.frame_clip_end[steps[:, 0]]
         num_frames = receiver.clip.joint_pos.shape[0]

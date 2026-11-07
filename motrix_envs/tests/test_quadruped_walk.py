@@ -243,14 +243,14 @@ def test_go2_command_resampling_only_updates_due_environments(monkeypatch: pytes
 
 def test_random_planar_velocity_binding_is_seeded_vectorized_and_task_specific():
     first = RandomPlanarVelocityBinding(
-        np.array([-0.5, -0.4, -1.0], dtype=np.float32),
-        np.array([1.0, 0.4, 1.0], dtype=np.float32),
+        torch.tensor([-0.5, -0.4, -1.0], dtype=torch.float32),
+        torch.tensor([1.0, 0.4, 1.0], dtype=torch.float32),
         rng=torch.Generator().manual_seed(7),
         standing_probability=0.0,
     ).read_command(batch_size=8)
     repeated = RandomPlanarVelocityBinding(
-        np.array([-0.5, -0.4, -1.0], dtype=np.float32),
-        np.array([1.0, 0.4, 1.0], dtype=np.float32),
+        torch.tensor([-0.5, -0.4, -1.0], dtype=torch.float32),
+        torch.tensor([1.0, 0.4, 1.0], dtype=torch.float32),
         rng=torch.Generator().manual_seed(7),
         standing_probability=0.0,
     ).read_command(batch_size=8)
@@ -258,14 +258,14 @@ def test_random_planar_velocity_binding_is_seeded_vectorized_and_task_specific()
     assert first.values.shape == (8, 3)
     assert np.unique(first.values, axis=0).shape[0] > 1
     np.testing.assert_array_equal(first.values, repeated.values)
-    assert _all(first.values >= [-0.5, -0.4, -1.0])
-    assert _all(first.values <= [1.0, 0.4, 1.0])
+    assert _all(first.values >= torch.tensor([-0.5, -0.4, -1.0]))
+    assert _all(first.values <= torch.tensor([1.0, 0.4, 1.0]))
 
 
 def test_random_planar_velocity_binding_can_sample_a_standing_batch():
     binding = RandomPlanarVelocityBinding(
-        np.full(3, -1.0, dtype=np.float32),
-        np.full(3, 1.0, dtype=np.float32),
+        torch.full((3,), -1.0, dtype=torch.float32),
+        torch.full((3,), 1.0, dtype=torch.float32),
         rng=torch.Generator().manual_seed(3),
         standing_probability=1.0,
     )

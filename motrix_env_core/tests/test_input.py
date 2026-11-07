@@ -5,6 +5,7 @@
 
 import numpy as np
 import pytest
+import torch
 
 from motrix_env_core.input import (
     BoundedGamePadPlanarVelocityBinding,
@@ -61,19 +62,17 @@ class _GamePad(GamePadDevice):
         return button in self.buttons
 
 
-def test_planar_velocity_command_is_batch_first_copied_float32_and_read_only() -> None:
+def test_planar_velocity_command_is_batch_first_copied_and_float32() -> None:
     source = np.array([[0.5, -0.2, 0.3], [1.0, 0.0, -0.5]], dtype=np.float64)
     command = PlanarVelocityCommand(source)
     source[:] = 9.0
 
     assert command.batch_size == 2
-    assert command.values.dtype == np.float32
-    assert not command.values.flags.writeable
+    assert command.values.dtype == torch.float32
+    # Owns a private copy: mutating the source leaves the command unchanged.
     np.testing.assert_array_equal(command.linear_velocity_x_mps, [0.5, 1.0])
     np.testing.assert_allclose(command.linear_velocity_y_mps, [-0.2, 0.0])
     np.testing.assert_allclose(command.yaw_rate_rad_s, [0.3, -0.5])
-    with pytest.raises(ValueError, match="read-only"):
-        command.values[0, 0] = 1.0
 
 
 @pytest.mark.parametrize(
