@@ -79,12 +79,11 @@ class ArrayEnvState:
             for name, value in self.metrics.items()
         }
 
-    def validate(self):
+    def validate(self) -> None:
         """Validate that the transition state's fields share one batch width.
 
-        Callers guarantee tensor types: every field passes through
-        ``_coerce_state`` before validation, which normalizes legacy values
-        to torch tensors.
+        Callers guarantee tensor types: task- and framework-produced values
+        are torch tensors by the frontend contract.
         """
         num_envs = self.obs.policy.shape[0]
         if self.obs.value is not None:
@@ -173,11 +172,17 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         with self.perf.scope("observation"):
             self._state = self.compute_observation(self._state)
         self._state = self._state.replace(obs=_as_obs(self._state.obs))
-        self._coerce_state(self._state)
         self._state.validate()
         return self._state
 
-    def _new_state(self, obs, reward, terminated, truncated, episode_steps) -> ArrayEnvState:
+    def _new_state(
+        self,
+        obs: EnvObs,
+        reward: torch.Tensor,
+        terminated: torch.Tensor,
+        truncated: torch.Tensor,
+        episode_steps: torch.Tensor,
+    ) -> ArrayEnvState:
         """Assemble the framework-owned transition state; subclasses add simulator-owned fields."""
         return ArrayEnvState(
             obs=obs,
@@ -203,29 +208,17 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         dtype = torch.from_numpy(np.empty((), dtype=space.dtype)).dtype
         return torch.zeros((self._num_envs, *space.shape), dtype=dtype)
 
-    def _zeros_obs(self, space) -> EnvObs:
+    def _zeros_obs(self, space: gym.spaces.Box | ObsSpace) -> EnvObs:
         obs_space = _as_obs_space(space)
         value = None if obs_space.value is None else self._zeros_box(obs_space.value)
         return EnvObs(policy=self._zeros_box(obs_space.policy), value=value)
 
-    def _assign_obs(self, dst: EnvObs, mask: torch.Tensor, src):
+    def _assign_obs(self, dst: EnvObs, mask: torch.Tensor, src: EnvObs | torch.Tensor) -> None:
         src = _as_obs(src)
         dst.policy[mask] = src.policy
         if dst.value is not None:
             assert src.value is not None
             dst.value[mask] = src.value
-
-    def _coerce_state(self, state: ArrayEnvState) -> ArrayEnvState:
-        """Normalize the state's observation structure in place.
-
-        All tensor fields are framework- or task-produced torch values by
-        contract; the only structural normalization left is adopting a bare
-        tensor observation and normalizing a captured final observation.
-        """
-        state.obs = _as_obs(state.obs)
-        if state.final_obs is not None:
-            state.final_obs.obs = _as_obs(state.final_obs.obs)
-        return state
 
     def _reset_done_envs(self) -> None:
         """Reset all environment rows marked terminated or truncated."""
@@ -263,7 +256,7 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
     def _max_episode_steps(self) -> int | None:
         return self._cfg.max_episode_steps
 
-    def _update_truncate(self):
+    def _update_truncate(self) -> None:
         """Mark rows that reached the configured episode limit."""
         max_episode_steps = self._max_episode_steps()
         if max_episode_steps:
@@ -296,10 +289,10 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         """
 
     @abc.abstractmethod
-    def physics_step(self):
+    def physics_step(self) -> None:
         """Advance the simulator by the configured substeps."""
 
-    def _prev_physics_step(self):
+    def _prev_physics_step(self) -> None:
         """Clear per-step transition outputs before advancing physics."""
         if self._state.final_obs is not None:
             self._state = self._state.replace(final_obs=None)
@@ -336,12 +329,10 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         self._prev_physics_step()
         with self.perf.scope("apply_action"):
             self._state = self.apply_action(actions, self._state)
-            self._coerce_state(self._state)
         with self.perf.scope("physics"):
             self.physics_step()
         with self.perf.scope("transition"):
             self._state = self.compute_transition(self._state)
-            self._coerce_state(self._state)
         self._state.episode_steps += 1
         self._update_truncate()
         trunc_ids = torch.nonzero(self._state.truncated, as_tuple=False).flatten()
@@ -353,7 +344,6 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         with self.perf.scope("observation"):
             self._state = self.compute_observation(self._state)
             self._state.obs = _as_obs(self._state.obs)
-            self._coerce_state(self._state)
         return self._state
 
 
