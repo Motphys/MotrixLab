@@ -127,7 +127,7 @@ class FeetPhaseRewardCfg(RewardTermCfg):
             feet_phase_reward,
             float(self.swing_height),
             float(self.feet_phase_sigma),
-            ground_height_grid(ctx, self.ground_geom),
+            ground_height_grid(ctx.model, self.ground_geom),
             SitePositionQuery(site=self.sole_l_site),
             SitePositionQuery(site=self.sole_r_site),
         )

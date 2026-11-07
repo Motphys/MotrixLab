@@ -563,8 +563,8 @@ class AnymalCEnv(DirectEnv):
         # Generate target position: offset relative to robot initial position
         # pose_command_range now represents offset range relative to robot
         pose_command_range = cfg.commands.pose_command_range
-        offset_low = torch.as_tensor(np.asarray(pose_command_range[:2]), dtype=torch.float32)
-        offset_high = torch.as_tensor(np.asarray(pose_command_range[3:5]), dtype=torch.float32)
+        offset_low = torch.tensor(pose_command_range[:2], dtype=torch.float32)
+        offset_high = torch.tensor(pose_command_range[3:5], dtype=torch.float32)
         target_offset = offset_low + (offset_high - offset_low) * torch.rand((num_envs, 2), dtype=torch.float32)
         target_positions = robot_init_pos + target_offset  # Target position in world coordinates
 

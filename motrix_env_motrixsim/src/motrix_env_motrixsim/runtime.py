@@ -16,6 +16,7 @@ import torch
 from motrix_env_core.config import SimCfg
 from motrix_env_core.config.scene import SceneCfg, SystemCameraCfg
 from motrix_env_core.config.scene.base import BodyCfg, RobotCfg
+from motrix_env_core.mdp.terrain import HeightFieldGrid
 from motrix_env_core.sim.backend import RenderConfig, SimBackend, SimRenderer
 from motrix_env_core.sim.body import assemble_body_model, resolved_key_pose
 from motrix_env_core.sim.model import (
@@ -83,12 +84,16 @@ class MotrixSimModelCompiler(SimModelCompiler):
             dtype=np.float32,
         )
         origin = np.asarray([float(pose[0]) - extent_x, float(pose[1]) - extent_y], dtype=np.float32)
-        self._others[key] = {
-            "heights": torch.from_numpy(heights),
-            "origin": torch.from_numpy(origin),
-            "spacing": torch.from_numpy(spacing),
-            "z0": torch.from_numpy(np.asarray([pose[2]], dtype=np.float32)),
-        }
+        # Export one shared, immutable grid: the float64 conversion happens
+        # once here instead of in every consuming term.
+        self._others[key] = HeightFieldGrid(
+            heights=torch.from_numpy(heights).to(torch.float64).contiguous(),
+            origin=torch.from_numpy(origin).to(torch.float64).contiguous(),
+            spacing=torch.from_numpy(spacing).to(torch.float64).contiguous(),
+            z0=torch.as_tensor([pose[2]], dtype=torch.float64),
+            constant=0.0,
+            enabled=True,
+        )
 
     def compile_body_joint_position_limits(self, key: str, body: str) -> None:
         lower, upper = _body_joint_position_limits(self._model, body)
@@ -122,15 +127,14 @@ class MotrixSimModelCompiler(SimModelCompiler):
                 masses = [body_links[name].mass for name in links]
             except KeyError as exc:
                 raise KeyError(f"Link {exc.args[0]!r} is not part of body {body!r}.") from None
-        self._others[key] = torch.from_numpy(np.asarray(masses, dtype=np.float32))
+        self._others[key] = torch.as_tensor(masses, dtype=torch.float32)
 
     def compile_link_center_of_mass(self, key: str, body: str) -> None:
-        self._others[key] = torch.from_numpy(
-            np.asarray(_named_link(self._model, body).center_of_mass, dtype=np.float32).reshape(3)
-        )
+        com = np.asarray(_named_link(self._model, body).center_of_mass, dtype=np.float32).reshape(3)
+        self._others[key] = torch.from_numpy(com)
 
     def compile_geom_friction(self, key: str, geom: str) -> None:
-        self._others[key] = torch.from_numpy(np.asarray(_named_geom(self._model, geom).friction, dtype=np.float32))
+        self._others[key] = torch.as_tensor(_named_geom(self._model, geom).friction, dtype=torch.float32)
 
 
 def _nominal_actuator_kp(model: mtx.SceneModel, actuator_names: tuple[str, ...] | None) -> FloatArray:
@@ -390,7 +394,7 @@ class MotrixSimBackend(SimBackend):
             mask = np.zeros((self._data.shape[0],), dtype=bool)
             mask[env_ids.detach().cpu().numpy()] = True
             points = np.ascontiguousarray(xy.detach().cpu().numpy(), dtype=np.float32)
-            return torch.from_numpy(np.asarray(geom.sample_height(self._data[mask], points), dtype=np.float32))
+            return torch.as_tensor(geom.sample_height(self._data[mask], points), dtype=torch.float32)
         height = float(geom.local_pose[2])
         return torch.full(xy.shape[:-1], height, dtype=torch.float32)
 

@@ -42,7 +42,7 @@ def _phase(
     speed = torch.sqrt(command[:, 0] * command[:, 0] + command[:, 1] * command[:, 1])
     stand = (speed.to(torch.float64) < 0.01) & (command[:, 2].abs().to(torch.float64) < 0.01)
     phase = raw.to(torch.float32)
-    phase = torch.where(stand[:, None], torch.full_like(phase, np.float32(math.pi)), phase)
+    phase = torch.where(stand[:, None], torch.full_like(phase, math.pi), phase)
     sin = torch.sin(phase.to(torch.float64)).to(torch.float32)
     cos = torch.cos(phase.to(torch.float64)).to(torch.float32)
     sin_cos_out[:, 0] = sin[:, 0]
@@ -54,7 +54,7 @@ def _phase(
 
 def _uniform_range(u: torch.Tensor, low, high) -> torch.Tensor:
     """Float32 ``low + (high - low) * 0.5 * (u + 1)`` matching the kernel convention."""
-    return low + (high - low) * np.float32(0.5) * (u + np.float32(1.0))
+    return low + (high - low) * 0.5 * (u + 1.0)
 
 
 def _resample_command(
@@ -166,7 +166,7 @@ class WalkCommand(CommandTerm):
     @dispatch
     def advance(receiver, ctx: ManagerContext) -> None:
         steps = receiver.steps
-        steps[:, 0] += np.float32(1.0)
+        steps[:, 0] += 1.0
         resample = torch.remainder(steps[:, 0], float(receiver.resample_steps)) == 0.0
         _resample_command(
             ctx,
@@ -184,10 +184,10 @@ class WalkCommand(CommandTerm):
         width = float(receiver.gait_period_width)
         if width > 0.0:
             u = ctx.rand.next_uniform(1)[:, 0]
-            jitter = _uniform_range(u, np.float32(-width), np.float32(width))
+            jitter = _uniform_range(u, -width, width)
             period = float(receiver.gait_period_base) + jitter.to(torch.float64)
             receiver.phase_step[:, 0] = (2.0 * math.pi * ctx.dt / period.clamp(min=0.1)).to(torch.float32)
-        first = _uniform_range(ctx.rand.next_uniform(1)[:, 0], np.float32(-math.pi), np.float32(math.pi))
+        first = _uniform_range(ctx.rand.next_uniform(1)[:, 0], -math.pi, math.pi)
         offsets = torch.empty_like(receiver.phase_offset)
         offsets[:, 0] = first
         offsets[:, 1] = ((first.to(torch.float64) + 2.0 * math.pi) % (2.0 * math.pi) - math.pi).to(torch.float32)
@@ -222,12 +222,12 @@ class WalkCommand(CommandTerm):
         if not self.curriculum_enabled or ctx.env_ids.numel() == 0:
             return
         ep_len = self.steps[ctx.env_ids, 0].to(torch.float64) + 1.0
-        avg_ep_len[0] = np.float32(0.99 * avg_ep_len[0] + 0.01 * float(ep_len.mean()))
+        avg_ep_len[0] = 0.99 * avg_ep_len[0] + 0.01 * float(ep_len.mean())
         if avg_ep_len[0] < self.level_down_threshold:
-            penalty_scale[0] *= np.float32(1.0 - self.degree)
+            penalty_scale[0] *= 1.0 - self.degree
         elif avg_ep_len[0] > self.level_up_threshold:
-            penalty_scale[0] *= np.float32(1.0 + self.degree)
-        penalty_scale[0] = np.float32(min(max(float(penalty_scale[0]), float(self.min_scale)), float(self.max_scale)))
+            penalty_scale[0] *= 1.0 + self.degree
+        penalty_scale[0] = min(max(float(penalty_scale[0]), float(self.min_scale)), float(self.max_scale))
 
 
 @configclass(kw_only=True)
@@ -255,14 +255,14 @@ class WalkCommandCfg(CommandCfg):
     def __call__(self, env: ManagerEnv) -> WalkCommand:
         num_envs = env.num_envs
         return WalkCommand(
-            vel_limit_low=torch.from_numpy(np.asarray(self.vel_limit[0], dtype=np.float32)),
-            vel_limit_high=torch.from_numpy(np.asarray(self.vel_limit[1], dtype=np.float32)),
+            vel_limit_low=torch.tensor(self.vel_limit[0], dtype=torch.float32),
+            vel_limit_high=torch.tensor(self.vel_limit[1], dtype=torch.float32),
             stand_prob=float(self.stand_prob),
             resample_steps=float(max(int(round(self.resampling_time / self.ctrl_dt)), 1)),
             phase_step=torch.from_numpy(
                 np.full(
                     (num_envs, 1),
-                    np.float32(2.0 * math.pi * self.ctrl_dt / self.gait_period),
+                    2.0 * math.pi * self.ctrl_dt / self.gait_period,
                     dtype=np.float32,
                 )
             ),
@@ -276,7 +276,7 @@ class WalkCommandCfg(CommandCfg):
                     dtype=np.float32,
                 )
             ),
-            avg_ep_len=torch.from_numpy(np.zeros((1,), dtype=np.float32)),
+            avg_ep_len=torch.zeros(1, dtype=torch.float32),
             level_down_threshold=float(self.level_down_threshold),
             level_up_threshold=float(self.level_up_threshold),
             degree=float(self.degree),

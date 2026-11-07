@@ -144,7 +144,7 @@ class WbtMotionClip:
             root_body_ang_vel_w=torch.from_numpy(np.ascontiguousarray(motion.body_ang_vel_w[:, root_index])),
             reference_body_pos_w=torch.from_numpy(np.ascontiguousarray(motion.body_pos_w[:, reference_index])),
             reference_body_quat_w=torch.from_numpy(np.ascontiguousarray(motion.body_quat_w[:, reference_index])),
-            frame_clip_end=torch.from_numpy(np.full(motion.num_frames, motion.num_frames - 1, dtype=np.int64)),
+            frame_clip_end=torch.full((motion.num_frames,), motion.num_frames - 1, dtype=torch.int64),
             extensions=Map(
                 {
                     name: MotionChannel(torch.from_numpy(load_extension_channel(motion, name)))

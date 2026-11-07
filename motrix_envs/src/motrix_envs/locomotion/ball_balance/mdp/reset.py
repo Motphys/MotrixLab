@@ -54,16 +54,10 @@ class BodyPosResetCfg(ResetTermCfg):
 
 
 def _reset_body_rot(ctx: ManagerContext, sim_writes: Map[torch.Tensor], noise_amplitude: torch.Tensor) -> None:
-    # Fixed promotion order: f32 angles, f64 trig, f32 quaternion,
-    # sequential f32 sum of squares, sqrt via f64 rounded back to f32, and an
-    # f32 division.
     angles = ctx.rand.next_uniform(3) * noise_amplitude
-    quat64 = from_euler(angles.to(torch.float64))
-    quat = quat64.to(torch.float32)
-    squares = quat * quat
-    total = squares[:, 0] + squares[:, 1] + squares[:, 2] + squares[:, 3]
-    norm = total.to(torch.float64).sqrt().to(torch.float32)
-    sim_writes["rotation"][:, 0].copy_(quat / norm[:, None])
+    quat = from_euler(angles)
+    quat = quat / quat.norm(dim=-1, keepdim=True)
+    sim_writes["rotation"][:, 0].copy_(quat)
 
 
 @configclass(kw_only=True)

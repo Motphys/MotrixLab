@@ -152,10 +152,10 @@ class JointPositionActionCfg(ActionCfg):
         action_ptr = np.zeros(1, dtype=np.int64)
         state = JointPositionActionState(
             action_queue=torch.from_numpy(action_queue),
-            default_angles=torch.from_numpy(default_angles[indices]),
+            default_angles=default_angles[indices],
             joint_lower=joint_lower[indices],
             joint_upper=joint_upper[indices],
-            action_scales=torch.from_numpy(action_scales[indices]),
+            action_scales=action_scales[indices],
             delay_steps=torch.from_numpy(delay_steps),
             action_ptr=torch.from_numpy(action_ptr),
             delay_lo=int(lo),
@@ -181,7 +181,7 @@ class JointPositionActionCfg(ActionCfg):
         env: ManagerEnv,
         joint_names: tuple[str, ...],
         joint_positions: tuple[float, ...],
-    ) -> np.ndarray:
+    ) -> torch.Tensor:
         if len(joint_names) != len(joint_positions):
             raise ValueError(
                 f"default pose must contain one position per joint: {len(joint_names)} names, "
@@ -197,12 +197,11 @@ class JointPositionActionCfg(ActionCfg):
             raise ValueError(
                 f"robot key pose 'default' must match actuator joint targets exactly: missing={missing}, extra={extra}"
             )
-        return np.asarray([positions[name] for name in actuator_joint_names], dtype=np.float32)
+        return torch.tensor([positions[name] for name in actuator_joint_names], dtype=torch.float32)
 
     @staticmethod
-    def _read_position_actuator_kps(env: ManagerEnv) -> np.ndarray:
-        kps = env.model.others["actuator_kp"]
-        return kps.detach().cpu().numpy() if isinstance(kps, torch.Tensor) else np.asarray(kps, dtype=np.float32)
+    def _read_position_actuator_kps(env: ManagerEnv) -> torch.Tensor:
+        return torch.as_tensor(env.model.others["actuator_kp"]).detach().cpu()
 
     @staticmethod
     def _read_position_actuator_effort_limits(env: ManagerEnv) -> np.ndarray:
@@ -220,14 +219,14 @@ class JointPositionActionCfg(ActionCfg):
             effort_limits[index] = effort_limit
         return effort_limits
 
-    def _init_action_scales(self, env: ManagerEnv, kps: np.ndarray) -> np.ndarray:
+    def _init_action_scales(self, env: ManagerEnv, kps: torch.Tensor) -> torch.Tensor:
         if not np.isfinite(self.action_scale) or self.action_scale <= 0.0:
             raise ValueError(f"action_scale must be positive and finite, got {self.action_scale}")
         if self.action_scales_by_effort_limit_over_p_gain:
-            effort = self._read_position_actuator_effort_limits(env)
-            safe_kp = np.where(kps == 0.0, 1.0, kps)
-            return np.where(kps == 0.0, 0.0, self.action_scale * effort / safe_kp).astype(np.float32)
-        return np.full(env.num_actuators, self.action_scale, dtype=np.float32)
+            effort = torch.as_tensor(self._read_position_actuator_effort_limits(env), dtype=kps.dtype)
+            safe_kp = torch.where(kps == 0.0, torch.ones_like(kps), kps)
+            return torch.where(kps == 0.0, torch.zeros_like(kps), self.action_scale * effort / safe_kp)
+        return torch.full((env.num_actuators,), self.action_scale, dtype=torch.float32)
 
 
 __all__ = ["JointPositionActionState", "JointPositionActionTerm", "JointPositionActionCfg"]

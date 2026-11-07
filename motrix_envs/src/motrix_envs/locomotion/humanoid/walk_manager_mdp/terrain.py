@@ -6,26 +6,21 @@
 import torch
 
 from motrix_env_core.mdp.terrain import HeightFieldGrid
+from motrix_env_core.sim import SimModel
 
 
-def ground_height_grid(ctx, ground_geom: str) -> HeightFieldGrid:
-    """Build the terrain grid from the build context's compiled model queries.
+def ground_height_grid(model: SimModel, ground_geom: str) -> HeightFieldGrid:
+    """Return the terrain grid shared by all terms.
 
-    Rough presets read the exported height-field grid; flat presets degenerate
-    to the ground geom's constant world z.
+    The height-field query registers its export only when the floor is an
+    HField terrain; the backend builds that grid (float64 storage) once and
+    every term shares the same immutable record. Flat presets degenerate to
+    ``ground_geom``'s constant world z.
     """
-    cfg = ctx.cfg
-    if cfg.ground_heightfield_geom is not None:
-        hf = ctx.model.others["ground_heightfield"]
-        return HeightFieldGrid(
-            heights=hf["heights"].to(torch.float64).contiguous(),
-            origin=hf["origin"].to(torch.float64).contiguous(),
-            spacing=hf["spacing"].to(torch.float64).contiguous(),
-            z0=hf["z0"].to(torch.float64).contiguous(),
-            constant=0.0,
-            enabled=True,
-        )
-    spec = ctx.model.others["geoms"][ground_geom]
+    grid = model.others.get("ground_heightfield")
+    if grid is not None:
+        return grid
+    spec = model.others["geoms"][ground_geom]
     return HeightFieldGrid(
         heights=torch.zeros((1, 1), dtype=torch.float64),
         origin=torch.zeros((2,), dtype=torch.float64),

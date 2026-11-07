@@ -161,9 +161,7 @@ class WbtMotionCommand(CommandTerm):
         """Fold accumulated failures into the adaptive sampler once per step."""
         failed = self.adaptive_bin_failed_count.numpy()
         if failed.size:
-            failed[:] = self.alpha * self.adaptive_current_bin_failed_count.numpy() + (np.float32(1.0) - self.alpha) * (
-                failed
-            )
+            failed[:] = self.alpha * self.adaptive_current_bin_failed_count.numpy() + (1.0 - self.alpha) * (failed)
             self.adaptive_current_bin_failed_count.numpy().fill(0.0)
 
     def _sampling_probabilities(self) -> np.ndarray:

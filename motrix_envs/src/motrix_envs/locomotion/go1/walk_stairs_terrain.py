@@ -280,8 +280,8 @@ class Go1WalkStairsTask(DirectEnv):
         self._contact_force.copy_(torch.cat(force, dim=1))
 
     def resample_commands(self, num_envs: int):
-        low = torch.as_tensor(np.asarray(self.cfg.commands.vel_limit[0]), dtype=torch.float32)
-        high = torch.as_tensor(np.asarray(self.cfg.commands.vel_limit[1]), dtype=torch.float32)
+        low = torch.tensor(self.cfg.commands.vel_limit[0], dtype=torch.float32)
+        high = torch.tensor(self.cfg.commands.vel_limit[1], dtype=torch.float32)
         return low + (high - low) * torch.rand((num_envs, 3), dtype=torch.float32)
 
     def update_reward(self, state: ArrayEnvState) -> ArrayEnvState:

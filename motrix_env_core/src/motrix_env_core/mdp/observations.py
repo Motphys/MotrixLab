@@ -13,6 +13,7 @@ from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import RobotCfg
 from motrix_env_core.manager.context import BuildContext, ManagerContext
 from motrix_env_core.manager.observations import ObservationTermCfg, ObsTerm
+from motrix_env_core.math.quaternion import rotate_inverse_
 from motrix_env_core.sim import (
     BodyJointPositionQuery,
     BodyJointVelocityQuery,
@@ -45,18 +46,6 @@ def add_uniform_noise(ctx: ManagerContext, out: torch.Tensor, amplitude: float) 
     """Consume one random value per output component and add scaled uniform noise in place."""
     if amplitude != 0.0:
         out += ctx.rand.next_uniform(out.shape[1]) * amplitude
-
-
-def _rotate_inverse(quaternion: torch.Tensor, vector: torch.Tensor, out: torch.Tensor) -> None:
-    """Rotate ``(N, 3)`` vectors by the inverse of ``(N, 4)`` ``[x, y, z, w]`` quaternions."""
-    x, y, z, w = quaternion.unbind(dim=1)
-    vx, vy, vz = vector.unbind(dim=1)
-    cx = y * vz - z * vy - w * vx
-    cy = z * vx - x * vz - w * vy
-    cz = x * vy - y * vx - w * vz
-    out[:, 0] = vx + 2.0 * (y * cz - z * cy)
-    out[:, 1] = vy + 2.0 * (z * cx - x * cz)
-    out[:, 2] = vz + 2.0 * (x * cy - y * cx)
 
 
 def body_joint_vel_obs(
@@ -130,7 +119,7 @@ def body_linear_velocity_obs(
     scale: float,
     noise_amplitude: float,
 ) -> None:
-    _rotate_inverse(base_quat, linear_velocity, out)
+    rotate_inverse_(base_quat, linear_velocity, out)
     out.mul_(scale)
     add_uniform_noise(ctx, out, noise_amplitude)
 
@@ -163,7 +152,7 @@ def body_angular_velocity_obs(
     scale: float,
     noise_amplitude: float,
 ) -> None:
-    _rotate_inverse(base_quat, angular_velocity, out)
+    rotate_inverse_(base_quat, angular_velocity, out)
     out.mul_(scale)
     add_uniform_noise(ctx, out, noise_amplitude)
 
@@ -193,7 +182,7 @@ def body_projected_gravity_obs(
 ) -> None:
     gravity = out.new_zeros(out.shape)
     gravity[:, 2] = -1.0
-    _rotate_inverse(base_quat, gravity, out)
+    rotate_inverse_(base_quat, gravity, out)
     add_uniform_noise(ctx, out, noise_amplitude)
 
 

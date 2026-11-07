@@ -95,8 +95,8 @@ class WalkResetParams:
 def _sample_spawn_xy(ctx: ManagerContext, params: WalkResetParams) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Sample world xy and lifted z, mirroring the per-lane spawn draws."""
     pose = params.init_pose
-    low = np.float32(-float(params.spawn_range))
-    high = np.float32(float(params.spawn_range))
+    low = -float(params.spawn_range)
+    high = float(params.spawn_range)
     x = _uniform_range(ctx.rand.next_uniform(1)[:, 0], low, high)
     y = _uniform_range(ctx.rand.next_uniform(1)[:, 0], low, high)
     offsets = torch.tensor([(i - 1) * 0.15 for i in range(3)], dtype=torch.float64)
@@ -229,7 +229,7 @@ class WalkStateResetCfg(ResetTermCfg):
         params = dict(
             default_joint_angles=body.init_joint_pos.contiguous(),
             init_pose=torch.cat([body.init_base_position, body.init_base_quat]),
-            heightfield=ground_height_grid(ctx, self.ground_geom),
+            heightfield=ground_height_grid(ctx.model, self.ground_geom),
             spawn_range=float(self.spawn_xy_range),
         )
 
@@ -258,8 +258,8 @@ class WalkStateResetCfg(ResetTermCfg):
                 base_mass_default=float(link_masses[base_index]),
                 base_com_default=others["randomize_base_com"],
                 friction_default=others["randomize_friction_default"],
-                kp_range=torch.from_numpy(np.asarray(randomization.kp_scale_range, dtype=np.float32)),
-                damping_range=torch.from_numpy(np.asarray(randomization.damping_scale_range, dtype=np.float32)),
+                kp_range=torch.tensor(randomization.kp_scale_range, dtype=torch.float32),
+                damping_range=torch.tensor(randomization.damping_scale_range, dtype=torch.float32),
                 friction_range=torch.from_numpy(
                     np.asarray(
                         (1.0, 1.0)
@@ -268,11 +268,11 @@ class WalkStateResetCfg(ResetTermCfg):
                         dtype=np.float32,
                     )
                 ),
-                mass_scale_range=torch.from_numpy(np.asarray(randomization.link_mass_scale_range, dtype=np.float32)),
+                mass_scale_range=torch.tensor(randomization.link_mass_scale_range, dtype=torch.float32),
                 base_mass_off_range=torch.from_numpy(
                     np.asarray(randomization.base_mass_offset_range, dtype=np.float32)
                 ),
-                com_noise=torch.from_numpy(np.asarray(randomization.base_com_offset_noise, dtype=np.float32)),
+                com_noise=torch.tensor(randomization.base_com_offset_noise, dtype=torch.float32),
             )
         else:
             params.update(

@@ -57,7 +57,7 @@ class KeyboardPlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
         value = np.where(
             direction > 0,
             self._command_upper,
-            np.where(direction < 0, self._command_lower, np.float32(0.0)),
+            np.where(direction < 0, self._command_lower, 0.0),
         )
         return PlanarVelocityCommand(np.repeat(value[None, :], batch_size, axis=0))
 
