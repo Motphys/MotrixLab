@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from typing import TypeVar
 
-import torch
-
 from motrix_env_core.array.env import ArrayEnv
 from motrix_env_core.array.env import ArrayEnvState as ArrayEnvState
 from motrix_env_core.base import EnvCfg

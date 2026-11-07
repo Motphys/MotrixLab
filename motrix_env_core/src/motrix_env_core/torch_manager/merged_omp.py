@@ -178,7 +178,7 @@ def install() -> None:
 
     CppCodeCache.load_async = classmethod(load_async)
     CppCodeCache.load = classmethod(
-        lambda cls, source_code, device_type="cpu": cls.load_async(source_code, device_type)()
+        lambda cls, source_code, *args, **kwargs: cls.load_async(source_code, *args, **kwargs)()
     )
     _installed = True
 

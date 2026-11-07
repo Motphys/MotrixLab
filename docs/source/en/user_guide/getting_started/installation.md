@@ -121,7 +121,6 @@ When reinstalling, include any other options you still need in the same invocati
 | `--rslrl` | Add the RSL-RL provider |
 | `--skrl-jax` | Add the SKRL JAX runtime, Linux-only |
 | `--skrl-torch` | Compatibility option; SKRL Torch is already a required repository dependency |
-| `--tbb` | Enable Intel TBB explicitly; already enabled by the Linux installer |
 | `--docs` | Add documentation tools |
 | `--all` | Full development environment, Python 3.10 only |
 | `--help` | Show the full installer option reference |

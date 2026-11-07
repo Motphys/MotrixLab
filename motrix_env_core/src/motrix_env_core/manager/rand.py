@@ -87,6 +87,4 @@ __all__ = [
     "RandValue",
     "draw_uniform",
     "initialize_rand_states",
-    "next_uniform",
-    "uniform_range",
 ]

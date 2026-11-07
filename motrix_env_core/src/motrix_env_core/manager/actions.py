@@ -8,7 +8,6 @@ from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING
 
 import gymnasium as gym
-import numpy as np
 import torch
 
 from motrix_env_core.config import configclass

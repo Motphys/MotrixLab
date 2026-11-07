@@ -1438,6 +1438,9 @@ dependencies = [
     { name = "gymnasium" },
     { name = "numpy" },
     { name = "omegaconf" },
+    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
     { name = "typing-extensions" },
 ]
 
@@ -1460,6 +1463,7 @@ requires-dist = [
     { name = "motrix-env-core", extras = ["video"], marker = "extra == 'all'", editable = "motrix_env_core" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "omegaconf", specifier = ">=2.3,<2.4" },
+    { name = "torch", specifier = ">=2.7,<3" },
     { name = "typing-extensions", specifier = ">=4.1" },
 ]
 provides-extras = ["video", "all"]
@@ -1522,7 +1526,7 @@ requires-dist = [
     { name = "gymnasium", specifier = "==1.1.1" },
     { name = "motrix-deploy", marker = "extra == 'deploy'", editable = "motrix_deploy" },
     { name = "motrix-deploy-tasks", marker = "extra == 'deploy'", editable = "motrix_deploy_tasks" },
-    { name = "motrix-env-core", extras = ["numba", "video"], editable = "motrix_env_core" },
+    { name = "motrix-env-core", extras = ["video"], editable = "motrix_env_core" },
     { name = "motrix-env-motrixsim", editable = "motrix_env_motrixsim" },
     { name = "motrix-robots", editable = "motrix_robots" },
     { name = "numpy", specifier = ">=1.26" },
@@ -1683,7 +1687,7 @@ requires-dist = [
     { name = "gymnasium", specifier = "==1.1.1" },
     { name = "hydra-core", specifier = ">=1.3,<1.4" },
     { name = "motrix-deploy", editable = "motrix_deploy" },
-    { name = "motrix-env-core", extras = ["numba", "video"], editable = "motrix_env_core" },
+    { name = "motrix-env-core", extras = ["video"], editable = "motrix_env_core" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "nvidia-ml-py", specifier = ">=13.610.43" },
     { name = "omegaconf", specifier = ">=2.3,<2.4" },

@@ -24,7 +24,6 @@ static). The eager schedule remains available as a debugging fallback
 from __future__ import annotations
 
 import os
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, Any
@@ -50,15 +49,6 @@ from motrix_env_core.torch_manager import merged_omp
 if TYPE_CHECKING:
     from motrix_env_core.manager.env import ManagerEnv
     from motrix_env_core.manager.resolver import ResolvedManagerProgram
-
-# Simulator-backed read-only arrays are wrapped as tensors but never written
-# by the executor; suppress PyTorch's non-writable-array warning once instead
-# of copying every read-only leaf on every view build.
-warnings.filterwarnings(
-    "ignore",
-    message="The given NumPy array is not writable",
-    category=UserWarning,
-)
 
 
 def _compile_options() -> dict[str, Any]:

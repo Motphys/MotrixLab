@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import torch
-
 from motrix_env_core.manager.rand import RandValue, initialize_rand_states
 
 if TYPE_CHECKING:

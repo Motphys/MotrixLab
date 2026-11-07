@@ -268,7 +268,7 @@ class SwapObsBuffer:
 
 
 class ManagerEnv(ArrayEnv[EnvCfgType]):
-    """NumPy environment whose task program is generated from manager config."""
+    """Torch-frontend environment whose task program is generated from manager config."""
 
     def __init__(
         self,

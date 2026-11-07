@@ -111,7 +111,7 @@ def from_euler(euler):
             cr * cp * sy - sr * sp * cy,
             cr * cp * cy + sr * sp * cy,
         ),
-        dim=-1,
+        axis=-1,
     )
 
 

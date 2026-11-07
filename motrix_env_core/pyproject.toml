@@ -36,13 +36,16 @@ classifiers = [
 # registry and input layers of this package. gymnasium stays in the base
 # dependencies because ``motrix_env_core.base`` (on the bare package import
 # path) types observation/action spaces with it, and it is a small
-# pure-Python distribution. array-api-compat is only used by the frontend
-# helper module and is likewise small.
+# pure-Python distribution. torch backs the public frontend state contract
+# (ArrayEnv/DirectEnv/ManagerEnv tensors); GPU-specific wheel indexes stay in
+# the training-side packages. array-api-compat is used by the shared
+# NumPy/Torch math helpers and the manager env namespace and is likewise small.
 dependencies = [
     "array-api-compat==1.15.0",
     "gymnasium==1.1.1",
     "numpy>=1.26",
     "omegaconf>=2.3,<2.4",
+    "torch>=2.7,<3",
     "typing-extensions>=4.1",
 ]
 
