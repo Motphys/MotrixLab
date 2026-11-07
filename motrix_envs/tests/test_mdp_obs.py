@@ -9,7 +9,7 @@ import torch
 
 from motrix_env_core.config.scene import KeyPoseCfg, ModelFileCfg, RobotCfg
 from motrix_env_core.manager.context import BuildContext
-from motrix_env_core.manager.rand import initialize_rand_states
+from motrix_env_core.manager.rand import RandValue, initialize_rand_states
 from motrix_env_core.mdp.action import JointPositionActionState
 from motrix_env_core.mdp.observations import (
     ActionsObsCfg,
@@ -26,7 +26,6 @@ from motrix_env_core.sim import (
     LinkLinearVelocityQuery,
     LinkQuaternionQuery,
 )
-from motrix_env_core.torch_manager.runtime import _BatchRand
 from motrix_envs.locomotion.wbt.mdp.observations import (
     DofPosRelObsCfg,
 )
@@ -193,7 +192,7 @@ def test_robot_observation_noise_uses_one_stateful_sequence_per_environment() ->
     def evaluate(rng_states: np.ndarray) -> np.ndarray:
         out = torch.empty((2, dof_vel.shape[1]), dtype=torch.float32)
         # The batch context shares (and advances) the per-env RNG state in place.
-        rand = _BatchRand(torch.from_numpy(rng_states.view(np.int64)))
+        rand = RandValue(torch.from_numpy(rng_states.view(np.int64)))
         term.dispatch(SimpleNamespace(rand=rand), out, dof_vel, *term.args[1:])
         return out.numpy()
 
