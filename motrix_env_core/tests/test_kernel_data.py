@@ -9,7 +9,7 @@ import torch
 
 from motrix_env_core.manager.kernel_data import (
     Map,
-    canonicalize_kernel_data,
+    validate_kernel_data,
     is_kernel_data,
     iter_leaves,
     leaf_value_type,
@@ -116,7 +116,7 @@ def test_kernel_data_rejects_unsupported_leaf() -> None:
         label: str
 
     with pytest.raises(TypeError, match="expected a tensor"):
-        canonicalize_kernel_data(_Invalid("invalid"), context="invalid")
+        validate_kernel_data(_Invalid("invalid"), context="invalid")
 
 
 def test_ndarrays_and_tensors_are_not_kernel_data_values() -> None:

@@ -11,7 +11,7 @@ import pytest
 import torch
 
 from motrix_env_core.manager.actions import ActionState
-from motrix_env_core.manager.kernel_data import canonicalize_kernel_data
+from motrix_env_core.manager.kernel_data import validate_kernel_data
 from motrix_env_core.mdp.action import JointPositionActionState, JointPositionActionTerm
 
 
@@ -23,7 +23,7 @@ class _ActionState(ActionState):
 @pytest.mark.parametrize("ptr", [0, 1, 2])
 def test_action_state_accessors_return_current_and_previous_rows(ptr: int) -> None:
     queue = np.arange(18, dtype=np.float32).reshape(2, 3, 3)
-    state = canonicalize_kernel_data(
+    state = validate_kernel_data(
         _ActionState(
             action_queue=torch.from_numpy(queue),
             action_ptr=torch.from_numpy(np.asarray([ptr], dtype=np.int64)),

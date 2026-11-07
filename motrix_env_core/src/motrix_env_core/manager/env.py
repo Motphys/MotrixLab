@@ -21,7 +21,7 @@ from motrix_env_core.config.sim_reset import ManagerResetCfg
 from motrix_env_core.manager.actions import ActionCfg, ActionTerm, ManagerActionsCfg
 from motrix_env_core.manager.commands import CommandCfg, CommandTerm, ManagerCommandsCfg, ResetContext
 from motrix_env_core.manager.kernel import KernelOutputs
-from motrix_env_core.manager.kernel_data import canonicalize_kernel_data
+from motrix_env_core.manager.kernel_data import validate_kernel_data
 
 if TYPE_CHECKING:
     from motrix_env_core.manager.resolver import ManagerLayout, ResolvedManagerProgram
@@ -334,7 +334,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
                 raise ValueError(f"Manager action {name!r} action dimension must match action space.")
         self._command_cfgs = cfg.command_cfgs()
         self._command_terms: dict[str, CommandTerm] = {
-            name: canonicalize_kernel_data(
+            name: validate_kernel_data(
                 materialize_metrics(
                     command_cfg(self),
                     self.num_envs,
@@ -344,7 +344,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
             )
             for name, command_cfg in self._command_cfgs.items()
         }
-        self._rand = canonicalize_kernel_data(_create_rand_value(self), context="Manager random state")
+        self._rand = validate_kernel_data(_create_rand_value(self), context="Manager random state")
         self._action_space, self._action_slices = self._build_action_space()
         self._reward_terms = create_reward_terms(cfg.reward_cfgs(), self)
         self.termination_manager = TerminationManager(cfg.termination_cfgs(), self)

@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from motrix_env_core.manager.kernel_data import canonicalize_kernel_data, is_kernel_data
+from motrix_env_core.manager.kernel_data import is_kernel_data, validate_kernel_data
 from motrix_env_core.sim.read import SimDataQuery
 
 # Static term-argument leaves accepted as-is; anything else is a cfg-authoring
@@ -29,7 +29,7 @@ def canonicalize_term_args(args: tuple[Any, ...], *, context: str) -> tuple[Any,
     values: list[Any] = []
     for index, value in enumerate(args):
         if is_kernel_data(value):
-            values.append(canonicalize_kernel_data(value, context=f"{context} args[{index}]"))
+            values.append(validate_kernel_data(value, context=f"{context} args[{index}]"))
         elif isinstance(value, _STATIC_LEAVES):
             values.append(value)
         elif isinstance(value, tuple) and all(isinstance(item, (bool, int, float, np.generic)) for item in value):

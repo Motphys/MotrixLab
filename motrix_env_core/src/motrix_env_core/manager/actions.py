@@ -13,7 +13,7 @@ import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager.dispatch import dispatch
-from motrix_env_core.manager.kernel_data import canonicalize_kernel_data
+from motrix_env_core.manager.kernel_data import validate_kernel_data
 
 if TYPE_CHECKING:
     from motrix_env_core.manager.env import ManagerEnv
@@ -71,7 +71,7 @@ class ActionTerm(abc.ABC):
         if not isinstance(state, ActionState):
             raise TypeError("ActionTerm state must be an ActionState.")
         self.action_space = action_space
-        self.state = canonicalize_kernel_data(state, context="ActionTerm state")
+        self.state = validate_kernel_data(state, context="ActionTerm state")
 
     def process(self, actions: torch.Tensor) -> torch.Tensor | None:
         """Record raw tensor actions and process one batched action slice."""
