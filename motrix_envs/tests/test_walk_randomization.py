@@ -56,9 +56,9 @@ def _tiny_delay_manager(num_envs: int = 2, num_actuators: int = 3, lo: int = 0, 
     env._action_writes = SimpleNamespace(buffer=lambda name: controls, execute=lambda: None)
     env._command_terms = {}
     env._state = SimpleNamespace()
-    env._compiled_manager_program = SimpleNamespace(prepared_trees=())
+    env._compiled_manager_program = SimpleNamespace()
     env.perf = SimpleNamespace(scope=lambda name: nullcontext())
-    env._reset_sim_rows = lambda env_ids, inputs: None
+    env._reset_sim_rows = lambda env_ids: None
     return env, term.state, controls
 
 

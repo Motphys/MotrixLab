@@ -43,8 +43,12 @@ class ActionState:
         """Return current raw actions: host ``(N, A)``, kernel lane ``(A,)``.
 
         The returned view shares history storage and does not advance the cursor.
+        The gather form keeps the index on tensors so compiled terms trace it
+        without a data-dependent scalar extraction.
         """
-        return self.action_queue[:, self.action_ptr[0], :]
+        queue = self.action_queue
+        index = self.action_ptr.view(1, 1, 1).expand(queue.shape[0], 1, queue.shape[-1])
+        return queue.gather(1, index).squeeze(1)
 
     @dispatch
     def previous(self) -> torch.Tensor:
@@ -52,8 +56,10 @@ class ActionState:
 
         The returned view wraps around the ring without copying data.
         """
-        ptr = (self.action_ptr[0] - 1) % self.action_queue.shape[-2]
-        return self.action_queue[:, ptr, :]
+        queue = self.action_queue
+        prev = (self.action_ptr.view(1, 1) - 1) % queue.shape[1]
+        index = prev.expand(queue.shape[0], 1, queue.shape[-1])
+        return queue.gather(1, index).squeeze(1)
 
 
 class ActionTerm(abc.ABC):

@@ -96,7 +96,7 @@ class WbtMotionCommand(CommandTerm):
     clip: WbtMotionClip
 
     # Runtime buffers and tracked-body alignment metadata.
-    reference_index: np.int64
+    reference_index: int
     target_body_position_relative: torch.Tensor
     target_body_orientation_relative: torch.Tensor
 
@@ -106,13 +106,13 @@ class WbtMotionCommand(CommandTerm):
     adaptive_bin_failed_count: torch.Tensor
     adaptive_current_bin_failed_count: torch.Tensor
     sampling_cdf: torch.Tensor
-    start_at_timestep_zero_prob: np.float32
+    start_at_timestep_zero_prob: float
     hold_at_clip_end: bool
     sequential_clips: bool
-    uniform_ratio: np.float32
-    alpha: np.float32
-    kernel_size: np.int64
-    kernel_lambda: np.float32
+    uniform_ratio: float
+    alpha: float
+    kernel_size: int
+    kernel_lambda: float
 
     # Per-environment frame state exposed through the manager metrics system.
     # Kept as ``(num_envs, 1)`` per-env arrays: the kernel lowering hands each
@@ -321,7 +321,7 @@ class WbtMotionCommandCfg(CommandCfg):
         tracked_shape = (len(self.tracked_body_names), 3)
         return WbtMotionCommand(
             clip=source,
-            reference_index=np.int64(reference_index),
+            reference_index=int(reference_index),
             steps=torch.zeros((env.num_envs, 1), dtype=torch.int64),
             clip_ended=torch.zeros((env.num_envs, 1), dtype=torch.bool),
             command=torch.empty((env.num_envs, 2 * env.num_actuators), dtype=torch.float32),
@@ -332,13 +332,13 @@ class WbtMotionCommandCfg(CommandCfg):
             sampling_cdf=torch.ones((num_bins,), dtype=torch.float32)
             if num_bins
             else torch.empty((0,), dtype=torch.float32),
-            start_at_timestep_zero_prob=np.float32(self.start_at_timestep_zero_prob),
+            start_at_timestep_zero_prob=float(self.start_at_timestep_zero_prob),
             hold_at_clip_end=self.hold_at_clip_end,
             sequential_clips=self.sequential_clips,
-            uniform_ratio=np.float32(self.uniform_ratio),
-            alpha=np.float32(self.alpha),
-            kernel_size=np.int64(self.kernel_size),
-            kernel_lambda=np.float32(self.kernel_lambda),
+            uniform_ratio=float(self.uniform_ratio),
+            alpha=float(self.alpha),
+            kernel_size=int(self.kernel_size),
+            kernel_lambda=float(self.kernel_lambda),
         )
 
 

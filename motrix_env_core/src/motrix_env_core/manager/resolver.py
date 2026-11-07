@@ -4,8 +4,7 @@
 """Backend-neutral resolver for manager task programs.
 
 Lowers one constructed manager environment into its execution metadata: the
-simulator read plan, the resolved context tree (path-keyed
-leaf descriptors with live value references), prepared term
+simulator read plan, the live manager context handed to terms, prepared term
 arguments, and one typed call record per manager term (command hooks,
 observations, rewards, terminations, simulator resets). Numerical executors —
 currently the Torch executor in :mod:`motrix_env_core.torch_manager` —
@@ -31,8 +30,6 @@ from motrix_env_core.manager.context import ManagerContext
 from motrix_env_core.manager.env import ManagerEnv, ReadPlan
 from motrix_env_core.manager.kernel_data import (
     Map,
-    ResolvedLeaf,
-    ResolvedTree,
     is_kernel_data,
     iter_leaves,
     leaf_value_type,
@@ -219,11 +216,6 @@ class SimResetTermCall:
 
 
 @dataclass(frozen=True)
-class ResolvedManagerContext:
-    tree_index: int
-
-
-@dataclass(frozen=True)
 class ResolvedSimReset:
     call: SimResetTermCall
     sim_writes_type: str
@@ -241,10 +233,15 @@ class ResolvedManagerProgram:
     per-group observation calls; reset runs the command reset hooks followed
     by the simulator reset terms. Reward and termination indices match
     ``ManagerLayout.rewards``/``terminations`` ordering.
+
+    ``context`` is the live :class:`ManagerContext` host instance handed to
+    every term; its tensors and Map entries alias the environment's
+    persistent state, so it is built once and never rebuilt.
     """
 
     read_plan: ReadPlan
     layout: ManagerLayout
+    context: ManagerContext
     command_updates: tuple[CommandUpdateHook, ...]
     rewards: tuple[RewardTermCall, ...]
     terminations: tuple[TerminationTermCall, ...]
@@ -252,8 +249,6 @@ class ResolvedManagerProgram:
     command_reset_hooks: tuple[CommandResetHook, ...]
     sim_reset_terms: tuple[ResolvedSimReset, ...]
     observations: dict[str, tuple[ObservationTermCall, ...]]
-    prepared_trees: tuple[ResolvedTree, ...]
-    context: ResolvedManagerContext
 
 
 __all__ = [
@@ -269,7 +264,6 @@ __all__ = [
     "ObservationTermCall",
     "ObservationTermLayout",
     "PreparedArg",
-    "ResolvedManagerContext",
     "ResolvedManagerProgram",
     "ResolvedSimReset",
     "RewardTermCall",
@@ -305,14 +299,13 @@ class ManagerProgramResolver:
     def __init__(self, env: ManagerEnv):
         self._env = env
         self._sim_inputs = _manager_sim_inputs(env.sim_data)
-        self._prepared_trees: list[ResolvedTree] = []
 
     def build(self) -> ResolvedManagerProgram:
         build_started = perf_counter()
         observation_groups = self._env.observation_groups
         reward_terms = self._env._reward_terms
         termination_terms = self._env.termination_manager.terms
-        context = self._resolve_manager_context(observation_groups, reward_terms, termination_terms)
+        context = self._resolve_manager_context()
         command_updates = tuple(
             CommandUpdateHook(key, function) for key, function in self._resolve_command_hooks("update")
         )
@@ -366,18 +359,16 @@ class ManagerProgramResolver:
             + len(termination_calls)
             + len(sim_reset_terms)
         )
-        leaf_count = sum(len(tree.leaves) for tree in self._prepared_trees)
         logger.info(
-            "Manager startup %s: resolve finished in %.3fs (%d term calls, %d resolved leaves)",
+            "Manager startup %s: resolve finished in %.3fs (%d term calls)",
             type(self._env).__name__,
             perf_counter() - build_started,
             call_count,
-            leaf_count,
         )
-        context_tree = self._prepared_trees[context.tree_index]
         return ResolvedManagerProgram(
-            read_plan=ReadPlan(self._env.sim_data, context_tree),
+            read_plan=ReadPlan(self._env.sim_data),
             layout=layout,
+            context=context,
             command_updates=command_updates,
             rewards=reward_calls,
             terminations=termination_calls,
@@ -385,8 +376,6 @@ class ManagerProgramResolver:
             command_reset_hooks=command_reset_hooks,
             sim_reset_terms=sim_reset_terms,
             observations=observation_terms,
-            prepared_trees=tuple(self._prepared_trees),
-            context=context,
         )
 
     # -- resets -------------------------------------------------------------
@@ -446,33 +435,28 @@ class ManagerProgramResolver:
 
     # -- layouts ------------------------------------------------------------
 
-    def _resolve_manager_context(
-        self,
-        observation_groups: dict[str, ObservationGroupEntry],
-        reward_terms: dict[str, RewardTerm],
-        termination_terms: dict[str, TerminationTerm],
-    ) -> ResolvedManagerContext:
-        del observation_groups, reward_terms, termination_terms
+    def _resolve_manager_context(self) -> ManagerContext:
         actions = {name: term.state for name, term in self._env.action_terms.items()}
-        # Sim views enter the resolved tree as zero-copy tensor views over the
+        # Sim views enter the context as zero-copy tensor views over the
         # read-program arena: the read program rewrites the arena contents in
-        # place, so the pre-built views stay valid for the program's lifetime
-        # and every upper layer sees one leaf type. Metrics stay ndarray per
-        # the existing numpy metrics contract.
+        # place, so the pre-built views stay valid for the program's lifetime.
+        # Metrics keep their numpy contract on the host; terms write them
+        # through the tensor views over the same backing arrays.
         sim = {key: torch.from_numpy(binding.value) for key, binding in self._sim_inputs.items()}
+        metrics = {name: torch.from_numpy(value) for name, value in self._env.metrics.items()}
         commands = dict(self._env.command_terms)
         value = ManagerContext(
             env_id=torch.from_numpy(np.arange(self._env.num_envs, dtype=np.int64)),
             actions=Map(actions),
             commands=Map(commands),
-            metrics=Map(self._env.metrics),
+            metrics=Map(metrics),
             rand=self._env._rand,
             sim=Map(sim),
-            dt=np.float32(self._env.cfg.ctrl_dt),
+            dt=float(self._env.cfg.ctrl_dt),
             sim_reset_requested=torch.from_numpy(self._env._sim_reset_requested),
         )
-        tree_index = self._register_tree("manager_context", value)
-        return ResolvedManagerContext(tree_index)
+        self._validate_context_leaves(value)
+        return value
 
     def _resolve_command_hooks(self, function_name: str) -> tuple[tuple[str, Callable], ...]:
         """Resolve one hook family over all command terms in declaration order.
@@ -640,36 +624,29 @@ class ManagerProgramResolver:
             return SimArg(self._env._term_query_keys[value])
         return ConstantArg(value)
 
-    def _register_tree(
-        self,
-        source_name: str,
-        value: Any,
-    ) -> int:
-        """Validate one kernel-data value's leaves and record its tree.
+    def _validate_context_leaves(self, value: ManagerContext) -> None:
+        """Validate the context tree's leaves once at resolution time.
 
-        Leaves are captured by reference: array leaves are refreshed in place
-        by their owning runtime objects and scalar/shared leaves are reused
-        unchanged.
+        Command terms, action states, and the rand value are already
+        canonicalized at construction; this walk covers the assembled context
+        itself (env id, sim views, metric views) with the same leaf-type
+        contract. Nothing is stored: terms hold the live host objects.
         """
-        leaves: dict[tuple[str, ...], ResolvedLeaf] = {}
         for leaf_path, annotation, leaf_value in iter_leaves(value):
             value_type = leaf_value_type(annotation)
             if value_type is None:
                 raise TypeError(
-                    f"{source_name} KernelData {'.'.join(leaf_path)} expected a tensor, an ndarray, or a numeric "
+                    f"manager_context KernelData {'.'.join(leaf_path)} expected a tensor, an ndarray, or a numeric "
                     "scalar."
                 )
             if value_type in (np.ndarray, torch.Tensor):
                 if not isinstance(leaf_value, value_type):
-                    raise TypeError(f"{source_name} field {'.'.join(leaf_path)!r} must be {value_type.__name__}.")
+                    raise TypeError(f"manager_context field {'.'.join(leaf_path)!r} must be {value_type.__name__}.")
             elif type(leaf_value) is not value_type:
                 raise TypeError(
-                    f"{source_name} field {'.'.join(leaf_path)!r} must return "
+                    f"manager_context field {'.'.join(leaf_path)!r} must return "
                     f"{value_type.__name__}, got {type(leaf_value).__name__}."
                 )
-            leaves[leaf_path] = ResolvedLeaf(leaf_value)
-        self._prepared_trees.append(ResolvedTree(value, leaves))
-        return len(self._prepared_trees) - 1
 
     def _validate_observation_spaces(self, groups: dict[str, ObservationGroupEntry]) -> None:
         expected_policy = self._env.policy_observation_space.shape

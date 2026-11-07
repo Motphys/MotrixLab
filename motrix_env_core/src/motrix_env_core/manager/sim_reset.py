@@ -96,12 +96,11 @@ class SimResetRuntime:
     def apply(
         self,
         task_program: TorchTaskProgram,
-        inputs: tuple[Any, ...],
         env_ids: np.ndarray,
     ) -> None:
         """Materialize compact term outputs, scatter them, and execute reset."""
         with active_perf_scope("reset_kernel"):
-            task_program.reset_kernel(inputs, env_ids, self.buffers)
+            task_program.reset_kernel(env_ids, self.buffers)
         for buffer in self.buffers:
             compact = buffer[: env_ids.size].copy()
             buffer[env_ids] = compact

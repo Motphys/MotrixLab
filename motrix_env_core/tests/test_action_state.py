@@ -21,7 +21,7 @@ class _ActionState(ActionState):
 
 
 @pytest.mark.parametrize("ptr", [0, 1, 2])
-def test_action_state_accessors_return_history_views(ptr: int) -> None:
+def test_action_state_accessors_return_current_and_previous_rows(ptr: int) -> None:
     queue = np.arange(18, dtype=np.float32).reshape(2, 3, 3)
     state = canonicalize_kernel_data(
         _ActionState(
@@ -40,12 +40,12 @@ def test_action_state_accessors_return_history_views(ptr: int) -> None:
     np.testing.assert_array_equal(current.numpy(), history[:, ptr])
     np.testing.assert_array_equal(previous.numpy(), history[:, (ptr - 1) % 3])
     assert tuple(current.shape) == tuple(previous.shape) == (2, 3)
-    assert current.data_ptr() == state.action_queue[:, ptr, :].data_ptr()
     np.testing.assert_array_equal(state.action_queue.numpy(), history)
     np.testing.assert_array_equal(state.action_ptr.numpy(), pointer)
 
+    # Accessors gather rows without mutating or aliasing history storage.
     current[0, 0] = -1.0
-    assert state.action_queue[0, ptr, 0] == -1.0
+    assert state.action_queue[0, ptr, 0] == history[0, ptr, 0]
 
 
 def test_joint_position_action_applies_per_lane_delay() -> None:

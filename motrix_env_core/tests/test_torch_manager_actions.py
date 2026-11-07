@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 import torch
 
+from motrix_env_core.manager.actions import ActionState
 from motrix_env_core.mdp.action import JointPositionActionState, JointPositionActionTerm
 from motrix_env_core.torch_manager.actions import process_joint_position_actions, reset_action_history
 
@@ -116,26 +117,20 @@ def test_action_helpers_compile_fullgraph_cpu() -> None:
     _exercise_reset(reset, process)
 
 
-def test_batch_action_views_read_each_lanes_own_slot() -> None:
+def test_action_state_views_read_each_lanes_own_slot() -> None:
     """The shared (1,) cursor must gather every lane's row, not lane 0's.
 
     Regression: a (1,1,A) gather index silently broadcast lane 0's action to
     all lanes, corrupting the per-lane action-echo observation and the
     action-rate reward.
     """
-    from motrix_env_core.torch_manager.runtime import _BatchActions
-
     num_envs, width, num_actions = 8, 4, 3
     queue = torch.arange(num_envs * width * num_actions, dtype=torch.float32).reshape(num_envs, width, num_actions)
     for ptr in (0, 1, width - 1):
-        namespace = _FixedActionNamespace(queue, torch.tensor([ptr], dtype=torch.int64))
-        actions = _BatchActions(namespace)
-        torch.testing.assert_close(actions.current(), queue[:, ptr, :])
+        state = ActionState(
+            action_queue=queue,
+            action_ptr=torch.tensor([ptr], dtype=torch.int64),
+        )
+        torch.testing.assert_close(state.current(), queue[:, ptr, :])
         previous = queue[:, (ptr - 1) % width, :]
-        torch.testing.assert_close(actions.previous(), previous)
-
-
-class _FixedActionNamespace:
-    def __init__(self, queue: torch.Tensor, ptr: torch.Tensor) -> None:
-        self.action_queue = queue
-        self.action_ptr = ptr
+        torch.testing.assert_close(state.previous(), previous)

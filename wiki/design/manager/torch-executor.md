@@ -5,32 +5,30 @@
 本文定义 `ManagerEnv` 的数值执行器：通用 Torch 批量执行器
 （`motrix_env_core.torch_manager.runtime.TorchManagerRuntime`）。resolver
 （`motrix_env_core.manager.resolver.ManagerProgramResolver`）把 manager 配置
-解析为 read plan / layout / typed term calls 等执行元数据，Torch 执行器
+解析为 read plan / layout / ManagerContext / typed term calls 等执行元数据，Torch 执行器
 以整批张量按固定语句顺序调度 term；host 生命周期与 term 配置 API 不变。
 Torch 是唯一执行器——历史上并存过的 Numba fused-kernel 路径与
 `executor="numba"|"torch"` 双执行器切换已经移除。相关背景见
 [Manager Runtime 设计](./runtime.md)。
 
 执行方式默认为 `torch.compile`：每个 kernel（evaluate/observe/reset）把整段
-term 调度编译为 Inductor 图（observe 限制 `cpp.threads=min(4, nthreads)`，
-可用 `MOTRIX_TORCH_COMPILE_THREADS` 覆盖；reset 以 env_ids 为动态维度参数），
-context 命名空间、invocation 参数与张量视图按 inputs 身份一次性缓存。
-RNG draw 顺序与 eager 完全一致；Inductor 重结合仅带来 ≤1e-8 量级的 reward
-差异。调试可用 `TorchManagerRuntime(env, program, compile=False)` 或
-`runtime.compile_enabled = False` 回到逐 term eager 执行。
+term 调度编译为 Inductor 图（observe 按组拆图；线程数与 chunk 由
+`MOTRIX_TORCH_COMPILE_THREADS`/`MOTRIX_TORCH_MIN_CHUNK` 控制；reset 以静态
+全批 masked 形式编译）。RNG draw 顺序与 eager 完全一致；Inductor 重结合仅带来
+≤1e-8 量级的 reward 差异。调试可用 `TorchManagerRuntime(env, program,
+compile=False)` 或 `runtime.compile_enabled = False` 回到逐 term eager 执行。
 
 ## 解析与执行的分工
 
-- `ManagerProgramResolver`（backend-neutral）负责输入准备：`ManagerContext`
-  解析为 path-keyed 的 resolved tree（叶子持有 live value 引用；数组字段已是
-  torch tensor，执行器无需再包装）；carrier dataclass term 参数按常量参数
-  原样透传，Dynamo 直接 trace 其属性访问，其结构化 fingerprint（字段名/类型/
-  张量 dtype+shape+内容哈希/标量值）计入 program fingerprint 以保持缓存失效
-  强度。构建 `ManagerLayout`、
-  `ReadPlan`、per-term-kind typed call records（command hooks 携带 receiver 与
-  static function，reward/termination 携带 buffer column index 与 resolved
-  argument 描述符等），并校验签名注解契约与签名契约。它不做任何代码生成、
-  缓存或 dispatcher 编译。
+- `ManagerProgramResolver`（backend-neutral）负责输入准备：组装唯一常驻的
+  `ManagerContext` 宿主实例（Map 容纳真实的 command/action term 实例，`sim`/
+  `metrics` 为零拷贝 tensor 视图，`rand` 为 tensor 批量 `RandValue`，`dt` 为
+  Python float），并以 `iter_leaves` 做一次性 leaf 类型校验；carrier dataclass
+  term 参数按常量参数原样透传，Dynamo 直接 trace 其属性访问。构建
+  `ManagerLayout`、`ReadPlan`、per-term-kind typed call records（command hooks
+  携带 receiver key 与 static function，reward/termination 携带 buffer column
+  index 与参数描述符等），并校验签名注解契约。它不做任何代码生成、缓存或
+  dispatcher 编译。
 - `TorchManagerRuntime` 消费这些元数据并执行 term 调度；所有写入落回
   host 持有的 numpy 缓冲（reward terms/masks/obs/command state/metrics），
   `ManagerEnv` 的公共 API 与状态面保持不变。
@@ -44,26 +42,27 @@ RNG draw 顺序与 eager 完全一致；Inductor 重结合仅带来 ≤1e-8 量�
   （masked）→ sim-reset terms 写 compact 行。
 - RNG：per-lane SplitMix64（`torch_manager.rand.draw_uniform`），批量语义为
   term 一次 draw `count=k` 等价于 per-lane 连续调用 k 次。
-- 解析树持久复用：resolver 产出的 resolved tree 是三个 kernel 共用的持久
-  anchor；simulator-backed 数组叶子由 read program 原地重写，
-  `_TensorCache` 在同一 anchor 上按叶子值身份缓存 tensor 视图，0 维
-  int/float/bool 叶子转为 Python 标量（graph-break-free 编译的关键）。
-- reset 路径是静态全批 masked 设计：选中的 lane 由布尔掩码选择，
-  reset write contract 覆盖的可写叶子（reset hook 的 receiver command
-  tree、RNG state 与 lane 形状的 metric）在 reset term 首次访问时 clone，
-  term 写 clone 行后以 `where(mask, clone, original)` 合并回常驻缓冲，
-  未选中 lane（含 RNG 状态）保持不变；compact sim-reset write 缓冲布局与
+- 常驻 context：三个 kernel 共用同一 `ManagerContext` 实例；simulator-backed
+  tensor 视图由 read program 原地重写 arena 保持有效，term 实例与标量字段即
+  宿主对象本身（graph-break-free 编译的关键：无转译层，guard 落在对象
+  identity 上）。
+- reset 路径是静态全批 masked 设计：选中的 lane 由布尔掩码选择，reset
+  write contract 覆盖的可写表面（reset hook 的 receiver command term 的
+  lane 形状 tensor 字段、RNG state 与 metric 视图）在编译期以
+  `dataclasses.replace` 重建为持久 clone，kernel 先从常驻缓冲刷新 clone、
+  term 写 clone 后以 `where(mask, clone, original)` 合并回常驻缓冲，未选中
+  lane（含 RNG 状态）保持不变；compact sim-reset write 缓冲布局与
   `SimResetRuntime.buffers` 一致。
 
 ## 批量 term 约定
 
-ctx（`_BatchContext`）字段全部是**整批**张量：
+ctx（`ManagerContext` 宿主实例）字段全部是**整批**张量：
 
 - `ctx.sim[key]` → `(N, ...)` 张量（SimDataQuery 参数同样是整批张量）
 - `ctx.commands[name].field` → per-env 字段 `(N, ...)`；嵌套 kernel_data（如
   `motion.clip.joint_pos`）为 shared `(F, J)`，term 自行按 `steps[:, 0]` gather
-- `ctx.actions[name].current()/previous()` → `(N, A)`；`action_queue/action_ptr`
-  同理
+- `ctx.actions[name]` 是真实 `ActionState`；`.current()/previous()` 为纯 tensor
+  gather 方法，返回 `(N, A)`；`action_queue/action_ptr` 同理
 - `ctx.metrics[name]` → `(N, 1)` 可写张量
 - `ctx.rand.next_uniform(count=k)` → `(N, k)`，`[-1,1)`，原地推进状态；
   `ctx.rand.uniform_range(count, low, high)` 同理
@@ -78,13 +77,13 @@ float，数组参数为批量张量）：
 - termination：返回 `(N,)` bool 张量；metric 写 `ctx.metrics[name][:, 0] = value`
 - observation：`out` 为 `(N, size)` 张量切片，直接写入；noise 用
   `ctx.rand.next_uniform(size) * amplitude`（count == out.shape[1] 保持 RNG 顺序）
-- reset：`(ctx, sim_writes, *args)`，ctx 为 lane-gathered（第 0 维 =
-  len(env_ids)），`sim_writes[name]` 为 compact `(M, *write_shape)` 张量
+- reset：`(ctx, sim_writes, *args)`，ctx 为静态全批 masked 形式（整批第 0 维
+  = N），`sim_writes[name]` 为 compact `(M, *write_shape)` 张量
 
 Command hooks（`update`/`advance`/`reset_env`）是 CommandTerm 类上的
 `@staticmethod` + `@dispatch` 函数，签名为 `(receiver, ctx)`；`receiver` 是该
-command 的 kernel-data namespace 视图（batch/reset 场景下分别为整批/gathered
-行）。host 侧 `reset(ResetContext)` 与 `on_transition()` 保持 numpy host 实现，
+command 的 `CommandTerm` 实例本身（reset 场景为其 lane-shape 字段替换为 clone
+的重建实例）。host 侧 `reset(ResetContext)` 与 `on_transition()` 保持 numpy host 实现，
 ActionTerm 的 `process/_reset` 也保持 numpy host 路径不变。
 
 标量参数（float）以 Python float 传入；字符串参数直接传入。

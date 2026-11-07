@@ -20,14 +20,8 @@ from motrix_env_core.config import configclass
 from motrix_env_core.config.sim_reset import ManagerResetCfg
 from motrix_env_core.manager.actions import ActionCfg, ActionTerm, ManagerActionsCfg
 from motrix_env_core.manager.commands import CommandCfg, CommandTerm, ManagerCommandsCfg, ResetContext
-from motrix_env_core.manager.kernel import (
-    KernelOutputs,
-    validate_kernel_context,
-)
-from motrix_env_core.manager.kernel_data import (
-    ResolvedTree,
-    canonicalize_kernel_data,
-)
+from motrix_env_core.manager.kernel import KernelOutputs
+from motrix_env_core.manager.kernel_data import canonicalize_kernel_data
 
 if TYPE_CHECKING:
     from motrix_env_core.manager.resolver import ManagerLayout, ResolvedManagerProgram
@@ -197,16 +191,14 @@ class ManagerBasedEnvCfg(EnvCfg):
 
 @dataclass(frozen=True)
 class ReadPlan:
-    """Simulator read program bound to the resolved context tree.
+    """Simulator read program backing the manager context's sim views.
 
     ``read`` executes the compiled read program; the simulator arena the
-    context tree's sim leaves view (as zero-copy tensors) is rewritten in
-    place, so every resolved leaf and the tree objects themselves stay valid
-    without rebuilding.
+    context's sim entries view (as zero-copy tensors) is rewritten in place,
+    so the tensor views stay valid without rebuilding.
     """
 
     sim_data: PhysicsReadProgram
-    tree: ResolvedTree
 
     def read(
         self,
@@ -458,10 +450,8 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         final_obs = self._zeros_obs(self.observation_space)
         self._final_obs_slot = _ObsBufferSlot.bind(final_obs, state.reward, state.terminated)
         self._refresh_sim_reads()
-        inputs = self._resolved_inputs
-        self._validate_kernel_context(inputs)
         warmup_started = perf_counter()
-        self._execute_observe_kernel(inputs)
+        self._execute_observe_kernel()
         logger.info(
             "Manager startup %s: warmup execution finished in %.3fs",
             env_name,
@@ -477,23 +467,22 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         obs, self._kernel_outputs = self._observation_buffer.swap()
         self._state = self._state.replace(obs=obs)
 
-    def _execute_evaluate_kernel(self, inputs: tuple[ResolvedTree, ...]) -> None:
+    def _execute_evaluate_kernel(self) -> None:
         """Evaluate rewards and terminations against the current command."""
         assert self._task_program is not None
         assert self._kernel_buffers is not None
         assert self._kernel_outputs is not None
         self._task_program.evaluate_kernel(
-            inputs,
             self._task_program.reward_weights,
             self._kernel_buffers,
             self._kernel_outputs,
         )
 
-    def _execute_observe_kernel(self, inputs: tuple[ResolvedTree, ...]) -> None:
+    def _execute_observe_kernel(self) -> None:
         """Evaluate observations against the command for the next action."""
         assert self._task_program is not None
         assert self._kernel_outputs is not None
-        self._task_program.observe_kernel(inputs, self._kernel_outputs)
+        self._task_program.observe_kernel(self._kernel_outputs)
 
     def _capture_final_obs(self, env_ids: np.ndarray) -> FinalObs[torch.Tensor]:
         """Observe pre-reset inputs after command on_transition.
@@ -504,7 +493,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         assert self._task_program is not None
         assert self._final_obs_slot is not None
         slot = self._final_obs_slot
-        self._task_program.observe_kernel(self._resolved_inputs, slot.kernel_outputs)
+        self._task_program.observe_kernel(slot.kernel_outputs)
         obs = slot.observation
         # ``env_ids`` is user-facing output of the torch frontend: hand over
         # an owned tensor while internal indexing stays on the numpy copy.
@@ -620,7 +609,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         self._action_writes.execute()
         return state
 
-    def _reset_sim_rows(self, env_ids: np.ndarray, inputs: tuple[ResolvedTree, ...]) -> None:
+    def _reset_sim_rows(self, env_ids: np.ndarray) -> None:
         """Run the simulator-only stages of the reset pipeline for selected rows.
 
         Clears frontend ctrl targets to mirror the backend's reset-row ctrl
@@ -635,7 +624,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
                     self._action_writes.buffer(name)[env_ids] = 0.0
         with self.perf.scope("apply_sim_reset"):
             assert self._task_program is not None
-            self._sim_reset_runtime.apply(self._task_program, inputs, env_ids)
+            self._sim_reset_runtime.apply(self._task_program, env_ids)
         assert self._compiled_manager_program is not None
         with self.perf.scope("reset_read_inputs"):
             self._compiled_manager_program.read_plan.read(self, env_ids)
@@ -706,7 +695,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         if sim_reset_ids is not None and sim_reset_ids.size:
             env_ids = np.concatenate([env_ids, sim_reset_ids])
         if env_ids.size:
-            self._reset_sim_rows(env_ids, self._resolved_inputs)
+            self._reset_sim_rows(env_ids)
 
     def _make_metrics_view(self) -> dict[str, Any]:
         """Assemble the persistent live metrics view for the current state.
@@ -735,7 +724,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         with self.perf.scope("read_inputs"):
             self._refresh_sim_reads()
         with self.perf.scope("evaluate"):
-            self._execute_evaluate_kernel(self._resolved_inputs)
+            self._execute_evaluate_kernel()
         with self.perf.scope("command_on_transition"):
             for command_term in self._command_terms.values():
                 command_term.on_transition()
@@ -748,7 +737,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         if self._kernel_outputs is None:
             return state
         with self.perf.scope("observe"):
-            self._execute_observe_kernel(self._resolved_inputs)
+            self._execute_observe_kernel()
         return state
 
     @property
@@ -793,17 +782,6 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         self._kernel_buffers = buffers
         return buffers
 
-    @property
-    def _resolved_inputs(self) -> tuple[ResolvedTree, ...]:
-        """Persistent resolved-input trees shared by all three kernels.
-
-        The trees are built once by the resolver. Simulator-backed array
-        leaves are rewritten in place by :meth:`_refresh_sim_reads`; every
-        other leaf aliases host state, so the trees are never rebuilt.
-        """
-        assert self._compiled_manager_program is not None
-        return self._compiled_manager_program.prepared_trees
-
     def _refresh_sim_reads(self, env_ids: np.ndarray | None = None) -> None:
         """Refresh the simulator-backed kernel inputs in place.
 
@@ -812,19 +790,3 @@ class ManagerEnv(ArrayEnv[EnvCfgType, torch.Tensor]):
         """
         assert self._compiled_manager_program is not None
         self._compiled_manager_program.read_plan.read(self, env_ids)
-
-    def _validate_kernel_context(self, inputs: tuple[ResolvedTree, ...]) -> None:
-        assert self._task_program is not None
-        assert self._kernel_buffers is not None
-        assert self._kernel_outputs is not None
-        try:
-            validate_kernel_context(
-                inputs,
-                self._task_program.reward_weights,
-                self._kernel_buffers,
-                self._kernel_outputs,
-                self.num_envs,
-            )
-        except (TypeError, ValueError) as error:
-            message = f"Invalid kernel context for {type(self).__name__} task kernel: {error}"
-            raise type(error)(message) from error

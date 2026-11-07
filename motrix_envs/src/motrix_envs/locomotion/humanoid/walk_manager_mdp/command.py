@@ -127,18 +127,18 @@ class WalkCommand(CommandTerm):
 
     vel_limit_low: torch.Tensor
     vel_limit_high: torch.Tensor
-    stand_prob: np.float32
-    resample_steps: np.float32
-    gait_period_base: np.float32
-    gait_period_width: np.float32
+    stand_prob: float
+    resample_steps: float
+    gait_period_base: float
+    gait_period_width: float
     curriculum_enabled: bool
     penalty_scale: torch.Tensor
     avg_ep_len: torch.Tensor
-    level_down_threshold: np.float32
-    level_up_threshold: np.float32
-    degree: np.float32
-    min_scale: np.float32
-    max_scale: np.float32
+    level_down_threshold: float
+    level_up_threshold: float
+    degree: float
+    min_scale: float
+    max_scale: float
 
     # Per-environment state. ``phase`` and ``steps`` are published as metrics;
     # the kernel lowering hands each lane a writable row view.
@@ -257,8 +257,8 @@ class WalkCommandCfg(CommandCfg):
         return WalkCommand(
             vel_limit_low=torch.from_numpy(np.asarray(self.vel_limit[0], dtype=np.float32)),
             vel_limit_high=torch.from_numpy(np.asarray(self.vel_limit[1], dtype=np.float32)),
-            stand_prob=np.float32(self.stand_prob),
-            resample_steps=np.float32(max(int(round(self.resampling_time / self.ctrl_dt)), 1)),
+            stand_prob=float(self.stand_prob),
+            resample_steps=float(max(int(round(self.resampling_time / self.ctrl_dt)), 1)),
             phase_step=torch.from_numpy(
                 np.full(
                     (num_envs, 1),
@@ -266,8 +266,8 @@ class WalkCommandCfg(CommandCfg):
                     dtype=np.float32,
                 )
             ),
-            gait_period_base=np.float32(self.gait_period),
-            gait_period_width=np.float32(self.gait_period_randomization_width),
+            gait_period_base=float(self.gait_period),
+            gait_period_width=float(self.gait_period_randomization_width),
             curriculum_enabled=self.curriculum_enabled,
             penalty_scale=torch.from_numpy(
                 np.full(
@@ -277,11 +277,11 @@ class WalkCommandCfg(CommandCfg):
                 )
             ),
             avg_ep_len=torch.from_numpy(np.zeros((1,), dtype=np.float32)),
-            level_down_threshold=np.float32(self.level_down_threshold),
-            level_up_threshold=np.float32(self.level_up_threshold),
-            degree=np.float32(self.degree),
-            min_scale=np.float32(self.min_scale),
-            max_scale=np.float32(self.max_scale),
+            level_down_threshold=float(self.level_down_threshold),
+            level_up_threshold=float(self.level_up_threshold),
+            degree=float(self.degree),
+            min_scale=float(self.min_scale),
+            max_scale=float(self.max_scale),
             command=torch.zeros((num_envs, 3), dtype=torch.float32),
             phase_offset=torch.zeros((num_envs, 2), dtype=torch.float32),
             sin_cos=torch.zeros((num_envs, 4), dtype=torch.float32),

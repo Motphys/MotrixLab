@@ -4,22 +4,20 @@
 """Generic Torch executor for resolved Manager programs.
 
 The runtime consumes the metadata produced by the manager resolver (read
-plan, layout, the resolved context tree, and per-term-kind typed
-call records) and executes the manager term schedule — command ``update``
-hooks, rewards, terminations, command ``advance`` hooks for evaluate;
-per-group observation terms for observe; command ``reset_env`` hooks plus
-simulator reset terms for reset — with one batched tensor call per term
-instead of a per-lane loop. All writes go back into the persistent tensor
-buffers the host lifecycle already owns (reset compact-write buffers stay
-numpy, matching ``SimResetRuntime.buffers``), so ``ManagerEnv`` keeps its
-current API and state surfaces unchanged.
+plan, layout, the live :class:`ManagerContext` host instance, and per-term
+typed call records) and executes the manager term schedule — command
+``update`` hooks, rewards, terminations, command ``advance`` hooks for
+evaluate; per-group observation terms for observe; command ``reset_env``
+hooks plus simulator reset terms for reset — with one batched tensor call
+per term. Terms receive the real host objects: Dynamo traces dataclass
+attribute access, frozen ``Map`` lookups, and term-state methods directly,
+guarding on object identity.
 
 By default each kernel schedule is additionally fused with ``torch.compile``
 into a compiled closure over the captured persistent tensors (one fused
 graph per kernel instead of one eager dispatch per tensor op; the reset
 graph computes over the full batch with a lane mask so every shape stays
-static). The eager schedule
-remains available as a debugging fallback
+static). The eager schedule remains available as a debugging fallback
 (``TorchManagerRuntime(env, program, compile=False)``).
 """
 
@@ -28,13 +26,15 @@ from __future__ import annotations
 import os
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
 
+from motrix_env_core.manager.context import ManagerContext
 from motrix_env_core.manager.kernel import KernelOutputs
+from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.manager.resolver import (
     CommandAdvanceHook,
     CommandResetHook,
@@ -46,7 +46,6 @@ from motrix_env_core.manager.resolver import (
     TerminationTermCall,
 )
 from motrix_env_core.torch_manager import merged_omp
-from motrix_env_core.torch_manager.rand import draw_uniform
 
 if TYPE_CHECKING:
     from motrix_env_core.manager.env import ManagerEnv
@@ -86,326 +85,38 @@ def _compile_options() -> dict[str, Any]:
 class TorchTaskProgram:
     """Drop-in replacement task program backed by Torch kernels."""
 
-    evaluate_kernel: Callable[[tuple[Any, ...], torch.Tensor, tuple[torch.Tensor, ...], Any], None]
-    observe_kernel: Callable[[tuple[Any, ...], Any], None]
-    reset_kernel: Callable[[tuple[Any, ...], np.ndarray, tuple[np.ndarray, ...]], None]
+    evaluate_kernel: Callable[[torch.Tensor, tuple[torch.Tensor, ...], Any], None]
+    observe_kernel: Callable[[Any], None]
+    reset_kernel: Callable[[np.ndarray, tuple[np.ndarray, ...]], None]
     reward_weights: torch.Tensor
 
 
-class _TensorCache:
-    """Tensor views over one resolved-input tree anchor.
+def _lane_clone(
+    value: Any,
+    num_envs: int,
+    pairs: list[tuple[torch.Tensor, torch.Tensor]],
+    clones_by_storage: dict[tuple[int, tuple[int, ...], tuple[int, ...], torch.dtype], torch.Tensor],
+) -> Any:
+    """Clone one kernel-data record's lane-shaped tensor fields.
 
-    Leaves are held by reference in the resolved trees and simulator-backed
-    arrays are rewritten in place by the read program, so views stay valid for
-    the lifetime of the anchor. The cache rebuilds only when the anchor
-    identity changes; tensors are keyed by leaf-value identity.
+    Reset terms write only the receiver command terms, the RNG state, and
+    metrics; every other field (shared clip arrays, sim views, scalars) is
+    read-only during reset and passes through uncloned.  The storage map
+    preserves aliases between a term metric field and the exported
+    ``ctx.metrics`` view, so both surfaces observe one masked reset result.
     """
-
-    def __init__(self) -> None:
-        self._anchor: Any = None
-        self._tensors: dict[int, Any] = {}
-
-    def tensors(self, anchor: Any) -> dict[int, Any]:
-        if self._anchor is not anchor:
-            self._anchor = anchor
-            self._tensors = {}
-        return self._tensors
-
-    def tensor(self, anchor: Any, value: Any) -> Any:
-        tensors = self.tensors(anchor)
-        key = id(value)
-        tensor = tensors.get(key)
-        if tensor is None:
-            if isinstance(value, torch.Tensor):
-                # 0-dim tensor leaves are configuration constants (body
-                # indices, sizes, noise amplitudes, mode flags); as tensors
-                # they force tensor-dependent control flow that Dynamo cannot
-                # trace (``if amplitude != 0`` / ``if sequential_clips``) and
-                # a scalar extraction Inductor cannot compile. Python scalars
-                # carry no dtype-precision concern and specialize branches at
-                # trace time. Non-0-dim tensors are already zero-copy views
-                # over their owning arenas and pass through unchanged.
-                if value.dim() == 0:
-                    if value.dtype in (torch.int64, torch.int32):
-                        tensors[key] = int(value)
-                        return tensors[key]
-                    if value.dtype in (torch.float32, torch.float64):
-                        tensors[key] = float(value)
-                        return tensors[key]
-                    if value.dtype is torch.bool:
-                        tensors[key] = bool(value)
-                        return tensors[key]
-                tensors[key] = value
-                return value
-            if isinstance(value, np.ndarray):
-                # 0-dim numpy scalar leaves follow the same rule.
-                if value.shape == ():
-                    if np.issubdtype(value.dtype, np.integer):
-                        tensors[key] = int(value)
-                        return tensors[key]
-                    if np.issubdtype(value.dtype, np.floating):
-                        tensors[key] = float(value)
-                        return tensors[key]
-                    if np.issubdtype(value.dtype, np.bool_):
-                        tensors[key] = bool(value)
-                        return tensors[key]
-                if value.dtype == np.uint64:
-                    value = value.view(np.int64)
-                tensor = torch.from_numpy(value)
-            elif isinstance(value, np.integer):
-                tensors[key] = int(value)
-                return tensors[key]
-            elif isinstance(value, (np.floating, float)):
-                tensors[key] = float(value)
-                return tensors[key]
-            elif isinstance(value, (np.bool_, bool)):
-                tensors[key] = bool(value)
-                return tensors[key]
-            else:
-                tensor = torch.as_tensor(value)
-            tensors[key] = tensor
-        return tensor
-
-
-def _tensorize_leaves(cache: _TensorCache, anchor: Any, tree: Any) -> dict[tuple[str, ...], Any]:
-    """Eagerly materialize every leaf of one resolved tree.
-
-    All tensor views are built up front so namespace resolution is a plain
-    dict lookup — no per-leaf branches for Dynamo to specialize when a graph
-    break forces it to compile as its own frame.
-    """
-    return {path: cache.tensor(anchor, leaf.value) for path, leaf in tree.leaves.items()}
-
-
-def _leaf_lookup(leaves: dict[tuple[str, ...], Any]) -> Callable[[tuple[str, ...]], Any]:
-    """Traceable leaf getter over one materialized leaf-view mapping.
-
-    ``dict.__getitem__`` bound methods are builtins Dynamo refuses to trace;
-    a plain closure keeps namespace resolution inside the compiled frame.
-    """
-
-    def get(path: tuple[str, ...]) -> Any:
-        return leaves[path]
-
-    return get
-
-
-class _Namespace:
-    """Attribute access over one subtree of the resolved manager context.
-
-    Leaf paths resolve to tensors through ``get`` (the batch view materializer
-    or the reset-lane gather); intermediate paths build child namespaces;
-    names absent from the tree fall back to the owning host object (plain
-    Python attributes such as scalar parameters). Resolved children are
-    memoized per instance: the tree is immutable, and tensor views stay valid
-    for the lifetime of the enclosing input anchor.
-    """
-
-    def __init__(
-        self,
-        leaves: dict[tuple[str, ...], Any],
-        prefix: tuple[str, ...],
-        host: Any,
-        get: Callable[[tuple[str, ...]], Any],
-    ) -> None:
-        self._leaves = leaves
-        self._prefix = prefix
-        self._host = host
-        self._get = get
-        self._resolved: dict[str, Any] = {}
-
-    def __getattr__(self, name: str) -> Any:
-        if name.startswith("_"):
-            raise AttributeError(name)
-        resolved = self._resolved.get(name, _MISSING)
-        if resolved is not _MISSING:
-            return resolved
-        resolved = self._resolve(name)
-        self._resolved[name] = resolved
-        return resolved
-
-    def _resolve(self, name: str) -> Any:
-        path = (*self._prefix, name)
-        if path in self._leaves:
-            return self._get(path)
-        children = {rest: path + rest[:1] for p in self._leaves if p[: len(path)] == path and (rest := p[len(path) :])}
-        if children:
-            # Single-leaf wrappers resolve directly to their only leaf;
-            # structured records with nested kernel_data build a child
-            # namespace so chained paths like ``motion.clip.joint_pos`` stay
-            # reachable.
-            if len(children) == 1:
-                first = next(iter(children))
-                if len(first) == 1:
-                    return self._get(children[first])
-            return _Namespace(self._leaves, path, self._host, self._get)
-        if self._host is None:
-            raise AttributeError(name)
-        value = getattr(self._host, name)
-        if isinstance(value, torch.Tensor):
-            # Host records keep tensor fields; expose the same 0-dim
-            # integer-constant rule as _TensorCache.tensor.
-            if value.dim() == 0 and value.dtype in (torch.int64, torch.int32):
-                return int(value)
-            return value
-        if isinstance(value, np.ndarray):
-            # Same 0-dim integer-constant rule as _TensorCache.tensor.
-            if value.shape == () and np.issubdtype(value.dtype, np.integer):
-                return int(value)
-            if value.dtype == np.uint64:
-                value = value.view(np.int64)
-            return torch.from_numpy(value)
-        return value
-
-
-_MISSING = object()
-
-
-class _BatchRand:
-    """Batched SplitMix64 draws over the shared per-env state buffer."""
-
-    def __init__(self, state: torch.Tensor) -> None:
-        self.state = state
-
-    def next_uniform(self, count: int = 1) -> torch.Tensor:
-        """Draw ``count`` values per lane in ``[-1, 1)``; shape ``(N, count)``."""
-        samples, state = draw_uniform(self.state, count)
-        self.state.copy_(state)
-        return samples
-
-    def uniform_range(self, count: int, low: float, high: float) -> torch.Tensor:
-        """Draw ``count`` values per lane in ``[low, high)``; shape ``(N, count)``."""
-        return low + (high - low) * np.float32(0.5) * (self.next_uniform(count) + np.float32(1.0))
-
-
-class _BatchActions:
-    """One action term's ring-buffer state with batched current/previous."""
-
-    def __init__(self, namespace: _Namespace) -> None:
-        self._namespace = namespace
-
-    @property
-    def action_queue(self) -> torch.Tensor:
-        return self._namespace.action_queue
-
-    @property
-    def action_ptr(self) -> torch.Tensor:
-        return self._namespace.action_ptr
-
-    def current(self) -> torch.Tensor:
-        # ``action_ptr`` is the shared (1,) cursor; gather every lane's row
-        # from the same slot.
-        queue = self.action_queue
-        index = self.action_ptr.view(1, 1, 1).expand(queue.shape[0], 1, queue.shape[-1])
-        return queue.gather(1, index).squeeze(1)
-
-    def previous(self) -> torch.Tensor:
-        queue = self.action_queue
-        prev = (self.action_ptr.view(1, 1) - 1) % queue.shape[1]
-        index = prev.expand(queue.shape[0], 1, queue.shape[-1])
-        return queue.gather(1, index).squeeze(1)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._namespace, name)
-
-
-class _SimMap:
-    def __init__(self, get: Callable[[tuple[str, ...]], Any], paths: dict[str, tuple[str, ...]]) -> None:
-        self._get = get
-        self._paths = paths
-
-    def __getitem__(self, key: str) -> Any:
-        return self._get(self._paths[key])
-
-
-class _CommandsMap:
-    def __init__(
-        self,
-        leaves: dict[tuple[str, ...], Any],
-        command_terms: dict[str, Any],
-        get: Callable[[tuple[str, ...]], Any],
-    ) -> None:
-        self._leaves = leaves
-        self._command_terms = command_terms
-        self._get = get
-        self._cache: dict[str, _Namespace] = {}
-
-    def __getitem__(self, name: str) -> _Namespace:
-        namespace = self._cache.get(name)
-        if namespace is None:
-            prefix = ("commands", name)
-            if not any(path[:2] == prefix for path in self._leaves):
-                raise KeyError(name)
-            namespace = _Namespace(self._leaves, prefix, self._command_terms[name], self._get)
-            self._cache[name] = namespace
-        return namespace
-
-
-class _ActionsMap:
-    def __init__(
-        self,
-        leaves: dict[tuple[str, ...], Any],
-        action_terms: dict[str, Any],
-        get: Callable[[tuple[str, ...]], Any],
-    ) -> None:
-        self._leaves = leaves
-        self._action_terms = action_terms
-        self._get = get
-        self._cache: dict[str, _BatchActions] = {}
-
-    def __getitem__(self, name: str) -> _BatchActions:
-        actions = self._cache.get(name)
-        if actions is None:
-            prefix = ("actions", name)
-            if not any(path[:2] == prefix for path in self._leaves):
-                raise KeyError(name)
-            namespace = _Namespace(self._leaves, prefix, self._action_terms[name].state, self._get)
-            actions = _BatchActions(namespace)
-            self._cache[name] = actions
-        return actions
-
-
-class _MetricsMap:
-    def __init__(self, get: Callable[[tuple[str, ...]], Any]) -> None:
-        self._get = get
-
-    def __getitem__(self, name: str) -> Any:
-        return self._get(("metrics", name))
-
-
-class _BatchContext:
-    """Batched stand-in for the per-lane ``ManagerContext``.
-
-    Per-env fields are full ``(N, ...)`` tensors; terms written for this
-    context operate on whole batches.
-    """
-
-    def __init__(
-        self,
-        tree: Any,
-        tensors: dict[tuple[str, ...], Any],
-        env: ManagerEnv,
-    ):
-        self.env_id = tensors[("env_id",)]
-        self.dt = float(tree.leaves[("dt",)].value)
-        self.sim_reset_requested = tensors[("sim_reset_requested",)]
-        self.rand = _BatchRand(tensors[("rand", "state")])
-        get = _leaf_lookup(tensors)
-        self.sim = _SimMap(
-            get,
-            {path[1]: path for path in tensors if len(path) == 2 and path[0] == "sim"},
-        )
-        self.commands = _CommandsMap(tensors, env.command_terms, get)
-        self.actions = _ActionsMap(tensors, env.action_terms, get)
-        self.metrics = _MetricsMap(get)
-
-
-class _WritesMap:
-    def __init__(self, writes: dict[str, torch.Tensor]) -> None:
-        self._writes = writes
-
-    def __getitem__(self, name: str) -> torch.Tensor:
-        return self._writes[name]
+    replacements = {}
+    for data_field in fields(value):
+        field_value = getattr(value, data_field.name)
+        if isinstance(field_value, torch.Tensor) and field_value.dim() >= 1 and field_value.shape[0] == num_envs:
+            key = (field_value.data_ptr(), tuple(field_value.shape), tuple(field_value.stride()), field_value.dtype)
+            clone = clones_by_storage.get(key)
+            if clone is None:
+                clone = field_value.clone()
+                clones_by_storage[key] = clone
+                pairs.append((field_value, clone))
+            replacements[data_field.name] = clone
+    return replace(value, **replacements) if replacements else value
 
 
 class TorchManagerRuntime:
@@ -421,21 +132,7 @@ class TorchManagerRuntime:
         self.program = program
         self.layout = program.layout
         self.compile_enabled = compile
-        self._cache = _TensorCache()
-
-        self._context_tree = program.prepared_trees[program.context.tree_index]
-        self._context_leaves = self._context_tree.leaves
-        # Reset terms write through three surfaces only: each reset hook's
-        # receiver command tree, the RNG state, and metrics. Everything
-        # else (sim views, action state, clip arrays, shared params) is
-        # read-only during reset and passes through uncloned.
-        self._reset_clone_prefixes: tuple[tuple[str, ...], ...] = (
-            *(("commands", hook.receiver_key) for hook in program.command_reset_hooks),
-            ("rand", "state"),
-            ("metrics",),
-        )
-        self._sim_paths = {path[1]: path for path in self._context_leaves if len(path) == 2 and path[0] == "sim"}
-        self._rand_path = ("rand", "state")
+        self.ctx = program.context
 
         # Typed call sequences encode the execution contract structurally:
         # evaluate follows the fixed phase order command update hooks ->
@@ -462,14 +159,6 @@ class TorchManagerRuntime:
             for name, reset in zip(env.sim_reset_terms, program.sim_reset_terms, strict=True)
         )
 
-        # Per-anchor caches: the host reuses one persistent resolved-input
-        # anchor (and at most two kernel-output buffer sets), so the batched
-        # context and per-invocation argument tuples are built once.
-        self._batch_ctx: _BatchContext | None = None
-        self._context_tensors: dict[tuple[str, ...], Any] | None = None
-        self._tree_tensors: tuple[dict[tuple[str, ...], Any], ...] | None = None
-        self._batch_ctx_anchor: Any = None
-        self._invocation_args_cache: dict[int, dict[int, tuple[Any, ...]]] = {}
         self._compiled_kernels: dict[Any, Any] = {}
 
     # -- kernel API ---------------------------------------------------------
@@ -484,45 +173,43 @@ class TorchManagerRuntime:
 
     def evaluate(
         self,
-        inputs: tuple[Any, ...],
         reward_weights: torch.Tensor,
         buffers: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
         outputs: KernelOutputs,
     ) -> None:
-        kernel = self._compiled_kernels.get(("evaluate", id(inputs), id(buffers)))
+        kernel = self._compiled_kernels.get(("evaluate", id(buffers)))
         if kernel is None:
-            kernel = self._build_compiled_evaluate(inputs, reward_weights, buffers)
-            self._compiled_kernels[("evaluate", id(inputs), id(buffers))] = kernel
+            kernel = self._build_compiled_evaluate(reward_weights, buffers)
+            self._compiled_kernels[("evaluate", id(buffers))] = kernel
         kernel(outputs.reward, outputs.terminated)
 
-    def observe(self, inputs: tuple[Any, ...], outputs: KernelOutputs) -> None:
-        kernel = self._compiled_kernels.get(("observe", id(inputs)))
+    def observe(self, outputs: KernelOutputs) -> None:
+        kernel = self._compiled_kernels.get("observe")
         if kernel is None:
-            kernel = self._build_compiled_observe(inputs)
-            self._compiled_kernels[("observe", id(inputs))] = kernel
+            kernel = self._build_compiled_observe()
+            self._compiled_kernels["observe"] = kernel
         value_obs = outputs.value_obs
         kernel(
             outputs.policy_obs,
             value_obs if value_obs is not None and value_obs.numel() else None,
         )
 
-    def reset(self, inputs: tuple[Any, ...], env_ids: np.ndarray, reset_buffers: tuple[np.ndarray, ...]) -> None:
+    def reset(self, env_ids: np.ndarray, reset_buffers: tuple[np.ndarray, ...]) -> None:
         if not self.command_reset_hooks and not self._reset_terms:
             return
         ids = torch.from_numpy(np.ascontiguousarray(env_ids, dtype=np.int64))
-        kernel = self._compiled_kernels.get(("reset", id(inputs), id(reset_buffers)))
+        kernel = self._compiled_kernels.get(("reset", id(reset_buffers)))
         if kernel is None:
-            kernel = self._build_compiled_reset(inputs, reset_buffers)
-            self._compiled_kernels[("reset", id(inputs), id(reset_buffers))] = kernel
+            kernel = self._build_compiled_reset(reset_buffers)
+            self._compiled_kernels[("reset", id(reset_buffers))] = kernel
         kernel(ids)
 
     def _build_compiled_evaluate(
         self,
-        inputs: tuple[Any, ...],
         reward_weights: torch.Tensor,
         buffers: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
     ) -> Callable[[torch.Tensor, torch.Tensor], None]:
-        ctx = self._context_for(inputs)
+        ctx = self.ctx
         weights = reward_weights
         raw_terms = buffers[0]
         weighted_terms = buffers[1]
@@ -530,8 +217,8 @@ class TorchManagerRuntime:
         dt = ctx.dt
         update_hooks = self.command_updates
         advance_hooks = self.command_advances
-        reward_plan = tuple((term, self._invocation_args_for(term, inputs)) for term in self.rewards)
-        termination_plan = tuple((term, self._invocation_args_for(term, inputs)) for term in self.terminations)
+        reward_plan = tuple((term, self._invocation_args(term)) for term in self.rewards)
+        termination_plan = tuple((term, self._invocation_args(term)) for term in self.terminations)
 
         def kernel(reward_view: torch.Tensor, terminated_view: torch.Tensor) -> None:
             for hook in update_hooks:
@@ -559,8 +246,8 @@ class TorchManagerRuntime:
             return torch.compile(kernel, dynamic=False, options=_compile_options())
         return kernel
 
-    def _build_compiled_observe(self, inputs: tuple[Any, ...]) -> Callable[[torch.Tensor, torch.Tensor | None], None]:
-        ctx = self._context_for(inputs)
+    def _build_compiled_observe(self) -> Callable[[torch.Tensor, torch.Tensor | None], None]:
+        ctx = self.ctx
         # Each term writes a private contiguous buffer; a single fused
         # ``cat + copy`` assembles the group output. Writing through strided
         # slice views of the group buffer forces per-term unfusable store
@@ -578,7 +265,7 @@ class TorchManagerRuntime:
             (
                 group_name,
                 tuple(
-                    (call, self._invocation_args_for(call, inputs), buf)
+                    (call, self._invocation_args(call), buf)
                     for call, buf in zip(self.observations[group_name], bufs, strict=True)
                 ),
             )
@@ -613,83 +300,85 @@ class TorchManagerRuntime:
 
         return kernel
 
-    def _build_compiled_reset(
-        self, inputs: tuple[Any, ...], reset_buffers: tuple[np.ndarray, ...]
-    ) -> Callable[[torch.Tensor], None]:
+    def _build_compiled_reset(self, reset_buffers: tuple[np.ndarray, ...]) -> Callable[[torch.Tensor], None]:
         """Compile the reset schedule as a static full-batch masked graph.
 
         The reset math runs for ALL lanes with the selected lanes chosen by a
-        boolean mask; per-env state written by terms is clone-modified and
-        merged back with ``where(mask, clone, original)``, so non-selected
-        lanes (including their RNG state) keep their values while selected
-        lanes advance exactly as the gathered schedule computed them (each
-        lane's SplitMix64 sequence is independent). Compaction into the
-        reset buffers happens outside the graph via one ``index_select`` per
-        write field. Static shapes let Inductor parallelize every loop.
+        boolean mask. Each receiver command term, the RNG state, and every
+        metric view is rebuilt once as a lane clone (``dataclasses.replace``
+        with lane-shaped tensor fields cloned); per-env state written by
+        terms is merged back with ``where(mask, clone, original)`` inside the
+        graph, so non-selected lanes (including their RNG state) keep their
+        values while selected lanes advance exactly as the gathered schedule
+        computed them (each lane's SplitMix64 sequence is independent).
+        Compaction into the reset buffers happens outside the graph via one
+        ``index_select`` per write field. Static shapes let Inductor
+        parallelize every loop.
         """
-        ctx = self._context_for(inputs)
-        assert self._context_tensors is not None
-        clone_prefixes = self._reset_clone_prefixes
-        get = _leaf_lookup(self._context_tensors)
+        ctx = self.ctx
         command_reset_hooks = self.command_reset_hooks
-        num_envs = ctx.rand.state.shape[0]
+        num_envs = ctx.env_id.shape[0]
         mask = torch.zeros(num_envs, dtype=torch.bool)
-        all_ids = torch.arange(num_envs)
+        # Lane write surfaces, cloned once at compile time and reused every
+        # reset: receiver command terms, the RNG state, and metrics. Sim
+        # writes go through the sim_writes map; everything else (sim views,
+        # action state, clip arrays, shared params) is read-only during reset
+        # and passes through uncloned.
+        pairs: list[tuple[torch.Tensor, torch.Tensor]] = []
+        clones_by_storage: dict[tuple[int, tuple[int, ...], tuple[int, ...], torch.dtype], torch.Tensor] = {}
+        lane_commands = {
+            hook.receiver_key: _lane_clone(ctx.commands[hook.receiver_key], num_envs, pairs, clones_by_storage)
+            for hook in command_reset_hooks
+        }
+        lane_rand_state = ctx.rand.state.clone()
+        pairs.append((ctx.rand.state, lane_rand_state))
+        lane_metrics = {}
+        for name, view in ctx.metrics.items():
+            key = (view.data_ptr(), tuple(view.shape), tuple(view.stride()), view.dtype)
+            clone = clones_by_storage.get(key)
+            if clone is None:
+                clone = view.clone()
+                clones_by_storage[key] = clone
+                pairs.append((view, clone))
+            lane_metrics[name] = clone
+        lane_ctx = ManagerContext(
+            env_id=ctx.env_id,
+            actions=ctx.actions,
+            commands=Map(lane_commands),
+            metrics=Map(lane_metrics),
+            rand=replace(ctx.rand, state=lane_rand_state),
+            sim=ctx.sim,
+            dt=ctx.dt,
+            sim_reset_requested=ctx.sim_reset_requested,
+        )
         write_plan = tuple(
             (
                 call,
-                tuple(torch.from_numpy(reset_buffers[offset + index]) for index in range(len(fields))),
+                tuple(torch.from_numpy(reset_buffers[offset + index]) for index in range(len(fields_))),
                 tuple(
-                    torch.empty_like(torch.from_numpy(reset_buffers[offset + index])) for index in range(len(fields))
+                    torch.empty_like(torch.from_numpy(reset_buffers[offset + index])) for index in range(len(fields_))
                 ),
-                fields,
-                self._invocation_args_for(call, inputs),
+                fields_,
+                self._invocation_args(call),
             )
-            for call, offset, fields in self._reset_terms
+            for call, offset, fields_ in self._reset_terms
         )
 
         def kernel() -> None:
-            clones: dict[tuple[str, ...], torch.Tensor] = {}
-
-            def lane_get(path: tuple[str, ...]) -> torch.Tensor:
-                cached = clones.get(path)
-                if cached is None:
-                    full = get(path)
-                    # Reset terms only write the receiver command trees,
-                    # RNG state and metrics (sim writes go through the
-                    # sim_writes map); every other leaf is read-only and
-                    # passes through uncloned.
-                    cached = (
-                        full.clone()
-                        if isinstance(full, torch.Tensor)
-                        and full.shape[:1] == (num_envs,)
-                        and any(path[: len(prefix)] == prefix for prefix in clone_prefixes)
-                        else full
-                    )
-                    clones[path] = cached
-                return cached
-
-            lane_rand = _LaneRand(self._rand_path, lane_get)
-            lane_ctx = _LaneContext(
-                ctx,
-                _CommandsMap(self._context_tensors, self.env.command_terms, lane_get),
-                lane_rand,
-                _SimMap(lane_get, self._sim_paths),
-                _MetricsMap(lane_get),
-                all_ids,
-                actions=_ActionsMap(self._context_tensors, self.env.action_terms, lane_get),
-            )
+            # Refresh the lane clones from the live originals first: the
+            # clones persist across reset invocations, so each run starts
+            # from the current batch state exactly like a fresh clone would.
+            for original, clone in pairs:
+                clone.copy_(original)
             for hook in command_reset_hooks:
                 receiver = lane_ctx.commands[hook.receiver_key]
                 hook.function(receiver, lane_ctx)
-            for call, _buffers, staging, fields, args in write_plan:
-                sim_writes = {name: buffer for name, buffer in zip(fields, staging, strict=True)}
+            for call, _buffers, staging, fields_, args in write_plan:
+                sim_writes = {name: buffer for name, buffer in zip(fields_, staging, strict=True)}
                 call.function(lane_ctx, _WritesMap(sim_writes), *args)
-            for path, tensor in clones.items():
-                if tensor is not get(path):
-                    full = get(path)
-                    lane_mask = mask.view((num_envs,) + (1,) * (tensor.dim() - 1))
-                    full.copy_(torch.where(lane_mask, tensor, full))
+            for original, clone in pairs:
+                lane_mask = mask.view((num_envs,) + (1,) * (original.dim() - 1))
+                original.copy_(torch.where(lane_mask, clone, original))
 
         if self.compile_enabled:
             kernel = torch.compile(kernel, dynamic=False, options=_compile_options())
@@ -713,93 +402,25 @@ class TorchManagerRuntime:
 
     # -- helpers ------------------------------------------------------------
 
-    def _context_for(self, inputs: tuple[Any, ...]) -> _BatchContext:
-        if self._batch_ctx_anchor is not inputs:
-            tensors = tuple(_tensorize_leaves(self._cache, inputs, tree) for tree in inputs)
-            self._tree_tensors = tensors
-            self._context_tensors = tensors[self.program.context.tree_index]
-            self._batch_ctx = _BatchContext(self._context_tree, self._context_tensors, self.env)
-            self._batch_ctx_anchor = inputs
-            self._invocation_args_cache = {}
-        return self._batch_ctx
-
-    def _plan_cache(self, inputs: tuple[Any, ...]) -> dict[int, tuple[Any, ...]]:
-        cache = self._invocation_args_cache.get(id(inputs))
-        if cache is None:
-            cache = {}
-            self._invocation_args_cache[id(inputs)] = cache
-        return cache
-
-    def _invocation_args_for(self, call: Any, inputs: tuple[Any, ...]) -> tuple[Any, ...]:
-        cache = self._plan_cache(inputs)
-        key = id(call)
-        args = cache.get(key)
-        if args is None:
-            args = self._invocation_args(call, inputs)
-            cache[key] = args
-        return args
-
     def _invocation_args(
         self,
         call: RewardTermCall | TerminationTermCall | ObservationTermCall | SimResetTermCall,
-        inputs: tuple[Any, ...],
     ) -> tuple[Any, ...]:
-        assert self._tree_tensors is not None
         args: list[Any] = []
         for arg in call.args:
             if isinstance(arg, SimArg):
-                assert self._context_tensors is not None
-                args.append(self._context_tensors[self._sim_paths[arg.key]])
+                args.append(self.ctx.sim[arg.key])
             else:
                 args.append(arg.value)
         return tuple(args)
 
 
-class _LaneRand:
-    """SplitMix64 draws on gathered reset rows, updated in place."""
+class _WritesMap:
+    def __init__(self, writes: dict[str, torch.Tensor]) -> None:
+        self._writes = writes
 
-    def __init__(self, rand_path: tuple[str, ...], gather: Callable[[tuple[str, ...]], torch.Tensor]) -> None:
-        self._rand_path = rand_path
-        self._gather = gather
-        self._state: torch.Tensor | None = None
-
-    @property
-    def state(self) -> torch.Tensor:
-        if self._state is None:
-            self._state = self._gather(self._rand_path)
-        return self._state
-
-    def next_uniform(self, count: int = 1) -> torch.Tensor:
-        samples, state = draw_uniform(self.state, count)
-        self.state.copy_(state)
-        return samples
-
-    def uniform_range(self, count: int, low: float, high: float) -> torch.Tensor:
-        return low + (high - low) * np.float32(0.5) * (self.next_uniform(count) + np.float32(1.0))
-
-
-class _LaneContext:
-    """Reset-lane context: per-env leaves cloned to the selected rows."""
-
-    def __init__(
-        self,
-        base: _BatchContext,
-        commands: _CommandsMap,
-        rand: _LaneRand,
-        sim: _SimMap,
-        metrics: _MetricsMap,
-        ids: torch.Tensor,
-        actions: _ActionsMap | None = None,
-    ) -> None:
-        self._base = base
-        self.commands = commands
-        self.rand = rand
-        self.sim = sim
-        self.metrics = metrics
-        self.env_id = ids
-        self.dt = base.dt
-        self.sim_reset_requested = base.sim_reset_requested
-        self.actions = actions if actions is not None else base.actions
+    def __getitem__(self, name: str) -> torch.Tensor:
+        return self._writes[name]
 
 
 __all__ = ["TorchManagerRuntime", "TorchTaskProgram"]

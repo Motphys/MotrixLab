@@ -8,7 +8,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
-import numpy as np
 import torch
 
 from motrix_env_core.manager.kernel_data import Map
@@ -22,17 +21,28 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ManagerContext:
-    """Framework-owned manager data available to every compiled term."""
+    """Framework-owned manager data available to every compiled term.
+
+    Terms receive this host instance directly: attribute access, ``Map``
+    string lookups, and term-state methods trace under Dynamo with guards on
+    object identity. Every entry is the live host object — the actual
+    ``CommandTerm``/``ActionState`` dataclass instances, zero-copy tensor
+    views over the simulator read arena, and writable torch views over the
+    per-environment metrics arrays — so kernels and host lifecycle observe one
+    state. The class is deliberately not frozen: terms write flags with
+    augmented assignment (``ctx.sim_reset_requested |= mask``), whose in-place
+    tensor ``__ior__`` rebinds the attribute slot to the same tensor.
+    """
 
     env_id: torch.Tensor
     actions: Map
     commands: Map
-    metrics: Map[np.ndarray]
+    metrics: Map
     rand: RandValue
     sim: Map
-    dt: np.float32
+    dt: float
     # Writable per-lane flag: a command term sets it inside a fused kernel to
     # request simulator-state rematerialization for that lane after the
     # transition. It is not an episode reset: episode bookkeeping and

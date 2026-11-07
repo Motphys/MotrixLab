@@ -483,7 +483,7 @@ def test_multiple_action_terms_concatenate_spaces_and_receive_ordered_slices() -
     np.testing.assert_array_equal(env.action_terms["test"].state.source, actions[:, :1])
     np.testing.assert_array_equal(env.action_terms["second"].state.source, actions[:, 1:])
     env._refresh_sim_reads()
-    env._execute_observe_kernel(env._resolved_inputs)
+    env._execute_observe_kernel()
     np.testing.assert_array_equal(state.obs.policy, actions)
     assert [(term.name, term.input_slice) for term in env.manager_layout.actions] == [
         ("test", slice(0, 1)),
@@ -575,9 +575,11 @@ def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> 
     assert isinstance(action, ActionTerm)
     command = _counter_command(env)
     assert env._compiled_manager_program is not None
-    context_tree = env._compiled_manager_program.prepared_trees[env._compiled_manager_program.context.tree_index]
-    assert context_tree.leaves[("actions", "test", "action_queue")].value is action.state.action_queue
-    assert context_tree.leaves[("actions", "test", "action_ptr")].value is action.state.action_ptr
+    context = env._compiled_manager_program.context
+    assert context.actions["test"] is action.state
+    assert context.commands["counter"] is command
+    assert context.actions["test"].action_queue is action.state.action_queue
+    assert context.sim is not None and context.dt == float(env.cfg.ctrl_dt)
     assert [term.output_slice for term in env.manager_layout.observations["policy"].terms] == [
         slice(0, 2),
         slice(2, 3),
@@ -604,21 +606,33 @@ def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> 
     assert env._compiled_manager_program is not None
 
 
-def test_read_plan_refreshes_resolved_leaves_in_place_without_rebuilding() -> None:
+def test_reset_keeps_command_metric_alias_for_direct_context() -> None:
+    env = _ManagerEnv(num_envs=2)
+    state = env.init_state()
+    command = _counter_command(env)
+    command.command[:] = 3.0
+    state.terminated[:] = torch.tensor([True, False])
+
+    env._reset_done_envs()
+
+    assert command.double.data_ptr() == torch.from_numpy(env.metrics["double"]).data_ptr()
+    np.testing.assert_allclose(command.command[:, 0], [-1.0, 3.0])
+    np.testing.assert_allclose(state.metrics["double"], [0.0, 0.0])
+
+
+def test_read_plan_refreshes_sim_views_in_place_without_rebuilding_context() -> None:
     env = _ManagerEnv(num_envs=3)
     env.init_state()
     assert env._compiled_manager_program is not None
     program = env._compiled_manager_program
-    context_tree = program.prepared_trees[program.context.tree_index]
-    leaves_before = dict(context_tree.leaves)
-    inputs_before = env._resolved_inputs
+    context = program.context
+    sim_views = {key: value for key, value in context.sim.items()}
 
     program.read_plan.read(env)
     program.read_plan.read(env, np.asarray([0, 2], dtype=np.int64))
 
-    assert program.prepared_trees[program.context.tree_index] is context_tree
-    assert env._resolved_inputs is inputs_before
-    assert all(context_tree.leaves[path] is leaf for path, leaf in leaves_before.items())
+    assert program.context is context
+    assert all(context.sim[key] is view for key, view in sim_views.items())
 
 
 def test_command_evaluation_updates_state_only_in_evaluate_kernel() -> None:
@@ -632,14 +646,13 @@ def test_command_evaluation_updates_state_only_in_evaluate_kernel() -> None:
     derived.fill_(-1.0)
 
     env._refresh_sim_reads()
-    inputs = env._resolved_inputs
-    env._execute_observe_kernel(inputs)
+    env._execute_observe_kernel()
     np.testing.assert_array_equal(derived[:, 0], [-1.0, -1.0])
     np.testing.assert_array_equal(state.obs.policy[:, 2], [-1.0, -1.0])
 
-    env._execute_evaluate_kernel(inputs)
+    env._execute_evaluate_kernel()
     np.testing.assert_allclose(derived[:, 0], [2.0, 4.0])
-    env._execute_observe_kernel(inputs)
+    env._execute_observe_kernel()
     np.testing.assert_allclose(state.obs.policy[:, 2], [2.0, 4.0])
 
 
@@ -723,8 +736,8 @@ def test_final_observation_noise_uses_shared_observation_rng() -> None:
     rng_before = env._rand.state.clone()
     observe = env._task_program.observe_kernel
 
-    def noisy_observe(inputs, outputs):
-        observe(inputs, outputs)
+    def noisy_observe(outputs):
+        observe(outputs)
         env._rand.state[:] += np.uint64(1)
         outputs.policy_obs[:, 0] = env._rand.state[:, 0].to(torch.float32)
 
@@ -738,7 +751,7 @@ def test_final_observation_noise_uses_shared_observation_rng() -> None:
         final.obs.policy[:, 0],
         (rng_before[[0], 0] + 1).to(torch.float32).numpy(),
     )
-    env._execute_observe_kernel(env._resolved_inputs)
+    env._execute_observe_kernel()
     np.testing.assert_array_equal(env._rand.state, rng_before + np.uint64(2))
     np.testing.assert_array_equal(final.obs.policy, saved_final)
 
@@ -757,8 +770,8 @@ def test_post_reset_observation_does_not_run_command_evaluation() -> None:
 
     np.testing.assert_array_equal(state.obs.policy[:, 2], 0.0)
     env._refresh_sim_reads()
-    env._execute_evaluate_kernel(env._resolved_inputs)
-    env._execute_observe_kernel(env._resolved_inputs)
+    env._execute_evaluate_kernel()
+    env._execute_observe_kernel()
 
     np.testing.assert_allclose(state.obs.policy[:, 2], [0.5, 1.0, 1.5])
 
