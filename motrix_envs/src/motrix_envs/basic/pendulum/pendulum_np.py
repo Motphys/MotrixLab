@@ -7,7 +7,6 @@ import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
-from motrix_env_core.direct import reward as reward_utils
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
@@ -16,6 +15,7 @@ from motrix_env_core.sim import (
     JointPositionWrite,
 )
 from motrix_env_core.sim.write import CtrlTargetsWrite, JointVelocityWrite
+from motrix_env_core.torch import reward as reward_utils
 
 from .cfg import PendulumEnvCfg
 

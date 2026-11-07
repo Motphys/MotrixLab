@@ -7,7 +7,6 @@ import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
-from motrix_env_core.direct import reward
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.sim import (
     BatchLinkQuaternionQuery,
@@ -19,6 +18,7 @@ from motrix_env_core.sim import (
     SensorValuesQuery,
 )
 from motrix_env_core.sim.write import BodyJointVelocityWrite, CtrlTargetsWrite
+from motrix_env_core.torch import reward
 from motrix_envs.basic.walker.cfg import WalkerEnvCfg
 
 _WALKER_LINKS = ("torso", "right_thigh", "right_leg", "right_foot", "left_thigh", "left_leg", "left_foot")

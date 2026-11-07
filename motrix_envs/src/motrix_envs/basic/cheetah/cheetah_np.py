@@ -7,7 +7,6 @@ import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
-from motrix_env_core.direct import reward
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.sim import (
     BodyJointPositionWrite,
@@ -17,6 +16,7 @@ from motrix_env_core.sim import (
     SensorValuesQuery,
 )
 from motrix_env_core.sim.write import BodyJointVelocityWrite, CtrlTargetsWrite
+from motrix_env_core.torch import reward
 from motrix_envs.basic.cheetah.cfg import CheetahEnvCfg
 
 _SIM_DATA_QUERIES = {

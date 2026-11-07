@@ -6,7 +6,6 @@ import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
-from motrix_env_core.direct import reward
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.sim import (
     DofPositionQuery,
@@ -15,6 +14,7 @@ from motrix_env_core.sim import (
     LinkPositionQuery,
 )
 from motrix_env_core.sim.write import CtrlTargetsWrite, JointVelocityWrite
+from motrix_env_core.torch import reward
 from motrix_envs.basic.reacher.cfg import ReacherEnvCfg
 
 _SIM_DATA_QUERIES = {
