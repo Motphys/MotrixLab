@@ -194,7 +194,7 @@ class WbtMotionCommand(CommandTerm):
 
     @staticmethod
     @dispatch
-    def update(receiver, ctx: ManagerContext) -> None:
+    def update(receiver: "WbtMotionCommand", ctx: ManagerContext) -> None:
         """Yaw-align the clip to each lane."""
         steps = receiver.steps[:, 0]
         reference_index = receiver.reference_index
@@ -213,7 +213,7 @@ class WbtMotionCommand(CommandTerm):
 
     @staticmethod
     @dispatch
-    def advance(receiver, ctx: ManagerContext) -> None:
+    def advance(receiver: "WbtMotionCommand", ctx: ManagerContext) -> None:
         """Advance every lane one frame."""
         steps = receiver.steps
         clip_end = receiver.clip.frame_clip_end[steps[:, 0]]
@@ -253,7 +253,7 @@ class WbtMotionCommand(CommandTerm):
 
     @staticmethod
     @dispatch
-    def reset_env(receiver, ctx: ManagerContext) -> None:
+    def reset_env(receiver: "WbtMotionCommand", ctx: ManagerContext) -> None:
         """Sample start frames for reset lanes."""
         if bool(receiver.sequential_clips):
             # Sequential playback rematerializes onto the current frame.

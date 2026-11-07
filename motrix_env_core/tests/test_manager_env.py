@@ -236,7 +236,7 @@ class _CounterCommand(CommandTerm):
 
     @staticmethod
     @dispatch
-    def update(receiver, ctx: ManagerContext) -> None:
+    def update(receiver: "_CounterCommand", ctx: ManagerContext) -> None:
         receiver.double[:, 0] = 2.0 * ctx.actions["test"].source[:, 0]
 
     def reset(self, ctx) -> None:
@@ -244,12 +244,12 @@ class _CounterCommand(CommandTerm):
 
     @staticmethod
     @dispatch
-    def advance(receiver, ctx: ManagerContext) -> None:
+    def advance(receiver: "_CounterCommand", ctx: ManagerContext) -> None:
         receiver.command[:, 0] += ctx.dt
 
     @staticmethod
     @dispatch
-    def reset_env(receiver, ctx: ManagerContext) -> None:
+    def reset_env(receiver: "_CounterCommand", ctx: ManagerContext) -> None:
         receiver.command[:, 0] = -1.0
 
 

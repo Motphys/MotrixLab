@@ -152,7 +152,7 @@ class WalkCommand(CommandTerm):
 
     @staticmethod
     @dispatch
-    def update(receiver, ctx: ManagerContext) -> None:
+    def update(receiver: "WalkCommand", ctx: ManagerContext) -> None:
         _phase(
             receiver.command,
             receiver.phase,
@@ -164,7 +164,7 @@ class WalkCommand(CommandTerm):
 
     @staticmethod
     @dispatch
-    def advance(receiver, ctx: ManagerContext) -> None:
+    def advance(receiver: "WalkCommand", ctx: ManagerContext) -> None:
         steps = receiver.steps
         steps[:, 0] += 1.0
         resample = torch.remainder(steps[:, 0], float(receiver.resample_steps)) == 0.0
@@ -179,7 +179,7 @@ class WalkCommand(CommandTerm):
 
     @staticmethod
     @dispatch
-    def reset_env(receiver, ctx: ManagerContext) -> None:
+    def reset_env(receiver: "WalkCommand", ctx: ManagerContext) -> None:
         receiver.steps[:, 0] = 0.0
         width = float(receiver.gait_period_width)
         if width > 0.0:
