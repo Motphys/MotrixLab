@@ -83,7 +83,7 @@ class ScalarTermLayout:
 class MetricFieldLayout:
     name: str
     index: int
-    dtype: np.dtype
+    dtype: torch.dtype
 
 
 @dataclass(frozen=True)
@@ -119,7 +119,7 @@ class ManagerLayout:
         lines.append("terminations:")
         lines.extend(f"  [{term.index}] {term.name}" for term in self.terminations)
         lines.append("metrics:")
-        lines.extend(f"  [{metric.index}] dtype={metric.dtype.name} {metric.name}" for metric in self.metrics)
+        lines.extend(f"  [{metric.index}] dtype={metric.dtype} {metric.name}" for metric in self.metrics)
         return "\n".join(lines)
 
 
@@ -310,7 +310,7 @@ class ManagerProgramResolver:
         termination_calls, termination_layout = self._resolve_terminations(termination_terms)
         sim_reset_terms = self._resolve_resets()
         per_env_metric_layout = tuple(
-            MetricFieldLayout(name, index, np.dtype(value.numpy().dtype))
+            MetricFieldLayout(name, index, value.dtype)
             for index, (name, value) in enumerate(self._env.metrics.items())
             if value.shape in {(self._env.num_envs,), (self._env.num_envs, 1)}
         )

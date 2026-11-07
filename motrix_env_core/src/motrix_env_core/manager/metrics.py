@@ -6,24 +6,25 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any
 
-import numpy as np
 import torch
 
 _METRIC_METADATA_KEY = "motrix_metric"
 _UNBOUND_METRIC = object()
-_NUMPY_DTYPES = {
-    torch.bool: np.dtype(np.bool_),
-    torch.int8: np.dtype(np.int8),
-    torch.int16: np.dtype(np.int16),
-    torch.int32: np.dtype(np.int32),
-    torch.int64: np.dtype(np.int64),
-    torch.uint8: np.dtype(np.uint8),
-    torch.uint16: np.dtype(np.uint16),
-    torch.uint32: np.dtype(np.uint32),
-    torch.float16: np.dtype(np.float16),
-    torch.float32: np.dtype(np.float32),
-    torch.float64: np.dtype(np.float64),
-}
+_EXPORT_DTYPES = frozenset(
+    {
+        torch.bool,
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+        torch.uint8,
+        torch.uint16,
+        torch.uint32,
+        torch.float16,
+        torch.float32,
+        torch.float64,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -104,9 +105,11 @@ def collect_metrics(
                 f"{context} metric field {data_field.name!r} must have shape "
                 f"({num_envs},) or ({num_envs}, 1), got {tensor.shape}."
             )
-        export_dtype = tensor.numpy().dtype if spec.dtype is None else _NUMPY_DTYPES[spec.dtype]
-        if export_dtype.kind not in "bif":
-            raise TypeError(f"{context} metric field {data_field.name!r} export dtype must be bool, integer, or float.")
+        dtype = tensor.dtype if spec.dtype is None else spec.dtype
+        if dtype not in _EXPORT_DTYPES:
+            raise TypeError(
+                f"{context} metric field {data_field.name!r} export dtype must be bool, integer, or float, got {dtype}."
+            )
         bindings.append((data_field.name if spec.name is None else spec.name, tensor))
     return tuple(bindings)
 
