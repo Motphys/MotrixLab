@@ -7,7 +7,6 @@ import abc
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import torch
 
 from motrix_env_core.config import configclass
@@ -22,8 +21,8 @@ if TYPE_CHECKING:
 class ResetContext:
     """Host-side inputs exposed to a command during selected-environment reset."""
 
-    env_ids: np.ndarray
-    terminated: np.ndarray
+    env_ids: torch.Tensor
+    terminated: torch.Tensor
     metrics: dict[str, Any]
 
 

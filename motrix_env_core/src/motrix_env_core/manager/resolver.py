@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import inspect
 import logging
-import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from time import perf_counter
@@ -40,18 +39,6 @@ from motrix_env_core.manager.terminations import TerminationTerm
 from motrix_env_core.sim import PhysicsReadProgram, SimDataQuery
 
 logger = logging.getLogger(__name__)
-
-
-def _read_only_view(array: np.ndarray) -> torch.Tensor:
-    """Wrap a simulator-owned read-only buffer as a zero-copy tensor view.
-
-    The read program rewrites the arena in place; the executor never writes
-    these tensors. Suppress PyTorch's non-writable-array warning for this
-    wrap only, instead of a process-wide filter or a defensive copy.
-    """
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        return torch.from_numpy(array)
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +274,7 @@ __all__ = [
 class ManagerSimInput:
     """One compiled simulator input exposed through ``ManagerContext.sim``."""
 
-    value: np.ndarray
+    value: torch.Tensor
     query: SimDataQuery
 
 
@@ -443,18 +430,18 @@ class ManagerProgramResolver:
         # Sim views enter the context as zero-copy tensor views over the
         # read-program arena: the read program rewrites the arena contents in
         # place, so the pre-built views stay valid for the program's lifetime.
-        sim = {key: _read_only_view(binding.value) for key, binding in self._sim_inputs.items()}
+        sim = {key: binding.value for key, binding in self._sim_inputs.items()}
         metrics = dict(self._env.metrics)
         commands = dict(self._env.command_terms)
         value = ManagerContext(
-            env_id=torch.from_numpy(np.arange(self._env.num_envs, dtype=np.int64)),
+            env_id=torch.arange(self._env.num_envs, dtype=torch.int64),
             actions=Map(actions),
             commands=Map(commands),
             metrics=Map(metrics),
             rand=self._env._rand,
             sim=Map(sim),
             dt=float(self._env.cfg.ctrl_dt),
-            sim_reset_requested=torch.from_numpy(self._env._sim_reset_requested),
+            sim_reset_requested=self._env._sim_reset_requested,
         )
         self._validate_context_leaves(value)
         return value

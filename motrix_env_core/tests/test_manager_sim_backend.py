@@ -62,7 +62,7 @@ def _core_model() -> SimModel:
     """The required core layout every backend must surface as ``env.model``."""
     return SimModel(
         actuators=_ACTUATORS,
-        init_dof_pos=np.asarray([0.5, -0.5], dtype=np.float32),
+        init_dof_pos=torch.tensor([0.5, -0.5], dtype=torch.float32),
     )
 
 
@@ -81,25 +81,26 @@ class _FakeWriteProgram(WriteProgram):
                     else tuple(all_names.index(target) for target in write.actuators)
                 )
                 self._routes[name] = route
-                self._buffers[name] = np.zeros((backend.num_envs, len(route)), dtype=np.float32)
+                self._buffers[name] = torch.zeros((backend.num_envs, len(route)), dtype=torch.float32)
 
-    def buffer(self, name: str) -> np.ndarray:
+    def buffer(self, name: str) -> torch.Tensor:
         return self._buffers[name]
 
-    def execute(self, env_ids=None) -> None:
-        ids = np.arange(self._backend.num_envs, dtype=np.int64) if env_ids is None else env_ids
+    def execute(self, env_ids: torch.Tensor | None = None) -> None:
+        ids = torch.arange(self._backend.num_envs, dtype=torch.int64) if env_ids is None else env_ids
         if self._reset:
-            self._backend.dof_pos[ids] = [0.5, -0.5]
+            self._backend.dof_pos[ids] = torch.tensor([0.5, -0.5], dtype=torch.float32)
             self._backend.dof_vel[ids] = 0.0
             for name, buffer in self._buffers.items():
                 if name.endswith("_position"):
                     self._backend.dof_pos[ids] = buffer[ids]
                 elif name.endswith("_velocity"):
                     self._backend.dof_vel[ids] = buffer[ids]
-            self._backend.reset_calls.append((ids.copy(), self._backend.dof_pos[ids].copy()))
+            self._backend.reset_calls.append((ids.clone(), self._backend.dof_pos[ids].clone()))
             self._backend.ctrl_targets[ids] = 0.0
         for name, route in self._routes.items():
-            self._backend.ctrl_targets[ids[:, None], route] = self.buffer(name)[ids]
+            route_index = torch.tensor(route, dtype=torch.int64)
+            self._backend.ctrl_targets[ids[:, None], route_index] = self.buffer(name)[ids]
         if self._routes:
             self._backend.ctrl_write_count += 1
 
@@ -121,17 +122,15 @@ class _FakeReadProgram(PhysicsReadProgram):
         self._queries = dict(queries)
         keys = tuple(queries)
         width = 2
-        self._arena = np.zeros((backend.num_envs * width,), dtype=np.float32)
+        self._arena = torch.zeros((backend.num_envs * width,), dtype=torch.float32)
         self._output = self._arena.reshape(backend.num_envs, width)
         self._views = {key: self._arena.reshape(backend.num_envs, width) for key in keys}
-        for value in self._views.values():
-            value.flags.writeable = False
 
     @property
     def arena_bytes(self) -> int:
-        return int(self._arena.nbytes)
+        return self._arena.numel() * self._arena.element_size()
 
-    def view(self, key: str) -> np.ndarray:
+    def view(self, key: str) -> torch.Tensor:
         return self._views[key]
 
     @property
@@ -141,9 +140,9 @@ class _FakeReadProgram(PhysicsReadProgram):
     def query(self, key: str):
         return self._queries[key]
 
-    def execute(self, env_ids=None) -> None:
+    def execute(self, env_ids: torch.Tensor | None = None) -> None:
         if env_ids is None:
-            self._output[:] = self._backend.dof_pos
+            self._output.copy_(self._backend.dof_pos)
         else:
             self._output[env_ids] = self._backend.dof_pos[env_ids]
 
@@ -158,11 +157,11 @@ class _FakeBackend(SimBackend):
     def __init__(self, scene, sim, num_envs: int) -> None:
         super().__init__(scene, sim, num_envs)
         self.num_envs = num_envs
-        self.dof_pos = np.zeros((num_envs, self.num_dof_pos), dtype=np.float32)
-        self.dof_vel = np.zeros((num_envs, self.num_dof_vel), dtype=np.float32)
-        self.ctrl_targets = np.zeros((num_envs, self.num_actuators), dtype=np.float32)
+        self.dof_pos = torch.zeros((num_envs, self.num_dof_pos), dtype=torch.float32)
+        self.dof_vel = torch.zeros((num_envs, self.num_dof_vel), dtype=torch.float32)
+        self.ctrl_targets = torch.zeros((num_envs, self.num_actuators), dtype=torch.float32)
         self.step_calls: list[int] = []
-        self.reset_calls: list[tuple[np.ndarray, np.ndarray | None]] = []
+        self.reset_calls: list[tuple[torch.Tensor, torch.Tensor | None]] = []
         self.ctrl_write_count = 0
         self._write_compiler = _FakeWriteCompiler(self)
         _FakeBackend.last = self
@@ -181,7 +180,7 @@ class _FakeBackend(SimBackend):
 
     def step(self, substeps: int) -> None:
         self.step_calls.append(substeps)
-        self.dof_pos += np.float32(0.25 * substeps)
+        self.dof_pos += 0.25 * substeps
 
     @property
     def model_compiler(self):

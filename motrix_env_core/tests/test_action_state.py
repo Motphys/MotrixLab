@@ -82,11 +82,12 @@ def test_joint_position_action_resamples_delay_on_reset(monkeypatch) -> None:
         joint_upper=torch.ones(1, dtype=torch.float32),
         action_scales=torch.ones(1, dtype=torch.float32),
         delay_steps=torch.zeros(3, dtype=torch.int64),
-        delay_lo=1,
-        delay_hi=3,
+        # Degenerate [2, 2] range keeps the resample deterministic: every
+        # draw is exactly 2 without mocking the seeded torch generator.
+        delay_lo=2,
+        delay_hi=2,
     )
     term = JointPositionActionTerm(gym.spaces.Box(-np.inf, np.inf, shape=(1,)), state)
-    monkeypatch.setattr(np.random, "randint", lambda lo, hi, size: np.full(size, lo + 1, dtype=np.int64))
 
     term._reset(torch.tensor([0, 2], dtype=torch.long))
 

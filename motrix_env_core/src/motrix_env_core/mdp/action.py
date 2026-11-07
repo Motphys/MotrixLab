@@ -60,6 +60,9 @@ class JointPositionActionTerm(ActionTerm):
 
     def __init__(self, space: gym.spaces.Box, state: JointPositionActionState) -> None:
         super().__init__(space, state)
+        # Seeded generator driving reset-time delay resampling; lives on the
+        # term (not the kernel-data state) because it is host-only.
+        self.generator = torch.Generator()
 
     def _process(self, actions: torch.Tensor) -> torch.Tensor:
         """Map raw policy actions to targets using manager-owned action history.
@@ -83,8 +86,11 @@ class JointPositionActionTerm(ActionTerm):
         """Resample per-episode delay after the base term clears raw history."""
         state = self.state
         if state.delay_hi > 0:
-            state.delay_steps[env_ids] = torch.from_numpy(
-                np.random.randint(state.delay_lo, state.delay_hi + 1, size=env_ids.numel())
+            state.delay_steps[env_ids] = torch.randint(
+                state.delay_lo,
+                state.delay_hi + 1,
+                (env_ids.numel(),),
+                generator=self.generator,
             )
 
 
@@ -165,7 +171,10 @@ class JointPositionActionCfg(ActionCfg):
         space = joint_position_action_space_from_ctrl_ranges(
             np.asarray(ctrl_ranges, dtype=np.float32), state.default_angles.numpy(), state.action_scales.numpy()
         )
-        return JointPositionActionTerm(space, state)
+        term = JointPositionActionTerm(space, state)
+        # Reset-time delay resampling is reproducible per environment seed.
+        term.generator.manual_seed(int(getattr(env, "_rand_seed", 0)) + 0x5EED)
+        return term
 
     @staticmethod
     def _resolve_default_pose(

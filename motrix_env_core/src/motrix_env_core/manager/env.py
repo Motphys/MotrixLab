@@ -59,12 +59,8 @@ _Q = TypeVar("_Q")
 logger = logging.getLogger(__name__)
 
 
-def _env_ids_to_numpy(env_ids: torch.Tensor, label: str) -> np.ndarray:
-    """Convert a public reset id tensor once to the internal numpy plane.
-
-    The manager frontend's public API is uniformly torch; passing a numpy
-    array here is an API misuse, not a supported input.
-    """
+def _validate_reset_ids(env_ids: torch.Tensor, label: str) -> torch.Tensor:
+    """Validate one public reset id tensor before it enters the reset pipeline."""
     if not isinstance(env_ids, torch.Tensor):
         raise TypeError(
             f"ManagerEnv.reset {label} must be a torch integer tensor, got {type(env_ids).__name__}; "
@@ -75,7 +71,7 @@ def _env_ids_to_numpy(env_ids: torch.Tensor, label: str) -> np.ndarray:
             f"ManagerEnv.reset {label} must have an integer dtype, got {env_ids.dtype}; "
             "use torch.tensor([...], dtype=torch.long)."
         )
-    return env_ids.detach().cpu().numpy()
+    return env_ids
 
 
 def _merge_query_declarations(
@@ -203,7 +199,7 @@ class ReadPlan:
     def read(
         self,
         env: ManagerEnv,
-        env_ids: np.ndarray | None = None,
+        env_ids: torch.Tensor | None = None,
     ) -> None:
         with env.perf.scope("sim_read"):
             self.sim_data.execute(env_ids)
@@ -308,7 +304,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         # Persistent kernel-bound sim-reset-request buffer
         # (``ctx.sim_reset_requested``), cleared before each physics step and
         # consumed by _reset_done_envs.
-        self._sim_reset_requested = np.zeros((self.num_envs, 1), dtype=bool)
+        self._sim_reset_requested = torch.zeros((self.num_envs, 1), dtype=torch.bool)
         self._compiled_manager_program: ResolvedManagerProgram | None = None
         self._action_cfgs = cfg.action_cfgs()
         if not self._action_cfgs:
@@ -461,7 +457,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         return state
 
     def _prev_physics_step(self) -> None:
-        self._sim_reset_requested.fill(False)
+        self._sim_reset_requested.fill_(False)
         super()._prev_physics_step()
         assert self._observation_buffer is not None
         obs, self._kernel_outputs = self._observation_buffer.swap()
@@ -495,15 +491,12 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         slot = self._final_obs_slot
         self._task_program.observe_kernel(slot.kernel_outputs)
         obs = slot.observation
-        # ``env_ids`` is user-facing output of the torch frontend: hand over
-        # an owned tensor while internal indexing stays on the numpy copy.
         env_ids = torch.as_tensor(env_ids, dtype=torch.long)
-        rows = env_ids.cpu().numpy()
         return FinalObs(
             env_ids=env_ids.clone(),
             obs=EnvObs(
-                policy=obs.policy[rows],
-                value=None if obs.value is None else obs.value[rows],
+                policy=obs.policy[env_ids],
+                value=None if obs.value is None else obs.value[env_ids],
             ),
         )
 
@@ -604,14 +597,13 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
                 assert controls is None
                 continue
             assert controls is not None
-            # The compiled write program owns numpy buffers. ``.numpy()`` is a
-            # zero-copy view of the controls tensor; the slice assignment is
-            # the single torch→numpy copy on this path.
-            self._action_writes.buffer(name)[:] = controls.numpy()
+            # Buffers are torch tensors aliasing the compiled write program's
+            # storage; the copy_ is the single handoff into the backend.
+            self._action_writes.buffer(name).copy_(controls)
         self._action_writes.execute()
         return state
 
-    def _reset_sim_rows(self, env_ids: np.ndarray) -> None:
+    def _reset_sim_rows(self, env_ids: torch.Tensor) -> None:
         """Run the simulator-only stages of the reset pipeline for selected rows.
 
         Clears frontend ctrl targets to mirror the backend's reset-row ctrl
@@ -643,7 +635,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         state = self._state
         with self.perf.scope("done_mask"):
             done = state.done
-            sim_reset_mask = torch.from_numpy(self._sim_reset_requested[:, 0])
+            sim_reset_mask = self._sim_reset_requested[:, 0]
             sim_reset_ids = torch.nonzero(sim_reset_mask & ~done, as_tuple=False).flatten()
             env_ids = torch.nonzero(done, as_tuple=False).flatten()
         if not env_ids.numel() and not sim_reset_ids.numel():
@@ -653,16 +645,15 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
                 state.episode_steps[env_ids] = 0
         with self.perf.scope("reset_envs"):
             self._reset_rows(
-                env_ids.detach().cpu().numpy(),
-                None if not sim_reset_ids.numel() else sim_reset_ids.detach().cpu().numpy(),
+                env_ids,
+                None if not sim_reset_ids.numel() else sim_reset_ids,
             )
 
     def reset(self, env_ids: torch.Tensor, sim_reset_ids: torch.Tensor | None = None) -> None:
         """Reset episode lanes fully and sim-reset the rest in one pass.
 
         ``env_ids`` and ``sim_reset_ids`` are integer torch tensors (the
-        manager frontend's public currency); they are converted once here to
-        the internal numpy control plane.
+        manager frontend's public currency).
 
         Episode lanes (``env_ids``) run the host lifecycle resets (command
         ``reset`` with termination statistics, action resets); sim-reset lanes
@@ -673,40 +664,37 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         are reread once for the union.
         """
         self._reset_rows(
-            _env_ids_to_numpy(env_ids, "env_ids"),
-            None if sim_reset_ids is None else _env_ids_to_numpy(sim_reset_ids, "sim_reset_ids"),
+            _validate_reset_ids(env_ids, "env_ids"),
+            None if sim_reset_ids is None else _validate_reset_ids(sim_reset_ids, "sim_reset_ids"),
         )
 
-    def _reset_rows(self, env_ids: np.ndarray, sim_reset_ids: np.ndarray | None = None) -> None:
-        """Numpy-control-plane reset shared by the public wrapper and the
+    def _reset_rows(self, env_ids: torch.Tensor, sim_reset_ids: torch.Tensor | None = None) -> None:
+        """Torch-control-plane reset shared by the public wrapper and the
         internal auto-reset flow."""
         assert self._state is not None
-        if env_ids.size:
+        if env_ids.numel():
             with self.perf.scope("command_reset"):
-                # Host command hooks keep the numpy contract: hand them the
-                # zero-copy numpy view of the torch termination state.
                 for command_term in self._command_terms.values():
                     command_term.reset(
                         ResetContext(
                             env_ids=env_ids,
-                            terminated=self._state.terminated.numpy(),
+                            terminated=self._state.terminated,
                             metrics=self._state.metrics,
                         )
                     )
             with self.perf.scope("action_reset"):
-                action_env_ids = torch.from_numpy(env_ids)
                 for action_term in self._action_terms.values():
-                    action_term.reset(action_env_ids)
-        if sim_reset_ids is not None and sim_reset_ids.size:
-            env_ids = np.concatenate([env_ids, sim_reset_ids])
-        if env_ids.size:
+                    action_term.reset(env_ids)
+        if sim_reset_ids is not None and sim_reset_ids.numel():
+            env_ids = torch.cat([env_ids, sim_reset_ids])
+        if env_ids.numel():
             self._reset_sim_rows(env_ids)
 
     def _make_metrics_view(self) -> dict[str, Any]:
         """Assemble the persistent live metrics view for the current state.
 
-        Values are NumPy views into the kernel reward/termination buffers and
-        the term-owned CPU tensor arrays, so kernels write them in place every
+        Values are views into the kernel reward/termination buffers and the
+        term-owned CPU tensor arrays, so kernels write them in place every
         step and nothing needs rebuilding per transition. Host-side writers
         may add batch-level scalar entries (e.g. sampler statistics at reset
         time). Consumers retain values across steps through
@@ -715,11 +703,14 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         assert self._compiled_manager_program is not None
         assert self._kernel_buffers is not None
         termination_masks = self._kernel_buffers[2]
-        masks_view = termination_masks.numpy()
-        metrics = {term.name: masks_view[:, term.index] for term in self._compiled_manager_program.layout.terminations}
+        metrics = {
+            term.name: termination_masks[:, term.index]
+            for term in self._compiled_manager_program.layout.terminations
+        }
+        # Single-column term metrics export as ``(N,)`` per-env vectors.
         metrics.update(
             {
-                name: (value.numpy()[:, 0] if value.ndim == 2 and value.shape[1] == 1 else value.numpy())
+                name: (value[:, 0] if value.ndim == 2 and value.shape[1] == 1 else value)
                 for name, value in self.metrics.items()
             }
         )
@@ -787,7 +778,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         self._kernel_buffers = buffers
         return buffers
 
-    def _refresh_sim_reads(self, env_ids: np.ndarray | None = None) -> None:
+    def _refresh_sim_reads(self, env_ids: torch.Tensor | None = None) -> None:
         """Refresh the simulator-backed kernel inputs in place.
 
         One native batch read rewrites the simulator-owned arena; ``env_ids``

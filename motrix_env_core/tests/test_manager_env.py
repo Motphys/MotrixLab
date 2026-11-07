@@ -629,7 +629,7 @@ def test_read_plan_refreshes_sim_views_in_place_without_rebuilding_context() -> 
     sim_views = {key: value for key, value in context.sim.items()}
 
     program.read_plan.read(env)
-    program.read_plan.read(env, np.asarray([0, 2], dtype=np.int64))
+    program.read_plan.read(env, torch.tensor([0, 2], dtype=torch.int64))
 
     assert program.context is context
     assert all(context.sim[key] is view for key, view in sim_views.items())

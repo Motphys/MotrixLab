@@ -184,10 +184,10 @@ class TorchManagerRuntime:
             value_obs if value_obs is not None and value_obs.numel() else None,
         )
 
-    def reset(self, env_ids: np.ndarray, reset_buffers: tuple[np.ndarray, ...]) -> None:
+    def reset(self, env_ids: torch.Tensor, reset_buffers: tuple[torch.Tensor, ...]) -> None:
         if not self.command_reset_hooks and not self._reset_terms:
             return
-        ids = torch.from_numpy(np.ascontiguousarray(env_ids, dtype=np.int64))
+        ids = env_ids.detach().cpu().contiguous().to(torch.int64)
         kernel = self._compiled_kernels.get(("reset", id(reset_buffers)))
         if kernel is None:
             kernel = self._build_compiled_reset(reset_buffers)
@@ -344,10 +344,8 @@ class TorchManagerRuntime:
         write_plan = tuple(
             (
                 call,
-                tuple(torch.from_numpy(reset_buffers[offset + index]) for index in range(len(fields_))),
-                tuple(
-                    torch.empty_like(torch.from_numpy(reset_buffers[offset + index])) for index in range(len(fields_))
-                ),
+                tuple(reset_buffers[offset + index] for index in range(len(fields_))),
+                tuple(torch.empty_like(reset_buffers[offset + index]) for index in range(len(fields_))),
                 fields_,
                 self._invocation_args(call),
             )
@@ -372,21 +370,19 @@ class TorchManagerRuntime:
 
         if self.compile_enabled:
             kernel = torch.compile(kernel, dynamic=False, options=_compile_options())
-        mask_np = mask.numpy()
         compact_plan = tuple(
-            (buffer.numpy(), stage.numpy())
+            (buffers, staging)
             for _invocation, buffers, staging, _fields, _args in write_plan
-            for buffer, stage in zip(buffers, staging, strict=True)
         )
 
         def wrapper(ids: torch.Tensor) -> None:
-            ids_np = ids.numpy()
-            mask_np.fill(False)
-            mask_np[ids_np] = True
+            mask.fill_(False)
+            mask[ids] = True
             kernel()
-            count = ids_np.shape[0]
-            for buffer, stage in compact_plan:
-                buffer[:count] = stage[ids_np]
+            count = ids.shape[0]
+            for buffers, staging in compact_plan:
+                for buffer, stage in zip(buffers, staging, strict=True):
+                    buffer[:count] = stage[ids]
 
         return wrapper
 

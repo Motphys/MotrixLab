@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
+import torch
 
 from motrix_env_core.config.sim_reset import ManagerResetCfg
 from motrix_env_core.manager.context import BuildContext
@@ -46,7 +46,7 @@ class SimResetRuntime:
     program: WriteProgram
     terms: dict[str, ResetTerm]
     writes: dict[str, dict[str, SimWrite]]
-    buffers: tuple[np.ndarray, ...]
+    buffers: tuple[torch.Tensor, ...]
 
     @classmethod
     def create(
@@ -96,13 +96,13 @@ class SimResetRuntime:
     def apply(
         self,
         task_program: TorchTaskProgram,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
     ) -> None:
         """Materialize compact term outputs, scatter them, and execute reset."""
         with active_perf_scope("reset_kernel"):
             task_program.reset_kernel(env_ids, self.buffers)
         for buffer in self.buffers:
-            compact = buffer[: env_ids.size].copy()
+            compact = buffer[: env_ids.numel()].clone()
             buffer[env_ids] = compact
         with active_perf_scope("backend_apply"):
             self.program.execute(env_ids)
