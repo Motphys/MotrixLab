@@ -31,7 +31,11 @@ class EnvObs:
 
 @dataclass
 class FinalObs:
-    """Owned pre-reset observations aligned with torch ``env_ids``."""
+    """Owned pre-reset observations of the current transition's truncated rows.
+
+    Rows in ``obs`` align with ``env_ids``. Tensors remain valid across steps;
+    consumers must treat them as read-only. ``obs.value`` stays optional.
+    """
 
     env_ids: torch.Tensor
     obs: EnvObs
@@ -85,7 +89,14 @@ class ArrayEnvState:
         assert self.terminated.shape == (num_envs,), self.terminated.shape
         assert self.truncated.shape == (num_envs,), self.truncated.shape
         assert self.episode_steps.shape == (num_envs,), self.episode_steps.shape
-        for value in (self.obs.policy, self.obs.value, self.reward, self.terminated, self.truncated, self.episode_steps):
+        for value in (
+            self.obs.policy,
+            self.obs.value,
+            self.reward,
+            self.terminated,
+            self.truncated,
+            self.episode_steps,
+        ):
             if value is not None:
                 assert isinstance(value, torch.Tensor), type(value)
 
@@ -113,7 +124,13 @@ def _coerce_obs(obs: EnvObs | torch.Tensor | np.ndarray) -> EnvObs:
 
 
 class ArrayEnv(ABEnv, Generic[EnvCfgType]):
-    """Simulator-agnostic environment lifecycle with a torch-only public state."""
+    """Simulator-agnostic environment lifecycle with a torch-only public state.
+
+    ``ArrayEnv`` owns the step / auto-reset / truncation lifecycle shared by
+    torch-frontend environments. It is deliberately free of simulator-state
+    concepts: subclasses address simulator rows themselves inside the reset
+    hooks, so the frontend only ever speaks in environment indices.
+    """
 
     _cfg: EnvCfgType
     _state: ArrayEnvState | None = None
@@ -166,8 +183,14 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         return self._state
 
     def _new_state(self, obs, reward, terminated, truncated, episode_steps) -> ArrayEnvState:
-        """Assemble the framework-owned transition state."""
-        return ArrayEnvState(obs=obs, reward=reward, terminated=terminated, truncated=truncated, episode_steps=episode_steps)
+        """Assemble the framework-owned transition state; subclasses add simulator-owned fields."""
+        return ArrayEnvState(
+            obs=obs,
+            reward=reward,
+            terminated=terminated,
+            truncated=truncated,
+            episode_steps=episode_steps,
+        )
 
     @property
     def policy_observation_space(self) -> gym.spaces.Box:
@@ -183,7 +206,8 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         return isinstance(self.observation_space, ObsSpace) and self.observation_space.value is not None
 
     def _zeros_box(self, space: gym.spaces.Box) -> torch.Tensor:
-        return torch.zeros((self._num_envs, *space.shape), dtype=torch.from_numpy(np.empty((), dtype=space.dtype)).dtype)
+        dtype = torch.from_numpy(np.empty((), dtype=space.dtype)).dtype
+        return torch.zeros((self._num_envs, *space.shape), dtype=dtype)
 
     def _zeros_reward(self) -> torch.Tensor:
         return torch.zeros((self._num_envs,), dtype=torch.float32)
@@ -227,17 +251,34 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
     def _reset_done_envs(self) -> None:
         """Reset all environment rows marked terminated or truncated."""
         state = self._state
-        done = state.done
-        if not bool(done.any()):
+        with self.perf.scope("done_mask"):
+            done = state.done
+            has_done = bool(done.any())
+        if not has_done:
             return
-        state.episode_steps[done] = 0
-        self.reset(torch.nonzero(done, as_tuple=False).flatten())
+
+        with self.perf.scope("select_done"):
+            state.episode_steps[done] = 0
+            env_ids = torch.nonzero(done, as_tuple=False).flatten()
+        with self.perf.scope("reset_envs"):
+            self.reset(env_ids)
 
     @abc.abstractmethod
-    def reset(self, env_ids: torch.Tensor) -> None: ...
+    def reset(self, env_ids: torch.Tensor) -> None:
+        """Write reset rows for the selected environments.
+
+        Subclasses address their simulator's rows themselves. Observation
+        generation is deferred until :meth:`compute_observation`, after reset
+        writes have completed.
+        """
 
     def _capture_final_obs(self, env_ids: torch.Tensor) -> FinalObs | None:
-        """Capture truncated rows before reset; unsupported by default."""
+        """Capture truncated rows before reset; default implementation is unsupported.
+
+        Called after transition and truncation updates, before any reset write.
+        Implementations must leave normal observations and task state unchanged
+        and return owned row tensors, without advancing observation history.
+        """
         return None
 
     def _max_episode_steps(self) -> int | None:
@@ -250,16 +291,34 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
             self._state.truncated[:] = self._state.episode_steps >= max_episode_steps
 
     @abc.abstractmethod
-    def create_renderer(self, config: RenderConfig) -> SimRenderer: ...
+    def create_renderer(self, config: RenderConfig) -> SimRenderer:
+        """Create the backend-owned renderer bound to this environment."""
 
     @abc.abstractmethod
-    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState: ...
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+        """Apply the action to the environment.
+
+        Args:
+            actions (torch.Tensor): The actions to apply
+            state (ArrayEnvState): The environment state to apply the actions.
+        """
 
     @abc.abstractmethod
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState: ...
+    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+        """Update the environment state after physics step
+
+        This is the only full simulator-data refresh point of a step: concrete
+        environments execute their whole read program here before deriving
+        reward, termination, and metrics. It must not write ``state.obs`` —
+        observations belong to :meth:`compute_observation`.
+
+        Args:
+            state (ArrayEnvState): The environment state to update
+        """
 
     @abc.abstractmethod
-    def physics_step(self): ...
+    def physics_step(self):
+        """Advance the simulator by the configured substeps."""
 
     def _prev_physics_step(self):
         """Clear per-step transition outputs before advancing physics."""
@@ -270,14 +329,31 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         self._state.truncated[:] = False
 
     def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
-        """Compute observations from simulator data after transition/reset."""
+        """Compute observations for all environments after reset.
+
+        Called once after the first reset of :meth:`init_state` and once per
+        :meth:`step` after episode bookkeeping and auto-reset. Implementations
+        must purely construct the observation from the simulator data already
+        refreshed by :meth:`compute_transition` (whole batch) and reset
+        (selected rows) without executing further reads. The default preserves
+        observations already present in ``state``.
+        """
         return state
 
     @perf_root("step")
     def step(self, actions: torch.Tensor) -> ArrayEnvState:
-        """Advance one control step through action, physics, reset, and observation."""
+        """Advance one control step.
+
+        Timing: ``apply_action`` -> ``physics_step`` -> ``compute_transition``
+        (the only full simulator-data refresh) -> episode bookkeeping ->
+        optional pre-reset ``final_obs`` capture for truncated rows ->
+        ``reset(env_ids)`` for done rows (may refresh selected rows) ->
+        ``compute_observation`` (whole batch, pure construction).
+        """
         if self._state is None:
-            self.init_state()
+            with self.perf.scope("init_state"):
+                self.init_state()
+
         self._prev_physics_step()
         with self.perf.scope("apply_action"):
             self._state = self.apply_action(actions, self._state)
