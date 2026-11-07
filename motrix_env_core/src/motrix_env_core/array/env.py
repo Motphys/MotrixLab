@@ -46,8 +46,14 @@ class ArrayEnvState:
     terminated: torch.Tensor
     truncated: torch.Tensor
     episode_steps: torch.Tensor
+    # Per-term reward breakdown for the latest transition. Freshly written
+    # every transition; empty when the environment does not decompose reward.
     reward_terms: dict[str, torch.Tensor] = dataclasses.field(default_factory=dict)
+    # Live diagnostics view. Per-environment quantities stay unreduced as
+    # ``(num_envs,)`` tensors; batch-level gauges are scalars. Values reflect
+    # the latest step and are reduced by :meth:`process_metrics`.
     metrics: dict[str, float | torch.Tensor] = dataclasses.field(default_factory=dict)
+    # None when no row truncated or the implementation does not capture finals.
     final_obs: FinalObs | None = None
 
     @property
@@ -58,12 +64,19 @@ class ArrayEnvState:
         return dataclasses.replace(self, **updates)
 
     def process_metrics(self) -> dict[str, float]:
+        """Reduce per-environment metrics into batch-level scalar floats.
+
+        Per-environment tensors are reduced with their mean (bool tensors
+        become trigger rates); scalars pass through. The result is a fresh,
+        small dict that is safe to retain across steps.
+        """
         return {
             name: float(value.float().mean().item()) if isinstance(value, torch.Tensor) else float(value)
             for name, value in self.metrics.items()
         }
 
     def validate(self):
+        """Validate the public transition state shapes and tensor types."""
         num_envs = self.obs.policy.shape[0]
         assert self.obs.policy.shape[0] == num_envs, self.obs.policy.shape
         if self.obs.value is not None:
@@ -77,20 +90,26 @@ class ArrayEnvState:
                 assert isinstance(value, torch.Tensor), type(value)
 
 
-def _as_obs(obs: EnvObs | torch.Tensor | np.ndarray) -> EnvObs:
+def _as_obs(obs: EnvObs | torch.Tensor) -> EnvObs:
+    """Normalize an already torch-native observation value."""
+    if isinstance(obs, EnvObs):
+        assert isinstance(obs.policy, torch.Tensor)
+        if obs.value is not None:
+            assert isinstance(obs.value, torch.Tensor)
+        return obs
+    assert isinstance(obs, torch.Tensor)
+    return EnvObs(policy=obs)
+
+
+def _coerce_obs(obs: EnvObs | torch.Tensor | np.ndarray) -> EnvObs:
+    """Convert legacy backend/task return values before strict normalization."""
     if isinstance(obs, EnvObs):
         if not isinstance(obs.policy, torch.Tensor):
             obs.policy = torch.as_tensor(obs.policy)
         if obs.value is not None and not isinstance(obs.value, torch.Tensor):
             obs.value = torch.as_tensor(obs.value)
         return obs
-    return EnvObs(policy=obs if isinstance(obs, torch.Tensor) else torch.as_tensor(obs))
-
-
-def _as_torch(value, *, dtype=None) -> torch.Tensor:
-    if isinstance(value, torch.Tensor):
-        return value
-    return torch.as_tensor(value, dtype=dtype)
+    return EnvObs(policy=torch.as_tensor(obs))
 
 
 class ArrayEnv(ABEnv, Generic[EnvCfgType]):
@@ -110,21 +129,26 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
 
     @property
     def state(self) -> ArrayEnvState:
+        """Get the current environment state."""
         return self._state
 
     @property
     def cfg(self) -> EnvCfgType:
+        """Get the environment configuration."""
         return self._cfg
 
     @property
     def render_spacing(self) -> float:
+        """Get the render spacing for multi-environment layouts."""
         return self._render_spacing
 
     @property
     def num_envs(self) -> int:
+        """Get the number of parallel environment rows."""
         return self._num_envs
 
     def init_state(self) -> ArrayEnvState:
+        """Create the initial environment transition state."""
         obs = self._zeros_obs(self.observation_space)
         self._state = self._new_state(
             obs,
@@ -136,12 +160,13 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         self._reset_done_envs()
         with self.perf.scope("observation"):
             self._state = self.compute_observation(self._state)
-        self._state = self._state.replace(obs=_as_obs(self._state.obs))
+        self._state = self._state.replace(obs=_coerce_obs(self._state.obs))
         self._coerce_state(self._state)
         self._state.validate()
         return self._state
 
     def _new_state(self, obs, reward, terminated, truncated, episode_steps) -> ArrayEnvState:
+        """Assemble the framework-owned transition state."""
         return ArrayEnvState(obs=obs, reward=reward, terminated=terminated, truncated=truncated, episode_steps=episode_steps)
 
     @property
@@ -175,7 +200,7 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         return EnvObs(policy=self._zeros_box(obs_space.policy), value=value)
 
     def _assign_obs(self, dst: EnvObs, mask: torch.Tensor, src):
-        src = _as_obs(src)
+        src = _coerce_obs(src)
         dst.policy[mask] = src.policy
         if dst.value is not None:
             assert src.value is not None
@@ -185,18 +210,22 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         state.obs = _as_obs(state.obs)
         for name in ("reward", "terminated", "truncated", "episode_steps"):
             value = getattr(state, name)
-            setattr(state, name, _as_torch(value))
-        state.reward_terms = {name: _as_torch(value) for name, value in state.reward_terms.items()}
+            setattr(state, name, value if isinstance(value, torch.Tensor) else torch.as_tensor(value))
+        state.reward_terms = {
+            name: value if isinstance(value, torch.Tensor) else torch.as_tensor(value)
+            for name, value in state.reward_terms.items()
+        }
         state.metrics = {
-            name: _as_torch(value) if not isinstance(value, (int, float)) else value
+            name: value if isinstance(value, (int, float, torch.Tensor)) else torch.as_tensor(value)
             for name, value in state.metrics.items()
         }
         if state.final_obs is not None:
-            state.final_obs.env_ids = _as_torch(state.final_obs.env_ids, dtype=torch.long)
+            assert state.final_obs.env_ids.dtype in (torch.int8, torch.int16, torch.int32, torch.int64)
             state.final_obs.obs = _as_obs(state.final_obs.obs)
         return state
 
     def _reset_done_envs(self) -> None:
+        """Reset all environment rows marked terminated or truncated."""
         state = self._state
         done = state.done
         if not bool(done.any()):
@@ -208,12 +237,14 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
     def reset(self, env_ids: torch.Tensor) -> None: ...
 
     def _capture_final_obs(self, env_ids: torch.Tensor) -> FinalObs | None:
+        """Capture truncated rows before reset; unsupported by default."""
         return None
 
     def _max_episode_steps(self) -> int | None:
         return self._cfg.max_episode_steps
 
     def _update_truncate(self):
+        """Mark rows that reached the configured episode limit."""
         max_episode_steps = self._max_episode_steps()
         if max_episode_steps:
             self._state.truncated[:] = self._state.episode_steps >= max_episode_steps
@@ -231,6 +262,7 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
     def physics_step(self): ...
 
     def _prev_physics_step(self):
+        """Clear per-step transition outputs before advancing physics."""
         if self._state.final_obs is not None:
             self._state = self._state.replace(final_obs=None)
         self._state.reward[:] = 0.0
@@ -238,10 +270,12 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         self._state.truncated[:] = False
 
     def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+        """Compute observations from simulator data after transition/reset."""
         return state
 
     @perf_root("step")
     def step(self, actions: torch.Tensor) -> ArrayEnvState:
+        """Advance one control step through action, physics, reset, and observation."""
         if self._state is None:
             self.init_state()
         self._prev_physics_step()
@@ -263,6 +297,7 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
             self._reset_done_envs()
         with self.perf.scope("observation"):
             self._state = self.compute_observation(self._state)
+            self._state.obs = _coerce_obs(self._state.obs)
             self._coerce_state(self._state)
         return self._state
 
