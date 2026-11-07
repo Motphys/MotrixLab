@@ -252,9 +252,9 @@ class BounceBallEnv(DirectEnv):
         height_reward = torch.exp(-(height_error**2) / (2 * self._cfg.height_error_sigma**2))
 
         # Height progress bonus
-        height_progress_bonus = (
-            (ball_z - self._cfg.height_progress_threshold).clamp(min=0.0) * self._cfg.height_progress_scale
-        )
+        height_progress_bonus = (ball_z - self._cfg.height_progress_threshold).clamp(
+            min=0.0
+        ) * self._cfg.height_progress_scale
 
         # ============================================================================
         # 5. Controlled upward velocity reward
@@ -264,9 +264,7 @@ class BounceBallEnv(DirectEnv):
         positioning_quality = torch.exp(-(xy_position_error**2) / (2 * self._cfg.positioning_quality_sigma**2))
 
         ideal_launch_velocity = torch.sqrt(2 * g * height_diff.clamp(min=0.0))
-        ideal_launch_velocity = ideal_launch_velocity.clamp(
-            self._cfg.ideal_velocity_min, self._cfg.ideal_velocity_max
-        )
+        ideal_launch_velocity = ideal_launch_velocity.clamp(self._cfg.ideal_velocity_min, self._cfg.ideal_velocity_max)
 
         upward_velocity_quality = torch.exp(
             -((ball_vz - ideal_launch_velocity) ** 2) / (2 * self._cfg.upward_velocity_sigma**2)
@@ -351,9 +349,7 @@ class BounceBallEnv(DirectEnv):
         # Distance-based dynamic factor
         distance_factor = 1.0 + self._cfg.distance_factor_scale / (
             1.0
-            + torch.exp(
-                -(vertical_dist - self._cfg.distance_factor_threshold) / self._cfg.distance_factor_sharpness
-            )
+            + torch.exp(-(vertical_dist - self._cfg.distance_factor_threshold) / self._cfg.distance_factor_sharpness)
         )
 
         home_position_reward = (
@@ -563,7 +559,7 @@ class BounceBallEnv(DirectEnv):
         # Randomize target heights for the environments being reset
         if cfg.randomize_target_height:
             min_height, max_height = cfg.target_height_range
-            new_target_heights = (torch.rand(num_reset, dtype=torch.float32) * (max_height - min_height) + min_height)
+            new_target_heights = torch.rand(num_reset, dtype=torch.float32) * (max_height - min_height) + min_height
         else:
             # Use mean of target_height_range when not randomizing
             default_height = sum(cfg.target_height_range) / 2.0

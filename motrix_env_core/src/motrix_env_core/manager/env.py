@@ -704,8 +704,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         assert self._kernel_buffers is not None
         termination_masks = self._kernel_buffers[2]
         metrics = {
-            term.name: termination_masks[:, term.index]
-            for term in self._compiled_manager_program.layout.terminations
+            term.name: termination_masks[:, term.index] for term in self._compiled_manager_program.layout.terminations
         }
         # Single-column term metrics export as ``(N,)`` per-env vectors.
         metrics.update(

@@ -346,9 +346,7 @@ class QuadrupedEnv(DirectEnv):
                 leg_penalties.append(geom_penalties[:, geom_slice].max(dim=-1).values)
         return torch.stack(leg_penalties, dim=-1)
 
-    def _point_to_segment_distance(
-        self, point: torch.Tensor, start: torch.Tensor, end: torch.Tensor
-    ) -> torch.Tensor:
+    def _point_to_segment_distance(self, point: torch.Tensor, start: torch.Tensor, end: torch.Tensor) -> torch.Tensor:
         segment = end - start
         segment_sq_norm = torch.sum(segment * segment, dim=-1)
         safe_norm = torch.where(segment_sq_norm > 1e-8, segment_sq_norm, torch.ones_like(segment_sq_norm))
@@ -669,9 +667,7 @@ class QuadrupedEnv(DirectEnv):
             self._ball_reset_angular_velocity[env_ids] = dof_vel[:, self._ball_vel_slice][:, 3:6]
         self._reset_program.execute(env_ids)
 
-    def _lift_non_contacting(
-        self, env_ids: torch.Tensor, dof_pos: torch.Tensor, dof_vel: torch.Tensor
-    ) -> torch.Tensor:
+    def _lift_non_contacting(self, env_ids: torch.Tensor, dof_pos: torch.Tensor, dof_vel: torch.Tensor) -> torch.Tensor:
         z = dof_pos[:, 2].clone()
         pending = torch.ones((env_ids.numel(),), dtype=torch.bool)
         for _ in range(1000):
@@ -963,9 +959,7 @@ class QuadrupedFetchEnv(QuadrupedEnv):
         ball_qpos = self._ball_pos_slice
         dof_pos[:, ball_qpos.start : ball_qpos.start + 2] = ball_xy
         dof_pos[:, ball_qpos.start + 2] = self._ball_geom_size0
-        dof_pos[:, ball_qpos.start + 3 : ball_qpos.stop] = torch.tensor(
-            [0.0, 0.0, 0.0, 1.0], dtype=torch.float32
-        )
+        dof_pos[:, ball_qpos.start + 3 : ball_qpos.stop] = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32)
 
         ball_qvel = self._ball_vel_slice
         dof_vel[:, ball_qvel.start : ball_qvel.stop] = 0.0

@@ -237,9 +237,8 @@ class FingerSpinEnv(FingerEnv):
             if float(getattr(self._cfg, "spin_touch_bonus_scale", 0.0)) > 0.0:
                 touch_values = inputs["touch"]
                 touch_raw = touch_values[:, 0] + touch_values[:, 1]
-                touch_bonus = (
-                    float(self._cfg.spin_touch_bonus_scale)
-                    * torch.tanh(touch_raw / float(max(self._cfg.spin_touch_bonus_tanh_scale, 1e-6)))
+                touch_bonus = float(self._cfg.spin_touch_bonus_scale) * torch.tanh(
+                    touch_raw / float(max(self._cfg.spin_touch_bonus_tanh_scale, 1e-6))
                 )
 
             if float(getattr(self._cfg, "spin_approach_reward_scale", 0.0)) > 0.0:

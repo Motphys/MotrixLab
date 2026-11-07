@@ -210,9 +210,10 @@ class HopperEnv(DirectEnv):
         if self._reset_position.shape[1] > 3:
             lower = self._joint_pos_lower[3:]
             upper = self._joint_pos_upper[3:]
-            dof_pos[:, 3:] = torch.rand((num_reset, self._reset_position.shape[1] - 3), dtype=torch.float32) * (
-                upper - lower
-            ) + lower
+            dof_pos[:, 3:] = (
+                torch.rand((num_reset, self._reset_position.shape[1] - 3), dtype=torch.float32) * (upper - lower)
+                + lower
+            )
 
         dof_vel = torch.zeros((num_reset, self._reset_velocity.shape[1]), dtype=torch.float32)
 

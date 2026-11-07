@@ -71,9 +71,7 @@ _SIM_DATA_QUERIES = {
 _SIM_MODEL_QUERIES = {"dof_position_limits": DofPositionLimitsQuery()}
 
 
-def _sanitize_joint_limits(
-    low: torch.Tensor, high: torch.Tensor
-) -> tuple[torch.Tensor, torch.Tensor]:
+def _sanitize_joint_limits(low: torch.Tensor, high: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     low = torch.where(torch.isfinite(low), low, torch.full_like(low, -torch.pi))
     high = torch.where(torch.isfinite(high), high, torch.full_like(high, torch.pi))
     return low.to(torch.float32), high.to(torch.float32)
@@ -222,7 +220,7 @@ class ManipulatorBase(DirectEnv):
     def _sample_arm_joint_angles(self, num: int) -> torch.Tensor:
         low = self._joint_limit_low[: len(_ARM_JOINTS)]
         high = self._joint_limit_high[: len(_ARM_JOINTS)]
-        return (torch.rand(num, len(_ARM_JOINTS), dtype=torch.float32) * (high - low) + low)
+        return torch.rand(num, len(_ARM_JOINTS), dtype=torch.float32) * (high - low) + low
 
     def _sample_target_pose(self, num: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         cfg = self._cfg
@@ -456,16 +454,12 @@ class BringBall(ManipulatorBase):
         r_orient = r_orient * post_grasp_scale
 
         # R3: Pause
-        r_pause = (
-            _tolerance(arm_speed_step, bounds=(0.0, 0.05), margin=0.3, sigmoid="linear") * is_close_to_ball
-        )
+        r_pause = _tolerance(arm_speed_step, bounds=(0.0, 0.05), margin=0.3, sigmoid="linear") * is_close_to_ball
         r_pause = r_pause * post_grasp_scale
 
         # R4: Close
         grasp_action = self._actions[:, self._grasp_act_i]
-        r_close_intent = _tolerance(
-            grasp_action, bounds=(0.8, 1.0), margin=1.0, sigmoid="linear", value_at_margin=0.01
-        )
+        r_close_intent = _tolerance(grasp_action, bounds=(0.8, 1.0), margin=1.0, sigmoid="linear", value_at_margin=0.01)
 
         r_approach_grasp = r_close_intent * is_close_to_ball * r_orient * r_pause * contact_with_obj.to(torch.float32)
         r_sustain_grasp = r_close_intent * grasp_mask
@@ -505,9 +499,7 @@ class BringBall(ManipulatorBase):
         # --- Penalties ---
         all_touch = self._touch_raw(slice(None))
         side_touch_sum = all_touch[..., 1] + all_touch[..., 2]
-        penalty_side = -float(cfg.side_penalty_scale) * torch.tanh(
-            side_touch_sum * float(cfg.side_penalty_tanh_scale)
-        )
+        penalty_side = -float(cfg.side_penalty_scale) * torch.tanh(side_touch_sum * float(cfg.side_penalty_tanh_scale))
 
         hover_phase = (is_close_to_ball > 0.5) & (~contact_with_obj)
         penalty_hover = -float(cfg.hover_penalty_scale) * hover_phase.to(torch.float32)

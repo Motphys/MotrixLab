@@ -328,13 +328,9 @@ class StewartEnv(DirectEnv):
         target_roll_deg = effective_actions[:, 0] * self._cfg.target_rotation_limit_deg
         target_pitch_deg = effective_actions[:, 1] * self._cfg.target_rotation_limit_deg
         target_tilt_cmd = torch.stack([target_roll_deg, target_pitch_deg], dim=-1)
-        target_euler_deg = torch.cat(
-            [target_tilt_cmd, torch.zeros((actions.shape[0], 1), dtype=torch.float32)], dim=-1
-        )
+        target_euler_deg = torch.cat([target_tilt_cmd, torch.zeros((actions.shape[0], 1), dtype=torch.float32)], dim=-1)
         target_euler_rad = target_euler_deg * torch.pi / 180.0
-        target_quat = _from_euler(
-            target_euler_rad[..., 0], target_euler_rad[..., 1], target_euler_rad[..., 2]
-        )
+        target_quat = _from_euler(target_euler_rad[..., 0], target_euler_rad[..., 1], target_euler_rad[..., 2])
 
         self._target_pos[:] = target_pos
         self._target_quat[:] = target_quat
@@ -441,12 +437,8 @@ class StewartEnv(DirectEnv):
             dim=-1,
         )
         disturb_rot_rad = disturb_rot_deg * torch.pi / 180.0
-        disturb_rot_quat = _from_euler(
-            disturb_rot_rad[..., 0], disturb_rot_rad[..., 1], disturb_rot_rad[..., 2]
-        )
-        stage_quat = _quat_mul(
-            disturb_rot_quat, self._stage_quat_init.expand(disturb_rot_quat.shape)
-        )
+        disturb_rot_quat = _from_euler(disturb_rot_rad[..., 0], disturb_rot_rad[..., 1], disturb_rot_rad[..., 2])
+        stage_quat = _quat_mul(disturb_rot_quat, self._stage_quat_init.expand(disturb_rot_quat.shape))
         roll_rad, pitch_rad, yaw_rad = _euler_xyz(_normalize_quat(stage_quat))
         roll_deg = roll_rad * 180.0 / torch.pi
         pitch_deg = pitch_rad * 180.0 / torch.pi
@@ -455,9 +447,7 @@ class StewartEnv(DirectEnv):
         pitch_deg = pitch_deg.clamp(-self._cfg.disturb_rot_limit_deg, self._cfg.disturb_rot_limit_deg)
         stage_euler_deg = torch.stack([roll_deg, pitch_deg, yaw_deg], dim=-1)
         stage_euler_rad = stage_euler_deg * torch.pi / 180.0
-        stage_quat = _from_euler(
-            stage_euler_rad[..., 0], stage_euler_rad[..., 1], stage_euler_rad[..., 2]
-        )
+        stage_quat = _from_euler(stage_euler_rad[..., 0], stage_euler_rad[..., 1], stage_euler_rad[..., 2])
         stage_pos = self._stage_pos_init[None, :] + self._disturb_pos[env_ids]
         stage_ang_vel = (
             torch.cat(
@@ -627,9 +617,7 @@ class StewartEnv(DirectEnv):
         term_center = self._cfg.k_center * center_score
 
         prev_zero_vel_rel_xy = self._prev_zero_vel_rel_xy
-        zero_reference = torch.where(
-            torch.isfinite(prev_zero_vel_rel_xy), prev_zero_vel_rel_xy, self._initial_rel_xy
-        )
+        zero_reference = torch.where(torch.isfinite(prev_zero_vel_rel_xy), prev_zero_vel_rel_xy, self._initial_rel_xy)
         zero_event = vel_xy <= self._cfg.zero_vel_thresh
         zero_closer_mask = zero_event & (rel_xy < zero_reference)
         zero_improve = (zero_reference - rel_xy).clamp(min=0.0)
@@ -649,9 +637,7 @@ class StewartEnv(DirectEnv):
         reward = term_center + term_zero_vel_closer + term_still_bonus
 
         term_terminal = torch.zeros((self._num_envs,), dtype=torch.float32)
-        reward = torch.where(
-            fallen, torch.full_like(reward, float(self._cfg.fall_penalty)), reward
-        )
+        reward = torch.where(fallen, torch.full_like(reward, float(self._cfg.fall_penalty)), reward)
         term_terminal[fallen] = float(self._cfg.fall_penalty)
 
         # Timeout flag for logging only; the framework owns truncation via its
@@ -702,13 +688,9 @@ class StewartEnv(DirectEnv):
         pitch_deg *= torch.where(torch.rand(num) < 0.5, -1.0, 1.0)
 
         target_pos = self._top_pos_init.unsqueeze(0).expand(num, -1).contiguous()
-        target_euler_deg = torch.stack(
-            [roll_deg, pitch_deg, torch.zeros((num,), dtype=torch.float32)], dim=-1
-        )
+        target_euler_deg = torch.stack([roll_deg, pitch_deg, torch.zeros((num,), dtype=torch.float32)], dim=-1)
         target_euler_rad = target_euler_deg * torch.pi / 180.0
-        target_quat = _from_euler(
-            target_euler_rad[..., 0], target_euler_rad[..., 1], target_euler_rad[..., 2]
-        )
+        target_quat = _from_euler(target_euler_rad[..., 0], target_euler_rad[..., 1], target_euler_rad[..., 2])
 
         # Write episode-scoped state for the reset rows
         self._target_pos[env_ids] = target_pos

@@ -35,11 +35,11 @@ def _make_env(sim_backend: str):
     if sim_backend == "np":
         env = Mock(spec=DirectEnv)
         state = ArrayEnvState(
-            obs=EnvObs(np.zeros((_NUM_ENVS, _OBS_DIM), dtype=np.float32)),
-            reward=np.ones(_NUM_ENVS, dtype=np.float32),
-            terminated=np.zeros(_NUM_ENVS, dtype=bool),
-            truncated=np.zeros(_NUM_ENVS, dtype=bool),
-            episode_steps=np.zeros(_NUM_ENVS, dtype=np.uint64),
+            obs=EnvObs(torch.zeros((_NUM_ENVS, _OBS_DIM), dtype=torch.float32)),
+            reward=torch.ones(_NUM_ENVS, dtype=torch.float32),
+            terminated=torch.zeros(_NUM_ENVS, dtype=torch.bool),
+            truncated=torch.zeros(_NUM_ENVS, dtype=torch.bool),
+            episode_steps=torch.zeros(_NUM_ENVS, dtype=torch.int64),
         )
     else:
         env = Mock(spec=TorchEnv)

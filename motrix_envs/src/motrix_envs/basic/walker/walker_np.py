@@ -177,9 +177,9 @@ class Walker2DEnv(DirectEnv):
         dof_pos[:, 2] = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * np.pi  # randomize root yaw
         lower = self._joint_pos_lower[3:]
         upper = self._joint_pos_upper[3:]
-        dof_pos[:, 3:] = torch.rand((num_reset, self._reset_position.shape[1] - 3), dtype=torch.float32) * (
-            upper - lower
-        ) + lower  # randomize other joint angles
+        dof_pos[:, 3:] = (
+            torch.rand((num_reset, self._reset_position.shape[1] - 3), dtype=torch.float32) * (upper - lower) + lower
+        )  # randomize other joint angles
         dof_vel = torch.zeros((num_reset, self._reset_velocity.shape[1]), dtype=torch.float32)
 
         self._reset_position[env_ids] = dof_pos

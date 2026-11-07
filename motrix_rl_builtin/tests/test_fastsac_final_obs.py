@@ -31,13 +31,13 @@ from motrix_env_core.array.env import ArrayEnvState, EnvObs, FinalObs
 
 
 def test_numpy_adapter_reads_final_result_without_consuming_environment_state():
-    final = FinalObs(np.array([0]), EnvObs(np.array([[7.0]], dtype=np.float32)))
+    final = FinalObs(torch.tensor([0]), EnvObs(torch.tensor([[7.0]], dtype=torch.float32)))
     state = ArrayEnvState(
-        obs=EnvObs(np.zeros((1, 1), dtype=np.float32)),
-        reward=np.zeros(1, dtype=np.float32),
-        terminated=np.zeros(1, dtype=bool),
-        truncated=np.ones(1, dtype=bool),
-        episode_steps=np.zeros(1, dtype=np.uint64),
+        obs=EnvObs(torch.zeros((1, 1), dtype=torch.float32)),
+        reward=torch.zeros(1, dtype=torch.float32),
+        terminated=torch.zeros(1, dtype=torch.bool),
+        truncated=torch.ones(1, dtype=torch.bool),
+        episode_steps=torch.zeros(1, dtype=torch.int64),
         final_obs=final,
     )
     initial = state.replace(final_obs=None)

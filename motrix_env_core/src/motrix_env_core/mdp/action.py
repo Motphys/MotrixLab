@@ -7,7 +7,6 @@ import math
 from dataclasses import dataclass
 
 import gymnasium as gym
-import numpy as np
 import torch
 
 from motrix_env_core.config import configclass
@@ -140,25 +139,20 @@ class JointPositionActionCfg(ActionCfg):
             )
         actuator_names = tuple(spec.name for spec in actuators)
         all_names = tuple(spec.name for spec in env.model.actuators)
-        indices = np.asarray([all_names.index(name) for name in actuator_names], dtype=np.int64)
-        joint_lower = joint_lower[indices]
-        joint_upper = joint_upper[indices]
+        indices = torch.tensor([all_names.index(name) for name in actuator_names], dtype=torch.int64)
         lo, hi = self.action_delay_steps
         if lo < 0 or hi < lo:
             raise ValueError(f"action_delay_steps must be 0 <= lo <= hi, got {self.action_delay_steps!r}")
         # Keep current and previous actions even when delay is disabled.
         width = max(hi + 1, 2)
-        action_queue = np.zeros((env.num_envs, width, len(actuators)), dtype=np.float32)
-        delay_steps = np.zeros(env.num_envs, dtype=np.int64)
-        action_ptr = np.zeros(1, dtype=np.int64)
         state = JointPositionActionState(
-            action_queue=torch.from_numpy(action_queue),
+            action_queue=torch.zeros((env.num_envs, width, len(actuators)), dtype=torch.float32),
             default_angles=default_angles[indices],
             joint_lower=joint_lower[indices],
             joint_upper=joint_upper[indices],
             action_scales=action_scales[indices],
-            delay_steps=torch.from_numpy(delay_steps),
-            action_ptr=torch.from_numpy(action_ptr),
+            delay_steps=torch.zeros(env.num_envs, dtype=torch.int64),
+            action_ptr=torch.zeros(1, dtype=torch.int64),
             delay_lo=int(lo),
             delay_hi=int(hi),
         )
