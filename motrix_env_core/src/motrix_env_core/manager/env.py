@@ -480,7 +480,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         assert self._kernel_outputs is not None
         self._task_program.observe_kernel(self._kernel_outputs)
 
-    def _capture_final_obs(self, env_ids: torch.Tensor | np.ndarray) -> FinalObs:
+    def _capture_final_obs(self, env_ids: torch.Tensor) -> FinalObs:
         """Observe pre-reset inputs after command on_transition.
 
         The compiled observe pass is batch-wide. Dedicated outputs preserve the

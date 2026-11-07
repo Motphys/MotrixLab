@@ -742,7 +742,7 @@ def test_final_observation_noise_uses_shared_observation_rng() -> None:
         outputs.policy_obs[:, 0] = env._rand.state[:, 0].to(torch.float32)
 
     env._task_program = replace(env._task_program, observe_kernel=noisy_observe)
-    final = env._capture_final_obs(np.array([0], dtype=np.int64))
+    final = env._capture_final_obs(torch.tensor([0], dtype=torch.long))
     np.testing.assert_array_equal(
         env._rand.state.numpy().view(np.uint64), rng_before.numpy().view(np.uint64) + np.uint64(1)
     )
