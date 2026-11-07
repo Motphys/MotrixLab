@@ -73,7 +73,7 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
                 self._claim(name, compiled.vel_indices, claimed_vel, "velocity")
             native_fields[name] = compiled.native
             refresh_kinematics |= compiled.refresh_kinematics
-        buffers: dict[str, np.ndarray] = {}
+        buffers: dict[str, torch.Tensor] = {}
         native_program = None
         if native_fields:
             # Reset (restore defaults, then apply the writes) and the FK pass
@@ -83,7 +83,7 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
                 self._data
             )
             for name in native_fields:
-                buffers[name] = native_program[name]
+                buffers[name] = torch.from_numpy(native_program[name])
         return _MotrixSimWriteProgram(self._data, buffers, native_program)
 
     def compile_body_joint_position(self, name: str, write: BodyJointPositionWrite) -> None:
@@ -339,14 +339,13 @@ class _MotrixSimWriteProgram(WriteProgram):
     def __init__(
         self,
         data: mtx.SceneData,
-        buffers: dict[str, np.ndarray],
+        buffers: dict[str, torch.Tensor],
         native_program: mtx_write.WriteProgram | None = None,
     ) -> None:
         self._data = data
-        self._buffers = buffers
-        # Public buffers are torch tensors aliasing the same storage; writes
-        # through them reach the native program's numpy buffers.
-        self._tensors = {name: torch.from_numpy(buffer) for name, buffer in buffers.items()}
+        # The tensors alias the native program's numpy buffer storage; writes
+        # through them reach the native side directly.
+        self._tensors = dict(buffers)
         self._native_program = native_program
 
     def buffer(self, name: str) -> torch.Tensor:
