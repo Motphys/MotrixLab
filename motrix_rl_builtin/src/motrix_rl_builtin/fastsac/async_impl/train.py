@@ -46,11 +46,12 @@ from motrix_rl_builtin.fastsac.async_impl.stats import (
 from motrix_rl_builtin.fastsac.async_impl.topology import resolve_fastsac_topology
 from motrix_rl_builtin.fastsac.async_impl.transport import (
     Control,
+    FinalObsStorage,
+    HostTransitionRing,
     RingCursors,
-    SharedTransitionRing,
+    fastsac_transition_schema,
 )
 from motrix_rl_builtin.fastsac.async_impl.transport.handshake import StartupHandshake
-from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsStorage
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import WeightChannelShared
 from motrix_rl_builtin.fastsac.async_impl.worker import (
     actor_param_numel,
@@ -223,21 +224,20 @@ class Trainer(TrainerBase):
         # host inventory.
         annotate_run(self._context.run_dir, system=capture_system_info(topology=topology))
         final_obs_enabled = max_episode_steps is not None
+        transition_schema = fastsac_transition_schema(obs_dim, critic_obs_dim, act_dim)
         final_stores: list[FinalObsStorage] | None = (
             [FinalObsStorage(async_options.ring_capacity, shard, obs_dim, critic_obs_dim) for shard in env_shards]
             if final_obs_enabled
             else None
         )
-        rings: list[SharedTransitionRing | RingCursors] = [
+        rings: list[HostTransitionRing | RingCursors] = [
             RingCursors()
             if ipc
-            else SharedTransitionRing(
+            else HostTransitionRing(
+                transition_schema,
                 async_options.ring_capacity,
                 shard,
-                obs_dim,
-                critic_obs_dim,
-                act_dim,
-                final_obs_store=final_stores[i] if final_stores is not None else None,
+                payload_store=final_stores[i] if final_stores is not None else None,
             )
             for i, (ipc, shard) in enumerate(zip(ring_ipc, env_shards))
         ]

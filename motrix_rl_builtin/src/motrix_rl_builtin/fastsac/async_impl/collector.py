@@ -22,11 +22,11 @@ from torch import nn
 
 from motrix_rl_builtin.fastsac.async_impl.transport import (
     Control,
-    IpcTransitionRing,
-    SharedTransitionRing,
+    FinalObsPayload,
+    GpuIpcTransitionRing,
+    HostTransitionRing,
     bind_flat_params,
 )
-from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsPayload
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import WeightReceiver
 from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
 from motrix_rl_builtin.fastsac.config import FastSacAgentCfg, FastSacCfg
@@ -63,7 +63,7 @@ class Collector:
         act_dim: int,
         action_scale: torch.Tensor,
         action_bias: torch.Tensor,
-        ring: SharedTransitionRing | IpcTransitionRing,
+        ring: HostTransitionRing | GpuIpcTransitionRing,
         weights: WeightReceiver,
         control: Control,
         collector_device: torch.device,
@@ -247,7 +247,7 @@ class Collector:
         result = self.env.step(actions)
         t_payload = time.perf_counter()
         final_payload = None
-        if self.ring.final_obs_store is not None:
+        if self.ring.payload_store is not None:
             final = result.final_obs
             if final is not None:
                 final_payload = FinalObsPayload(
@@ -261,13 +261,15 @@ class Collector:
         t_push = time.perf_counter()
         # Capacity was established before stepping; no other producer can use it.
         self.ring.push(
-            self.obs.detach(),
-            self.critic_obs.detach(),
-            actions.detach(),
-            rewards,
-            terminated,
-            truncated,
-            final_obs=final_payload,
+            {
+                "obs": self.obs.detach(),
+                "critic_obs": self.critic_obs.detach(),
+                "actions": actions.detach(),
+                "rewards": rewards,
+                "dones": terminated,
+                "truncations": truncated,
+            },
+            payload=final_payload,
         )
         t_bookkeep = time.perf_counter()
 

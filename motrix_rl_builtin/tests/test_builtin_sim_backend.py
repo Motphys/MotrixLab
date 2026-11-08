@@ -11,7 +11,12 @@ import numpy as np
 import pytest
 import torch
 import torch.multiprocessing as mp
-from motrix_rl_builtin.fastsac.async_impl.transport import Control, SharedTransitionRing, StartupHandshake
+from motrix_rl_builtin.fastsac.async_impl.transport import (
+    Control,
+    HostTransitionRing,
+    StartupHandshake,
+    fastsac_transition_schema,
+)
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import HostWeightSender, WeightChannelShared
 from motrix_rl_builtin.fastsac.async_impl.worker import actor_param_numel, run_collector_process
 from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap, FastSacStepResult
@@ -139,12 +144,14 @@ class _AsyncTestEnv(_AsyncEnv, DirectEnv):
         return state
 
     def _make_state(self, value: float) -> ArrayEnvState:
+        # Torch tensor currency (#157): state fields are torch tensors on the
+        # frontend, matching the wrap's expectations after the migration.
         return ArrayEnvState(
-            obs=EnvObs(np.full((self.num_envs, _OBS_DIM), value, dtype=np.float32)),
-            reward=np.full(self.num_envs, value, dtype=np.float32),
-            terminated=np.zeros(self.num_envs, dtype=bool),
-            truncated=np.zeros(self.num_envs, dtype=bool),
-            episode_steps=np.zeros(self.num_envs, dtype=np.uint64),
+            obs=EnvObs(torch.full((self.num_envs, _OBS_DIM), value, dtype=torch.float32)),
+            reward=torch.full((self.num_envs,), value, dtype=torch.float32),
+            terminated=torch.zeros(self.num_envs, dtype=torch.bool),
+            truncated=torch.zeros(self.num_envs, dtype=torch.bool),
+            episode_steps=torch.zeros(self.num_envs, dtype=torch.int64),
             metrics={"progress": 0.5},
         )
 
@@ -180,7 +187,7 @@ def _collect_in_spawn(tmp_path) -> tuple[torch.Tensor, ...]:
     dims = (_OBS_DIM, _OBS_DIM, _ACT_DIM)
     action_scale = torch.ones(_ACT_DIM)
     action_bias = torch.zeros(_ACT_DIM)
-    ring = SharedTransitionRing(2, _NUM_ENVS, *dims)
+    ring = HostTransitionRing(fastsac_transition_schema(*dims), 2, _NUM_ENVS)
     weights = WeightChannelShared(_OBS_DIM)
     control = Control()
     ctx = mp.get_context("spawn")
@@ -188,7 +195,7 @@ def _collect_in_spawn(tmp_path) -> tuple[torch.Tensor, ...]:
     error_queue = ctx.Queue(maxsize=2)
     weight_tx = HostWeightSender(weights, actor_param_numel(cfg, dims, action_scale, action_bias))
     # Ship the real handshake messages: weight slots (publisher learner) and
-    # ring slots (draining learner; None for the host SharedTransitionRing).
+    # ring slots (draining learner; None for the host HostTransitionRing).
     handshake = StartupHandshake(ctx, num_collectors=1, barrier=False)
     handshake.ship_weight_slots(0, weight_tx.params)
     handshake.ship_ring_slots(0, None)
@@ -215,6 +222,7 @@ def _collect_in_spawn(tmp_path) -> tuple[torch.Tensor, ...]:
             "seed": 7,
             "run_dir": str(tmp_path),
             "handshake": handshake,
+            "collector_device": torch.device("cpu"),
         },
     )
 
@@ -238,7 +246,7 @@ def _collect_in_spawn(tmp_path) -> tuple[torch.Tensor, ...]:
     assert control.collector_steps == 1
     count, views = ring.read_span()
     assert count >= 1
-    return tuple(tensor.clone() for tensor in views)
+    return tuple(views[name].clone() for name in ("obs", "critic_obs", "actions", "rewards", "dones", "truncations"))
 
 
 @pytest.mark.integration
@@ -251,12 +259,18 @@ def test_fastsac_async_supports_sim_backends(tmp_path) -> None:
 
     obs, critic_obs, _actions, rewards, dones, truncations = slot
     assert all(
-        (tensor.device.type, tensor.dtype, tensor.shape[:1]) == ("cpu", torch.float32, (_NUM_ENVS,)) for tensor in slot
+        (tensor.device.type, tensor.dtype, tensor.shape[1]) == ("cpu", torch.float32, _NUM_ENVS)
+        for tensor in (obs, critic_obs, _actions, rewards)
     )
-    # The test env steps every field from 0.0 to 1.0: the stored transition
-    # batch must carry the post-step values through the shared ring.
-    torch.testing.assert_close(obs, torch.full_like(obs, 1.0))
-    torch.testing.assert_close(critic_obs, torch.full_like(critic_obs, 1.0))
+    assert all(
+        (tensor.device.type, tensor.dtype, tensor.shape[1]) == ("cpu", torch.int64, _NUM_ENVS)
+        for tensor in (dones, truncations)
+    )
+    # A transition slot stores the PRE-step observation (s_t; the replay
+    # buffer derives next_obs from the successive slot) plus the post-step
+    # reward: init obs is 0.0 and the single step's reward is 1.0.
+    torch.testing.assert_close(obs, torch.full_like(obs, 0.0))
+    torch.testing.assert_close(critic_obs, torch.full_like(critic_obs, 0.0))
     torch.testing.assert_close(rewards, torch.full_like(rewards, 1.0))
     assert not dones.any()
     assert not truncations.any()
