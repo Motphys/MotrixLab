@@ -53,7 +53,7 @@ single source of truth.
 - Require pull requests, at least one maintainer review, and dismissal of stale
   approvals.
 - Require the `Branch policy / validate`, `Tests / pytest (fast)`,
-  `Tests / pytest (numba)`, `PR checks / prek`, and `CodeQL / analyze` status
+  `Tests / pytest (slow)`, `PR checks / prek`, and `CodeQL / analyze` status
   checks.
 - Require approval of all review conversations before merge.
 - Require linear history or squash merging; disable merge commits for ordinary

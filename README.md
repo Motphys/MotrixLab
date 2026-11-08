@@ -15,7 +15,7 @@
 
 _Microduck locomotion policies trained with MotrixLab, rendered in MotrixRender — [watch the HD video](https://github.com/user-attachments/assets/4bcf3122-f135-44cb-a966-d2d8e84479da)._
 
-**📖 Documentation**: [简体中文](https://motrixlab.readthedocs.io/zh-cn/stable/) | [English](https://motrixlab.readthedocs.io/en/stable/)
+**📖 Documentation**: [简体中文](https://motrixlab.readthedocs.io/zh-cn/latest/) | [English](https://motrixlab.readthedocs.io/en/latest/)
 
 </div>
 

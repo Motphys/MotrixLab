@@ -5,8 +5,11 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 
 from motrix_env_core.config.scene import KeyPoseCfg, ModelFileCfg, RobotCfg
+from motrix_env_core.manager.context import BuildContext
+from motrix_env_core.manager.rand import RandValue, initialize_rand_states
 from motrix_env_core.mdp.action import JointPositionActionState
 from motrix_env_core.mdp.observations import (
     ActionsObsCfg,
@@ -15,9 +18,6 @@ from motrix_env_core.mdp.observations import (
     BodyLinearVelocityObsCfg,
     UniformNoiseCfg,
 )
-from motrix_env_core.mdp.state import RandValue
-from motrix_env_core.numba.manager.context import BuildContext
-from motrix_env_core.numba.manager.rand import initialize_rand_states
 from motrix_env_core.sim import (
     BodyJointPositionQuery,
     BodyJointVelocityQuery,
@@ -117,21 +117,22 @@ def test_actions_observation_reads_current_actions() -> None:
     env = SimpleNamespace(action_terms={"joint_position": SimpleNamespace(state=action)})
     cfg = ActionsObsCfg()
     term = cfg.__call__(env)
-    current = np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
-    out = np.empty(term.size, dtype=np.float32)
+    current = np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32)
+    out = torch.empty((1, term.size), dtype=torch.float32)
 
     assert term.size == 3
-    # Manager kernels receive a lane view: queue shape is (W, A), not (N, W, A).
-    queue = np.zeros((2, 3), dtype=np.float32)
-    queue[1] = current
-    lane_state = SimpleNamespace(
-        current=lambda: queue[1],
+    # The batched context exposes the whole-batch queue; current() is the
+    # queue row the action pointer selects.
+    queue = torch.zeros((1, 2, 3), dtype=torch.float32)
+    queue[:, 1] = torch.from_numpy(current)
+    batch_state = SimpleNamespace(
+        current=lambda: queue[:, 1],
         action_queue=queue,
-        action_ptr=np.asarray([1], dtype=np.int64),
+        action_ptr=torch.asarray([1], dtype=torch.int64),
     )
-    ctx = SimpleNamespace(actions={"joint_position": lane_state})
+    ctx = SimpleNamespace(actions={"joint_position": batch_state})
     term.dispatch(ctx, out, *term.args)
-    np.testing.assert_array_equal(out, current)
+    np.testing.assert_array_equal(out.numpy(), current)
 
 
 def test_robot_observation_cfg_uses_sim_query_layout_and_robot_key_pose() -> None:
@@ -167,35 +168,33 @@ def test_robot_dof_pos_rel_obs_cfg_requires_scene_robot() -> None:
 
 def test_robot_base_velocities_are_expressed_in_the_base_local_frame() -> None:
     half_sqrt_two = np.float32(np.sqrt(0.5))
-    base_quat = np.asarray([0.0, 0.0, half_sqrt_two, half_sqrt_two], dtype=np.float32)
-    linear_velocity = np.asarray([1.0, 0.0, 0.0], dtype=np.float32)
-    angular_velocity = np.asarray([0.0, 2.0, 0.0], dtype=np.float32)
-    noise = RandValue(np.asarray([1], dtype=np.uint64))
+    base_quat = torch.from_numpy(np.asarray([[0.0, 0.0, half_sqrt_two, half_sqrt_two]], dtype=np.float32))
+    linear_velocity = torch.from_numpy(np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32))
+    angular_velocity = torch.from_numpy(np.asarray([[0.0, 2.0, 0.0]], dtype=np.float32))
     linear = BodyLinearVelocityObsCfg().__call__(_env())
     angular = BodyAngularVelocityObsCfg().__call__(_env())
-    linear_out = np.empty(3, dtype=np.float32)
-    angular_out = np.empty(3, dtype=np.float32)
+    linear_out = torch.empty((1, 3), dtype=torch.float32)
+    angular_out = torch.empty((1, 3), dtype=torch.float32)
 
-    # Str args name sim keys; the compiler resolves them to lane arrays, so a
-    # direct dispatch call substitutes them explicitly.
-    ctx = SimpleNamespace(rand=noise)
-    linear.dispatch(ctx, linear_out, base_quat, linear_velocity, *linear.args[2:])
-    angular.dispatch(ctx, angular_out, base_quat, angular_velocity, *angular.args[2:])
+    # Str args name sim keys; the resolver binds them to whole-batch arrays,
+    # so a direct dispatch call substitutes them explicitly.
+    linear.dispatch(None, linear_out, base_quat, linear_velocity, *linear.args[2:])
+    angular.dispatch(None, angular_out, base_quat, angular_velocity, *angular.args[2:])
 
-    np.testing.assert_allclose(linear_out, [0.0, -1.0, 0.0], atol=1e-6)
-    np.testing.assert_allclose(angular_out, [2.0, 0.0, 0.0], atol=1e-6)
+    np.testing.assert_allclose(linear_out.numpy()[0], [0.0, -1.0, 0.0], atol=1e-6)
+    np.testing.assert_allclose(angular_out.numpy()[0], [2.0, 0.0, 0.0], atol=1e-6)
 
 
 def test_robot_observation_noise_uses_one_stateful_sequence_per_environment() -> None:
-    dof_vel = np.asarray([1.0, 2.0], dtype=np.float32)
+    dof_vel = torch.from_numpy(np.tile(np.asarray([1.0, 2.0], dtype=np.float32), (2, 1)))
     term = BodyJointVelObsCfg(noise=UniformNoiseCfg(amplitude=0.25)).__call__(_env())
 
-    def evaluate(rng_states: np.ndarray) -> np.ndarray:
-        out = np.empty((2, dof_vel.shape[0]), dtype=np.float32)
-        for env_id in range(2):
-            ctx = SimpleNamespace(rand=RandValue(rng_states[env_id]))
-            term.dispatch(ctx, out[env_id], dof_vel, *term.args[1:])
-        return out
+    def evaluate(rng_states: torch.Tensor) -> np.ndarray:
+        out = torch.empty((2, dof_vel.shape[1]), dtype=torch.float32)
+        # The batch context shares (and advances) the per-env RNG state in place.
+        rand = RandValue(rng_states)
+        term.dispatch(SimpleNamespace(rand=rand), out, dof_vel, *term.args[1:])
+        return out.numpy()
 
     rng_states = initialize_rand_states(2, rand_seed=7)
     first = evaluate(rng_states)
@@ -206,6 +205,6 @@ def test_robot_observation_noise_uses_one_stateful_sequence_per_environment() ->
     np.testing.assert_array_equal(reproduced, first)
     assert np.any(continued != first)
     assert np.any(different_seed != first)
-    assert np.all(first >= dof_vel - 0.25)
-    assert np.all(first < dof_vel + 0.25)
+    assert np.all(first >= dof_vel.numpy() - 0.25)
+    assert np.all(first < dof_vel.numpy() + 0.25)
     assert not np.array_equal(first[0], first[1])

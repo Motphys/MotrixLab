@@ -71,7 +71,7 @@ CUDA 推理的数据边界为：CPU policy observation 先复制到预分配 pin
 
 ```
 motrix_rl/src/motrix_rl/fastsac/
-├── agent.py / buffer.py / networks.py / wrap_np.py
+├── agent.py / buffer.py / networks.py / wrap.py
 ├── config.py                 # FastSacCfg 与共享配置
 ├── framework.py              # 注册 motrix.fastsac，根据配置选择 Trainer
 ├── sync/
@@ -85,7 +85,7 @@ motrix_rl/src/motrix_rl/fastsac/
     └── train.py              # Trainer(TrainerBase)：分配共享内存、spawn 两进程、编排生命周期
 ```
 
-**复用（import，不复制）**：`fastsac.networks.{Actor, Critic}`、`fastsac.buffer.{SimpleReplayBuffer, EmpiricalNormalization}`、`fastsac.agent.FastSacAgent`、`fastsac.wrap_np.FastSacNpEnvWrap`、`fastsac.config.FastSacAgentCfg`。
+**复用（import，不复制）**：`fastsac.networks.{Actor, Critic}`、`fastsac.buffer.{SimpleReplayBuffer, EmpiricalNormalization}`、`fastsac.agent.FastSacAgent`、`fastsac.wrap.FastSacEnvWrap`、`fastsac.config.FastSacAgentCfg`。
 
 **Framework 接入**：`FastSacProvider` 以 `agent_name="fastsac"` 注册在 `motrix` framework 下，`train_backend="torch"`、`checkpoint_format="pt"`。`create_trainer` 根据 `FastSacCfg.asynchronous` 返回同步或异步 Trainer，因此两种拓扑天然共用 checkpoint 与 play 路径。
 

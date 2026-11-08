@@ -3,8 +3,7 @@
 
 """Task-specific random planar-velocity command binding for quadruped training."""
 
-import numpy as np
-from numpy.typing import NDArray
+import torch
 
 from motrix_env_core.input import CommandBinding, PlanarVelocityCommand
 
@@ -14,10 +13,10 @@ class RandomPlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
 
     def __init__(
         self,
-        lower: NDArray[np.float32],
-        upper: NDArray[np.float32],
+        lower: torch.Tensor,
+        upper: torch.Tensor,
         *,
-        rng: np.random.Generator,
+        rng: torch.Generator,
         standing_probability: float = 0.0,
     ) -> None:
         self._lower = lower
@@ -26,11 +25,12 @@ class RandomPlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
         self._rng = rng
 
     def read_command(self, *, batch_size: int = 1) -> PlanarVelocityCommand:
-        values = self._rng.uniform(self._lower, self._upper, size=(batch_size, 3))
+        u = torch.rand((batch_size, 3), generator=self._rng)
+        values = self._lower + (self._upper - self._lower) * u
         if self._standing_probability > 0.0:
-            standing = self._rng.random(batch_size) < self._standing_probability
+            standing = torch.rand((batch_size,), generator=self._rng) < self._standing_probability
             values[standing] = 0.0
-        return PlanarVelocityCommand(values.astype(np.float32))
+        return PlanarVelocityCommand(values)
 
 
 __all__ = ["RandomPlanarVelocityBinding"]

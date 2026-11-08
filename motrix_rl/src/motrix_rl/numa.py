@@ -3,7 +3,7 @@
 
 """Lightweight Linux NUMA discovery and placement shared by training and benches.
 
-Importing this module does not load NumPy, Torch, Numba, or the simulator;
+Importing this module does not load NumPy, Torch, or the simulator;
 the package initializer may load other framework dependencies. Memory policies
 affect future allocations of the calling thread and are inherited by new threads
 and spawned processes; apply placement before runtime initialization.

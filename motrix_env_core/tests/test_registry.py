@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import gymnasium as gym
 import numpy as np
 import pytest
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -16,7 +17,7 @@ from motrix_env_core.base import ABEnv
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import MjcfFileCfg, RobotCfg, SceneCfg
 from motrix_env_core.direct.env import DirectEnv, DirectEnvCfg
-from motrix_env_core.numba.manager.env import ManagerBasedEnvCfg, ManagerEnv
+from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
 from motrix_env_core.sim import ModelQuery
 from motrix_env_core.sim.backend import SimBackend
 from motrix_env_core.sim.model import SimModel
@@ -133,30 +134,30 @@ def test_importing_framework_does_not_import_builtin_environments():
 
 
 @pytest.mark.parametrize("base_class", [DirectEnv, ManagerEnv])
-def test_environment_backend_is_inferred_from_base_class(base_class) -> None:
+def test_environment_registration_requires_supported_base_class(base_class, monkeypatch) -> None:
     class CustomEnvironment(base_class):
         pass
 
-    assert registry._infer_sim_backend(CustomEnvironment) == "np"
+    meta = registry.EnvMeta(env_cfg_cls=registry.EnvCfg, env_cfg_factory=registry.EnvCfg)
+    monkeypatch.setitem(registry._envs, "scratch-env", meta)
+    registry.register_env("scratch-env", CustomEnvironment)
+    assert registry._env_cls_or_raise("scratch-env", meta) is CustomEnvironment
 
     class UnknownEnv(ABEnv):
         pass
 
-    with pytest.raises(ValueError, match="must inherit DirectEnv or TorchEnv"):
-        registry._infer_sim_backend(UnknownEnv)
+    with pytest.raises(TypeError, match="must inherit DirectEnv or ManagerEnv"):
+        registry.register_env("scratch-env", UnknownEnv)
 
 
-def test_environment_metadata_resolves_the_registered_backend() -> None:
-    class TorchEnv(ABEnv):
-        pass
+def test_environment_metadata_requires_a_registered_class() -> None:
+    meta = registry.EnvMeta(env_cfg_cls=registry.EnvCfg, env_cfg_factory=registry.EnvCfg)
 
-    meta = registry.EnvMeta(
-        env_cfg_cls=registry.EnvCfg,
-        env_cfg_factory=registry.EnvCfg,
-        env_cls_dict={"np": DirectEnv, "torch": TorchEnv},
-    )
+    with pytest.raises(ValueError, match="has no registered environment class"):
+        registry._env_cls_or_raise("test-env", meta)
 
-    assert registry._resolve_backend("test-env", meta) == ("np", DirectEnv)
+    meta = registry.EnvMeta(env_cfg_cls=registry.EnvCfg, env_cfg_factory=registry.EnvCfg, env_cls=DirectEnv)
+    assert registry._env_cls_or_raise("test-env", meta) is DirectEnv
 
 
 def test_manager_seed_is_passed_to_manager_environment():
@@ -195,13 +196,13 @@ def test_custom_environment_can_be_registered_and_created_without_builtins():
         def action_space(self) -> gym.spaces.Box:
             return gym.spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32)
 
-        def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+        def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
             return state
 
         def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
             return state
 
-        def reset(self, env_ids: np.ndarray) -> None:
+        def reset(self, env_ids: torch.Tensor) -> None:
             pass
 
     env = registry.make(env_name, num_envs=2, sim="fake-registry")
@@ -254,13 +255,13 @@ def test_direct_env_resolves_sim_backend_through_registry():
         def action_space(self) -> gym.spaces.Box:
             return gym.spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32)
 
-        def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+        def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
             return state
 
         def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
             return state
 
-        def reset(self, env_ids: np.ndarray) -> None:
+        def reset(self, env_ids: torch.Tensor) -> None:
             pass
 
     env = registry.make(env_name, num_envs=2, sim="fake-registry")
@@ -430,4 +431,4 @@ def test_env_plugin_registration_conflicts_are_not_silently_skipped(monkeypatch)
     with pytest.raises(ValueError, match="Environment 'manual' is already registered"):
         registry.make_env_config("manual")
     assert registry._envs["manual"].env_cfg_cls is _PluginEnvCfg
-    assert registry._envs["manual"].env_cls_dict == {"np": _PluginEnv}
+    assert registry._envs["manual"].env_cls is _PluginEnv

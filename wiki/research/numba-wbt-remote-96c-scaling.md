@@ -146,7 +146,7 @@ pre-kernel(advance+clip) -> [host: clip-end reset, 罕见] -> _read_kernel_input
 
 ### 基准方法
 
-以下 `update_state` 数据来自 `a.epyc.mp`,每项预热后运行 100 次并取中位数。它使用对应 commit 中现已删除的
+以下 `update_state` 数据来自远端 EPYC 96 核机器（见文首机器对比表），每项预热后运行 100 次并取中位数。它使用对应 commit 中现已删除的
 legacy task-compute 专项入口；当前仓库没有可用的端到端 A/B 命令复现这组历史数据，因此下表仅作为阶段性历史记录。
 旧/新代码均使用同一 Python 3.10.20、Numba 0.61.2、NumPy 2.2.6 和 MotrixSim
 0.9.1.dev115457,并固定 `RAYON_NUM_THREADS=8` / `NUMBA_NUM_THREADS=48`。

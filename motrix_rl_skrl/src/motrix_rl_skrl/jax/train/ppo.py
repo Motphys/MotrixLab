@@ -84,6 +84,9 @@ class PPO(BasePPO):
 
         if "Reward" in infos:
             for key, value in infos["Reward"].items():
+                # Manager environments hand out torch tensors; take the
+                # zero-copy numpy view for the JAX statistics path.
+                value = np.asarray(value)
                 self.tracking_data[f"Reward Instant / {key} (max)"].append(jnp.max(value))
                 self.tracking_data[f"Reward Instant / {key} (min)"].append(jnp.min(value))
                 self.tracking_data[f"Reward Instant / {key} (mean)"].append(jnp.mean(value))

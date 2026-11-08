@@ -14,12 +14,11 @@
 <rect x="540" y="42" width="220" height="36" rx="8" fill="#1d2a40" stroke="#5b93e0"/><text x="650" y="65" text-anchor="middle" class="stage" fill="#ffffff">compute_transition</text>
 <rect x="540" y="86" width="220" height="36" rx="6" fill="#1a2e21" stroke="#3fb950"/><text x="550" y="101" class="chip" fill="#63d47e">evaluate kernel</text>
 <text x="550" y="115" class="sub" fill="#63d47e">update &#183; rewards &#183; terminations &#183; advance</text>
-<rect x="540" y="128" width="220" height="22" rx="6" fill="#251d38" stroke="#9775fa"/><text x="550" y="143" class="chip" fill="#c5b3ff">command &#183; on_transition()</text>
 </g>
 <g stroke="#8a939e" stroke-width="1.4" fill="#8a939e">
 <path d="M240 60h40l-7-4 7 4-7 4z"/><path d="M500 60h40l-7-4 7 4-7 4z"/>
 <path d="M126 80h8l-4 6zM126 108h8l-4 6zM386 80h8l-4 6z"/>
-<path d="M646 80h8l-4 6zM646 122h8l-4 6z"/>
+<path d="M646 80h8l-4 6z"/>
 </g>
 
 <!-- Centered truncation check and the done? branch -->
@@ -39,7 +38,7 @@
 <rect x="20" y="344" width="220" height="36" rx="6" fill="#251d38" stroke="#9775fa"/><text x="30" y="359" class="chip" fill="#c5b3ff">host-side resets</text>
 <text x="30" y="373" class="sub" fill="#c5b3ff">command reset(ctx) &#183; action reset(env_ids)</text>
 <rect x="20" y="386" width="220" height="36" rx="6" fill="#1a2e21" stroke="#3fb950"/><text x="30" y="401" class="chip" fill="#63d47e">reset kernel</text>
-<text x="30" y="415" class="sub" fill="#63d47e">reset_env hooks &#8594; sim_reset terms</text>
+<text x="30" y="415" class="sub" fill="#63d47e">reset hooks &#8594; sim_reset terms</text>
 <rect x="20" y="428" width="220" height="22" rx="6" fill="#1a1b1e" stroke="#3fb950" stroke-dasharray="4 3"/><text x="30" y="443" class="chip" fill="#63d47e">sim_reset_requested rows join this run</text>
 <g stroke="#8a939e" stroke-width="1.2" fill="#8a939e"><path d="M126 338h8l-4 6zM126 380h8l-4 6z"/></g>
 
@@ -53,6 +52,6 @@
 
 <!-- Legend -->
 <rect x="24" y="478" width="13" height="13" rx="3" fill="#1d2a40" stroke="#5b93e0"/><text x="44" y="489" class="legend" fill="#a8b0ba">ArrayEnv framework stage</text>
-<rect x="210" y="478" width="13" height="13" rx="3" fill="#1a2e21" stroke="#3fb950"/><text x="230" y="489" class="legend" fill="#a8b0ba">Manager kernel (@dispatch)</text>
+<rect x="210" y="478" width="13" height="13" rx="3" fill="#1a2e21" stroke="#3fb950"/><text x="230" y="489" class="legend" fill="#a8b0ba">Manager kernel</text>
 <rect x="420" y="478" width="13" height="13" rx="3" fill="#251d38" stroke="#9775fa"/><text x="440" y="489" class="legend" fill="#a8b0ba">Manager host-side callback</text>
 </svg>

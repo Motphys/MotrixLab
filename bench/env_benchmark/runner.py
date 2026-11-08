@@ -68,7 +68,7 @@ def run_steps(
     expected_spec = None
     names = [args.env] + ([args.compare_env] if args.compare_env is not None else [])
     with redirect_stdout(sys.stderr) if args.json else redirect_stdout(sys.stdout):
-        np, _ = workload.load_runtime()
+        np, _, _ = workload.load_runtime()
         for name in names:
             env, actions, expected_spec = workload.prepare_env(name, args, num_envs, actions, expected_spec)
             try:

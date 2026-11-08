@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from motrix_env_core.numba.manager.rand import RandValue, initialize_rand_states
+from motrix_env_core.manager.rand import RandValue, initialize_rand_states
 
 if TYPE_CHECKING:
     from motrix_env_core.manager import ManagerEnv
@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
 def _create_rand_value(env: ManagerEnv) -> RandValue:
     """Create the framework-owned per-environment PRNG state."""
+    # View the uint64 bit buffer as signed int64 so Torch kernels can consume
+    # it directly; the SplitMix64 bit pattern is preserved exactly.
     return RandValue(initialize_rand_states(env.num_envs, env._rand_seed))
 
 

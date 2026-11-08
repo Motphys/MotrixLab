@@ -1,15 +1,15 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-import abc
 from dataclasses import dataclass
 
 import gymnasium as gym
-import numpy as np
 import torch
 
 from motrix_env_core.array.env import FinalObs
 from motrix_env_core.base import ABEnv
+from motrix_env_core.renderer import RenderConfig, create_renderer
+from motrix_rl.utils import env_infos
 
 
 @dataclass
@@ -29,14 +29,20 @@ class FastSacStepResult:
     info: dict
 
 
-class FastSacEnvWrap(abc.ABC):
-    """Base environment adapter consumed by FastSAC."""
+class FastSacEnvWrap:
+    """Environment adapter consumed by FastSAC.
 
-    def __init__(
-        self,
-        env: ABEnv,
-        device: torch.device,
-    ) -> None:
+    Wraps a Motrix environment (``ArrayEnv`` frontends) as the torch-tensor
+    vectorized environment consumed by FastSAC. The frontend already exposes
+    torch state and consumes torch actions; state passes through with only a
+    device move to the trainer device. Environments simulate on CPU, so the
+    actor maps its tanh output to the action range declared by the
+    environment and the wrapper clips on CPU before stepping. Done
+    environments are auto-reset by the environment; the returned observation
+    is therefore the post-reset observation for those environments.
+    """
+
+    def __init__(self, env: ABEnv, device: torch.device, render: RenderConfig | None = None) -> None:
         action_space = env.action_space
         if not isinstance(action_space, gym.spaces.Box):
             raise TypeError("FastSAC supports only Box action spaces.")
@@ -44,9 +50,10 @@ class FastSacEnvWrap(abc.ABC):
         self._env = env
         self.device = device
         self.num_envs = env.num_envs
-        self._low = np.asarray(action_space.low, dtype=np.float32)
-        self._high = np.asarray(action_space.high, dtype=np.float32)
-        self._renderer = None
+        # Bounds live on CPU alongside the env-bound actions clamped in step.
+        self._low_t = torch.as_tensor(action_space.low, dtype=torch.float32)
+        self._high_t = torch.as_tensor(action_space.high, dtype=torch.float32)
+        self._renderer = create_renderer(env, render)
 
     @property
     def env(self) -> ABEnv:
@@ -54,20 +61,30 @@ class FastSacEnvWrap(abc.ABC):
 
     @property
     def action_low(self) -> torch.Tensor:
-        return torch.as_tensor(self._low, dtype=torch.float32, device=self.device)
+        return self._low_t.to(self.device)
 
     @property
     def action_high(self) -> torch.Tensor:
-        return torch.as_tensor(self._high, dtype=torch.float32, device=self.device)
+        return self._high_t.to(self.device)
 
-    @abc.abstractmethod
-    def reset(self) -> tuple[torch.Tensor, torch.Tensor]: ...
+    def reset(self) -> tuple[torch.Tensor, torch.Tensor]:
+        state = self._env.init_state()
+        return state.obs.policy.to(self.device), state.obs.value_or_policy.to(self.device)
 
-    @abc.abstractmethod
-    def step(
-        self,
-        actions: torch.Tensor,
-    ) -> FastSacStepResult: ...
+    def step(self, actions: torch.Tensor) -> FastSacStepResult:
+        env_actions = torch.clamp(actions.detach().cpu(), self._low_t, self._high_t)
+        state = self._env.step(env_actions)
+        return FastSacStepResult(
+            obs=state.obs.policy.to(self.device),
+            critic_obs=state.obs.value_or_policy.to(self.device),
+            reward=state.reward.to(self.device),
+            terminated=state.terminated.to(device=self.device, dtype=torch.bool),
+            truncated=state.truncated.to(device=self.device, dtype=torch.bool),
+            # None when no row truncated or the implementation does not
+            # capture finals.
+            final_obs=state.final_obs,
+            info=env_infos(state),
+        )
 
     @property
     def max_episode_steps(self) -> int | None:

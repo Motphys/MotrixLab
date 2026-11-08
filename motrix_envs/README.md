@@ -38,16 +38,16 @@ for the plugin contract and an external-package example.
 `motrix_envs.core` mirrors the complete public API exported by `motrix_env_core`:
 
 ```python
-from motrix_envs.core import EnvCfg, NpEnv, SceneCfg, configclass, registry
+from motrix_envs.core import EnvCfg, SceneCfg, configclass, registry
 ```
 
 Projects that only need the environment framework should install `motrix-env-core` and import it directly:
 
 ```python
-from motrix_env_core import EnvCfg, NpEnv, SceneCfg, configclass, registry
+from motrix_env_core import EnvCfg, SceneCfg, configclass, registry
 ```
 
-Framework imports such as `motrix_envs.np.env` move to `motrix_env_core` or the `motrix_envs.core` facade. Concrete
+Framework imports move to `motrix_env_core` or the `motrix_envs.core` facade. Concrete
 environment paths under `motrix_envs.basic`, `motrix_envs.locomotion`, and `motrix_envs.manipulation` remain stable.
 
 ## Registration

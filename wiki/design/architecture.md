@@ -86,8 +86,8 @@ RL 框架集成层通过 Wrapper 把这些通用接口适配到具体框架：
 ```
 ABEnv (motrix_envs)
   │
-  └── DirectEnv ─→ SkrlNpWrapper   ──→ SKRL Trainer
-               ─→ RslrlNpEnvWrap ──→ RSLRL Trainer
+  └── DirectEnv ─→ SkrlTorchEnvWrap   ──→ SKRL Trainer
+               ─→ RslrlEnvWrap ──→ RSLRL Trainer
 ```
 
 Wrapper 是唯一允许同时引用 `motrix_envs` 类型和 RL 框架类型的地方。环境代码不知道自己会被哪个框架训练；RL 框架代码通过 Wrapper 屏蔽仿真后端差异。
@@ -301,15 +301,15 @@ motrix_env_core.registry.make("cartpole"): 查找 CartPoleEnvCfg + CartPoleEnv(D
   │                                      创建 SceneData(batch=[2048])
   │
   ▼
-wrap_env(): DirectEnv → SkrlNpWrapper（torch.Tensor 接口）
+wrap_env(): DirectEnv → SkrlTorchEnvWrap（torch.Tensor 接口）
   │
   ▼
 Trainer.train(): 构建 PPO Agent + SequentialTrainer → 训练循环
   │
   ▼
 每个 step:
-  SkrlNpWrapper.step(torch.Tensor)
-    → actions.cpu().numpy()
-    → CartPoleEnv.step(np.ndarray) → ArrayEnvState
-    → torch.tensor(state.obs) → 返回给 PPO
+  SkrlTorchEnvWrap.step(torch.Tensor)
+    → actions.to(torch.float32).cpu()
+    → CartPoleEnv.step(torch.Tensor) → ArrayEnvState（torch 张量）
+    → state.obs.policy.to(device) → 返回给 PPO
 ```

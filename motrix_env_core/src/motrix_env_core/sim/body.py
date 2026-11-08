@@ -25,6 +25,7 @@ Cross-backend invariants:
 from __future__ import annotations
 
 import numpy as np
+import torch
 
 from motrix_env_core.config.scene.base import RobotCfg
 from motrix_env_core.sim.model import ActuatorSpec, BodyModel
@@ -119,7 +120,8 @@ def assemble_body_model(
         robot_cfg: The scene's ``RobotCfg`` when the body declares key poses.
 
     Returns:
-        The assembled body model with a baked init snapshot.
+        The assembled body model with a baked init snapshot (float32 torch
+        tensors; backend-extracted numpy facts are converted at this boundary).
 
     Raises:
         ValueError: If array shapes disagree with the name axes, or the
@@ -165,11 +167,11 @@ def assemble_body_model(
         base_link_name=base_link_name,
         link_names=tuple(link_names),
         joint_names=joint_names,
-        joint_pos_limits=limits,
+        joint_pos_limits=None if limits is None else (torch.from_numpy(limits[0]), torch.from_numpy(limits[1])),
         actuators=body_actuators,
-        init_base_position=init_base_position,
-        init_base_quat=init_base_quat,
-        init_joint_pos=init_joint_pos,
-        init_link_positions=positions,
-        init_link_quats=quats,
+        init_base_position=torch.from_numpy(init_base_position),
+        init_base_quat=torch.from_numpy(init_base_quat),
+        init_joint_pos=torch.from_numpy(init_joint_pos),
+        init_link_positions=torch.from_numpy(positions),
+        init_link_quats=torch.from_numpy(quats),
     )
