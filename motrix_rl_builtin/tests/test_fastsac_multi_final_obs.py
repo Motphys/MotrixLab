@@ -9,21 +9,27 @@ import pytest
 import torch
 from fastsac_async_mocks import make_mock_learner
 from motrix_rl_builtin.fastsac.async_impl.learner import DrainStaging
-from motrix_rl_builtin.fastsac.async_impl.transport import IpcTransitionRing, RingCursors
-from motrix_rl_builtin.fastsac.async_impl.transport.ring import (
+from motrix_rl_builtin.fastsac.async_impl.transport import (
     FinalObsPayload,
     FinalObsStorage,
-    SharedTransitionRing,
+    GpuIpcTransitionRing,
+    HostTransitionRing,
+    RingCursors,
+    fastsac_transition_schema,
 )
 from motrix_rl_builtin.fastsac.buffer import SimpleReplayBuffer
+
+
+def _schema():
+    return fastsac_transition_schema(2, 3, 1)
 
 
 def _ring(num_envs, capacity=5, *, ipc=False):
     final = FinalObsStorage(capacity, num_envs, 2, 3)
     if ipc:
-        slots = torch.zeros(capacity, num_envs, 2 + 3 + 1 + 3, device="cuda")
-        return IpcTransitionRing(RingCursors(), slots, capacity, num_envs, 2, 3, 1, final_obs_store=final)
-    return SharedTransitionRing(capacity, num_envs, 2, 3, 1, final_obs_store=final)
+        slots = torch.zeros(capacity, num_envs, _schema().feature_width, device="cuda")
+        return GpuIpcTransitionRing(RingCursors(), slots, _schema(), capacity, num_envs, payload_store=final)
+    return HostTransitionRing(_schema(), capacity, num_envs, payload_store=final)
 
 
 def _rows(generation, env_ids, terminal=False):
@@ -44,13 +50,15 @@ def _push(ring, generation, offset, ids):
         final_obs, final_critic = _rows(generation, [offset + i for i in ids], terminal=True)
         payload = FinalObsPayload(torch.tensor(ids), final_obs, final_critic)
     return ring.push(
-        obs,
-        critic,
-        torch.zeros(ring.num_envs, 1),
-        torch.ones(ring.num_envs),
-        torch.zeros_like(truncated),
-        truncated,
-        final_obs=payload,
+        {
+            "obs": obs,
+            "critic_obs": critic,
+            "actions": torch.zeros(ring.num_envs, 1),
+            "rewards": torch.ones(ring.num_envs),
+            "dones": torch.zeros_like(truncated),
+            "truncations": truncated,
+        },
+        payload,
     )
 
 
@@ -72,7 +80,10 @@ def _learner(rings, *, device="cpu", n_steps=1, buffer_size=8, staging=False):
     learner.ddp_rank = 2
     if staging:
         learner._staging = DrainStaging(
-            learner.agent.rb, learner.async_options.max_ingest_per_iter, learner.agent.device
+            learner.agent.rb,
+            learner.async_options.max_ingest_per_iter,
+            learner.agent.device,
+            tuple((f.name, f.per_env_shape, f.dtype) for f in _schema().fields),
         )
     return learner
 

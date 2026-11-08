@@ -5,7 +5,7 @@
 
 Unlike the sync trainer it does NOT step the env. It drains raw transitions from
 the shared transition ring (host fields or CUDA-IPC device fields, see
-``transport/ring.py`` / ``transport/ipc_ring.py``) into the agent's GPU replay buffer, runs
+``transport/ring.py`` / ``transport/gpu_ipc_ring.py``) into the agent's GPU replay buffer, runs
 gradient updates governed by ``utd_mode`` (§6 of the design), and periodically
 publishes actor weights + obs-normalizer stats to the collector via its
 :class:`~motrix_rl_builtin.fastsac.async_impl.transport.WeightSender` endpoint.
@@ -26,10 +26,10 @@ import torch.distributed as dist
 from motrix_rl_builtin.fastsac.agent import FastSacAgent
 from motrix_rl_builtin.fastsac.async_impl.transport import (
     Control,
-    IpcTransitionRing,
-    SharedTransitionRing,
+    FinalObsPayload,
+    GpuIpcTransitionRing,
+    HostTransitionRing,
 )
-from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsPayload
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import WeightSender
 from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
 from motrix_rl_builtin.fastsac.config import FastSacCfg
@@ -45,7 +45,7 @@ class CollectorEndpoint:
     misordered pair silently cross-wires two collectors.
     """
 
-    ring: SharedTransitionRing | IpcTransitionRing
+    ring: HostTransitionRing | GpuIpcTransitionRing
     weight_sender: WeightSender
 
 
@@ -110,19 +110,26 @@ class DrainStaging:
     * :meth:`finish` — block until everything landed (end of ingesting).
     """
 
-    def __init__(self, rb, chunk: int, device: torch.device):
+    def __init__(
+        self,
+        rb,
+        chunk: int,
+        device: torch.device,
+        field_layout: tuple[tuple[str, tuple[int, ...], torch.dtype], ...],
+    ):
+        """Pinned-staging H2D pipeline for host-ring shards on a CUDA learner.
+
+        ``field_layout`` is the transition schema's
+        ``(name, per_env_shape, dtype)`` sequence; the pinned buffers are
+        allocated per field from it (schema order is the ingest order the
+        replay buffer's ``extend_batch`` expects).
+        """
         self.rb = rb
         self.stream = torch.cuda.Stream(device=device)
         self.event = torch.cuda.Event()
         self.pending = False
-        pin = lambda *shape: torch.empty(*shape, pin_memory=True)  # noqa: E731
-        self.buffers = (
-            pin(chunk, rb.n_env, rb.n_obs),
-            pin(chunk, rb.n_env, rb.n_critic_obs),
-            pin(chunk, rb.n_env, rb.n_act),
-            pin(chunk, rb.n_env),
-            torch.empty(chunk, rb.n_env, dtype=torch.int64, pin_memory=True),
-            torch.empty(chunk, rb.n_env, dtype=torch.int64, pin_memory=True),
+        self.buffers = tuple(
+            torch.empty(chunk, rb.n_env, *shape, dtype=dtype, pin_memory=True) for _name, shape, dtype in field_layout
         )
 
     def acquire(self) -> None:
@@ -198,11 +205,14 @@ class Learner:
         # the staged async H2D pipeline (DrainStaging); pure-IPC and MIXED
         # ranks lift host shards at assembly and consume everything D2D
         # (see _drain_rings), so staging would be dead weight there.
-        has_host = any(not isinstance(ring, IpcTransitionRing) for ring in self.rings)
-        has_ipc = any(isinstance(ring, IpcTransitionRing) for ring in self.rings)
+        has_host = any(not isinstance(ring, GpuIpcTransitionRing) for ring in self.rings)
+        has_ipc = any(isinstance(ring, GpuIpcTransitionRing) for ring in self.rings)
         self._staging: DrainStaging | None = None
         if agent.device.type == "cuda" and has_host and not has_ipc:
-            self._staging = DrainStaging(agent.rb, max(self.async_options.max_ingest_per_iter, 1), agent.device)
+            field_layout = tuple((f.name, f.per_env_shape, f.dtype) for f in self.rings[0].schema.fields)
+            self._staging = DrainStaging(
+                agent.rb, max(self.async_options.max_ingest_per_iter, 1), agent.device, field_layout
+            )
         # This rank owns and publishes to its own collectors only; the parent
         # passes exactly the endpoints selected by the channel topology.
         # DDP replica id (multi-learner); None keeps the single-learner path.
@@ -261,13 +271,21 @@ class Learner:
             if avail <= 0:
                 continue
             count, views = ring.read_span()
+            # The IPC ring bounds availability by ISSUED reads (commit events
+            # may still be in flight), which can lag the size()-based estimate
+            # above — an empty span is a benign "nothing readable yet".
+            if count <= 0:
+                continue
+            # Schema order is the single positional authority downstream
+            # (GenerationAssembler shards, staged ingest, replay extend).
+            views = tuple(views[field.name] for field in ring.schema.fields)
             # PURE-HOST rank (self._staging): keep the host views — the staged
             # pipeline moves them with async H2D on the copy stream,
             # overlapping the next gradient update. MIXED rank: lift host
             # shards to the device at assembly so the merge is single-device
             # D2D; IPC shards are already there. Host ring on CPU consumes
             # directly into the buffer.
-            if self._staging is None and not isinstance(ring, IpcTransitionRing):
+            if self._staging is None and not isinstance(ring, GpuIpcTransitionRing):
                 views = tuple(view.to(self.agent.device) for view in views)
             count = min(count, avail)
             for offset in range(count):
@@ -311,12 +329,12 @@ class Learner:
         # Payload belongs to the same unread slots, not a separately stamped
         # event stream. It is copied to owned rows before acknowledging slots.
         final_payloads = None
-        if len(self.rings) == 1 and self.rings[0].final_obs_store is not None:
-            final_payloads = self.rings[0].read_final_span(len(generations))
-        elif self.rings[0].final_obs_store is not None:
+        if len(self.rings) == 1 and self.rings[0].payload_store is not None:
+            final_payloads = self.rings[0].read_payload_span(len(generations))
+        elif self.rings[0].payload_store is not None:
             # Ring env ids are shard-local; replay ids are local to this rank,
             # with the same collector-order blocks as the transition merge above.
-            shards = [ring.read_final_span(len(generations)) for ring in self.rings]
+            shards = [ring.read_payload_span(len(generations)) for ring in self.rings]
             final_payloads = []
             for generation in zip(*shards):
                 parts = []

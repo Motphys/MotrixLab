@@ -205,21 +205,23 @@ def test_extend_batch_matches_extend_across_wrap():
 
 def test_ring_read_span_fifo_and_no_wrap():
     """Contiguous-run consumption is FIFO, in-order, and never crosses the wrap."""
-    from motrix_rl_builtin.fastsac.async_impl.transport import SharedTransitionRing
+    from motrix_rl_builtin.fastsac.async_impl.transport import HostTransitionRing, fastsac_transition_schema
 
     capacity, num_envs, obs_dim, act_dim = 5, 3, 4, 2
 
     def push(ring, t):
         return ring.push(
-            torch.full((num_envs, obs_dim), float(t)),
-            torch.full((num_envs, obs_dim), float(t)),
-            torch.full((num_envs, act_dim), float(t)),
-            torch.full((num_envs,), float(t)),
-            torch.full((num_envs,), t % 2, dtype=torch.long),
-            torch.full((num_envs,), t % 3 == 0, dtype=torch.long),
+            {
+                "obs": torch.full((num_envs, obs_dim), float(t)),
+                "critic_obs": torch.full((num_envs, obs_dim), float(t)),
+                "actions": torch.full((num_envs, act_dim), float(t)),
+                "rewards": torch.full((num_envs,), float(t)),
+                "dones": torch.full((num_envs,), t % 2, dtype=torch.long),
+                "truncations": torch.full((num_envs,), t % 3 == 0, dtype=torch.long),
+            }
         )
 
-    ring = SharedTransitionRing(capacity, num_envs, obs_dim, obs_dim, act_dim)
+    ring = HostTransitionRing(fastsac_transition_schema(obs_dim, obs_dim, act_dim), capacity, num_envs)
     next_expected = 0
     for t in range(capacity * 4):
         assert push(ring, t)
@@ -231,19 +233,19 @@ def test_ring_read_span_fifo_and_no_wrap():
             assert count >= k
             assert 1 <= count <= capacity - (ring.read_completed_count % capacity)  # no wrap
             for i in range(k):
-                assert torch.all(views[0][i] == next_expected + i)
-                assert torch.all(views[1][i] == next_expected + i)  # critic dim reuse ok
-                assert torch.all(views[2][i] == next_expected + i)
-                assert torch.all(views[3][i] == next_expected + i)
-                assert torch.all(views[4][i] == (next_expected + i) % 2)
-                assert torch.all(views[5][i] == ((next_expected + i) % 3 == 0))
+                assert torch.all(views["obs"][i] == next_expected + i)
+                assert torch.all(views["critic_obs"][i] == next_expected + i)  # critic dim reuse ok
+                assert torch.all(views["actions"][i] == next_expected + i)
+                assert torch.all(views["rewards"][i] == next_expected + i)
+                assert torch.all(views["dones"][i] == (next_expected + i) % 2)
+                assert torch.all(views["truncations"][i] == ((next_expected + i) % 3 == 0))
             ring.commit_reads(k)
             next_expected += k
     # drain the remainder
     while ring.has_next():
         count, views = ring.read_span()
         for i in range(count):
-            assert torch.all(views[0][i] == next_expected + i)
+            assert torch.all(views["obs"][i] == next_expected + i)
         ring.commit_reads(count)
         next_expected += count
     assert next_expected == capacity * 4
@@ -251,10 +253,10 @@ def test_ring_read_span_fifo_and_no_wrap():
 
 
 def test_shared_ring_counts_are_cumulative_and_synchronous_across_wraps():
-    from motrix_rl_builtin.fastsac.async_impl.transport import SharedTransitionRing
+    from motrix_rl_builtin.fastsac.async_impl.transport import HostTransitionRing, fastsac_transition_schema
 
     capacity = 3
-    ring = SharedTransitionRing(capacity, 1, 1, 1, 1)
+    ring = HostTransitionRing(fastsac_transition_schema(1, 1, 1), capacity, 1)
     writes = reads = 0
 
     def assert_counts():
@@ -267,7 +269,16 @@ def test_shared_ring_counts_are_cumulative_and_synchronous_across_wraps():
     def push(tag):
         value = torch.tensor([[float(tag)]])
         flags = torch.zeros(1, dtype=torch.long)
-        return ring.push(value, value, value, value[:, 0], flags, flags)
+        return ring.push(
+            {
+                "obs": value,
+                "critic_obs": value,
+                "actions": value,
+                "rewards": value[:, 0],
+                "dones": flags,
+                "truncations": flags,
+            }
+        )
 
     assert_counts()
     for _ in range(4):
@@ -281,7 +292,7 @@ def test_shared_ring_counts_are_cumulative_and_synchronous_across_wraps():
         for _ in range(2):
             count, views = ring.read_span()
             assert count == min(writes - reads, capacity - reads % capacity)
-            assert float(views[0][0, 0, 0]) == reads
+            assert float(views["obs"][0, 0, 0]) == reads
             assert_counts()  # borrowing views does not issue an acknowledgement
             ring.commit_reads(1)
             reads += 1
@@ -289,7 +300,7 @@ def test_shared_ring_counts_are_cumulative_and_synchronous_across_wraps():
 
     while ring.has_next():
         count, views = ring.read_span()
-        torch.testing.assert_close(views[0][:, 0, 0], torch.arange(reads, reads + count, dtype=torch.float32))
+        torch.testing.assert_close(views["obs"][:, 0, 0], torch.arange(reads, reads + count, dtype=torch.float32))
         ring.commit_reads(count)
         reads += count
         assert_counts()

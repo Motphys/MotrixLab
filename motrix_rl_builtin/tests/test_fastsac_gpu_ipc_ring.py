@@ -18,15 +18,18 @@ from types import SimpleNamespace
 import pytest
 import torch
 from motrix_rl_builtin.fastsac.async_impl.transport import (
-    IpcTransitionRing,
+    FinalObsPayload,
+    FinalObsStorage,
+    GpuIpcTransitionRing,
+    HostTransitionRing,
     RingCursors,
-    SharedTransitionRing,
+    fastsac_transition_schema,
 )
-from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsPayload, FinalObsStorage
 from motrix_rl_builtin.fastsac.buffer import SimpleReplayBuffer
 
 CAPACITY, N_ENV, OBS, CRI, ACT = 5, 3, 4, 6, 2
-FEAT = OBS + CRI + ACT + 3
+SCHEMA = fastsac_transition_schema(OBS, CRI, ACT)
+FEAT = SCHEMA.feature_width
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
@@ -36,21 +39,21 @@ cuda_only = pytest.mark.skipif(not torch.cuda.is_available(), reason="IPC ring r
 def _batch(t: int, seed: int = 0):
     """Deterministic per-step field tensors (the collector's CPU outputs)."""
     g = torch.Generator().manual_seed(seed * 1000 + t)
-    return (
-        torch.randn(N_ENV, OBS, generator=g),
-        torch.randn(N_ENV, CRI, generator=g),
-        torch.randn(N_ENV, ACT, generator=g),
-        torch.randn(N_ENV, generator=g),
-        torch.randint(0, 2, (N_ENV,), generator=g, dtype=torch.long),
-        torch.randint(0, 2, (N_ENV,), generator=g, dtype=torch.long),
-    )
+    return {
+        "obs": torch.randn(N_ENV, OBS, generator=g),
+        "critic_obs": torch.randn(N_ENV, CRI, generator=g),
+        "actions": torch.randn(N_ENV, ACT, generator=g),
+        "rewards": torch.randn(N_ENV, generator=g),
+        "dones": torch.randint(0, 2, (N_ENV,), generator=g, dtype=torch.long),
+        "truncations": torch.randint(0, 2, (N_ENV,), generator=g, dtype=torch.long),
+    }
 
 
 def _owner_receiver():
     cursors = RingCursors()
     slots = torch.zeros(CAPACITY, N_ENV, FEAT, dtype=torch.float32, device="cuda")
-    owner = IpcTransitionRing(cursors, slots, CAPACITY, N_ENV, OBS, CRI, ACT)
-    receiver = IpcTransitionRing(cursors, slots, CAPACITY, N_ENV, OBS, CRI, ACT)
+    owner = GpuIpcTransitionRing(cursors, slots, SCHEMA, CAPACITY, N_ENV)
+    receiver = GpuIpcTransitionRing(cursors, slots, SCHEMA, CAPACITY, N_ENV)
     return owner, receiver
 
 
@@ -58,11 +61,9 @@ def _owner_receiver():
 def test_ipc_ring_rejects_bad_slots():
     cursors = RingCursors()
     with pytest.raises(ValueError, match="CUDA"):
-        IpcTransitionRing(cursors, torch.zeros(CAPACITY, N_ENV, FEAT), CAPACITY, N_ENV, OBS, CRI, ACT)
+        GpuIpcTransitionRing(cursors, torch.zeros(CAPACITY, N_ENV, FEAT), SCHEMA, CAPACITY, N_ENV)
     with pytest.raises(ValueError, match="shape"):
-        IpcTransitionRing(
-            cursors, torch.zeros(CAPACITY, N_ENV, FEAT + 1, device="cuda"), CAPACITY, N_ENV, OBS, CRI, ACT
-        )
+        GpuIpcTransitionRing(cursors, torch.zeros(CAPACITY, N_ENV, FEAT + 1, device="cuda"), SCHEMA, CAPACITY, N_ENV)
 
 
 @cuda_only
@@ -82,17 +83,17 @@ def test_ipc_ring_roundtrip_matches_pushed_data():
             k, views = receiver.read_span()
             for i in range(k):
                 f = pushed[expected + i]
-                torch.testing.assert_close(views[0][i], f[0].cuda())
-                torch.testing.assert_close(views[1][i], f[1].cuda())
-                torch.testing.assert_close(views[2][i], f[2].cuda())
-                torch.testing.assert_close(views[3][i], f[3].cuda())
-                torch.testing.assert_close(views[4][i].long().cpu(), f[4])
-                torch.testing.assert_close(views[5][i].long().cpu(), f[5])
+                torch.testing.assert_close(views["obs"][i], f["obs"].cuda())
+                torch.testing.assert_close(views["critic_obs"][i], f["critic_obs"].cuda())
+                torch.testing.assert_close(views["actions"][i], f["actions"].cuda())
+                torch.testing.assert_close(views["rewards"][i], f["rewards"].cuda())
+                torch.testing.assert_close(views["dones"][i].long().cpu(), f["dones"])
+                torch.testing.assert_close(views["truncations"][i].long().cpu(), f["truncations"])
             receiver.commit_reads(k)
             expected += k
 
     for fields in pushed:
-        while not owner.push(*fields):
+        while not owner.push(fields):
             drain_and_verify()  # free slots (the learner's role) and retry
         drain_and_verify()
     torch.cuda.synchronize()  # land the last push's event before the final drain
@@ -105,7 +106,7 @@ def test_ipc_ring_cursor_publishes_only_after_event():
     """A pushed slot is invisible until its event completes; size() flushes."""
     owner, receiver = _owner_receiver()
     fields = _batch(0, seed=1)
-    assert owner.push(*fields)
+    assert owner.push(fields)
     torch.cuda.synchronize()  # land the H2D; the cursor must catch up lazily
     assert owner.size() == 1
     assert receiver.has_next()
@@ -143,10 +144,10 @@ def test_ipc_ring_issued_counts_precede_event_proven_counts_across_wraps(monkeyp
 
     for t in range(CAPACITY * 2 + 1):
         fields = _batch(t, seed=13)
-        assert owner.push(*fields)
+        assert owner.push(fields)
         assert owner.write_issued_count == t + 1
         assert owner.write_completed_count == owner.cursors.write_completed_count == t
-        assert receiver.read_span() == (0, ())
+        assert receiver.read_span() == (0, {})
         assert not receiver.has_next()
 
         for event in events:
@@ -156,13 +157,13 @@ def test_ipc_ring_issued_counts_precede_event_proven_counts_across_wraps(monkeyp
         count, views = receiver.read_span()
         assert count == 1
         assert receiver.read_issued_count == receiver.read_completed_count == t
-        copied = tuple(view.clone() for view in views)
+        copied = {f.name: views[f.name].clone() for f in SCHEMA.fields}
         receiver.commit_reads(count)
         assert receiver.read_issued_count == t + 1
         assert receiver.read_completed_count == receiver.cursors.read_completed_count == t
         # The issued read position skips the consumed slot even while its
         # acknowledgement is withheld and the producer still sees it occupied.
-        assert receiver.read_span() == (0, ())
+        assert receiver.read_span() == (0, {})
         assert not receiver.has_next()
         assert owner.size() == 1
 
@@ -170,17 +171,17 @@ def test_ipc_ring_issued_counts_precede_event_proven_counts_across_wraps(monkeyp
             event.synchronize()
         assert receiver.read_completed_count == t + 1
         assert owner.size() == 0
-        for actual, expected in zip(copied, fields):
-            torch.testing.assert_close(actual[0].cpu().to(expected.dtype), expected)
+        for field in SCHEMA.fields:
+            torch.testing.assert_close(copied[field.name][0].cpu().to(fields[field.name].dtype), fields[field.name])
 
 
 @cuda_only
 def test_ipc_ring_backpressure_bounds_in_flight():
     owner, receiver = _owner_receiver()
     for t in range(CAPACITY):
-        assert owner.push(*_batch(t, seed=3))
+        assert owner.push(_batch(t, seed=3))
     assert owner.is_full()
-    assert not owner.push(*_batch(CAPACITY, seed=3))
+    assert not owner.push(_batch(CAPACITY, seed=3))
     # consumer frees everything -> producer can push again (across the wrap)
     while receiver.has_next():
         k, _ = receiver.read_span()
@@ -191,7 +192,7 @@ def test_ipc_ring_backpressure_bounds_in_flight():
     # before the producer's is_full() is meaningful.
     receiver.has_next()
     assert not owner.is_full()
-    assert owner.push(*_batch(CAPACITY, seed=3))
+    assert owner.push(_batch(CAPACITY, seed=3))
 
 
 @cuda_only
@@ -221,14 +222,14 @@ def test_ipc_sparse_pre_step_gate_waits_for_completed_read_acknowledgement(monke
     cursors = RingCursors()
     slots = torch.zeros(capacity, N_ENV, FEAT, device="cuda")
     store = FinalObsStorage(capacity, N_ENV, OBS, CRI)
-    owner = IpcTransitionRing(cursors, slots, capacity, N_ENV, OBS, CRI, ACT, final_obs_store=store)
-    receiver = IpcTransitionRing(cursors, slots, capacity, N_ENV, OBS, CRI, ACT, final_obs_store=store)
+    owner = GpuIpcTransitionRing(cursors, slots, SCHEMA, capacity, N_ENV, payload_store=store)
+    receiver = GpuIpcTransitionRing(cursors, slots, SCHEMA, capacity, N_ENV, payload_store=store)
     # Leave some sparse room, but not enough for a worst-case full-env payload.
     published = store.capacity - N_ENV + 1
     for tag in range(published):
         assert not owner.is_full()
         payload = FinalObsPayload(torch.tensor([0]), torch.full((1, OBS), float(tag)), torch.zeros(1, CRI))
-        assert owner.push(*_batch(tag), final_obs=payload)
+        assert owner.push(_batch(tag), payload)
     assert owner.size() < capacity
     assert owner.is_full()
     for event in events:
@@ -236,7 +237,7 @@ def test_ipc_sparse_pre_step_gate_waits_for_completed_read_acknowledgement(monke
     assert owner.write_completed_count == published
     count, _ = receiver.read_span()
     assert count == published
-    snapshots = receiver.read_final_span(count)
+    snapshots = receiver.read_payload_span(count)
     receiver.commit_reads(1)
     assert receiver.read_issued_count == 1
     assert receiver.read_completed_count == 0
@@ -246,7 +247,7 @@ def test_ipc_sparse_pre_step_gate_waits_for_completed_read_acknowledgement(monke
     assert receiver.read_completed_count == 1
     assert not owner.is_full()
     payload = FinalObsPayload(torch.arange(N_ENV), torch.full((N_ENV, OBS), 99.0), torch.zeros(N_ENV, CRI))
-    assert owner.push(*_batch(published), final_obs=payload)
+    assert owner.push(_batch(published), payload)
     torch.testing.assert_close(snapshots[0].obs, torch.zeros(1, OBS))
     # Do not release CUDA storage with the last H2D event still in flight.
     torch.cuda.synchronize()
@@ -259,14 +260,14 @@ def test_ipc_ring_back_to_back_pushes_do_not_collide():
     owner, receiver = _owner_receiver()
     pushed = [_batch(t, seed=9) for t in range(CAPACITY)]
     for fields in pushed:  # NO producer-side flush between pushes
-        assert owner.push(*fields)
+        assert owner.push(fields)
     torch.cuda.synchronize()
     owner.size()
     expected = 0
     while receiver.has_next():
         k, views = receiver.read_span()
         for i in range(k):
-            torch.testing.assert_close(views[0][i], pushed[expected + i][0].cuda())
+            torch.testing.assert_close(views["obs"][i], pushed[expected + i]["obs"].cuda())
         receiver.commit_reads(k)
         expected += k
     assert expected == CAPACITY
@@ -276,27 +277,27 @@ def test_ipc_ring_back_to_back_pushes_do_not_collide():
 def test_ipc_and_host_ring_produce_identical_replay_buffers():
     """The learner's ingest path is transport-equivalent at the buffer level."""
     total = CAPACITY * 4
-    host = SharedTransitionRing(total, N_ENV, OBS, CRI, ACT)
+    host = HostTransitionRing(SCHEMA, total, N_ENV)
     rb_host = SimpleReplayBuffer(N_ENV, 2 * total, OBS, ACT, CRI, device="cpu")
     rb_ipc = SimpleReplayBuffer(N_ENV, 2 * total, OBS, ACT, CRI, device="cuda")
     owner, receiver = _owner_receiver()
     batches = [_batch(t, seed=11) for t in range(total)]
     for fields in batches:
-        assert host.push(*fields)
-        while not owner.push(*fields):
+        assert host.push(fields)
+        while not owner.push(fields):
             while receiver.has_next():
                 k, views = receiver.read_span()
-                rb_ipc.extend_batch(*views)
+                rb_ipc.extend_batch(*(views[f.name] for f in SCHEMA.fields))
                 receiver.commit_reads(k)
     torch.cuda.synchronize()  # land the last push's event before the final drains
     owner.size()  # producer-side flush, as the collector's polling would do
     while host.has_next():
         _k, views = host.read_span()
-        rb_host.extend_batch(*views)
+        rb_host.extend_batch(*(views[f.name] for f in SCHEMA.fields))
         host.commit_reads(_k)
     while receiver.has_next():
         k, views = receiver.read_span()
-        rb_ipc.extend_batch(*views)
+        rb_ipc.extend_batch(*(views[f.name] for f in SCHEMA.fields))
         receiver.commit_reads(k)
     assert rb_ipc.ptr == rb_host.ptr == total
     for name in ("observations", "critic_observations", "actions", "rewards", "dones", "truncations"):
@@ -397,7 +398,7 @@ def test_learner_drains_ipc_ring_end_to_end():
     total = 40  # > rb cap 33 -> exercises the rb wrap
     batches = [_batch(t, seed=5) for t in range(total)]
     for t, fields in enumerate(batches):
-        while not owner.push(*fields):
+        while not owner.push(fields):
             owner.size()
             learner.drain()
     owner.size()
@@ -411,12 +412,12 @@ def test_learner_drains_ipc_ring_end_to_end():
     cap = 33
     for t in range(total - cap + 1, total):  # surviving slots after the wrap
         s = t % cap
-        torch.testing.assert_close(agent.rb.observations[:, s].cpu(), batches[t][0])
-        torch.testing.assert_close(agent.rb.critic_observations[:, s].cpu(), batches[t][1])
-        torch.testing.assert_close(agent.rb.actions[:, s].cpu(), batches[t][2])
-        torch.testing.assert_close(agent.rb.rewards[:, s].cpu(), batches[t][3])
-        torch.testing.assert_close(agent.rb.dones[:, s].cpu(), batches[t][4])
-        torch.testing.assert_close(agent.rb.truncations[:, s].cpu(), batches[t][5])
+        torch.testing.assert_close(agent.rb.observations[:, s].cpu(), batches[t]["obs"])
+        torch.testing.assert_close(agent.rb.critic_observations[:, s].cpu(), batches[t]["critic_obs"])
+        torch.testing.assert_close(agent.rb.actions[:, s].cpu(), batches[t]["actions"])
+        torch.testing.assert_close(agent.rb.rewards[:, s].cpu(), batches[t]["rewards"])
+        torch.testing.assert_close(agent.rb.dones[:, s].cpu(), batches[t]["dones"])
+        torch.testing.assert_close(agent.rb.truncations[:, s].cpu(), batches[t]["truncations"])
 
 
 @cuda_only
@@ -471,7 +472,7 @@ def test_learner_drains_mixed_host_and_ipc_rings():
         ),
         device=torch.device("cuda"),
     )
-    host_ring = SharedTransitionRing(CAPACITY, N_ENV, OBS, CRI, ACT)
+    host_ring = HostTransitionRing(SCHEMA, CAPACITY, N_ENV)
     owner, receiver = _owner_receiver()
     stub = SimpleNamespace(publish=lambda *a, **k: None)
     control = SimpleNamespace(num_collectors=2, stop=False)
@@ -492,9 +493,9 @@ def test_learner_drains_mixed_host_and_ipc_rings():
 
     batches = [(_batch(t, seed=9), _batch(t, seed=500 + t)) for t in range(total)]
     for t, (host_fields, ipc_fields) in enumerate(batches):
-        while not host_ring.push(*host_fields):
+        while not host_ring.push(host_fields):
             learner.drain()
-        while not owner.push(*ipc_fields):
+        while not owner.push(ipc_fields):
             owner.size()
             learner.drain()
         owner.size()
@@ -510,11 +511,11 @@ def test_learner_drains_mixed_host_and_ipc_rings():
     assert agent.rb.ptr == total
     for t, (host_fields, ipc_fields) in enumerate(batches):
         s = t % 64
-        torch.testing.assert_close(agent.rb.observations[:N_ENV, s].cpu(), host_fields[0])
-        torch.testing.assert_close(agent.rb.observations[N_ENV:, s].cpu(), ipc_fields[0])
-        torch.testing.assert_close(agent.rb.critic_observations[:N_ENV, s].cpu(), host_fields[1])
-        torch.testing.assert_close(agent.rb.critic_observations[N_ENV:, s].cpu(), ipc_fields[1])
-        torch.testing.assert_close(agent.rb.actions[:N_ENV, s].cpu(), host_fields[2])
-        torch.testing.assert_close(agent.rb.actions[N_ENV:, s].cpu(), ipc_fields[2])
-        torch.testing.assert_close(agent.rb.rewards[:N_ENV, s].cpu(), host_fields[3])
-        torch.testing.assert_close(agent.rb.rewards[N_ENV:, s].cpu(), ipc_fields[3])
+        torch.testing.assert_close(agent.rb.observations[:N_ENV, s].cpu(), host_fields["obs"])
+        torch.testing.assert_close(agent.rb.observations[N_ENV:, s].cpu(), ipc_fields["obs"])
+        torch.testing.assert_close(agent.rb.critic_observations[:N_ENV, s].cpu(), host_fields["critic_obs"])
+        torch.testing.assert_close(agent.rb.critic_observations[N_ENV:, s].cpu(), ipc_fields["critic_obs"])
+        torch.testing.assert_close(agent.rb.actions[:N_ENV, s].cpu(), host_fields["actions"])
+        torch.testing.assert_close(agent.rb.actions[N_ENV:, s].cpu(), ipc_fields["actions"])
+        torch.testing.assert_close(agent.rb.rewards[:N_ENV, s].cpu(), host_fields["rewards"])
+        torch.testing.assert_close(agent.rb.rewards[N_ENV:, s].cpu(), ipc_fields["rewards"])

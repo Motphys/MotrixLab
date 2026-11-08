@@ -9,8 +9,12 @@ import numpy as np
 import pytest
 import torch
 from motrix_rl_builtin.fastsac.async_impl.collector import Collector
-from motrix_rl_builtin.fastsac.async_impl.transport import Control, SharedTransitionRing
-from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsStorage
+from motrix_rl_builtin.fastsac.async_impl.transport import (
+    Control,
+    FinalObsStorage,
+    HostTransitionRing,
+    fastsac_transition_schema,
+)
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import (
     HostWeightReceiver,
     HostWeightSender,
@@ -125,7 +129,7 @@ def _source_policy():
 def _collector(device: str, *, compile: bool = False, amp: bool = False):
     env = _CpuEnv()
     cfg = _cfg(device, compile=compile, amp=amp)
-    ring = SharedTransitionRing(2, _NUM_ENVS, _OBS_DIM, _CRITIC_OBS_DIM, _ACT_DIM)
+    ring = HostTransitionRing(fastsac_transition_schema(_OBS_DIM, _CRITIC_OBS_DIM, _ACT_DIM), 2, _NUM_ENVS)
     source_actor, source_normalizer = _source_policy()
     shared = WeightChannelShared(_OBS_DIM)
     weight_tx = HostWeightSender(shared, sum(p.numel() for p in source_actor.parameters()))
@@ -223,14 +227,14 @@ def test_collector_explicit_cpu_placement_and_timing() -> None:
     assert "sync.wait_writer" in stats["timing_ms"]
     assert "sync.host_snapshot" in stats["timing_ms"]
     assert "sync.actor_load" in stats["timing_ms"]
-    assert collector.ring.obs.device.type == "cpu"
-    assert collector.ring.critic_obs.device.type == "cpu"
+    assert collector.ring.data["obs"].device.type == "cpu"
+    assert collector.ring.data["critic_obs"].device.type == "cpu"
 
 
 def test_collector_reports_env_step_substage_timing() -> None:
     env = _PerfEnv()
     cfg = _cfg("cpu")
-    ring = SharedTransitionRing(2, _NUM_ENVS, _OBS_DIM, _CRITIC_OBS_DIM, _ACT_DIM)
+    ring = HostTransitionRing(fastsac_transition_schema(_OBS_DIM, _CRITIC_OBS_DIM, _ACT_DIM), 2, _NUM_ENVS)
     source_actor, source_normalizer = _source_policy()
     shared = WeightChannelShared(_OBS_DIM)
     weight_tx = HostWeightSender(shared, sum(p.numel() for p in source_actor.parameters()))
@@ -268,7 +272,7 @@ def test_collector_reports_env_step_substage_timing() -> None:
 def test_collector_uses_resolved_device_without_config_re_resolution() -> None:
     env = _CpuEnv()
     cfg = _cfg("meta")
-    ring = SharedTransitionRing(2, _NUM_ENVS, _OBS_DIM, _CRITIC_OBS_DIM, _ACT_DIM)
+    ring = HostTransitionRing(fastsac_transition_schema(_OBS_DIM, _CRITIC_OBS_DIM, _ACT_DIM), 2, _NUM_ENVS)
     collector = Collector(
         env,
         cfg,
@@ -294,8 +298,8 @@ def test_cuda_collector_uses_flat_weight_copy_and_reuses_staging() -> None:
     assert collector.obs.device.type == "cpu"
     assert all(param.device.type == "cuda" for param in collector.actor.parameters())
     assert collector.obs_normalizer._mean.device.type == "cuda"
-    assert collector.ring.obs.device.type == "cpu"
-    assert collector.ring.critic_obs.device.type == "cpu"
+    assert collector.ring.data["obs"].device.type == "cpu"
+    assert collector.ring.data["critic_obs"].device.type == "cpu"
     assert (
         collector._flat_params.untyped_storage().data_ptr()
         == next(collector.actor.parameters()).untyped_storage().data_ptr()
@@ -425,7 +429,7 @@ def _backpressure_collector(*, capacity=16):
     )
     env, control = _BackpressureEnv(), Control()
     store = FinalObsStorage(capacity, env.num_envs, 3, 3)
-    ring = SharedTransitionRing(capacity, env.num_envs, 3, 3, 1, final_obs_store=store)
+    ring = HostTransitionRing(fastsac_transition_schema(3, 3, 1), capacity, env.num_envs, payload_store=store)
     collector = Collector(
         env,
         cfg,
@@ -467,7 +471,7 @@ def test_payload_backpressure_gates_before_actions_and_resumes_without_dropped_s
     monkeypatch.setattr(ring, "push", push_once)
     # Each result owns one terminal row. Leave fewer than num_envs rows free:
     # even though this env would fit, the next step may truncate every env.
-    published = ring.final_obs_store.capacity - env.num_envs + 1
+    published = ring.payload_store.capacity - env.num_envs + 1
     for _ in range(published):
         assert collector.step_once()
     assert ring.size() < ring.capacity
@@ -481,9 +485,9 @@ def test_payload_backpressure_gates_before_actions_and_resumes_without_dropped_s
     torch.testing.assert_close(collector.obs, obs_before)
 
     count, fields = ring.read_span()
-    payloads = ring.read_final_span(count)
+    payloads = ring.read_payload_span(count)
     assert count == published
-    torch.testing.assert_close(fields[0][:, 0, 0], torch.arange(published, dtype=torch.float32))
+    torch.testing.assert_close(fields["obs"][:, 0, 0], torch.arange(published, dtype=torch.float32))
     ring.commit_reads(1)
     assert not ring.is_full()
     assert collector.step_once()
@@ -492,8 +496,8 @@ def test_payload_backpressure_gates_before_actions_and_resumes_without_dropped_s
     assert control.collector_steps == collector._collect_n == collector.n_episodes == published + 1
     count, fields = ring.read_span()
     assert count == published
-    torch.testing.assert_close(fields[0][:, 0, 0], torch.arange(1, published + 1, dtype=torch.float32))
-    resumed_payloads = ring.read_final_span(count)
+    torch.testing.assert_close(fields["obs"][:, 0, 0], torch.arange(1, published + 1, dtype=torch.float32))
+    resumed_payloads = ring.read_payload_span(count)
     for offset, payload in enumerate(resumed_payloads, start=2):
         torch.testing.assert_close(payload.obs, torch.full((1, 3), float(1000 + offset)))
     # Previously read owned snapshots survive acknowledgement and publication.
@@ -531,9 +535,9 @@ def test_published_step_owns_transition_and_final_payload_buffers():
         torch.zeros(2, dtype=torch.long),
         torch.tensor([0, 1]),
     )
-    for actual, wanted in zip(fields, expected):
+    for actual, wanted in zip(fields.values(), expected):
         torch.testing.assert_close(actual[0], wanted)
-    payload = ring.read_final_span(count)[0]
+    payload = ring.read_payload_span(count)[0]
     assert payload.env_ids.tolist() == [1]
     torch.testing.assert_close(payload.obs, torch.full((1, 3), 7.0))
     torch.testing.assert_close(payload.critic_obs, torch.full((1, 3), 7.0))

@@ -12,7 +12,7 @@ import torch
 from fastsac_async_mocks import make_mock_learner
 from motrix_rl_builtin.fastsac.async_impl.learner import Learner
 from motrix_rl_builtin.fastsac.async_impl.stats import aggregate_collector_stats
-from motrix_rl_builtin.fastsac.async_impl.transport import Control, SharedTransitionRing
+from motrix_rl_builtin.fastsac.async_impl.transport import Control, HostTransitionRing, fastsac_transition_schema
 
 
 def test_control_aggregates_per_collector_steps() -> None:
@@ -55,16 +55,25 @@ def _strict_learner(num_updates: int) -> Learner:
 
 def _push_batch(ring, tag: float) -> None:
     n = ring.num_envs
-    obs = torch.full((n, ring.obs.shape[-1]), tag)
-    actions = torch.zeros(n, ring.actions.shape[-1])
+    obs = torch.full((n, ring.data["obs"].shape[-1]), tag)
+    actions = torch.zeros(n, ring.data["actions"].shape[-1])
     rewards = torch.zeros(n)
     dones = torch.zeros(n, dtype=torch.long)
-    pushed = ring.push(obs, obs, actions, rewards, dones, dones)
+    pushed = ring.push(
+        {
+            "obs": obs,
+            "critic_obs": obs,
+            "actions": actions,
+            "rewards": rewards,
+            "dones": dones,
+            "truncations": dones,
+        }
+    )
     assert pushed
 
 
 def test_drain_merges_shard_generations_into_full_batches() -> None:
-    rings = [SharedTransitionRing(4, 4, 3, 3, 2) for _ in range(2)]
+    rings = [HostTransitionRing(fastsac_transition_schema(3, 3, 2), 4, 4) for _ in range(2)]
     extends: list = []
     learner = make_mock_learner(rings, extends)
 
@@ -88,7 +97,7 @@ def test_drain_merges_shard_generations_into_full_batches() -> None:
 
 
 def test_drain_holds_generation_until_all_rings_deliver() -> None:
-    rings = [SharedTransitionRing(4, 4, 3, 3, 2) for _ in range(2)]
+    rings = [HostTransitionRing(fastsac_transition_schema(3, 3, 2), 4, 4) for _ in range(2)]
     extends: list = []
     learner = make_mock_learner(rings, extends)
 
@@ -104,7 +113,7 @@ def test_drain_holds_generation_until_all_rings_deliver() -> None:
 
 
 def test_single_ring_drain_batches_multiple_slots() -> None:
-    ring = SharedTransitionRing(4, 4, 3, 3, 2)
+    ring = HostTransitionRing(fastsac_transition_schema(3, 3, 2), 4, 4)
     extends: list = []
     learner = make_mock_learner([ring], extends)
 

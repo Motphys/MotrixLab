@@ -23,7 +23,7 @@ from types import SimpleNamespace
 import torch
 from fastsac_async_mocks import make_mock_learner
 from motrix_rl_builtin.fastsac.async_impl.learner import Learner
-from motrix_rl_builtin.fastsac.async_impl.transport import SharedTransitionRing
+from motrix_rl_builtin.fastsac.async_impl.transport import HostTransitionRing, fastsac_transition_schema
 from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization, SimpleReplayBuffer
 
 _OBS, _COBS, _ACT = 7, 5, 3
@@ -37,7 +37,14 @@ def _batch(envs: int, tag: float, seed: int) -> tuple:
     rewards = torch.randn(envs, generator=g)
     dones = (torch.rand(envs, generator=g) < 0.1).long()
     truncations = (torch.rand(envs, generator=g) < 0.1).long()
-    return obs, critic_obs, actions, rewards, dones, truncations
+    return {
+        "obs": obs,
+        "critic_obs": critic_obs,
+        "actions": actions,
+        "rewards": rewards,
+        "dones": dones,
+        "truncations": truncations,
+    }
 
 
 _make_learner = make_mock_learner
@@ -48,22 +55,26 @@ def test_generation_merge_matches_single_ring_byte_for_byte() -> None:
     """Same 8 batches: one ring drained directly vs two shard rings merged."""
     envs, shards, batches = 8, 2, 8
     whole = [_batch(envs, tag=float(t), seed=t) for t in range(batches)]
-    shard = lambda fields, r: tuple(f[r * (envs // shards) : (r + 1) * (envs // shards)] for f in fields)  # noqa: E731
+
+    def shard(batch, r):
+        return {k: v[r * (envs // shards) : (r + 1) * (envs // shards)] for k, v in batch.items()}
 
     single_extends: list = []
-    single = _make_learner([SharedTransitionRing(16, envs, _OBS, _COBS, _ACT)], single_extends)
+    single = _make_learner([HostTransitionRing(fastsac_transition_schema(_OBS, _COBS, _ACT), 16, envs)], single_extends)
     for fields in whole:
-        assert single.rings[0].push(*fields)
+        assert single.rings[0].push(fields)
     assert single.drain() == batches
 
     dual_extends: list = []
-    rings = [SharedTransitionRing(16, envs // shards, _OBS, _COBS, _ACT) for _ in range(shards)]
+    rings = [
+        HostTransitionRing(fastsac_transition_schema(_OBS, _COBS, _ACT), 16, envs // shards) for _ in range(shards)
+    ]
     dual = _make_learner(rings, dual_extends)
     # generation k: both collectors push their shard of batch k (env blocks
     # concatenate in collector order, matching the single-ring env order)
     for fields in whole:
         for r in range(shards):
-            assert rings[r].push(*shard(fields, r))
+            assert rings[r].push(shard(fields, r))
     assert dual.drain() == batches
 
     assert len(single_extends) == len(dual_extends)
@@ -85,17 +96,19 @@ def test_generation_merge_preserves_n_step_adjacency() -> None:
         return SimpleReplayBuffer(n_env=envs, buffer_size=64, n_obs=_OBS, n_act=_ACT, n_critic_obs=_COBS, device="cpu")
 
     single_rb, dual_rb = make_rb(), make_rb()
-    single = _make_learner([SharedTransitionRing(16, envs, _OBS, _COBS, _ACT)], None)
+    single = _make_learner([HostTransitionRing(fastsac_transition_schema(_OBS, _COBS, _ACT), 16, envs)], None)
     single.agent.rb = single_rb
-    rings = [SharedTransitionRing(16, envs // shards, _OBS, _COBS, _ACT) for _ in range(shards)]
+    rings = [
+        HostTransitionRing(fastsac_transition_schema(_OBS, _COBS, _ACT), 16, envs // shards) for _ in range(shards)
+    ]
     dual = _make_learner(rings, None)
     dual.agent.rb = dual_rb
 
     whole = [_batch(envs, tag=float(t), seed=100 + t) for t in range(batches)]
     for fields in whole:
-        assert single.rings[0].push(*fields)
+        assert single.rings[0].push(fields)
         for r in range(shards):
-            assert rings[r].push(*tuple(f[r * (envs // shards) : (r + 1) * (envs // shards)] for f in fields))
+            assert rings[r].push({k: v[r * (envs // shards) : (r + 1) * (envs // shards)] for k, v in fields.items()})
     assert single.drain() == batches
     assert dual.drain() == batches
 

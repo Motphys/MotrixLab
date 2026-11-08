@@ -1,22 +1,18 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared-memory primitives for the async FastSAC trainer.
+"""Shared-memory primitives for asynchronous trainers.
 
 All tensors are CPU tensors marked ``share_memory_()`` so they can be handed to a
-``torch.multiprocessing`` ``spawn`` child in M1 unchanged. In M0 everything runs
-in one process; the same objects work in-process, which lets us validate the
-collector/learner decomposition before introducing real concurrency.
+``torch.multiprocessing`` ``spawn`` child unchanged; the same objects also work
+in one process, which lets a trainer validate its collector/learner
+decomposition before introducing real concurrency.
 
-Three primitives:
+Primitives:
 
-* :class:`SharedTransitionRing` — single-producer / single-consumer ring of raw
-  transition batches (collector -> learner) with bounded backpressure.
-* the weight channel (see :mod:`motrix_rl_builtin.fastsac.async_impl.transport.weight_channel`)
-  — double-buffered actor weights + obs-normalizer stats (learner ->
-  collector) guarded by a seqlock so readers always see a complete,
-  consistent snapshot even when the writer publishes twice during a read.
-* :class:`Control`         — a few shared scalars (stop flag, global_step, ...).
+* the SPSC transition rings (see :mod:`.ring` and :mod:`.gpu_ipc_ring`);
+* :class:`Control` — a few shared scalars (stop flag, global_step, ...);
+* flat-parameter helpers for inference-only module snapshots.
 
 Memory ordering
 ---------------
@@ -65,8 +61,8 @@ class Control:
     sums them. The learner uses the aggregate as the training-progress basis;
     each collector compares its own entry against ``num_iterations`` /
     ``learning_starts`` (one entry == one env-step batch of that collector's
-    env shard). With ``num_collectors=1`` this is byte-identical to the previous
-    single-counter behavior.
+    env shard). With ``num_collectors=1`` this is byte-identical to a single
+    shared counter.
     """
 
     def __init__(self, num_collectors: int = 1):
@@ -136,9 +132,9 @@ def load_flat_params(module: nn.Module, flat: torch.Tensor) -> None:
 def bind_flat_params(module: nn.Module) -> torch.Tensor:
     """Bind all module parameters to views of one device-contiguous flat tensor.
 
-    The collector owns an inference-only actor, so its parameters do not need
-    optimizer storage. Binding them once lets every later CPU snapshot version
-    reach CUDA through one H2D copy instead of one transfer per parameter.
+    A collector owns inference-only modules whose parameters need no optimizer
+    storage. Binding them once lets every later CPU snapshot version reach CUDA
+    through one H2D copy instead of one transfer per parameter.
     """
     params = list(module.parameters())
     flat = torch.empty(sum(p.numel() for p in params), dtype=params[0].dtype, device=params[0].device)
@@ -150,9 +146,3 @@ def bind_flat_params(module: nn.Module) -> torch.Tensor:
             param.data = view
             offset += param.numel()
     return flat
-
-
-# obs-normalizer stat buffers that the collector needs (read-only) to reproduce
-# the sync ``act()`` path (normalize with update=False, see agent.act); consumed
-# by the weight channel (weight_channel.py).
-_NORM_KEYS = ("_mean", "_std", "_var", "count")

@@ -45,12 +45,13 @@ from motrix_rl_builtin.fastsac.async_impl.learner import CollectorEndpoint, Lear
 from motrix_rl_builtin.fastsac.async_impl.stats import timing_mean
 from motrix_rl_builtin.fastsac.async_impl.transport import (
     Control,
-    IpcTransitionRing,
+    FinalObsStorage,
+    GpuIpcTransitionRing,
+    HostTransitionRing,
     RingCursors,
-    SharedTransitionRing,
+    fastsac_transition_schema,
 )
 from motrix_rl_builtin.fastsac.async_impl.transport.handshake import StartupHandshake
-from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsStorage
 from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import (
     GpuIpcWeightSender,
     HostWeightSender,
@@ -315,7 +316,7 @@ def run_collector_process(
     dims: tuple[int, int, int],
     action_scale: torch.Tensor,
     action_bias: torch.Tensor,
-    ring: SharedTransitionRing | RingCursors,
+    ring: HostTransitionRing | RingCursors,
     weights: WeightChannelShared,
     control: Control,
     collector_data_queue: Queue,
@@ -364,15 +365,13 @@ def run_collector_process(
         if isinstance(ring, RingCursors):
             if ring_slots is None:
                 raise RuntimeError("the learner shipped no transition-ring slots for the IPC ring handshake")
-            ring = IpcTransitionRing(
+            ring = GpuIpcTransitionRing(
                 ring,
                 ring_slots,
+                fastsac_transition_schema(obs_dim, critic_obs_dim, act_dim),
                 opts.ring_capacity,
                 num_envs,
-                obs_dim,
-                critic_obs_dim,
-                act_dim,
-                final_obs_store=final_store,
+                payload_store=final_store,
             )
         collector = Collector(
             env,
@@ -447,7 +446,7 @@ def run_learner_process(
     dims: tuple[int, int, int],
     action_scale: torch.Tensor,
     action_bias: torch.Tensor,
-    rings: list[SharedTransitionRing | RingCursors],
+    rings: list[HostTransitionRing | RingCursors],
     weights: list[WeightChannelShared],
     control: Control,
     error_queue,
@@ -460,7 +459,7 @@ def run_learner_process(
     resume_from: str | None,
     seed: int | None,
     handshake: StartupHandshake,
-    all_rings: list[SharedTransitionRing],
+    all_rings: list[HostTransitionRing],
     weight_ipc: list[bool],
     collector_ids: list[int],
     learner_data_queue: Queue,
@@ -579,7 +578,7 @@ def run_learner_process(
             )
             handshake.ship_weight_slots(channel, tx.params)
             weight_txs.append(tx)
-        # Wrap RingCursors into IpcTransitionRing (allocating the device slots
+        # Wrap RingCursors into GpuIpcTransitionRing (allocating the device slots
         # and shipping them to the collector) BEFORE building the endpoints —
         # the endpoints must hold the FINAL ring objects the drain path uses.
         for j, ring in enumerate(rings):
@@ -589,19 +588,21 @@ def run_learner_process(
                 if device.type != "cuda":
                     raise RuntimeError("the IPC transition ring was selected but the learner device is not CUDA")
                 obs_dim, critic_obs_dim, act_dim = dims
-                feat = obs_dim + critic_obs_dim + act_dim + 3
+                schema = fastsac_transition_schema(obs_dim, critic_obs_dim, act_dim)
                 ring_slots = torch.zeros(
-                    opts.ring_capacity, per_collector_envs, feat, dtype=torch.float32, device=device
-                )
-                rings[j] = IpcTransitionRing(
-                    ring,
-                    ring_slots,
                     opts.ring_capacity,
                     per_collector_envs,
-                    obs_dim,
-                    critic_obs_dim,
-                    act_dim,
-                    final_obs_store=final_stores[j] if final_stores is not None else None,
+                    schema.feature_width,
+                    dtype=torch.float32,
+                    device=device,
+                )
+                rings[j] = GpuIpcTransitionRing(
+                    ring,
+                    ring_slots,
+                    schema,
+                    opts.ring_capacity,
+                    per_collector_envs,
+                    payload_store=final_stores[j] if final_stores is not None else None,
                 )
             handshake.ship_ring_slots(collector_id, ring_slots)
 
@@ -749,7 +750,7 @@ def run_learner_process(
                     "buffer_size": agent.rb.num_stored * agent.num_envs,
                     "buffer_capacity": agent.rb.buffer_size * agent.num_envs,
                     # bare RingCursors (IPC transport) carry no size; the
-                    # wrapped IpcTransitionRing lives in this worker.
+                    # wrapped GpuIpcTransitionRing lives in this worker.
                     "ring_fill": [None if isinstance(ring, RingCursors) else ring.size() for ring in all_rings],
                     "weight_version": max((tx.version for tx in weight_txs), default=None),
                     "checkpoint_path": last_checkpoint_path,
