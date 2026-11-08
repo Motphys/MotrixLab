@@ -25,19 +25,19 @@ from motrix_rl_builtin.fastsac.async_impl.transport.ring import (
     SharedTransitionRing,
 )
 from motrix_rl_builtin.fastsac.buffer import SimpleReplayBuffer
-from motrix_rl_builtin.fastsac.wrap_np import FastSacNpEnvWrap
+from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap
 
-from motrix_env_core.array.env import ArrayEnvState, FinalObs, NpObs
+from motrix_env_core.array.env import ArrayEnvState, EnvObs, FinalObs
 
 
 def test_numpy_adapter_reads_final_result_without_consuming_environment_state():
-    final = FinalObs(np.array([0]), NpObs(np.array([[7.0]], dtype=np.float32)))
+    final = FinalObs(torch.tensor([0]), EnvObs(torch.tensor([[7.0]], dtype=torch.float32)))
     state = ArrayEnvState(
-        obs=NpObs(np.zeros((1, 1), dtype=np.float32)),
-        reward=np.zeros(1, dtype=np.float32),
-        terminated=np.zeros(1, dtype=bool),
-        truncated=np.ones(1, dtype=bool),
-        episode_steps=np.zeros(1, dtype=np.uint64),
+        obs=EnvObs(torch.zeros((1, 1), dtype=torch.float32)),
+        reward=torch.zeros(1, dtype=torch.float32),
+        terminated=torch.zeros(1, dtype=torch.bool),
+        truncated=torch.ones(1, dtype=torch.bool),
+        episode_steps=torch.zeros(1, dtype=torch.int64),
         final_obs=final,
     )
     initial = state.replace(final_obs=None)
@@ -47,7 +47,7 @@ def test_numpy_adapter_reads_final_result_without_consuming_environment_state():
         init_state=lambda: initial,
         step=lambda actions: state,
     )
-    wrapped = FastSacNpEnvWrap(env, torch.device("cpu"))
+    wrapped = FastSacEnvWrap(env, torch.device("cpu"))
     obs, critic_obs = wrapped.reset()
     torch.testing.assert_close(obs, torch.zeros(1, 1))
     torch.testing.assert_close(critic_obs, obs)

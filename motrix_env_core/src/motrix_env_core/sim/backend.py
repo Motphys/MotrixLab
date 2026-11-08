@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
+import torch
 
 from motrix_env_core.config import SimCfg
 from motrix_env_core.config.scene import SceneCfg, SystemCameraCfg
@@ -85,8 +85,8 @@ class SimRenderer(abc.ABC):
         """Present one frame from the current simulator state (sync + viewer input)."""
 
     @abc.abstractmethod
-    def capture(self) -> np.ndarray:
-        """Return the current system-camera view as an HxWx3 uint8 image (headless only)."""
+    def capture(self) -> torch.Tensor:
+        """Return the current system-camera view as an HxWx3 uint8 image tensor (headless only)."""
 
     @abc.abstractmethod
     def close(self) -> None:
@@ -167,7 +167,7 @@ class SimBackend(abc.ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} does not provide rendering")
 
-    def sample_terrain_height(self, geom_name: str, env_ids: np.ndarray, xy: np.ndarray) -> np.ndarray:
+    def sample_terrain_height(self, geom_name: str, env_ids: torch.Tensor, xy: torch.Tensor) -> torch.Tensor:
         """Sample terrain height at ``(rows, ..., 2)`` query points for selected rows.
 
         Optional capability covering both height-field and flat ground geoms;

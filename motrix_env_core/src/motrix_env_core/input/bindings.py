@@ -3,16 +3,24 @@
 
 """Bindings that produce high-level commands from devices or configuration."""
 
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Generic, TypeVar
 
-import numpy as np
+import torch
 
-from motrix_env_core.input.command import FloatArray, PlanarVelocityCommand
+from motrix_env_core.input.command import PlanarVelocityCommand
 from motrix_env_core.input.device import GamePadDevice, KeyboardDevice
 
 CommandT = TypeVar("CommandT")
+
+
+def _finite_vec3(name: str, values) -> torch.Tensor:
+    tensor = torch.as_tensor(values, dtype=torch.float32)
+    if tensor.shape != (3,) or not bool(torch.isfinite(tensor).all()):
+        raise ValueError(f"{name} must contain three finite values")
+    return tensor
 
 
 class CommandBinding(ABC, Generic[CommandT]):
@@ -30,36 +38,33 @@ class KeyboardPlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
         self,
         device: KeyboardDevice,
         *,
-        command_lower: Sequence[float] | FloatArray,
-        command_upper: Sequence[float] | FloatArray,
+        command_lower: Sequence[float] | torch.Tensor,
+        command_upper: Sequence[float] | torch.Tensor,
     ) -> None:
         self._device = device
-        self._command_lower = np.array(command_lower, dtype=np.float32, copy=True)
-        self._command_upper = np.array(command_upper, dtype=np.float32, copy=True)
-        if self._command_lower.shape != (3,) or self._command_upper.shape != (3,):
-            raise ValueError("keyboard command lower and upper must have shape (3,)")
-        if not np.all(np.isfinite(self._command_lower)) or not np.all(np.isfinite(self._command_upper)):
-            raise ValueError("keyboard command lower and upper must contain only finite numbers")
-        if np.any(self._command_lower > 0.0) or np.any(self._command_upper < 0.0):
+        self._command_lower = _finite_vec3("command_lower", command_lower)
+        self._command_upper = _finite_vec3("command_upper", command_upper)
+        if bool((self._command_lower > 0.0).any()) or bool((self._command_upper < 0.0).any()):
             raise ValueError("keyboard command range must contain zero on every axis")
 
     def read_command(self, *, batch_size: int = 1) -> PlanarVelocityCommand:
         _validate_batch_size(batch_size)
         self._device.poll()
-        direction = np.asarray(
+        direction = torch.tensor(
             (
                 int(self._device.is_pressing("w")) - int(self._device.is_pressing("s")),
                 int(self._device.is_pressing("a")) - int(self._device.is_pressing("d")),
                 int(self._device.is_pressing("q")) - int(self._device.is_pressing("e")),
             ),
-            dtype=np.int8,
+            dtype=torch.int8,
         )
-        value = np.where(
+        zero = torch.zeros(3, dtype=torch.float32)
+        value = torch.where(
             direction > 0,
             self._command_upper,
-            np.where(direction < 0, self._command_lower, np.float32(0.0)),
+            torch.where(direction < 0, self._command_lower, zero),
         )
-        return PlanarVelocityCommand(np.repeat(value[None, :], batch_size, axis=0))
+        return PlanarVelocityCommand(value[None, :].repeat(batch_size, 1))
 
 
 class GamePadPlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
@@ -85,26 +90,26 @@ class GamePadPlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
             raise ValueError("axis names must be non-empty strings")
         self._device = device
         self._axes = axes
-        self._scale = np.asarray((linear_x_scale, linear_y_scale, yaw_scale), dtype=np.float32)
-        if np.any(self._scale < 0.0):
+        self._scale = _finite_vec3("scale values", (linear_x_scale, linear_y_scale, yaw_scale))
+        if bool((self._scale < 0.0).any()):
             raise ValueError("scale values must be non-negative")
         if isinstance(deadzone, bool) or not isinstance(deadzone, (int, float)):
             raise ValueError("deadzone must be a finite value inside [0, 1)")
         self._deadzone = float(deadzone)
-        if not np.isfinite(self._deadzone) or not 0.0 <= self._deadzone < 1.0:
+        if not math.isfinite(self._deadzone) or not 0.0 <= self._deadzone < 1.0:
             raise ValueError("deadzone must be a finite value inside [0, 1)")
         inversions = (invert_linear_x, invert_linear_y, invert_yaw)
         if any(not isinstance(value, bool) for value in inversions):
             raise ValueError("axis inversion flags must be bool values")
-        self._direction = np.asarray(tuple(-1.0 if value else 1.0 for value in inversions), dtype=np.float32)
+        self._direction = torch.tensor(tuple(-1.0 if value else 1.0 for value in inversions), dtype=torch.float32)
 
     def read_command(self, *, batch_size: int = 1) -> PlanarVelocityCommand:
         _validate_batch_size(batch_size)
         self._device.poll()
-        axes = np.asarray(tuple(self._device.axis_value(axis) for axis in self._axes), dtype=np.float32)
-        axes[np.abs(axes) < self._deadzone] = 0.0
+        axes = torch.tensor(tuple(self._device.axis_value(axis) for axis in self._axes), dtype=torch.float32)
+        axes = torch.where(axes.abs() < self._deadzone, torch.zeros_like(axes), axes)
         value = axes * self._direction * self._scale
-        return PlanarVelocityCommand(np.repeat(value[None, :], batch_size, axis=0))
+        return PlanarVelocityCommand(value[None, :].repeat(batch_size, 1))
 
 
 class BoundedGamePadPlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
@@ -117,10 +122,10 @@ class BoundedGamePadPlanarVelocityBinding(CommandBinding[PlanarVelocityCommand])
         linear_x_axis: str,
         linear_y_axis: str,
         yaw_axis: str,
-        command_lower: Sequence[float] | FloatArray,
-        command_upper: Sequence[float] | FloatArray,
+        command_lower: Sequence[float] | torch.Tensor,
+        command_upper: Sequence[float] | torch.Tensor,
         deadzone: float = 0.0,
-        range_scale: Sequence[float] | FloatArray = (1.0, 1.0, 1.0),
+        range_scale: Sequence[float] | torch.Tensor = (1.0, 1.0, 1.0),
         invert_linear_x: bool = False,
         invert_linear_y: bool = False,
         invert_yaw: bool = False,
@@ -131,31 +136,24 @@ class BoundedGamePadPlanarVelocityBinding(CommandBinding[PlanarVelocityCommand])
             raise ValueError("axis names must be non-empty strings")
         self._device = device
         self._axes = axes
-        self._command_lower = np.asarray(command_lower, dtype=np.float32)
-        self._command_upper = np.asarray(command_upper, dtype=np.float32)
-        self._range_scale = np.asarray(range_scale, dtype=np.float32)
-        for name, value in (
-            ("command_lower", self._command_lower),
-            ("command_upper", self._command_upper),
-            ("range_scale", self._range_scale),
-        ):
-            if value.shape != (3,) or not np.all(np.isfinite(value)):
-                raise ValueError(f"{name} must contain three finite values")
-        if np.any(self._command_lower > 0.0) or np.any(self._command_upper < 0.0):
+        self._command_lower = _finite_vec3("command_lower", command_lower)
+        self._command_upper = _finite_vec3("command_upper", command_upper)
+        self._range_scale = _finite_vec3("range_scale", range_scale)
+        if bool((self._command_lower > 0.0).any()) or bool((self._command_upper < 0.0).any()):
             raise ValueError("gamepad command range must contain zero on every axis")
-        if np.any(self._command_lower > self._command_upper):
+        if bool((self._command_lower > self._command_upper).any()):
             raise ValueError("gamepad command lower must not exceed upper")
-        if np.any(self._range_scale < 0.0) or np.any(self._range_scale > 1.0):
+        if bool((self._range_scale < 0.0).any()) or bool((self._range_scale > 1.0).any()):
             raise ValueError("range_scale values must be inside [0, 1]")
         if isinstance(deadzone, bool) or not isinstance(deadzone, (int, float)):
             raise ValueError("deadzone must be a finite value inside [0, 1)")
         self._deadzone = float(deadzone)
-        if not np.isfinite(self._deadzone) or not 0.0 <= self._deadzone < 1.0:
+        if not math.isfinite(self._deadzone) or not 0.0 <= self._deadzone < 1.0:
             raise ValueError("deadzone must be a finite value inside [0, 1)")
         inversions = (invert_linear_x, invert_linear_y, invert_yaw)
         if any(not isinstance(value, bool) for value in inversions):
             raise ValueError("axis inversion flags must be bool values")
-        self._direction = np.asarray(tuple(-1.0 if value else 1.0 for value in inversions), dtype=np.float32)
+        self._direction = torch.tensor(tuple(-1.0 if value else 1.0 for value in inversions), dtype=torch.float32)
         if deadman_button is not None and (not isinstance(deadman_button, str) or not deadman_button):
             raise ValueError("deadman_button must be null or a non-empty string")
         self._deadman_button = deadman_button
@@ -164,30 +162,30 @@ class BoundedGamePadPlanarVelocityBinding(CommandBinding[PlanarVelocityCommand])
         _validate_batch_size(batch_size)
         self._device.poll()
         if self._deadman_button is not None and not self._device.is_button_pressing(self._deadman_button):
-            value = np.zeros(3, dtype=np.float32)
+            value = torch.zeros(3, dtype=torch.float32)
         else:
-            axes = np.asarray(tuple(self._device.axis_value(axis) for axis in self._axes), dtype=np.float32)
-            axes = np.clip(axes * self._direction, -1.0, 1.0)
-            magnitude = np.maximum(np.abs(axes) - self._deadzone, 0.0) / (1.0 - self._deadzone)
-            normalized = np.copysign(magnitude, axes)
-            bounded = np.where(
+            axes = torch.tensor(tuple(self._device.axis_value(axis) for axis in self._axes), dtype=torch.float32)
+            axes = torch.clamp(axes * self._direction, -1.0, 1.0)
+            magnitude = (axes.abs() - self._deadzone).clamp(min=0.0) / (1.0 - self._deadzone)
+            normalized = torch.copysign(magnitude, axes)
+            bounded = torch.where(
                 normalized >= 0.0,
                 normalized * self._command_upper,
                 (-normalized) * self._command_lower,
             )
-            value = (bounded * self._range_scale).astype(np.float32)
-        return PlanarVelocityCommand(np.repeat(value[None, :], batch_size, axis=0))
+            value = bounded * self._range_scale
+        return PlanarVelocityCommand(value[None, :].repeat(batch_size, 1))
 
 
 class ConstantPlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
     """Replicate one configured planar velocity across the requested batch."""
 
-    def __init__(self, value: Sequence[float] | FloatArray) -> None:
-        self._value = np.asarray(value, dtype=np.float32)
+    def __init__(self, value: Sequence[float] | torch.Tensor) -> None:
+        self._value = _finite_vec3("value", value)
 
     def read_command(self, *, batch_size: int = 1) -> PlanarVelocityCommand:
         _validate_batch_size(batch_size)
-        return PlanarVelocityCommand(np.repeat(self._value[None, :], batch_size, axis=0))
+        return PlanarVelocityCommand(self._value[None, :].repeat(batch_size, 1))
 
 
 def _validate_batch_size(batch_size: int) -> None:

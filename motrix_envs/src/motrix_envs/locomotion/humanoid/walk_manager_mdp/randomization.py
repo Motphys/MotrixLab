@@ -14,7 +14,7 @@ class WalkRandomizationCfg:
     sim write program, and the backend keeps the written overrides between
     resets. A degenerate range (``min == max``, or ``(1.0, 1.0)`` / zero
     width) disables that item; when randomization is enabled, all write keys
-    are declared so the Numba map schema remains stable, while disabled items
+    are declared so the write map schema remains stable, while disabled items
     perform no writes.
 
     Attributes:

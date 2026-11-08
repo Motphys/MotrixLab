@@ -18,8 +18,9 @@ def load_runtime():
     import numpy as np
 
     from motrix_env_core import registry
+    from motrix_env_core.manager import ManagerEnv
 
-    return np, registry
+    return np, registry, ManagerEnv
 
 
 def prepare_env(
@@ -30,7 +31,7 @@ def prepare_env(
     expected_action_spec=None,
 ):
     """Create an environment and compatible fixed actions, checking comparisons."""
-    np, registry = load_runtime()
+    np, registry, manager_env_type = load_runtime()
     kwargs = {"mode": args.mode, "num_envs": num_envs}
     if args.sim_backend is not None:
         kwargs["sim_backend"] = args.sim_backend
@@ -56,6 +57,16 @@ def prepare_env(
                 low = np.where(np.isfinite(space.low), space.low, -1.0)
                 high = np.where(np.isfinite(space.high), space.high, 1.0)
                 actions = np.random.default_rng(args.seed).uniform(low, high, size=shape).astype(space.dtype)
+        elif not isinstance(actions, np.ndarray):
+            # Compare runs pass the previous env's actions through; canonicalize
+            # back to numpy so every env receives identically valued actions.
+            actions = np.asarray(actions)
+        # Manager environments consume tensor actions; hand each env a
+        # zero-copy tensor view of the same canonical numpy values.
+        if isinstance(env, manager_env_type):
+            import torch
+
+            actions = torch.from_numpy(np.ascontiguousarray(actions))
         return env, actions, action_spec
     except BaseException:
         close_env(env)

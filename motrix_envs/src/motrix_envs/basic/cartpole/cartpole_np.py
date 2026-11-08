@@ -3,6 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -52,9 +53,8 @@ class CartPoleEnv(DirectEnv):
     def action_space(self):
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState):
-        ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = actions.astype(np.float32, copy=False)
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
         return state
 
@@ -63,41 +63,27 @@ class CartPoleEnv(DirectEnv):
         inputs = self.sim_data
         dof_pos = inputs["dof_pos"]
 
-        # compute reward
-        reward = np.ones((self._num_envs,), dtype=np.float32)
-
-        # compute terminated
         cart_pos = dof_pos[:, 0]
         angle = dof_pos[:, 1]
-        terminated = np.logical_or(np.isnan(angle), np.abs(angle) > 0.2)
-        terminated = np.logical_or(cart_pos < -0.8, terminated)
-        terminated = np.logical_or(cart_pos > 0.8, terminated)
+        terminated = angle.isnan() | (angle.abs() > 0.2)
+        terminated = terminated | (cart_pos < -0.8)
+        terminated = terminated | (cart_pos > 0.8)
 
-        state.reward = reward
-        state.terminated = terminated
+        state.reward[:] = 1.0
+        state.terminated[:] = terminated
         return state
 
     def compute_observation(self, state: ArrayEnvState):
-        obs = np.concatenate([self.sim_data["dof_pos"], self.sim_data["dof_vel"]], axis=-1)
+        obs = torch.cat([self.sim_data["dof_pos"], self.sim_data["dof_vel"]], dim=-1)
         assert obs.shape == (self._num_envs, 4)
         return state.replace(obs=obs)
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
         cfg: CartPoleEnvCfg = self._cfg
-        rows = len(env_ids)
-        noise_pos = np.random.uniform(
-            -cfg.reset_noise_scale,
-            cfg.reset_noise_scale,
-            (rows, 2),
-        )
-        noise_vel = np.random.uniform(
-            -cfg.reset_noise_scale,
-            cfg.reset_noise_scale,
-            (rows, 2),
-        )
-
-        dof_pos = noise_pos.astype(np.float32)
-        dof_vel = noise_vel.astype(np.float32)
+        rows = env_ids.numel()
+        scale = cfg.reset_noise_scale
+        dof_pos = (torch.rand(rows, 2, dtype=torch.float32) * 2.0 - 1.0) * scale
+        dof_vel = (torch.rand(rows, 2, dtype=torch.float32) * 2.0 - 1.0) * scale
 
         self._reset_position[env_ids] = dof_pos
         self._reset_velocity[env_ids] = dof_vel

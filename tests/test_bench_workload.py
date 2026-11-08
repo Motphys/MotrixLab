@@ -19,7 +19,7 @@ def test_benchmark_modules_import_without_runtime():
             "-c",
             "import sys; import bench.bench_env; import bench.env_benchmark.runner; "
             "import bench.env_benchmark.workload; "
-            "assert not {'numpy', 'torch', 'numba', 'motrixsim'} & sys.modules.keys()",
+            "assert not {'numpy', 'torch', 'motrixsim'} & sys.modules.keys()",
         ],
         check=True,
     )
@@ -38,7 +38,7 @@ def test_comparison_reuses_actions_and_closes_incompatible_environment(monkeypat
     )
     environments = iter([reference, compared, incompatible])
     registry = SimpleNamespace(make=lambda *args, **kwargs: next(environments))
-    monkeypatch.setattr(workload, "load_runtime", lambda: (np, registry))
+    monkeypatch.setattr(workload, "load_runtime", lambda: (np, registry, dict))
     args = SimpleNamespace(mode="train", sim_backend=None, zero_actions=False, seed=123)
     env, actions, spec = workload.prepare_env("reference", args, 3)
     assert env is reference

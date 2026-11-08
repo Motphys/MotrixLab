@@ -3,34 +3,29 @@
 
 """Walk-task builder for the shared in-kernel terrain grid."""
 
-import numpy as np
+import torch
 
 from motrix_env_core.mdp.terrain import HeightFieldGrid
+from motrix_env_core.sim import SimModel
 
 
-def ground_height_grid(ctx, ground_geom: str) -> HeightFieldGrid:
-    """Build the terrain grid from the build context's compiled model queries.
+def ground_height_grid(model: SimModel, ground_geom: str) -> HeightFieldGrid:
+    """Return the terrain grid shared by all terms.
 
-    Rough presets read the exported height-field grid; flat presets degenerate
-    to the ground geom's constant world z.
+    The height-field query registers its export only when the floor is an
+    HField terrain; the backend builds that grid (float64 storage) once and
+    every term shares the same immutable record. Flat presets degenerate to
+    ``ground_geom``'s constant world z.
     """
-    cfg = ctx.cfg
-    if cfg.ground_heightfield_geom is not None:
-        hf = ctx.model.others["ground_heightfield"]
-        return HeightFieldGrid(
-            heights=hf["heights"],
-            origin=hf["origin"],
-            spacing=hf["spacing"],
-            z0=hf["z0"],
-            constant=np.float32(0.0),
-            enabled=True,
-        )
-    spec = ctx.model.others["geoms"][ground_geom]
+    grid = model.others.get("ground_heightfield")
+    if grid is not None:
+        return grid
+    spec = model.others["geoms"][ground_geom]
     return HeightFieldGrid(
-        heights=np.zeros((1, 1), dtype=np.float32),
-        origin=np.zeros((2,), dtype=np.float32),
-        spacing=np.ones((2,), dtype=np.float32),
-        z0=np.zeros((1,), dtype=np.float32),
-        constant=np.float32(spec.local_pose[2]),
+        heights=torch.zeros((1, 1), dtype=torch.float64),
+        origin=torch.zeros((2,), dtype=torch.float64),
+        spacing=torch.ones((2,), dtype=torch.float64),
+        z0=torch.zeros((1,), dtype=torch.float64),
+        constant=float(spec.local_pose[2]),
         enabled=False,
     )

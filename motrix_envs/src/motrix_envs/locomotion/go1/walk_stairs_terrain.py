@@ -1,13 +1,13 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
-# SPDX-License-Identifier: Apache-2.0
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
-from motrix_env_core.math import quaternion
+from motrix_env_core.math.quaternion import rotate_inverse
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     BodyAngularVelocityWrite,
@@ -26,6 +26,8 @@ from motrix_env_core.sim.write import BodyJointVelocityWrite, CtrlTargetsWrite
 from motrix_envs.locomotion.go1.cfg import Go1WalkDirectStairsEnvCfg
 
 from .common import generate_repeating_array
+
+_GRAVITY = torch.tensor([0, 0, -1], dtype=torch.float32)
 
 
 def _sim_data_queries(cfg: Go1WalkDirectStairsEnvCfg):
@@ -75,15 +77,15 @@ class Go1WalkStairsTask(DirectEnv):
         self._init_obs_space()
         self._num_action = self._action_space.shape[0]
         self._num_observation = self._observation_space.shape[0]
-        height_list = np.array([-1, 0.5, 1.5])
+        height_list = [-1, 0.5, 1.5]
         offset_h = [[2, 0, 2, 1, 1], [2, 2, 1, 0, 0], [1, 1, 2, 1, 2], [0, 1, 0, 2, 0], [0, 1, 1, 0, 2]]
         offset = []
         for i in range(5):
             for j in range(5):
                 h_index = offset_h[j][i]
                 offset.append([(i - 2) * 8.0, (j - 2) * 8.0, height_list[h_index]])
-        self.offset_list = np.array(offset)
-        self._init_base_pose = self.model.init_dof_pos[:7].copy()
+        self.offset_list = torch.tensor(offset, dtype=torch.float32)
+        self._init_base_pose = self.model.init_dof_pos[:7].clone()
         self._init_buffer()
         self.period_counter = 0
 
@@ -129,11 +131,10 @@ class Go1WalkStairsTask(DirectEnv):
         assert isinstance(cfg, Go1WalkDirectStairsEnvCfg)
         # init buffers
 
-        self.reset_buf = np.ones(self._num_envs, dtype=np.bool_)
-        self.kps = np.ones(self._num_action, dtype=np.float32) * cfg.control_config.stiffness
-        self.kds = np.ones(self._num_action, dtype=np.float32) * cfg.control_config.damping
-        self.gravity_vec = np.array([0, 0, -1], dtype=np.float32)
-        self.commands_scale = np.array(
+        self.reset_buf = torch.ones(self._num_envs, dtype=torch.bool)
+        self.kps = torch.full((self._num_action,), cfg.control_config.stiffness, dtype=torch.float32)
+        self.kds = torch.full((self._num_action,), cfg.control_config.damping, dtype=torch.float32)
+        self.commands_scale = torch.tensor(
             (
                 [
                     cfg.normalization.lin_vel,
@@ -141,10 +142,10 @@ class Go1WalkStairsTask(DirectEnv):
                     cfg.normalization.ang_vel,
                 ]
             ),
-            dtype=np.float32,
+            dtype=torch.float32,
         )
 
-        self.default_angles = np.zeros(self._num_action, dtype=np.float32)
+        self.default_angles = torch.zeros(self._num_action, dtype=torch.float32)
         self.hip_indices = []
         self.calf_indices = []
         actuator_names = [spec.name for spec in self.model.actuators]
@@ -157,7 +158,7 @@ class Go1WalkStairsTask(DirectEnv):
             if "calf" in actuator_names[i]:
                 self.calf_indices.append(i)
 
-        self._init_joint_position = self.default_angles.copy()
+        self._init_joint_position = self.default_angles.clone()
 
         # Contact-pair counts follow the cfg-pinned collision queries: the
         # legacy code derived them by substring-matching the scene's single
@@ -168,13 +169,13 @@ class Go1WalkStairsTask(DirectEnv):
         # Episode-scoped task state: full-batch buffers, reset writes the done
         # rows in place.
         num_envs = self._num_envs
-        self._commands = np.zeros((num_envs, 3), dtype=np.float32)
-        self._contacts = np.zeros((num_envs, self.foot_check_num), dtype=np.bool_)
-        self._contact_force = np.zeros((num_envs, 12), dtype=np.float32)
-        self._feet_air_time = np.zeros((num_envs, self.foot_check_num), dtype=np.float32)
-        self._last_dof_vel = np.zeros((num_envs, self._num_action), dtype=np.float32)
-        self._current_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
-        self._last_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
+        self._commands = torch.zeros((num_envs, 3), dtype=torch.float32)
+        self._contacts = torch.zeros((num_envs, self.foot_check_num), dtype=torch.bool)
+        self._contact_force = torch.zeros((num_envs, 12), dtype=torch.float32)
+        self._feet_air_time = torch.zeros((num_envs, self.foot_check_num), dtype=torch.float32)
+        self._last_dof_vel = torch.zeros((num_envs, self._num_action), dtype=torch.float32)
+        self._current_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32)
+        self._last_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32)
 
         spacing = 2.0
         cols = int(np.ceil(np.sqrt(self._num_envs)))
@@ -186,16 +187,17 @@ class Go1WalkStairsTask(DirectEnv):
             y = row * spacing
             z = 0.0
             offsets.append([x, y, z])
-        self.offsets = np.array(offsets)
+        self.offsets = torch.tensor(offsets, dtype=torch.float32)
 
-    def apply_action(self, actions, state):
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        actions = torch.as_tensor(actions, dtype=torch.float32)
         # Copy values: the read buffer is a view that the upcoming physics-step
         # read overwrites in place.
-        self._last_dof_vel[:] = self.get_dof_vel()
-        self._last_actions[:] = self._current_actions
-        self._current_actions[:] = actions
+        self._last_dof_vel.copy_(self.get_dof_vel())
+        self._last_actions.copy_(self._current_actions)
+        self._current_actions.copy_(actions)
         ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = np.asarray(self._compute_torques(actions), dtype=np.float32)
+        ctrl.copy_(self._compute_torques(actions))
         self._ctrl_writes.execute()
         return state
 
@@ -206,10 +208,10 @@ class Go1WalkStairsTask(DirectEnv):
         torques = self.kps * (actions_scaled + self.default_angles - self.get_dof_pos()) - self.kds * self.get_dof_vel()
         return torques
 
-    def get_local_linvel(self) -> np.ndarray:
+    def get_local_linvel(self) -> torch.Tensor:
         return self.sim_data["local_linvel"]
 
-    def get_gyro(self) -> np.ndarray:
+    def get_gyro(self) -> torch.Tensor:
         return self.sim_data["gyro"]
 
     def compute_observation(self, state: ArrayEnvState):
@@ -218,7 +220,7 @@ class Go1WalkStairsTask(DirectEnv):
         linear_vel = inputs["local_linvel"]
         gyro = inputs["gyro"]
         base_quat = inputs["root_quat"]
-        local_gravity = quaternion.rotate_inverse(base_quat, self.gravity_vec)
+        local_gravity = rotate_inverse(base_quat, _GRAVITY)
         diff = inputs["robot_joint_pos"] - self.default_angles
         noisy_linvel = linear_vel * self.cfg.normalization.lin_vel
         noisy_gyro = gyro * self.cfg.normalization.ang_vel
@@ -228,7 +230,7 @@ class Go1WalkStairsTask(DirectEnv):
         last_actions = self._current_actions
         contact_force = self._contact_force
 
-        obs = np.hstack(
+        obs = torch.cat(
             [
                 noisy_linvel,
                 noisy_gyro,
@@ -238,14 +240,15 @@ class Go1WalkStairsTask(DirectEnv):
                 last_actions,
                 command,
                 contact_force,
-            ]
+            ],
+            dim=1,
         )
         return state.replace(obs=obs)
 
     def compute_transition(self, state):
         self.sim_data.execute()
         # Contact bookkeeping is reward state derived from the refreshed cache.
-        self._contacts[:] = self.sim_data["foot_colliding"]
+        self._contacts.copy_(self.sim_data["foot_colliding"])
         self.update_feet_air_time()
         self.update_contact_force()
         state = self.update_terminated(state)
@@ -254,9 +257,9 @@ class Go1WalkStairsTask(DirectEnv):
 
     def update_terminated(self, state: ArrayEnvState) -> ArrayEnvState:
         termination_check = self.sim_data["termination_colliding"]
-        terminated = termination_check.any(axis=1)
+        terminated = termination_check.any(dim=1)
 
-        over_speed = np.sum(np.square(self.get_local_linvel()[:, :2]), axis=1) > 1e8
+        over_speed = torch.sum(torch.square(self.get_local_linvel()[:, :2]), dim=1) > 1e8
         terminated = terminated | over_speed
         return state.replace(
             terminated=terminated,
@@ -272,17 +275,14 @@ class Go1WalkStairsTask(DirectEnv):
         force = []
         for k in range(len(self.cfg.sensor.feet)):
             contact_force = foot_forces[:, 3 * k : 3 * k + 3]
-            contact_force = quaternion.rotate_inverse(base_quat, contact_force)
+            contact_force = rotate_inverse(base_quat, contact_force)
             force.append(contact_force)
-        self._contact_force[:] = np.concatenate(force, axis=1)
+        self._contact_force.copy_(torch.cat(force, dim=1))
 
     def resample_commands(self, num_envs: int):
-        commands = np.random.uniform(
-            low=self.cfg.commands.vel_limit[0],
-            high=self.cfg.commands.vel_limit[1],
-            size=(num_envs, 3),
-        )
-        return commands.astype(np.float32)
+        low = torch.tensor(self.cfg.commands.vel_limit[0], dtype=torch.float32)
+        high = torch.tensor(self.cfg.commands.vel_limit[1], dtype=torch.float32)
+        return low + (high - low) * torch.rand((num_envs, 3), dtype=torch.float32)
 
     def update_reward(self, state: ArrayEnvState) -> ArrayEnvState:
         terminated = state.terminated
@@ -291,26 +291,26 @@ class Go1WalkStairsTask(DirectEnv):
 
         rewards = {k: v * self.cfg.reward_config.scales[k] for k, v in reward_dict.items()}
         rwd = sum(rewards.values())
-        rwd = np.clip(rwd, 0.0, 10000.0)
+        rwd = torch.clamp(rwd, 0.0, 10000.0)
         if "termination" in self.cfg.reward_config.scales:
             termination = self._reward_termination(terminated) * self.cfg.reward_config.scales["termination"]
-            rwd += termination
+            rwd = rwd + termination
 
-        rwd = np.where(terminated, np.array(0.0), rwd)
+        rwd = torch.where(terminated, torch.zeros((), dtype=torch.float32), rwd)
 
         return state.replace(reward=rwd)
 
-    def reset(self, env_ids: np.ndarray) -> None:
-        num_reset = len(env_ids)
+    def reset(self, env_ids: torch.Tensor) -> None:
+        num_reset = env_ids.numel()
 
-        base_pose = np.tile(self._init_base_pose, (num_reset, 1))
+        base_pose = self._init_base_pose.repeat(num_reset, 1)
 
         num_period = 25
         idx = generate_repeating_array(num_period, num_reset, self.period_counter)
         self.period_counter = (self.period_counter + num_reset) % num_period
-        base_pose[:, :3] = self.offset_list[idx]
+        base_pose[:, :3] = self.offset_list[torch.as_tensor(idx, dtype=torch.int64)]
 
-        _reset_pose = base_pose.astype(np.float32)
+        _reset_pose = base_pose
         self._reset_position[env_ids] = _reset_pose[:, :3]
         self._reset_rotation[env_ids] = _reset_pose[:, 3:7]
         self._reset_linear_velocity[env_ids] = 0.0
@@ -318,7 +318,7 @@ class Go1WalkStairsTask(DirectEnv):
         self._reset_joint_position[env_ids] = self._init_joint_position
         self._reset_joint_velocity[env_ids] = 0.0
         self._reset_program.execute(env_ids)
-        self.sim_data.execute(np.asarray(env_ids, dtype=np.int64))
+        self.sim_data.execute(env_ids)
 
         self._commands[env_ids] = self.resample_commands(num_reset)
         self._current_actions[env_ids] = 0.0
@@ -328,7 +328,7 @@ class Go1WalkStairsTask(DirectEnv):
         self._contacts[env_ids] = False
         self._contact_force[env_ids] = 0.0
 
-    def _get_reward(self) -> dict[str, np.ndarray]:
+    def _get_reward(self) -> dict[str, torch.Tensor]:
         commands = self._commands
         return {
             "lin_vel_z": self._reward_lin_vel_z(),
@@ -350,85 +350,87 @@ class Go1WalkStairsTask(DirectEnv):
     # ------------ reward functions----------------
     def _reward_lin_vel_z(self):
         # Penalize z axis base linear velocity
-        return np.square(self.get_local_linvel()[:, 2])
+        return torch.square(self.get_local_linvel()[:, 2])
 
     def _reward_ang_vel_xy(self):
         # Penalize xy axes base angular velocity
-        return np.sum(np.square(self.get_gyro()[:, :2]), axis=1)
+        return torch.sum(torch.square(self.get_gyro()[:, :2]), dim=1)
 
     def _reward_orientation(self):
         # Penalize non flat base orientation
         base_quat = self.sim_data["root_quat"]
-        gravity = quaternion.rotate_inverse(base_quat, self.gravity_vec)
-        return np.sum(np.square(gravity[:, :2]), axis=1)
+        gravity = rotate_inverse(base_quat, _GRAVITY)
+        return torch.sum(torch.square(gravity[:, :2]), dim=1)
 
     def _reward_torques(self):
         # Penalize torques
-        return np.sum(np.square(self.sim_data["actuator_ctrls"]), axis=1)
+        return torch.sum(torch.square(self.sim_data["actuator_ctrls"]), dim=1)
 
     def _reward_dof_vel(self):
         # Penalize dof velocities
-        return np.sum(np.square(self.get_dof_vel()), axis=1)
+        return torch.sum(torch.square(self.get_dof_vel()), dim=1)
 
     def _reward_dof_acc(self):
         # Penalize dof accelerations
-        return np.sum(
-            np.square((self._last_dof_vel - self.get_dof_vel()) / self.cfg.ctrl_dt),
-            axis=1,
+        return torch.sum(
+            torch.square((self._last_dof_vel - self.get_dof_vel()) / self.cfg.ctrl_dt),
+            dim=1,
         )
 
     def _reward_action_rate(self):
         # Penalize changes in actions
         action_diff = self._current_actions - self._last_actions
-        return np.sum(np.square(action_diff), axis=1)
+        return torch.sum(torch.square(action_diff), dim=1)
 
     def _reward_termination(self, done):
         # Terminal reward / penalty
         return done
 
-    def _reward_feet_air_time(self, commands: np.ndarray):
+    def _reward_feet_air_time(self, commands: torch.Tensor):
         # Reward long steps
         feet_air_time = self._feet_air_time
         first_contact = (feet_air_time > 0.0) * self._contacts
         # reward only on first contact with the ground
-        rew_airTime = np.sum((feet_air_time - 0.5) * first_contact, axis=1)
+        rew_airTime = torch.sum((feet_air_time - 0.5) * first_contact, dim=1)
         # no reward for zero command
-        rew_airTime *= np.linalg.norm(commands[:, :2], axis=1) > 0.1
+        rew_airTime *= torch.linalg.vector_norm(commands[:, :2], dim=1) > 0.1
         return rew_airTime
 
-    def _reward_tracking_lin_vel(self, commands: np.ndarray):
+    def _reward_tracking_lin_vel(self, commands: torch.Tensor):
         # Tracking of linear velocity commands (xy axes)
-        lin_vel_error = np.sum(np.square(commands[:, :2] - self.get_local_linvel()[:, :2]), axis=1)
-        return np.exp(-lin_vel_error / self.cfg.reward_config.tracking_sigma)
+        lin_vel_error = torch.sum(torch.square(commands[:, :2] - self.get_local_linvel()[:, :2]), dim=1)
+        return torch.exp(-lin_vel_error / self.cfg.reward_config.tracking_sigma)
 
-    def _reward_tracking_ang_vel(self, commands: np.ndarray):
+    def _reward_tracking_ang_vel(self, commands: torch.Tensor):
         # Tracking of angular velocity commands (yaw)
-        ang_vel_error = np.square(commands[:, 2] - self.get_gyro()[:, 2])
-        return np.exp(-ang_vel_error / self.cfg.reward_config.tracking_sigma)
+        ang_vel_error = torch.square(commands[:, 2] - self.get_gyro()[:, 2])
+        return torch.exp(-ang_vel_error / self.cfg.reward_config.tracking_sigma)
 
-    def _reward_stand_still(self, commands: np.ndarray):
+    def _reward_stand_still(self, commands: torch.Tensor):
         # Penalize motion at zero commands
-        return np.sum(np.abs(self.get_dof_pos() - self.default_angles), axis=1) * (
-            np.linalg.norm(commands, axis=1) < 0.1
+        return torch.sum(torch.abs(self.get_dof_pos() - self.default_angles), dim=1) * (
+            torch.linalg.vector_norm(commands, dim=1) < 0.1
         )
 
-    def _reward_hip_pos(self, commands: np.ndarray):
-        return (0.8 - np.abs(commands[:, 1])) * np.sum(
-            np.square(self.get_dof_pos()[:, self.hip_indices] - self.default_angles[self.hip_indices]),
-            axis=1,
+    def _reward_hip_pos(self, commands: torch.Tensor):
+        return (0.8 - torch.abs(commands[:, 1])) * torch.sum(
+            torch.square(self.get_dof_pos()[:, self.hip_indices] - self.default_angles[self.hip_indices]),
+            dim=1,
         )
 
-    def _reward_calf_pos(self, commands: np.ndarray):
-        return (0.8 - np.abs(commands[:, 1])) * np.sum(
-            np.square(self.get_dof_pos()[:, self.calf_indices] - self.default_angles[self.calf_indices]),
-            axis=1,
+    def _reward_calf_pos(self, commands: torch.Tensor):
+        return (0.8 - torch.abs(commands[:, 1])) * torch.sum(
+            torch.square(self.get_dof_pos()[:, self.calf_indices] - self.default_angles[self.calf_indices]),
+            dim=1,
         )
 
     def _reward_feet_stumble(self):
         # Penalize feet hitting vertical surfaces
         foot_forces = self.sim_data["foot_contact_forces"]
-        is_stumble = 0
+        is_stumble = torch.zeros((self._num_envs,), dtype=torch.float32)
         for k in range(len(self.cfg.sensor.feet)):
             contact_force = foot_forces[:, 3 * k : 3 * k + 3]
-            is_stumble += (np.linalg.norm(contact_force, axis=1) > 5 * np.abs(contact_force[:, 2])) * 1.0
+            is_stumble += (torch.linalg.vector_norm(contact_force, dim=1) > 5 * torch.abs(contact_force[:, 2])).to(
+                torch.float32
+            )
         return is_stumble

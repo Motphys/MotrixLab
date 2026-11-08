@@ -76,7 +76,7 @@ USER ${UID}:${GID}
 FROM python-base AS train-cuda-deps
 RUN --mount=type=cache,target=/home/motrix/.cache/uv,uid=1000,gid=1000,sharing=locked \
     uv sync --frozen --no-default-groups \
-      --extra cuda --extra rslrl --extra docs --extra tbb \
+      --extra cuda --extra rslrl --extra docs \
       --no-install-workspace
 
 FROM train-cuda-deps AS train-cuda
@@ -91,7 +91,7 @@ COPY --chown=${UID}:${GID} --parents motrix* ./
 COPY --chown=${UID}:${GID} configs /workspace/configs
 RUN --mount=type=cache,target=/home/motrix/.cache/uv,uid=1000,gid=1000,sharing=locked \
     uv sync --frozen --no-default-groups --no-editable \
-      --extra cuda --extra rslrl --extra docs --extra tbb
+      --extra cuda --extra rslrl --extra docs
 
 WORKDIR /workspace
 ENTRYPOINT ["/app/.venv/bin/mxlab"]
@@ -107,7 +107,7 @@ LABEL org.opencontainers.image.title="MotrixLab CUDA training runtime with JAX" 
       org.opencontainers.image.version="${MOTRIXLAB_VERSION}"
 RUN --mount=type=cache,target=/home/motrix/.cache/uv,uid=1000,gid=1000,sharing=locked \
     uv sync --project /app --frozen --no-default-groups --no-editable \
-      --extra cuda --extra skrl-jax --extra rslrl --extra docs --extra tbb
+      --extra cuda --extra skrl-jax --extra rslrl --extra docs
 
 WORKDIR /workspace
 ENTRYPOINT ["/app/.venv/bin/mxlab"]
@@ -116,7 +116,7 @@ CMD ["--help"]
 FROM python-base AS train-rocm-deps
 RUN --mount=type=cache,target=/home/motrix/.cache/uv,uid=1000,gid=1000,sharing=locked \
     uv sync --frozen --no-default-groups \
-      --extra rocm --extra rslrl --extra docs --extra tbb \
+      --extra rocm --extra rslrl --extra docs \
       --no-install-workspace
 
 FROM train-rocm-deps AS train-rocm
@@ -131,7 +131,7 @@ COPY --chown=${UID}:${GID} --parents motrix* ./
 COPY --chown=${UID}:${GID} configs /workspace/configs
 RUN --mount=type=cache,target=/home/motrix/.cache/uv,uid=1000,gid=1000,sharing=locked \
     uv sync --frozen --no-default-groups --no-editable \
-      --extra rocm --extra rslrl --extra docs --extra tbb
+      --extra rocm --extra rslrl --extra docs
 
 WORKDIR /workspace
 ENTRYPOINT ["/app/.venv/bin/mxlab"]

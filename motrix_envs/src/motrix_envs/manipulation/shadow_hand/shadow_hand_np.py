@@ -3,11 +3,12 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
-from motrix_env_core.array.env import ArrayEnvState, NpObs
+from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.direct.env import DirectEnv
-from motrix_env_core.math import quaternion, utils
+from motrix_env_core.math import quaternion
 from motrix_env_core.sim import (
     BatchLinkAngularVelocityQuery,
     BatchLinkLinearVelocityQuery,
@@ -53,6 +54,19 @@ _SIM_DATA_QUERIES = {
 }
 
 _SIM_MODEL_QUERIES = {"hand_joint_position_limits": BodyJointPositionLimitsQuery(body="rh_forearm")}
+
+
+def _generate_random_shoemake(size: int) -> torch.Tensor:
+    """Uniformly distributed random quaternions (Shoemake's method), (x, y, z, w)."""
+    u1, u2, u3 = torch.rand(3, size, dtype=torch.float32)
+    sqrt1_u1 = torch.sqrt(1 - u1)
+    sqrtu1 = torch.sqrt(u1)
+    w = sqrt1_u1 * torch.sin(2 * torch.pi * u2)
+    x = sqrt1_u1 * torch.cos(2 * torch.pi * u2)
+    y = sqrtu1 * torch.sin(2 * torch.pi * u3)
+    z = sqrtu1 * torch.cos(2 * torch.pi * u3)
+    return torch.stack([x, y, z, w], dim=-1)
+
 
 """
 Shadow Hand Cube Reorientation Environment for MotrixSim
@@ -116,13 +130,17 @@ class ShadowHandReposeEnv(DirectEnv):
         self._observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(157,), dtype=np.float32)
 
         # Get actuator control ranges from model
-        self._actuator_ctrl_lower = np.asarray([spec.ctrl_range[0] for spec in self.model.actuators], dtype=np.float32)
-        self._actuator_ctrl_upper = np.asarray([spec.ctrl_range[1] for spec in self.model.actuators], dtype=np.float32)
+        self._actuator_ctrl_lower = torch.tensor(
+            [spec.ctrl_range[0] for spec in self.model.actuators], dtype=torch.float32
+        )
+        self._actuator_ctrl_upper = torch.tensor(
+            [spec.ctrl_range[1] for spec in self.model.actuators], dtype=torch.float32
+        )
 
         # Hand limits use the same articulated-DOF order as the hand position slice.
         hand_lower, hand_upper = self.model.others["hand_joint_position_limits"]
-        self._hand_dof_lower_limits = np.asarray(hand_lower, dtype=np.float32)
-        self._hand_dof_upper_limits = np.asarray(hand_upper, dtype=np.float32)
+        self._hand_dof_lower_limits = hand_lower.to(torch.float32)
+        self._hand_dof_upper_limits = hand_upper.to(torch.float32)
         expected_shape = (self._num_hand_dofs,)
         if self._hand_dof_lower_limits.shape != expected_shape or self._hand_dof_upper_limits.shape != expected_shape:
             raise ValueError(
@@ -137,15 +155,15 @@ class ShadowHandReposeEnv(DirectEnv):
         self._cube_base_vel = slice(-6, None)
 
         # Initial cube position (in hand)
-        self._in_hand_pos = np.array(cfg.cube_initial_pos, dtype=np.float32)
+        self._in_hand_pos = torch.tensor(cfg.cube_initial_pos, dtype=torch.float32)
 
         # Episode-scoped task state: full-batch buffers, reset writes the done
         # rows in place.
         num_envs = self._num_envs
-        self._goal_pos = np.tile(self._in_hand_pos, (num_envs, 1))
-        self._goal_rot = np.zeros((num_envs, 4), dtype=np.float32)
-        self._prev_actions = np.zeros((num_envs, self._num_actuators), dtype=np.float32)
-        self._successes = np.zeros(num_envs, dtype=np.int32)
+        self._goal_pos = self._in_hand_pos.unsqueeze(0).repeat(num_envs, 1)
+        self._goal_rot = torch.zeros(num_envs, 4, dtype=torch.float32)
+        self._prev_actions = torch.zeros(num_envs, self._num_actuators, dtype=torch.float32)
+        self._successes = torch.zeros(num_envs, dtype=torch.int64)
 
     @property
     def observation_space(self):
@@ -176,28 +194,30 @@ class ShadowHandReposeEnv(DirectEnv):
         inputs = self.sim_data
         positions = inputs["fingertip_pos"][rows]
         quaternions = inputs["fingertip_quat"][rows]
-        velocities = np.concatenate((inputs["fingertip_lin_vel"][rows], inputs["fingertip_ang_vel"][rows]), axis=-1)
+        velocities = torch.cat((inputs["fingertip_lin_vel"][rows], inputs["fingertip_ang_vel"][rows]), dim=-1)
         return positions, quaternions, velocities
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState):
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
         """Apply actions to the hand actuators."""
         cfg = self._cfg
 
         # Scale actions from [-1, 1] to actuator control range
-        targets = utils.scale(actions, self._actuator_ctrl_lower, self._actuator_ctrl_upper)
+        targets = 0.5 * (actions + 1.0) * (self._actuator_ctrl_upper - self._actuator_ctrl_lower) + (
+            self._actuator_ctrl_lower
+        )
 
         # Apply action moving average for smoothness
         if cfg.act_moving_average < 1.0:
             targets = cfg.act_moving_average * targets + (1.0 - cfg.act_moving_average) * self._prev_actions
 
         # Clamp to control limits
-        targets = np.clip(targets, self._actuator_ctrl_lower, self._actuator_ctrl_upper)
+        targets = torch.clamp(targets, self._actuator_ctrl_lower, self._actuator_ctrl_upper)
 
         # Set actuator controls
         ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = np.asarray(targets, dtype=np.float32)
+        ctrl.copy_(targets)
         self._ctrl_writes.execute()
-        self._prev_actions[:] = targets
+        self._prev_actions.copy_(targets)
 
         return state
 
@@ -225,21 +245,26 @@ class ShadowHandReposeEnv(DirectEnv):
         fingertip_pos, fingertip_quat, fingertip_vel = self._extract_link_states(rows)
 
         # Flatten fingertip states (5 × 13 = 65)
-        fingertip_state = np.concatenate(
+        fingertip_state = torch.cat(
             [
                 fingertip_pos.reshape(num_envs, -1),  # 15
                 fingertip_quat.reshape(num_envs, -1),  # 20
                 fingertip_vel.reshape(num_envs, -1),  # 30
             ],
-            axis=-1,
+            dim=-1,
         )  # Total: 65
 
         # Compute relative quaternion
-        relative_quat = quaternion.mul(cube_quat, quaternion.conjugate(self._goal_rot))
-        scaled_hand_pos = utils.unscale(hand_dof_pos, self._hand_dof_lower_limits, self._hand_dof_upper_limits)
+        relative_quat = quaternion.mul(cube_quat, quaternion.inverse(self._goal_rot))
+        scaled_hand_pos = (
+            2.0
+            * (hand_dof_pos - self._hand_dof_lower_limits)
+            / (self._hand_dof_upper_limits - self._hand_dof_lower_limits)
+            - 1.0
+        )
 
         # Build observation (157 dims)
-        obs = np.concatenate(
+        obs = torch.cat(
             [
                 scaled_hand_pos,
                 cfg.vel_obs_scale * hand_dof_vel,  # 24
@@ -253,13 +278,13 @@ class ShadowHandReposeEnv(DirectEnv):
                 fingertip_state,  # 65
                 self._prev_actions,  # 20
             ],
-            axis=-1,
+            dim=-1,
         )
         # Publish the computed policy observation on the state. The field
         # name is applied via setattr so static audits can tell this
         # sanctioned observation-stage write apart from the forbidden
         # transition-time writes.
-        setattr(state, "obs", NpObs(policy=obs))
+        setattr(state, "obs", EnvObs(policy=obs))
         return state
 
     def compute_transition(self, state: ArrayEnvState):
@@ -272,8 +297,8 @@ class ShadowHandReposeEnv(DirectEnv):
 
         # Compute reward and termination from the refreshed simulator cache
         reward, terminated, goal_reached = self._compute_reward()
-        if np.any(goal_reached):
-            reset_goal_indices = np.where(goal_reached)[0]
+        if bool(goal_reached.any()):
+            reset_goal_indices = torch.nonzero(goal_reached, as_tuple=False).flatten()
             self._reset_goal_pose(reset_goal_indices)
         # Update the goal mocap body so viewers track the current goal pose
         # (a write program, not an observation read).
@@ -303,48 +328,48 @@ class ShadowHandReposeEnv(DirectEnv):
         cube_pos, cube_quat, _ = self._extract_cube_states(slice(None))
 
         # Distance from cube to goal position
-        goal_dist = np.linalg.norm(cube_pos - self._goal_pos, axis=-1)
+        goal_dist = torch.linalg.norm(cube_pos - self._goal_pos, dim=-1)
 
         # Rotation distance
         rot_dist = quaternion.rotation_distance(cube_quat, self._goal_rot)
 
         # Core reward components
         dist_rew = goal_dist * cfg.dist_reward_scale
-        rot_rew = 1.0 / (np.abs(rot_dist) + cfg.rot_eps) * cfg.rot_reward_scale
-        action_penalty = np.sum(self._prev_actions**2, axis=-1) * cfg.action_penalty_scale
+        rot_rew = 1.0 / (torch.abs(rot_dist) + cfg.rot_eps) * cfg.rot_reward_scale
+        action_penalty = torch.sum(self._prev_actions**2, dim=-1) * cfg.action_penalty_scale
 
         # Base reward
         reward = dist_rew + rot_rew + action_penalty
 
         # Check for success (only rotation tolerance)
-        goal_reached = np.abs(rot_dist) <= cfg.success_tolerance
+        goal_reached = torch.abs(rot_dist) <= cfg.success_tolerance
 
         # Update success counter
-        self._successes += goal_reached * 1
+        self._successes += goal_reached.to(torch.int64)
 
         # Success bonus
-        reward = np.where(goal_reached, reward + cfg.reach_goal_bonus, reward)
+        reward = torch.where(goal_reached, reward + cfg.reach_goal_bonus, reward)
 
         # Fall penalty
         fallen = goal_dist >= cfg.fall_dist
-        reward = np.where(fallen, reward + cfg.fall_penalty, reward)
+        reward = torch.where(fallen, reward + cfg.fall_penalty, reward)
 
         # Termination conditions
-        terminated = np.zeros(num_envs, dtype=bool)
+        terminated = torch.zeros(num_envs, dtype=torch.bool)
 
         # 1. Fall termination
-        terminated = np.logical_or(terminated, fallen)
+        terminated = terminated | fallen
 
         # 2. Success termination with hold mechanism
-        new_pos = np.zeros(num_envs, dtype=bool)
+        new_pos = torch.zeros(num_envs, dtype=torch.bool)
         if cfg.max_consecutive_successes > 0:
             # Reset progress on goal reached when max consecutive successes reached
             new_pos = self._successes >= cfg.max_consecutive_successes
-            self._successes *= 1 - new_pos
+            self._successes *= (~new_pos).to(torch.int64)
 
         # 3. NaN protection
-        terminated = np.logical_or(terminated, np.isnan(rot_dist))
-        terminated = np.logical_or(terminated, np.isnan(goal_dist))
+        terminated = terminated | rot_dist.isnan()
+        terminated = terminated | goal_dist.isnan()
 
         return reward, terminated, new_pos
 
@@ -353,71 +378,66 @@ class ShadowHandReposeEnv(DirectEnv):
         cfg = self._cfg
 
         # Compute visualization position (offset from goal position)
-        viz_pos = self._goal_pos + np.array(cfg.viz_target_offset, dtype=np.float32)
+        viz_pos = self._goal_pos + torch.tensor(cfg.viz_target_offset, dtype=torch.float32)
 
         # Update mocap body pose
-        all_ids = np.arange(self._num_envs, dtype=np.int64)
-        self._target_writes.buffer("target_pos")[all_ids, 0] = np.asarray(viz_pos, dtype=np.float32)
-        self._target_writes.buffer("target_rot")[all_ids, 0] = np.asarray(self._goal_rot, dtype=np.float32)
+        all_ids = torch.arange(self._num_envs, dtype=torch.int64)
+        self._target_writes.buffer("target_pos")[all_ids, 0] = viz_pos
+        self._target_writes.buffer("target_rot")[all_ids, 0] = self._goal_rot
         self._target_writes.execute(all_ids)
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
         """Reset environments."""
         cfg = self._cfg
 
-        num_resets = len(env_ids)
-        row_ids = np.asarray(env_ids, dtype=np.int64)
+        num_resets = env_ids.numel()
 
         # Reset hand DOFs with noise
         hand_pos = self._reset_program.buffer("hand_position")
         hand_vel = self._reset_program.buffer("hand_velocity")
 
         # Add noise to DOF positions
-        dof_pos_noise = np.random.uniform(
-            -cfg.reset_dof_pos_noise,
-            cfg.reset_dof_pos_noise,
-            (num_resets, self._num_hand_dofs),
-        ).astype(np.float32)
+        dof_pos_noise = (
+            torch.rand(num_resets, self._num_hand_dofs, dtype=torch.float32) * 2.0 - 1.0
+        ) * cfg.reset_dof_pos_noise
 
         # Add noise to DOF velocities
-        dof_vel_noise = np.random.uniform(
-            -cfg.reset_dof_vel_noise, cfg.reset_dof_vel_noise, (num_resets, self._num_hand_dofs)
-        ).astype(np.float32)
+        dof_vel_noise = (
+            torch.rand(num_resets, self._num_hand_dofs, dtype=torch.float32) * 2.0 - 1.0
+        ) * cfg.reset_dof_vel_noise
 
         # Set hand DOF states for all envs being reset.
-        hand_pos[row_ids] = dof_pos_noise
-        hand_vel[row_ids] = dof_vel_noise
+        hand_pos[env_ids] = dof_pos_noise
+        hand_vel[env_ids] = dof_vel_noise
 
         # Reset cube position with small noise
-        cube_pos_noise = np.random.uniform(-cfg.reset_position_noise, cfg.reset_position_noise, (num_resets, 3)).astype(
-            np.float32
-        )
-        cube_pos = np.tile(self._in_hand_pos, (num_resets, 1))
-        cube_pos += cube_pos_noise
+        cube_pos_noise = (torch.rand(num_resets, 3, dtype=torch.float32) * 2.0 - 1.0) * cfg.reset_position_noise
+        cube_pos = self._in_hand_pos.unsqueeze(0).repeat(num_resets, 1)
+        cube_pos = cube_pos + cube_pos_noise
 
         # Randomize cube orientation
-        cube_quat = quaternion.generate_random_shoemake(num_resets)
+        cube_quat = _generate_random_shoemake(num_resets)
 
         # BodyPositionWrite / BodyRotationWrite buffers are (N, B, 3) / (N, B, 4).
-        self._reset_program.buffer("cube_position")[row_ids, 0] = cube_pos
-        self._reset_program.buffer("cube_rotation")[row_ids, 0] = cube_quat
-        self._reset_program.buffer("cube_linear_velocity")[row_ids, 0] = 0.0
-        self._reset_program.buffer("cube_angular_velocity")[row_ids, 0] = 0.0
-        self._reset_program.execute(row_ids)
-        self.sim_data.execute(row_ids)
+        self._reset_program.buffer("cube_position")[env_ids, 0] = cube_pos
+        self._reset_program.buffer("cube_rotation")[env_ids, 0] = cube_quat
+        self._reset_program.buffer("cube_linear_velocity")[env_ids, 0] = 0.0
+        self._reset_program.buffer("cube_angular_velocity")[env_ids, 0] = 0.0
+        self._reset_program.execute(env_ids)
+        self.sim_data.execute(env_ids)
 
         # Reset episode-scoped task state for the reset rows. The goal position
         # is fixed; the goal orientation is sampled uniformly on SO(3).
-        self._goal_pos[row_ids] = self._in_hand_pos
-        self._goal_rot[row_ids] = quaternion.generate_random_shoemake(num_resets)
-        self._prev_actions[row_ids] = 0.0
-        self._successes[row_ids] = 0
+        self._goal_pos[env_ids] = self._in_hand_pos
+        self._goal_rot[env_ids] = _generate_random_shoemake(num_resets)
+        self._prev_actions[env_ids] = 0.0
+        self._successes[env_ids] = 0
 
     def _reset_goal_pose(self, env_ids):
         """Reset goal pose to random orientation with fixed position."""
-        num_resets = len(env_ids)
+        num_resets = env_ids.numel()
 
         # Goal position is fixed
 
         # Randomize goal orientation using Shoemake method for uniform SO(3) sampling
-        self._goal_rot[env_ids] = quaternion.generate_random_shoemake(num_resets)
+        self._goal_rot[env_ids] = _generate_random_shoemake(num_resets)

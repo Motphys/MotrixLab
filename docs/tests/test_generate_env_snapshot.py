@@ -89,7 +89,7 @@ def test_validate_options_rejects_invalid_values(args, message):
         generate_env_snapshot._validate_options(*args)
 
 
-def test_generate_snapshot_initializes_registered_np_env(monkeypatch, tmp_path):
+def test_generate_snapshot_initializes_registered_env(monkeypatch, tmp_path):
     class FakeArrayEnv:
         pass
 
