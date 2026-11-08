@@ -223,10 +223,9 @@ class HumanoidVelocityTrackingManagerEnvCfg(ManagerBasedEnvCfg):
 
         # Rough-terrain presets place an HField geom as the floor; export its
         # static grid so the fused kernel can look up ground heights itself.
-        self.ground_heightfield_geom: str | None = None
+        # The exported query's presence in model.others selects the rough path.
         floor_obj = getattr(self.scene.objs, "floor", None)
         if isinstance(floor_obj, HFieldTerrainCfg):
-            self.ground_heightfield_geom = ground_geom
             self.queries.model["ground_heightfield"] = HeightFieldDataQuery(geom=ground_geom)
 
         # Scene-level facts shared by several terms.

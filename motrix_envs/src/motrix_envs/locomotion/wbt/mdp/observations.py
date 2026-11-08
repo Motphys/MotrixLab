@@ -3,7 +3,10 @@
 
 """WBT command-backed observation terms."""
 
+from dataclasses import dataclass
+
 import numpy as np
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import RobotCfg
@@ -11,39 +14,22 @@ from motrix_env_core.manager import (
     ManagerContext,
     ObservationTermCfg,
     ObsTerm,
-    kernel_data,
-    njit,
 )
-from motrix_env_core.manager.math.quaternion import inverse as quat_inverse
-from motrix_env_core.manager.math.quaternion import mul as quat_mul
-from motrix_env_core.manager.math.quaternion import rotate_inverse, to_matrix_first_two_rows
-from motrix_env_core.mdp.noise import add_uniform_noise
+from motrix_env_core.math import quaternion
+from motrix_env_core.math.quaternion import relative_orientation, rotate_inverse
 from motrix_env_core.mdp.observations import (
     UniformNoiseCfg,
+    add_uniform_noise,
 )
-from motrix_env_core.numba.kernel_data import SharedArray
-from motrix_env_core.numba.manager.dispatch import dispatch
 from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommand
 
 
-@njit(inline="always")
-def _write_relative_orientation_6d(
-    reference_quat_w: np.ndarray,
-    target_quat_w: np.ndarray,
-    out: np.ndarray,
-) -> None:
-    relative_quat = out[:4]
-    quat_inverse(reference_quat_w, relative_quat)
-    quat_mul(relative_quat, target_quat_w, relative_quat)
-    to_matrix_first_two_rows(relative_quat, out[:6])
-
-
-@dispatch
-def motion_joint_obs(ctx: ManagerContext, out: np.ndarray) -> None:
-    motion: WbtMotionCommand = ctx.commands["motion"]
+def motion_joint_obs(ctx: ManagerContext, out: torch.Tensor) -> None:
+    motion = ctx.commands["motion"]
+    steps = motion.steps[:, 0]
     joint_count = motion.clip.joint_pos.shape[1]
-    out[:joint_count] = motion.clip.joint_pos[motion.steps[0]]
-    out[joint_count:] = motion.clip.joint_vel[motion.steps[0]]
+    out[:, :joint_count] = motion.clip.joint_pos[steps]
+    out[:, joint_count:] = motion.clip.joint_vel[steps]
 
 
 @configclass(kw_only=True)
@@ -55,40 +41,34 @@ class MotionJointObsCfg(ObservationTermCfg):
         return ObsTerm(2 * motion.clip.joint_pos.shape[1], motion_joint_obs)
 
 
-@dispatch
-def motion_reference_position_obs(ctx: ManagerContext, out: np.ndarray) -> None:
-    tracked_body_pos = ctx.sim["tracked_body_pos"]
-    tracked_body_quat = ctx.sim["tracked_body_quat"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    reference_pos = tracked_body_pos[motion.reference_index]
-    reference_quat = tracked_body_quat[motion.reference_index]
-    target_ref_pos = motion.clip.reference_body_pos_w[motion.steps[0]]
-    rotate_inverse(
+def motion_reference_position_obs(ctx: ManagerContext, out: torch.Tensor) -> None:
+    motion = ctx.commands["motion"]
+    reference_index = motion.reference_index
+    reference_pos = ctx.sim["tracked_body_pos"][:, reference_index]
+    reference_quat = ctx.sim["tracked_body_quat"][:, reference_index]
+    local = rotate_inverse(
         reference_quat,
-        (
-            target_ref_pos[0] - reference_pos[0],
-            target_ref_pos[1] - reference_pos[1],
-            target_ref_pos[2] - reference_pos[2],
-        ),
-        out,
+        motion.clip.reference_body_pos_w[motion.steps[:, 0]] - reference_pos,
     )
+    out.copy_(local)
 
 
 @configclass(kw_only=True)
 class MotionReferencePositionObsCfg(ObservationTermCfg):
     def __call__(self, ctx) -> ObsTerm:
-        del ctx
         return ObsTerm(3, motion_reference_position_obs)
 
 
-@dispatch
-def motion_reference_orientation_obs(ctx: ManagerContext, out: np.ndarray, noise_amplitude: np.float32) -> None:
-    tracked_body_quat = ctx.sim["tracked_body_quat"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    rand = ctx.rand
-    reference_quat = tracked_body_quat[motion.reference_index]
-    _write_relative_orientation_6d(reference_quat, motion.clip.reference_body_quat_w[motion.steps[0]], out)
-    add_uniform_noise(out, noise_amplitude, rand.state)
+def motion_reference_orientation_obs(
+    ctx: ManagerContext,
+    out: torch.Tensor,
+    noise_amplitude: float,
+) -> None:
+    motion = ctx.commands["motion"]
+    reference_quat = ctx.sim["tracked_body_quat"][:, motion.reference_index]
+    local = relative_orientation(reference_quat, motion.clip.reference_body_quat_w[motion.steps[:, 0]])
+    out.copy_(local)
+    add_uniform_noise(ctx, out, noise_amplitude)
 
 
 @configclass(kw_only=True)
@@ -96,28 +76,18 @@ class MotionReferenceOrientationObsCfg(ObservationTermCfg):
     noise: UniformNoiseCfg = UniformNoiseCfg()
 
     def __call__(self, ctx) -> ObsTerm:
-        del ctx
-        return ObsTerm(6, motion_reference_orientation_obs, np.float32(self.noise.amplitude))
+        return ObsTerm(6, motion_reference_orientation_obs, float(self.noise.amplitude))
 
 
-@dispatch
-def robot_body_position_in_reference_frame_obs(ctx: ManagerContext, out: np.ndarray) -> None:
-    tracked_body_pos = ctx.sim["tracked_body_pos"]
-    tracked_body_quat = ctx.sim["tracked_body_quat"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    reference_pos = tracked_body_pos[motion.reference_index]
-    reference_quat = tracked_body_quat[motion.reference_index]
-    for body_id in range(tracked_body_pos.shape[0]):
-        offset = body_id * 3
-        rotate_inverse(
-            reference_quat,
-            (
-                tracked_body_pos[body_id, 0] - reference_pos[0],
-                tracked_body_pos[body_id, 1] - reference_pos[1],
-                tracked_body_pos[body_id, 2] - reference_pos[2],
-            ),
-            out[offset : offset + 3],
-        )
+def robot_body_position_in_reference_frame_obs(ctx: ManagerContext, out: torch.Tensor) -> None:
+    motion = ctx.commands["motion"]
+    reference_index = motion.reference_index
+    reference_pos = ctx.sim["tracked_body_pos"][:, reference_index]
+    local = rotate_inverse(
+        ctx.sim["tracked_body_quat"][:, reference_index][:, None, :],
+        ctx.sim["tracked_body_pos"] - reference_pos[:, None, :],
+    )
+    out.copy_(local.reshape(local.shape[0], -1))
 
 
 @configclass(kw_only=True)
@@ -127,17 +97,17 @@ class RobotBodyPositionInReferenceFrameObsCfg(ObservationTermCfg):
         return ObsTerm(3 * num_tracked, robot_body_position_in_reference_frame_obs)
 
 
-@dispatch
-def robot_body_orientation_obs(ctx: ManagerContext, out: np.ndarray) -> None:
+def robot_body_orientation_obs(ctx: ManagerContext, out: torch.Tensor) -> None:
+    # Bug-compatible with the historical per-lane oracle: body zero writes its
+    # 6D matrix over the shared out[:4] inverse-quaternion scratch, and every
+    # later body reads those four matrix entries as its reference quaternion.
+    # Do not silently repair this alias; migrate the observation contract
+    # explicitly.
     tracked_body_quat = ctx.sim["tracked_body_quat"]
-    motion: WbtMotionCommand = ctx.commands["motion"]
-    quat_inverse(tracked_body_quat[motion.reference_index], out[:4])
-    for body_id in range(tracked_body_quat.shape[0]):
-        offset = body_id * 6
-        relative_quat = out[offset : offset + 4]
-        relative_quat[:] = out[:4]
-        quat_mul(relative_quat, tracked_body_quat[body_id], relative_quat)
-        to_matrix_first_two_rows(relative_quat, out[offset : offset + 6])
+    reference_quat = tracked_body_quat[:, ctx.commands["motion"].reference_index]
+    first = quaternion.matrix6d(quaternion.mul(quaternion.inverse(reference_quat), tracked_body_quat[:, 0, :]))
+    rest = quaternion.matrix6d(quaternion.mul(first[:, None, :4], tracked_body_quat[:, 1:, :]))
+    out.copy_(torch.cat((first[:, None, :], rest), dim=1).reshape(tracked_body_quat.shape[0], -1))
 
 
 @configclass(kw_only=True)
@@ -147,18 +117,15 @@ class RobotBodyOrientationObsCfg(ObservationTermCfg):
         return ObsTerm(6 * num_tracked, robot_body_orientation_obs)
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class RelativePositionParams:
-    reference: SharedArray
-    noise_amplitude: np.float32
+    reference: torch.Tensor
+    noise_amplitude: float
 
 
-@dispatch
-def dof_pos_rel_obs(ctx: ManagerContext, out: np.ndarray, params: RelativePositionParams) -> None:
-    dof_pos = ctx.sim["robot_dof_pos"]
-    rand = ctx.rand
-    np.subtract(dof_pos, params.reference, out)
-    add_uniform_noise(out, params.noise_amplitude, rand.state)
+def dof_pos_rel_obs(ctx: ManagerContext, out: torch.Tensor, params: RelativePositionParams) -> None:
+    out.copy_(ctx.sim["robot_dof_pos"] - params.reference)
+    add_uniform_noise(ctx, out, params.noise_amplitude)
 
 
 @configclass(kw_only=True)
@@ -194,16 +161,13 @@ class DofPosRelObsCfg(ObservationTermCfg):
         if missing:
             raise ValueError(f"RobotCfg {robot_name!r} key pose is missing queried joints: {missing}.")
         reference = np.asarray([positions[name] for name in queried_joints], dtype=np.float32)
-        params = RelativePositionParams(reference, np.float32(self.noise.amplitude))
+        params = RelativePositionParams(torch.from_numpy(reference), float(self.noise.amplitude))
         return ObsTerm(reference.shape[0], dof_pos_rel_obs, params)
 
 
-@dispatch
-def dof_vel_obs(ctx: ManagerContext, out: np.ndarray, noise_amplitude: np.float32) -> None:
-    dof_vel = ctx.sim["robot_dof_vel"]
-    rand = ctx.rand
-    out[:] = dof_vel
-    add_uniform_noise(out, noise_amplitude, rand.state)
+def dof_vel_obs(ctx: ManagerContext, out: torch.Tensor, noise_amplitude: float) -> None:
+    out.copy_(ctx.sim["robot_dof_vel"])
+    add_uniform_noise(ctx, out, noise_amplitude)
 
 
 @configclass(kw_only=True)
@@ -214,4 +178,4 @@ class DofVelObsCfg(ObservationTermCfg):
 
     def __call__(self, ctx) -> ObsTerm:
         num_joints = len(ctx.model.bodies["robot"].joint_names)
-        return ObsTerm(num_joints, dof_vel_obs, np.float32(self.noise.amplitude))
+        return ObsTerm(num_joints, dof_vel_obs, float(self.noise.amplitude))

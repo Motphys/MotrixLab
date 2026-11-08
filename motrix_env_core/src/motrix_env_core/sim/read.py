@@ -6,10 +6,9 @@ from __future__ import annotations
 import abc
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, TypeAlias
+from typing import Any
 
-import numpy as np
-import numpy.typing as npt
+import torch
 
 
 # Name fields hold concrete strings so query dataclasses remain valid,
@@ -483,10 +482,6 @@ class SimDataQueryCompiler(abc.ABC):
         """
 
 
-FloatArray: TypeAlias = npt.NDArray[np.float32]
-IntArray: TypeAlias = npt.NDArray[np.int64]
-
-
 class PhysicsReadProgram(abc.ABC):
     """One backend's compiled executable physical read program.
 
@@ -513,24 +508,24 @@ class PhysicsReadProgram(abc.ABC):
         """Return the resolved concrete declaration served under ``key``."""
 
     @abc.abstractmethod
-    def view(self, key: str) -> FloatArray:
+    def view(self, key: str) -> torch.Tensor:
         """Return the stable read-only logical view for one declared query key.
 
         The view aliases the arena with the query's declared trailing shape and
-        leading batch dimension, is float32, and stays valid for the program's
-        lifetime.
+        leading batch dimension, is a float32 torch tensor, and stays valid for
+        the program's lifetime.
         """
 
-    def __getitem__(self, key: str) -> FloatArray:
+    def __getitem__(self, key: str) -> torch.Tensor:
         """Read :meth:`view` by key — the canonical env-facing read spelling."""
         if not isinstance(key, str):
             raise TypeError(f"Simulator query keys must be strings, got {type(key).__name__}.")
         return self.view(key)
 
     @abc.abstractmethod
-    def execute(self, env_ids: IntArray | None = None) -> None:
+    def execute(self, env_ids: torch.Tensor | None = None) -> None:
         """Refresh the authoritative arena — the full batch, or selected rows.
 
-        ``env_ids`` is either ``None`` (full batch) or a one-dimensional int64
-        row index array.
+        ``env_ids`` is either ``None`` (full batch) or a one-dimensional
+        integer row-index tensor.
         """

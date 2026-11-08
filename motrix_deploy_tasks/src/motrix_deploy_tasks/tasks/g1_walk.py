@@ -206,7 +206,8 @@ class G1WalkPolicyProcessor(PolicyProcessor[PlanarVelocityCommand]):
             raise ValidationError("command.type", "PlanarVelocityCommand", type(command).__name__)
         if command.batch_size != 1:
             raise ValidationError("command.batch_size", "1", command.batch_size)
-        velocity = command.values[0]
+        # The core command carries a torch tensor; the deploy domain is NumPy.
+        velocity = command.values[0].numpy()
         if np.any(velocity < self._command_lower) or np.any(velocity > self._command_upper):
             raise ValidationError(
                 "command.velocity",

@@ -1,18 +1,23 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Action-space construction helpers for manager and direct environments."""
+"""Action-space construction helpers for manager and direct environments.
+
+Computations run on Torch tensors; the boundary to ``gym.spaces.Box`` (NumPy
+currency) is the final construction step.
+"""
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core.sim.model import ActuatorType
 
 
 def symmetric_residual_action_space(
-    control_ranges: np.ndarray,
-    default_values: np.ndarray,
-    action_scales: float | np.ndarray,
+    control_ranges: torch.Tensor,
+    default_values: torch.Tensor,
+    action_scales: float | torch.Tensor,
 ) -> gym.spaces.Box:
     """Build zero-centered residual-action bounds for affine controls.
 
@@ -29,16 +34,16 @@ def symmetric_residual_action_space(
         Symmetric ``Box`` with bounds ``[-limit, +limit]`` per actuator.
     """
     lower, upper = control_ranges
-    scales = np.asarray(action_scales, dtype=np.float32)
-    boundaries = np.maximum(np.abs(lower - default_values), np.abs(upper - default_values)) / scales
-    boundaries = np.where(scales == 0.0, 0.0, boundaries)
-    return gym.spaces.Box(-boundaries, boundaries, dtype=np.float32)
+    scales = torch.as_tensor(action_scales, dtype=torch.float32)
+    boundaries = torch.maximum(torch.abs(lower - default_values), torch.abs(upper - default_values)) / scales
+    boundaries = torch.where(scales == 0.0, torch.zeros_like(boundaries), boundaries)
+    return gym.spaces.Box(-boundaries.numpy(), boundaries.numpy(), dtype=np.float32)
 
 
 def asymmetric_residual_action_space(
-    control_ranges: np.ndarray,
-    default_values: np.ndarray,
-    action_scales: float | np.ndarray,
+    control_ranges: torch.Tensor,
+    default_values: torch.Tensor,
+    action_scales: float | torch.Tensor,
 ) -> gym.spaces.Box:
     """Build non-symmetric residual-action bounds for affine controls.
 
@@ -56,27 +61,28 @@ def asymmetric_residual_action_space(
         Asymmetric ``Box`` with independent per-actuator low/high bounds.
     """
     lower, upper = control_ranges
-    scales = np.asarray(action_scales, dtype=np.float32)
+    scales = torch.as_tensor(action_scales, dtype=torch.float32)
     low = (lower - default_values) / scales
     high = (upper - default_values) / scales
+    zero = torch.zeros_like(low)
     return gym.spaces.Box(
-        np.where(scales == 0.0, 0.0, low),
-        np.where(scales == 0.0, 0.0, high),
+        torch.where(scales == 0.0, zero, low).numpy(),
+        torch.where(scales == 0.0, zero, high).numpy(),
         dtype=np.float32,
     )
 
 
 def joint_position_action_space(
     actuators: tuple,
-    default_angles: np.ndarray,
-    action_scales: float | np.ndarray,
-    actuator_indices: np.ndarray | None = None,
+    default_angles: torch.Tensor,
+    action_scales: float | torch.Tensor,
+    actuator_indices: torch.Tensor | None = None,
 ) -> gym.spaces.Box:
     """Build symmetric bounds for joint-position actions.
 
     Each actuator's bound is the furthest distance from its default angle to
-    either position-control limit, divided by the per-actuator scale applied
-    by the environment. Pass a scalar for uniform scales. Position actuators
+    either position-control limit, divided by the per-actuator scale applied by
+    the environment. Pass a scalar for uniform scales. Position actuators
     must declare ``ctrl_range`` directly or inherit it from their target joint
     during model construction.
 
@@ -91,17 +97,17 @@ def joint_position_action_space(
         Symmetric ``Box`` with bounds ``[-limit, +limit]`` per actuator.
     """
     if actuator_indices is None:
-        actuator_indices = np.arange(len(actuators), dtype=np.int64)
+        actuator_indices = torch.arange(len(actuators), dtype=torch.int64)
     control_ranges = []
-    for actuator_index in actuator_indices:
-        actuator = actuators[int(actuator_index)]
+    for actuator_index in actuator_indices.tolist():
+        actuator = actuators[actuator_index]
         if actuator.actuator_type is not ActuatorType.POSITION:
             raise ValueError(f"actuator {actuator.name!r} must be a position actuator, got {actuator.actuator_type!r}")
         if actuator.ctrl_range is None:
             raise ValueError(f"position actuator {actuator.name!r} must define or inherit ctrl_range")
         control_ranges.append(actuator.ctrl_range)
     return joint_position_action_space_from_ctrl_ranges(
-        np.asarray(control_ranges, dtype=np.float32),
+        torch.tensor(control_ranges, dtype=torch.float32),
         default_angles,
         action_scales,
         # The loop above already selected rows in ``actuator_indices`` order;
@@ -111,10 +117,10 @@ def joint_position_action_space(
 
 
 def joint_position_action_space_from_ctrl_ranges(
-    ctrl_ranges: np.ndarray,
-    default_angles: np.ndarray,
-    action_scales: float | np.ndarray,
-    actuator_indices: np.ndarray | None = None,
+    ctrl_ranges: torch.Tensor,
+    default_angles: torch.Tensor,
+    action_scales: float | torch.Tensor,
+    actuator_indices: torch.Tensor | None = None,
 ) -> gym.spaces.Box:
     """Build symmetric joint-position action bounds from ctrl ranges.
 
@@ -130,14 +136,14 @@ def joint_position_action_space_from_ctrl_ranges(
         Symmetric ``Box`` with bounds ``[-limit, +limit]`` per actuator.
     """
     if actuator_indices is None:
-        actuator_indices = np.arange(ctrl_ranges.shape[0], dtype=np.int64)
-    default_angles = np.asarray(default_angles, dtype=np.float32)
-    expected_shape = (actuator_indices.size,)
+        actuator_indices = torch.arange(ctrl_ranges.shape[0], dtype=torch.int64)
+    expected_shape = (actuator_indices.numel(),)
     if default_angles.shape != expected_shape:
-        raise ValueError(f"default_angles must have shape {expected_shape}, got {default_angles.shape}")
-    control_ranges = np.asarray(ctrl_ranges, dtype=np.float32)[actuator_indices].T
-    if control_ranges.shape != (2, actuator_indices.size):
+        raise ValueError(f"default_angles must have shape {expected_shape}, got {tuple(default_angles.shape)}")
+    control_ranges = ctrl_ranges[actuator_indices].T
+    if control_ranges.shape != (2, actuator_indices.numel()):
         raise ValueError(
-            f"actuator control ranges must have shape (2, {actuator_indices.size}), got {control_ranges.shape}"
+            f"actuator control ranges must have shape (2, {actuator_indices.numel()}), "
+            f"got {tuple(control_ranges.shape)}"
         )
     return symmetric_residual_action_space(control_ranges, default_angles, action_scales)

@@ -3,7 +3,7 @@
 ## 摘要
 
 本文面向任务开发者，说明如何使用 `ManagerBasedEnvCfg` 和 Manager term 创建一个 config-driven `ManagerEnv`。
-内容覆盖任务文件组织、manager groups、term 创建、`required_queries()`、`@kernel_data` 字段和常用 term 接口。
+内容覆盖任务文件组织、manager groups、term 创建、`SimDataQuery` 参数、kernel-data dataclass 字段和常用 term 接口。
 运行时边界见 [Manager Runtime](./runtime.md)，kernel ABI 见 [Manager Kernel ABI](./kernel-abi.md)。
 
 ## 1. 任务文件组织
@@ -75,13 +75,13 @@ class MyTaskEnvCfg(ManagerBasedEnvCfg):
 
 ## 3. Term 创建与字段
 
-各 term cfg 通过 `__call__()` 创建 concrete runtime term。Concrete term 使用 `@kernel_data` 声明固定字段：
+各 term cfg 通过 `__call__()` 创建 concrete runtime term。Concrete term 使用 plain frozen dataclass（kernel-data record）声明固定字段：
 
 ```python
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class TrackingErrorTermination:
     threshold: np.float32
-    error: np.ndarray = metric()
+    error: torch.Tensor = metric()
 
     def compute(self, ctx: ManagerContext) -> bool:
         value = ...
@@ -89,38 +89,40 @@ class TrackingErrorTermination:
         return value > self.threshold
 ```
 
-`@kernel_data` 的字段必须有类型标注，结构在构造期固定。Term record 不可替换字段，但 owner 可以按契约原地更新 ndarray backing。
+kernel-data record 的字段必须有类型标注，结构在构造期固定。Term record 不可替换字段，但 owner 可以按契约原地更新 backing（tensor 写入或经 `tensor.numpy()` 视图写入）。
 支持的 leaf 类型为：
 
-- 普通 `np.ndarray`：默认按 environment 切片，第一维为 `num_envs`；
-- `SharedArray`：所有 lane 访问完整数组，适合模型参数、查表数据和 motion clip；
-- Python 标量和固定 dtype NumPy scalar；
-- 另一个 `@kernel_data` 类型。
+- `torch.Tensor`：term 拥有字段的默认且唯一的数组类型，是宿主 numpy arena 上的零拷贝视图；lane 形状张量第一维为 `num_envs`，模型参数、查表数据和 motion clip 等共享张量则没有 batch 维（宿主侧 numpy 代码通过 `tensor.numpy()` 视图读写同一 backing）；
+- Python 标量（bool/int/float；NumPy 标量与 ndarray 均不是合法 leaf）；
+- 另一个 kernel-data record 类型。
 
 需要对外发布逐环境指标时使用 `metric()` 字段。框架为其分配 `(num_envs, 1)` backing，term 在当前 lane 写入 `[0]`。
 
 ## 4. Simulator query 声明
 
-任务可以在 `cfg.queries.data` 和 `cfg.queries.model` 中声明 query。Observation term 也可以通过 `required_queries()` 声明自己需要的 query：
+任务可以在 `cfg.queries.data` 和 `cfg.queries.model` 中声明 query；此外，reward、termination 和
+observation term 可以把 `SimDataQuery` 对象直接作为 term 参数传入，声明自己需要的 sim 数据：
 
 ```python
 @configclass(kw_only=True)
 class RobotPositionObsCfg(ObservationTermCfg):
-    def required_queries(self) -> SimQueriesCfg:
-        return SimQueriesCfg(
-            data={"robot_pos": LinkPositionQuery(link=lambda cfg: cfg.scene.objs.robot.resolved_base_link_name)}
+    def __call__(self, env):
+        return ObservationTerm(
+            size=3,
+            dispatch=robot_position_obs,
+            args=(LinkPositionQuery(link=env.cfg.scene.objs.robot.resolved_base_link_name), 0.5),
         )
 ```
 
-合并规则：
+dispatch 收到的对应参数是 read program 提供的整批 sim 视图（`(N, ...)`）。合并规则：
 
-1. 任务显式声明拥有该 key；
-2. 任务未声明时，由 term 提供默认 query；
-3. 多个 term 对同一 key 提供不相等 query 时，构造期报错；
-4. 相等 query 由 backend read program 折叠为一次 physical read，并保留各 key 的 logical view。
+1. Manager 构造期扫描 term 参数中的 `SimDataQuery`，按相等去重登记为合成 key，与任务声明统一合并；
+2. 同一 key 下不相等的声明构造期报错；
+3. 相等 query 由 backend read program 折叠为一次 physical read，并保留各 key 的 logical view。
 
-Query key 是 compiled interface；重命名 key 需要同步修改所有 `ctx.sim["key"]` 消费者。
-Term 不持有 backend handle，也不在运行期创建或执行 simulator query。
+完整机制见 [Term 自声明 Sim Query](./term-required-queries.md)。Query key 是 compiled interface；重命名
+key 需要同步修改所有 `ctx.sim["key"]` 消费者。Term 不持有 backend handle，也不在运行期创建或执行
+simulator query。
 
 ## 5. Action
 
@@ -131,7 +133,7 @@ ActionCfg 在构造期返回冻结的 host 描述对象：
 ```python
 ActionTerm(
     action_space=space,
-    state=state,  # @kernel_data BaseActionState 子类
+    state=state,  # kernel-data dataclass（BaseActionState 子类）
     process=process_action,  # process_action(state, actions_batch) -> controls | None
     reset=reset_action,  # reset_action(state, env_ids) -> None
 )
@@ -158,7 +160,7 @@ Reward term 返回当前 environment 的 scalar，Manager 最终按配置 weight
 Termination term 返回单个 environment 的 `bool`：
 
 ```python
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class OutOfBoundsTermination:
     limit: np.float32
 
@@ -172,6 +174,10 @@ Observation、reward、termination term 不应通过共享全局 registry 查找
 
 Reset 配置声明 simulator state 和 term state 的恢复行为。Term 的 `reset(env_ids)` 只修改指定 environment rows；不要在 term 中实现全局 auto-reset、episode step 或 truncation。
 这些职责属于 [Manager Runtime](./runtime.md) 所述的 `ArrayEnv` lifecycle 和 backend reset program。
+
+对外 API 层面，`ManagerEnv.reset(env_ids, sim_reset_ids=None)` 接收整数 `torch.Tensor`
+（例如 `torch.tensor([0, 2], dtype=torch.long)`），传入 numpy 数组抛出 `TypeError`；
+term 侧的 host 回调（command reset、action reset）仍保持 numpy 契约。
 
 ## 8. 开发验收
 

@@ -1,7 +1,6 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-import importlib
 import platform
 from queue import Empty
 from types import SimpleNamespace
@@ -17,55 +16,33 @@ from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import HostWe
 from motrix_rl_builtin.fastsac.async_impl.worker import actor_param_numel, run_collector_process
 from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap, FastSacStepResult
 
-from motrix_env_core.array.env import ArrayEnvState, NpObs
+from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.base import EnvCfg
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.registry import EnvBuildSpec
-from motrix_env_motrixsim.torch_env import TorchEnv, TorchEnvState, TorchObs
-
-_SIM_BACKENDS = ["np", "torch"]
-
-
-_FASTSAC_WRAPPERS = {"np": "FastSacNpEnvWrap", "torch": "FastSacTorchEnvWrap"}
-
 
 _NUM_ENVS = 2
 
-
 _OBS_DIM = 3
-
 
 _ACT_DIM = 2
 
 
-def _make_env(sim_backend: str):
+def _make_env():
     policy_space = gym.spaces.Box(-np.inf, np.inf, (_OBS_DIM,), dtype=np.float32)
     action_space = gym.spaces.Box(
         low=np.array([-2.0, -1.0], dtype=np.float32),
         high=np.array([2.0, 3.0], dtype=np.float32),
     )
-    if sim_backend == "np":
-        env = Mock(spec=DirectEnv)
-        state = ArrayEnvState(
-            obs=NpObs(np.zeros((_NUM_ENVS, _OBS_DIM), dtype=np.float32)),
-            reward=np.ones(_NUM_ENVS, dtype=np.float32),
-            terminated=np.zeros(_NUM_ENVS, dtype=bool),
-            truncated=np.zeros(_NUM_ENVS, dtype=bool),
-            episode_steps=np.zeros(_NUM_ENVS, dtype=np.uint64),
-        )
-    else:
-        env = Mock(spec=TorchEnv)
-        env.device = torch.device("cpu")
-        state = TorchEnvState(
-            data=None,
-            obs=TorchObs(torch.zeros((_NUM_ENVS, _OBS_DIM), device=env.device)),
-            reward=torch.ones(_NUM_ENVS, device=env.device),
-            terminated=torch.zeros(_NUM_ENVS, dtype=torch.bool, device=env.device),
-            truncated=torch.zeros(_NUM_ENVS, dtype=torch.bool, device=env.device),
-            episode_steps=torch.zeros(_NUM_ENVS, dtype=torch.int64, device=env.device),
-        )
-
+    env = Mock(spec=DirectEnv)
+    state = ArrayEnvState(
+        obs=EnvObs(torch.zeros((_NUM_ENVS, _OBS_DIM), dtype=torch.float32)),
+        reward=torch.ones(_NUM_ENVS, dtype=torch.float32),
+        terminated=torch.zeros(_NUM_ENVS, dtype=torch.bool),
+        truncated=torch.zeros(_NUM_ENVS, dtype=torch.bool),
+        episode_steps=torch.zeros(_NUM_ENVS, dtype=torch.int64),
+    )
     env.cfg = SimpleNamespace(max_episode_steps=100)
     env.num_envs = _NUM_ENVS
     env.action_space = action_space
@@ -78,17 +55,17 @@ def _make_env(sim_backend: str):
     return env
 
 
-def _wrap_env(monkeypatch, sim_backend: str, env, renderer):
-    wrapper_module = importlib.import_module(f"motrix_rl_builtin.fastsac.wrap_{sim_backend}")
-    monkeypatch.setattr(wrapper_module, "create_renderer", Mock(return_value=renderer))
-    return getattr(wrapper_module, _FASTSAC_WRAPPERS[sim_backend])(env, torch.device("cpu"), render=object())
+def _wrap_env(monkeypatch, env, renderer):
+    import motrix_rl_builtin.fastsac.wrap as wrap_module
+
+    monkeypatch.setattr(wrap_module, "create_renderer", Mock(return_value=renderer))
+    return wrap_module.FastSacEnvWrap(env, torch.device("cpu"), render=object())
 
 
-@pytest.mark.parametrize("sim_backend", _SIM_BACKENDS)
-def test_rl_trainer_supports_sim_backend(monkeypatch, sim_backend: str) -> None:
-    env = _make_env(sim_backend)
+def test_rl_trainer_supports_sim_backend(monkeypatch) -> None:
+    env = _make_env()
     renderer = Mock()
-    wrapped = _wrap_env(monkeypatch, sim_backend, env, renderer)
+    wrapped = _wrap_env(monkeypatch, env, renderer)
 
     assert isinstance(wrapped, FastSacEnvWrap)
     initial = wrapped.reset()
@@ -100,9 +77,8 @@ def test_rl_trainer_supports_sim_backend(monkeypatch, sim_backend: str) -> None:
     assert isinstance(result.info, dict)
 
     actions = env.step.call_args.args[0]
-    assert isinstance(actions, np.ndarray if sim_backend == "np" else torch.Tensor)
-    if sim_backend == "torch":
-        assert actions.device == env.device
+    assert isinstance(actions, torch.Tensor)
+    assert actions.device.type == "cpu"
 
     wrapped.render("ignored", ignored=True)
     wrapped.close()
@@ -110,21 +86,16 @@ def test_rl_trainer_supports_sim_backend(monkeypatch, sim_backend: str) -> None:
     renderer.close.assert_called_once_with()
 
 
-@pytest.mark.parametrize("sim_backend", _SIM_BACKENDS)
-def test_fastsac_clips_actions_for_sim_backend(sim_backend: str) -> None:
-    env = _make_env(sim_backend)
-    module = importlib.import_module(f"motrix_rl_builtin.fastsac.wrap_{sim_backend}")
-    wrapped = getattr(module, _FASTSAC_WRAPPERS[sim_backend])(env, torch.device("cpu"))
+def test_fastsac_clips_actions_for_sim_backend() -> None:
+    env = _make_env()
+    wrapped = FastSacEnvWrap(env, torch.device("cpu"))
     actions = torch.tensor([[3.0, -2.0], [0.5, 4.0]])
 
     wrapped.step(actions)
 
     expected = actions.clamp(torch.from_numpy(env.action_space.low), torch.from_numpy(env.action_space.high))
     actual = env.step.call_args.args[0]
-    if sim_backend == "np":
-        np.testing.assert_allclose(actual, expected.numpy())
-    else:
-        torch.testing.assert_close(actual, expected.to(env.device))
+    np.testing.assert_allclose(actual, expected.numpy())
 
 
 class _AsyncEnv:
@@ -163,30 +134,17 @@ class _AsyncEnv:
         return self._make_state(0.0).obs, {}
 
 
-class _AsyncNpEnv(_AsyncEnv, DirectEnv):
+class _AsyncTestEnv(_AsyncEnv, DirectEnv):
     def compute_transition(self, state):
         return state
 
     def _make_state(self, value: float) -> ArrayEnvState:
         return ArrayEnvState(
-            obs=NpObs(np.full((self.num_envs, _OBS_DIM), value, dtype=np.float32)),
+            obs=EnvObs(np.full((self.num_envs, _OBS_DIM), value, dtype=np.float32)),
             reward=np.full(self.num_envs, value, dtype=np.float32),
             terminated=np.zeros(self.num_envs, dtype=bool),
             truncated=np.zeros(self.num_envs, dtype=bool),
             episode_steps=np.zeros(self.num_envs, dtype=np.uint64),
-            metrics={"progress": 0.5},
-        )
-
-
-class _AsyncTorchEnv(_AsyncEnv, TorchEnv):
-    def _make_state(self, value: float) -> TorchEnvState:
-        return TorchEnvState(
-            data=None,
-            obs=TorchObs(torch.full((self.num_envs, _OBS_DIM), value)),
-            reward=torch.full((self.num_envs,), value),
-            terminated=torch.zeros(self.num_envs, dtype=torch.bool),
-            truncated=torch.zeros(self.num_envs, dtype=torch.bool),
-            episode_steps=torch.zeros(self.num_envs, dtype=torch.int64),
             metrics={"progress": 0.5},
         )
 
@@ -217,7 +175,7 @@ def _async_cfg():
     )
 
 
-def _collect_in_spawn(sim_backend: str, tmp_path) -> tuple[torch.Tensor, ...]:
+def _collect_in_spawn(tmp_path) -> tuple[torch.Tensor, ...]:
     cfg = _async_cfg()
     dims = (_OBS_DIM, _OBS_DIM, _ACT_DIM)
     action_scale = torch.ones(_ACT_DIM)
@@ -235,7 +193,7 @@ def _collect_in_spawn(sim_backend: str, tmp_path) -> tuple[torch.Tensor, ...]:
     handshake.ship_weight_slots(0, weight_tx.params)
     handshake.ship_ring_slots(0, None)
 
-    env_cls = _AsyncNpEnv if sim_backend == "np" else _AsyncTorchEnv
+    env_cls = _AsyncTestEnv
     env_spec = EnvBuildSpec(env_cls, EnvCfg(scene=SceneCfg()))
     process = ctx.Process(
         target=run_collector_process,
@@ -265,7 +223,7 @@ def _collect_in_spawn(sim_backend: str, tmp_path) -> tuple[torch.Tensor, ...]:
     if process.is_alive():
         process.terminate()
         process.join(timeout=5)
-        pytest.fail(f"{sim_backend} collector process did not exit")
+        pytest.fail("collector process did not exit")
 
     try:
         child_error = error_queue.get_nowait()
@@ -289,14 +247,16 @@ def _collect_in_spawn(sim_backend: str, tmp_path) -> tuple[torch.Tensor, ...]:
     reason="FastSAC async shared memory currently supports x86-64 only",
 )
 def test_fastsac_async_supports_sim_backends(tmp_path) -> None:
-    np_slot = _collect_in_spawn("np", tmp_path)
-    torch_slot = _collect_in_spawn("torch", tmp_path)
+    slot = _collect_in_spawn(tmp_path)
 
-    assert len(np_slot) == len(torch_slot)
-    for np_tensor, torch_tensor in zip(np_slot, torch_slot):
-        assert (np_tensor.device.type, np_tensor.dtype, np_tensor.shape) == (
-            torch_tensor.device.type,
-            torch_tensor.dtype,
-            torch_tensor.shape,
-        )
-        torch.testing.assert_close(np_tensor, torch_tensor)
+    obs, critic_obs, _actions, rewards, dones, truncations = slot
+    assert all(
+        (tensor.device.type, tensor.dtype, tensor.shape[:1]) == ("cpu", torch.float32, (_NUM_ENVS,)) for tensor in slot
+    )
+    # The test env steps every field from 0.0 to 1.0: the stored transition
+    # batch must carry the post-step values through the shared ring.
+    torch.testing.assert_close(obs, torch.full_like(obs, 1.0))
+    torch.testing.assert_close(critic_obs, torch.full_like(critic_obs, 1.0))
+    torch.testing.assert_close(rewards, torch.full_like(rewards, 1.0))
+    assert not dones.any()
+    assert not truncations.any()

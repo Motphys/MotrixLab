@@ -4,8 +4,7 @@
 [`motrix-env-core`](../motrix_env_core) to the MotrixSim simulator:
 
 - `MotrixSimSceneCompiler` — compiles a declarative `SceneCfg` into a MotrixSim model;
-- `MotrixSimBackend` — the live `SimBackend` (reads, writes, stepping, reset, rendering);
-- `TorchEnv` — the torch-tensor environment frontend for MotrixSim.
+- `MotrixSimBackend` — the live `SimBackend` (reads, writes, stepping, reset, rendering).
 
 Installing the package registers the backend under the name `"motrixsim"` through the
 `motrix_env.sim_backends` entry-point group, and marks it as the default simulator. Importing

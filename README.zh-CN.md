@@ -15,7 +15,7 @@
 
 _使用 MotrixLab 训练的 microduck 行走策略，由 MotrixRender 实时渲染 — [观看高清视频](https://github.com/user-attachments/assets/4bcf3122-f135-44cb-a966-d2d8e84479da)。_
 
-**📖 用户文档**: [简体中文](https://motrixlab.readthedocs.io/zh-cn/stable/) | [English](https://motrixlab.readthedocs.io/en/stable/)
+**📖 用户文档**: [简体中文](https://motrixlab.readthedocs.io/zh-cn/latest/) | [English](https://motrixlab.readthedocs.io/en/latest/)
 
 </div>
 

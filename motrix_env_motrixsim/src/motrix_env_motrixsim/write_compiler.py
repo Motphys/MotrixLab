@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import motrixsim as mtx
 import numpy as np
+import torch
 from motrixsim import write as mtx_write
 
 from motrix_env_core.sim.write import (
@@ -72,7 +73,7 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
                 self._claim(name, compiled.vel_indices, claimed_vel, "velocity")
             native_fields[name] = compiled.native
             refresh_kinematics |= compiled.refresh_kinematics
-        buffers: dict[str, np.ndarray] = {}
+        buffers: dict[str, torch.Tensor] = {}
         native_program = None
         if native_fields:
             # Reset (restore defaults, then apply the writes) and the FK pass
@@ -82,7 +83,7 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
                 self._data
             )
             for name in native_fields:
-                buffers[name] = native_program[name]
+                buffers[name] = torch.from_numpy(native_program[name])
         return _MotrixSimWriteProgram(self._data, buffers, native_program)
 
     def compile_body_joint_position(self, name: str, write: BodyJointPositionWrite) -> None:
@@ -338,28 +339,35 @@ class _MotrixSimWriteProgram(WriteProgram):
     def __init__(
         self,
         data: mtx.SceneData,
-        buffers: dict[str, np.ndarray],
+        buffers: dict[str, torch.Tensor],
         native_program: mtx_write.WriteProgram | None = None,
     ) -> None:
         self._data = data
-        self._buffers = buffers
+        # The tensors alias the native program's numpy buffer storage; writes
+        # through them reach the native side directly.
+        self._tensors = dict(buffers)
         self._native_program = native_program
 
-    def buffer(self, name: str) -> np.ndarray:
-        return self._buffers[name]
+    def buffer(self, name: str) -> torch.Tensor:
+        return self._tensors[name]
 
-    def execute(self, env_ids: np.ndarray | None = None) -> None:
+    def execute(self, env_ids: torch.Tensor | None = None) -> None:
         if env_ids is not None:
-            if not isinstance(env_ids, np.ndarray) or env_ids.dtype != np.int64 or env_ids.ndim != 1:
-                raise TypeError("Simulator write env_ids must be a one-dimensional int64 ndarray.")
-            if np.any(env_ids < 0) or np.any(env_ids >= self._data.shape[0]):
+            if not isinstance(env_ids, torch.Tensor) or env_ids.dtype not in (torch.int32, torch.int64):
+                raise TypeError("Simulator write env_ids must be an integer tensor.")
+            ids = env_ids.detach().cpu().contiguous().to(torch.int64).numpy()
+            if ids.ndim != 1:
+                raise TypeError("Simulator write env_ids must be one-dimensional.")
+            if np.any(ids < 0) or np.any(ids >= self._data.shape[0]):
                 raise IndexError("Simulator write env_ids are out of range.")
-            if np.unique(env_ids).size != env_ids.size:
+            if np.unique(ids).size != ids.size:
                 raise ValueError("Simulator write env_ids must not contain duplicates.")
-            if env_ids.size == 0:
+            if ids.size == 0:
                 return
+        else:
+            ids = None
         if self._native_program is not None:
-            self._native_program.execute(self._data, env_ids=None if env_ids is None else np.sort(env_ids))
+            self._native_program.execute(self._data, env_ids=None if ids is None else np.sort(ids))
 
 
 def _named_body(model: mtx.SceneModel, body_name: str):

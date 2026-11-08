@@ -16,7 +16,6 @@ MODULE_SPEC.loader.exec_module(generate_env_docs)
 def _registered_env(en: str = "English description.", zh_cn: str = "中文描述。") -> dict[str, object]:
     return {
         "config_class": "DemoEnvCfg",
-        "available_backends": ["np"],
         "description": {"en": en, "zh_CN": zh_cn},
     }
 

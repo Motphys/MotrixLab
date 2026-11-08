@@ -15,8 +15,7 @@ def test_shared_module_import_does_not_initialize_runtime():
         [
             sys.executable,
             "-c",
-            "import sys; import motrix_rl.numa; "
-            "assert not {'numpy', 'torch', 'numba', 'motrixsim'} & sys.modules.keys()",
+            "import sys; import motrix_rl.numa; assert not {'numpy', 'torch', 'motrixsim'} & sys.modules.keys()",
         ],
         check=True,
     )

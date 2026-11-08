@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, Mock
 
 import numpy as np
 import pytest
+import torch
 
 import motrix_env_motrixsim.renderer as motrixsim_renderer
 from motrix_env_core.config.scene import SystemCameraCfg
@@ -127,7 +128,7 @@ def test_headless_renderer_configures_camera_resolution_and_captures(monkeypatch
 
     frame = renderer.capture()
     assert frame.shape == (4, 6, 3)
-    assert frame.dtype == np.uint8
+    assert frame.dtype == torch.uint8
     # The capture request rides the sync frame to the renderer and its map
     # callback only fires on a later submit's maintenance, so every capture
     # must block on the readback within the same call (issue #37).

@@ -3,10 +3,10 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
-from motrix_env_core.direct import reward as reward_utils
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
@@ -15,6 +15,7 @@ from motrix_env_core.sim import (
     JointPositionWrite,
 )
 from motrix_env_core.sim.write import CtrlTargetsWrite, JointVelocityWrite
+from motrix_env_core.torch import reward as reward_utils
 
 from .cfg import PendulumEnvCfg
 
@@ -47,7 +48,7 @@ class PendulumEnv(DirectEnv):
         self._action_space = gym.spaces.Box(-1.0, 1.0, (1,), dtype=np.float32)
         self._observation_space = gym.spaces.Box(-np.inf, np.inf, (3,), dtype=np.float32)
         # Episode-scoped control history for the control-delta penalty.
-        self._prev_ctrl = np.zeros(self._num_envs, dtype=np.float32)
+        self._prev_ctrl = torch.zeros(self._num_envs, dtype=torch.float32)
 
     @property
     def observation_space(self):
@@ -57,18 +58,17 @@ class PendulumEnv(DirectEnv):
     def action_space(self):
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState):
-        actions = np.clip(actions, -1.0, 1.0)
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        actions = torch.clamp(actions, -1.0, 1.0)
         scaled = self._action_low + (actions + 1.0) * 0.5 * (self._action_high - self._action_low)
-        ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = np.asarray(scaled, dtype=np.float32)
+        self._ctrl_writes.buffer("ctrl").copy_(scaled)
         self._ctrl_writes.execute()
         return state
 
     def compute_observation(self, state: ArrayEnvState):
         angle = self.sim_data["dof_pos"][:, 0]
         ang_vel = self.sim_data["dof_vel"][:, 0]
-        obs = np.stack([np.cos(angle), np.sin(angle), ang_vel], axis=-1)
+        obs = torch.stack([torch.cos(angle), torch.sin(angle), ang_vel], dim=-1)
         assert obs.shape == (self._num_envs, 3)
         return state.replace(obs=obs)
 
@@ -85,43 +85,43 @@ class PendulumEnv(DirectEnv):
         ctrl = inputs["actuator_ctrls"][:, 0]
         # In this model, zero angle corresponds to the hanging-down position.
         # Shift the target by pi to encourage the upright (inverted) posture.
-        upright = (1.0 + np.cos(angle_wrapped)) * 0.5
+        upright = (1.0 + torch.cos(angle_wrapped)) * 0.5
         prev_ctrl = self._prev_ctrl
         ctrl_delta = ctrl - prev_ctrl
         vel_penalty = 0.2 * (ang_vel**2)
-        energy = 0.5 * ang_vel**2 + (1.0 - np.cos(angle_wrapped))
+        energy = 0.5 * ang_vel**2 + (1.0 - torch.cos(angle_wrapped))
         energy_target = 2.0
-        energy_reward = reward_utils.tolerance(
-            energy,
-            bounds=(energy_target, energy_target),
-            margin=2.0,
-            value_at_margin=0.1,
-            sigmoid="gaussian",
+        energy_reward = torch.as_tensor(
+            reward_utils.tolerance(
+                energy,
+                bounds=(energy_target, energy_target),
+                margin=2.0,
+                value_at_margin=0.1,
+                sigmoid="gaussian",
+            ),
+            dtype=torch.float32,
         )
-        reward = (3.0 * upright + energy_reward - vel_penalty - 0.001 * ctrl**2 - 0.001 * ctrl_delta**2).astype(
-            np.float32
-        )
+        reward = 3.0 * upright + energy_reward - vel_penalty - 0.001 * ctrl**2 - 0.001 * ctrl_delta**2
 
         # compute terminated
-        terminated = np.isnan(dof_pos).any(axis=-1) | np.isnan(dof_vel).any(axis=-1)
+        terminated = dof_pos.isnan().any(dim=-1) | dof_vel.isnan().any(dim=-1)
 
-        state.reward = reward
-        state.terminated = terminated
+        state.reward[:] = reward
+        state.terminated[:] = terminated
         self._prev_ctrl[:] = ctrl
         return state
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
         cfg: PendulumEnvCfg = self._cfg
         reset_noise_scale = getattr(cfg, "reset_noise_scale", 0.0)
-        num_reset = len(env_ids)
-        dof_pos = np.zeros((num_reset, 1), dtype=np.float32)
-        dof_vel = np.zeros((num_reset, 1), dtype=np.float32)
-        dof_pos[:, 0] = np.random.uniform(-np.pi, np.pi, size=(num_reset,))
+        num_reset = env_ids.numel()
+        dof_pos = (torch.rand(num_reset, 1, dtype=torch.float32) * 2.0 - 1.0) * np.pi
+        dof_vel = torch.zeros(num_reset, 1, dtype=torch.float32)
         if reset_noise_scale > 0.0:
-            dof_vel[:, 0] = np.random.uniform(-reset_noise_scale, reset_noise_scale, size=(num_reset,))
+            dof_vel = (torch.rand(num_reset, 1, dtype=torch.float32) * 2.0 - 1.0) * reset_noise_scale
 
         self._reset_position[env_ids] = dof_pos
         self._reset_velocity[env_ids] = dof_vel
         self._reset_program.execute(env_ids)
-        self.sim_data.execute(np.asarray(env_ids, np.int64))
+        self.sim_data.execute(env_ids)
         self._prev_ctrl[env_ids] = 0.0

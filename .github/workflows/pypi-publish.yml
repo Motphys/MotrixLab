@@ -89,7 +89,20 @@ jobs:
           version: "0.9.14"
 
       - name: Set up Python
-        run: uv python install 3.10
+        env:
+          # python-build-standalone downloads are occasionally dropped by the
+          # CDN; retry with backoff instead of failing the release job.
+          UV_HTTP_TIMEOUT: "600"
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if uv python install 3.10; then
+              exit 0
+            fi
+            echo "python download attempt $attempt failed; retrying in 15s"
+            sleep 15
+          done
+          echo "error: failed to install Python 3.10 after 5 attempts" >&2
+          exit 1
 
       - name: Build distribution wheels
         run: |

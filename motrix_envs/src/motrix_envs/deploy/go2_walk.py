@@ -82,7 +82,7 @@ def _feet_phase_offsets(env_cfg: QuadrupedWalkEnvCfg) -> np.ndarray:
         for foot_index in pair:
             if foot_index in seen or not 0 <= foot_index < 4:
                 raise ValueError(f"Go2 trot_pairs must cover each foot exactly once, got {env_cfg.trot_pairs}")
-            offsets[foot_index] = np.float32(0.5 * pair_index)
+            offsets[foot_index] = 0.5 * pair_index
             seen.add(foot_index)
     if seen != set(range(4)):
         raise ValueError(f"Go2 trot_pairs must cover feet [0, 1, 2, 3], got {env_cfg.trot_pairs}")

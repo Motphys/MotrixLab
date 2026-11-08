@@ -34,10 +34,8 @@ import torch
 if TYPE_CHECKING:
     from torch.utils.tensorboard import SummaryWriter
 
-from motrix_env_core.array.env import ArrayEnv
 from motrix_env_core.registry import EnvBuildSpec
 from motrix_env_core.renderer import RenderConfig
-from motrix_env_motrixsim.torch_env import TorchEnv
 from motrix_rl import checkpoints
 from motrix_rl.device import resolve_default_device
 from motrix_rl.numa import apply_binding
@@ -61,8 +59,6 @@ from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import (
 )
 from motrix_rl_builtin.fastsac.config import FastSacCfg
 from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap
-from motrix_rl_builtin.fastsac.wrap_np import FastSacNpEnvWrap
-from motrix_rl_builtin.fastsac.wrap_torch import FastSacTorchEnvWrap
 
 logger = logging.getLogger(__name__)
 
@@ -86,11 +82,7 @@ def build_env(
     seed: int | None = None,
 ) -> FastSacEnvWrap:
     env = env_spec.make(num_envs=num_envs, mode=mode, seed=seed)
-    if isinstance(env, TorchEnv):
-        return FastSacTorchEnvWrap(env, device, render=render)
-    if isinstance(env, ArrayEnv):
-        return FastSacNpEnvWrap(env, device, render=render)
-    raise TypeError(f"FastSAC does not support environment type '{type(env).__name__}'.")
+    return FastSacEnvWrap(env, device, render=render)
 
 
 def actor_param_numel(cfg: FastSacCfg, dims, action_scale, action_bias) -> int:
@@ -625,8 +617,8 @@ def run_learner_process(
         learner._last_train_gstep = resume_step  # lockstep basis continues from the checkpoint
         learner.publish_weights()  # give every collector an initial policy before it warms up
 
-        # Elapsed/ETA anchor. The collector's env build (scene compile, numba
-        # JIT) runs concurrently with the learner build and can outlast it by
+        # Elapsed/ETA anchor. The collector's env build (scene compile, kernel
+        # compile) runs concurrently with the learner build and can outlast it by
         # tens of seconds; timing from this point would bill that startup wait
         # to elapsed and the first window's rates. The anchor moves to the
         # first ingested collector batch below.

@@ -6,18 +6,18 @@
 框架负责 query 的配置级解析和 key 校验；backend 负责 simulator handle 解析、physical memory planning、相等 query 的去重、
 logical view 和 full/partial execute。
 
-Manager task 的 query 来源和 `required_queries()` 规则见 [Manager Task API](./task-authoring.md)；整体 simulator 边界见
+Manager task 的 query 来源（任务 `queries.data` 与 term 的 `SimDataQuery` 参数）见
+[Manager Task API](./task-authoring.md)；整体 simulator 边界见
 [Manager SimBackend](./sim-backend.md)。
 
 ## 1. 数据流与责任
 
 ```text
-cfg.queries.data + observation.required_queries()
-  -> ManagerBasedEnvCfg.sim_query_cfgs()
-  -> resolve_sim_queries（key 校验 + EnvCfg resolver）
+cfg.queries.data + term args 中的 SimDataQuery
+  -> ManagerEnv 构造期合并（_merge_query_declarations）
   -> SimBackend.compile_reads
   -> PhysicsReadProgram
-  -> ManagerContext.sim
+  -> ManagerContext.sim / term 参数视图
 ```
 
 | 组件 | 职责 |
@@ -71,12 +71,13 @@ program 和 kernel 不保留 callable。
 
 ## 4. Term required queries
 
-声明来源有两处：任务 `queries.data` / `queries.model`，以及 observation term 的 `required_queries()`。Manager 在 backend 编译前合并它们：
+声明来源有两处：任务 `queries.data` / `queries.model`，以及 reward/termination/observation term 参数中的
+`SimDataQuery` 对象。Manager 在 backend 编译前合并它们：
 
 - 任务显式声明的 key 由任务拥有；
-- 任务未声明的 key 由 term contribution 补齐；
-- 多个 term 对同一 key 贡献不等 query 时构造期报错；
-- 相等 term contributions 折叠为一条声明；
+- term 参数中的 query 按相等去重，登记为合成 key；
+- 同一 key 下不相等声明构造期报错；
+- 相等声明折叠为一条声明、一次 physical read；
 - data query 进入 read program；model query 在 term construction 时解析为静态参数。
 
 具体协议和限制见 [Term 自声明 Sim Query](./term-required-queries.md)。

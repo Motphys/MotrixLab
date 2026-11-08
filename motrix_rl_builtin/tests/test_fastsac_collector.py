@@ -20,7 +20,7 @@ from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
 from motrix_rl_builtin.fastsac.networks import Actor
 from motrix_rl_builtin.fastsac.wrap import FastSacStepResult
 
-from motrix_env_core.array.env import FinalObs, NpObs
+from motrix_env_core.array.env import EnvObs, FinalObs
 from motrix_env_core.perf import Perf
 
 _NUM_ENVS = 8
@@ -396,7 +396,7 @@ class _BackpressureEnv:
             reward=torch.tensor([1.0, 2.0]),
             terminated=torch.zeros(2, dtype=torch.bool),
             truncated=torch.tensor([False, True]),
-            final_obs=FinalObs(np.array([1]), NpObs(policy=np.full((1, 3), 7.0, dtype=np.float32))),
+            final_obs=FinalObs(np.array([1]), EnvObs(policy=np.full((1, 3), 7.0, dtype=np.float32))),
             info={"Reward": {"alive": np.ones(2)}, "metrics": {"error": np.ones(2)}},
         )
         return self.outputs

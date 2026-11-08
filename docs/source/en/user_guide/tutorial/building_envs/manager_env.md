@@ -3,7 +3,7 @@
 `ManagerEnv` is the manager-workflow frontend: actions, commands, resets, observations,
 rewards, and terminations are not hand-written in the environment class. Instead they are
 declared term by term in the config groups of `ManagerBasedEnvCfg`, and the manager
-compiler generates a fused Numba task program from them. It suits tasks with many terms
+runtime executes them as batched torch kernels. It suits tasks with many terms
 that reuse composable mdp terms, such as locomotion and whole-body tracking.
 
 For choosing between the workflows, see the
@@ -48,8 +48,12 @@ term does and how to define it.
 ## Lifecycle
 
 `ManagerEnv` also inherits `ArrayEnv`; the step sequence and the auto-reset / truncation
-semantics match DirectEnv. The figure below integrates the term callbacks into the
-pipeline: green parts run inside manager kernels (`@dispatch`), purple parts are the
+semantics match DirectEnv. The manager frontend's public currency is uniformly torch:
+`step(actions)` and `reset(env_ids)` (including `sim_reset_ids`) take integer
+`torch.Tensor`s, e.g. `env.reset(torch.tensor([0, 2], dtype=torch.long))`; passing a
+numpy array raises a `TypeError`. The figure below integrates the term callbacks into the
+pipeline: green parts run inside manager kernels — plain functions the manager runtime
+resolves by signature and dispatches as batched tensor calls — purple parts are the
 manager's host-side Python callbacks, and blue parts are the framework — the
 orchestrating stages and its own data plumbing:
 
@@ -64,8 +68,8 @@ orchestrating stages and its own data plumbing:
 ```
 
 Two differences from DirectEnv: term callbacks are not hand-written in the environment
-class — they are declared in the config groups and compiled into fused kernels by the
-manager compiler; kernel compilation and warm-up happen at the first `init_state()`
+class — they are declared in the config groups and executed as batched torch kernels by
+the manager runtime; kernel compilation and warm-up happen at the first `init_state()`
 (startup), never inside the step loop.
 
 ## Action terms (actions)
@@ -83,36 +87,47 @@ distributed to the terms.
    tuple `()` controls all actuators, explicit names control only the listed ones, and
    one actuator may belong to a single term. `None` means the term writes no actuator
    targets.
-2. An `ActionTerm` subclass decorated with `@kernel_data`: it holds persistent state
-   (`np.ndarray` fields, one row per environment) and shared model data (`SharedArray`
-   fields), and implements three methods — `action_space()` returns this term's action
-   space, `process(actions)` transforms the action batch into routed actuator controls,
-   and `reset(env_ids)` clears persistent state.
+2. An `ActionState` subclass — a plain frozen dataclass — holds the term's persistent
+   state (`torch.Tensor` fields, one row per environment) and static model data
+   (scalars or batch-free tensors); the manager appends the shared raw-action history
+   (`action_queue`, `action_ptr`). An `ActionTerm` subclass takes
+   `(action_space, state)` in `__init__` and implements `_process(actions)` — transform
+   the action batch into this term's routed actuator controls — and `_reset(env_ids)` —
+   clear persistent state for selected rows. The base class owns the raw-action
+   history: its `process()` / `reset()` wrap yours.
 
 ```python
+@dataclass(frozen=True, slots=True)
+class MyJointActionState(ActionState):
+    default_angles: torch.Tensor     # static model data: per-actuator default pose (A,)
+    action_scales: torch.Tensor      # static model data: per-actuator scale (A,)
+
+
+class MyJointAction(ActionTerm):
+    state: MyJointActionState
+
+    def _process(self, actions: torch.Tensor) -> torch.Tensor:
+        return actions * self.state.action_scales + self.state.default_angles
+
+    def _reset(self, env_ids: torch.Tensor) -> None:
+        ...  # resample per-episode randomization for the reset rows
+
+
 @configclass(kw_only=True)
 class MyJointActionCfg(ActionCfg):
     actuator_names: tuple[str, ...] = ()
     scale: float = 0.5
 
     def __call__(self, env: ManagerEnv, actuators) -> ActionTerm:
-        return MyJointAction(scale=np.float32(self.scale), num_envs=env.num_envs,
-                             actuators=actuators)
-
-
-@kernel_data
-class MyJointAction(ActionTerm):
-    current: np.ndarray              # persistent state: previous action (num_envs rows)
-    scale: SharedArray               # static parameter: passed in by __call__
-
-    def action_space(self, env, actuators) -> gym.spaces.Box:
-        ...  # derived from the actuators' ctrl_range
-
-    def process(self, actions: np.ndarray) -> np.ndarray:
-        ...  # transform actions, return this term's routed actuator controls
-
-    def reset(self, env_ids: np.ndarray) -> None:
-        self.current[env_ids] = 0.0
+        default_angles = ...  # (A,) resolved from the robot's default key pose
+        state = MyJointActionState(
+            action_queue=torch.zeros((env.num_envs, 2, len(actuators)), dtype=torch.float32),
+            action_ptr=torch.zeros(1, dtype=torch.int64),
+            default_angles=default_angles,
+            action_scales=torch.full((len(actuators),), self.scale),
+        )
+        space = joint_position_action_space(actuators, default_angles, self.scale)
+        return MyJointAction(space, state)
 ```
 
 ## Observation terms (observations)
@@ -130,19 +145,18 @@ term's observation into `out` — `ctx.sim["key"]` reads data declared in `queri
 noise is passed in as a scalar argument and added inside the dispatch.
 
 ```python
-@dispatch
-def projected_gravity_obs(ctx: ManagerContext, out: np.ndarray,
-                          noise_amplitude: np.float32) -> None:
+def projected_gravity_obs(ctx: ManagerContext, out: torch.Tensor,
+                          noise_amplitude: float) -> None:
     ...  # compute and write out (width 3)
-    add_uniform_noise(out, noise_amplitude, ctx.rand.state)
+    out.add_(ctx.rand.next_uniform(3) * noise_amplitude)
 
 
 @configclass(kw_only=True)
 class ProjectedGravityObsCfg(ObservationTermCfg):
-    noise: UniformNoiseCfg = UniformNoiseCfg()
+    noise_amplitude: float = 0.05
 
     def __call__(self, env: ManagerEnv) -> ObsTerm:
-        return ObsTerm(3, projected_gravity_obs, np.float32(self.noise.amplitude))
+        return ObsTerm(3, projected_gravity_obs, self.noise_amplitude)
 ```
 
 Simulation data an observation depends on is declared through the environment's
@@ -156,15 +170,14 @@ scalar; the total reward is the sum of the terms weighted by `weight` — a posi
 
 **How to define one**: a reward term is a `RewardTermCfg` subclass (the base carries
 `weight: float`) whose `__call__(env)` returns `RewardTerm(dispatch, *args)`. The
-dispatch has the shape `def xxx_reward(ctx, *args) -> float` and reads declared data
-through `ctx.sim["key"]`.
+dispatch has the shape `def xxx_reward(ctx, *args) -> torch.Tensor` — one score per
+environment — and reads declared data through `ctx.sim["key"]`.
 
 ```python
-@dispatch
-def base_height_reward(ctx: ManagerContext, target_z: np.float32,
-                       sigma: np.float32) -> float:
-    error = ctx.sim["robot_base_pos"][2] - target_z
-    return math.exp(-(error * error) / (sigma * sigma))
+def base_height_reward(ctx: ManagerContext, target_z: float,
+                       sigma: float) -> torch.Tensor:
+    error = ctx.sim["robot_base_pos"][:, 2] - target_z
+    return torch.exp(-(error * error) / (sigma * sigma))
 
 
 @configclass(kw_only=True)
@@ -173,8 +186,7 @@ class BaseHeightRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, env: ManagerEnv) -> RewardTerm:
-        return RewardTerm(base_height_reward,
-                          np.float32(self.target_z), np.float32(self.sigma))
+        return RewardTerm(base_height_reward, self.target_z, self.sigma)
 ```
 
 ## Termination terms (terminations)
@@ -185,14 +197,14 @@ time-limit `truncated`).
 
 **How to define one**: a termination term is a `TerminationTermCfg` subclass whose
 `__call__(env)` returns `TerminationTerm(dispatch, *args, metric_names=(...))`. The
-dispatch has the shape `def xxx_termination(ctx, *args) -> bool`; the optional
-`metric_names` register per-environment quantities the dispatch writes into
-`ctx.metrics` as readable metrics.
+dispatch has the shape `def xxx_termination(ctx, *args) -> torch.Tensor` — a boolean
+mask, one per environment; the optional `metric_names` register per-environment
+quantities the dispatch writes into `ctx.metrics` as readable metrics.
 
 ```python
-@dispatch
-def bad_orientation_termination(ctx: ManagerContext, threshold: np.float32) -> bool:
-    ...
+def bad_orientation_termination(ctx: ManagerContext, threshold: float) -> torch.Tensor:
+    tilt_sq = ...  # squared tilt of the base, per environment
+    ctx.metrics["base_tilt"][:, 0] = tilt_sq
     return tilt_sq > threshold * threshold
 
 
@@ -202,7 +214,7 @@ class BadOrientationTerminationCfg(TerminationTermCfg):
 
     def __call__(self, env: ManagerEnv) -> TerminationTerm:
         return TerminationTerm(bad_orientation_termination,
-                               np.float32(self.threshold),
+                               self.threshold,
                                metric_names=("base_tilt",))
 ```
 
@@ -219,9 +231,10 @@ state the term writes (`BodyPositionWrite`, `JointVelocityWrite`, ...; the dict 
 the write channels inside the dispatch); the dispatch computes the values to write.
 
 ```python
-@dispatch
-def _reset_body_pos(ctx: ManagerContext, sim_writes, spawn, noise) -> None:
-    position = sim_writes["position"]
+def _reset_body_pos(ctx: ManagerContext, sim_writes: Map[torch.Tensor],
+                    spawn: tuple[float, float, float],
+                    noise: tuple[float, float, float]) -> None:
+    position = sim_writes["position"]  # compact (K, ...) rows for this reset pass
     ...  # write the randomized initial position
 
 
@@ -233,8 +246,8 @@ class BodyPosResetCfg(ResetTermCfg):
     def __call__(self, env: ManagerEnv) -> ResetTerm:
         return ResetTerm(
             _reset_body_pos,
-            tuple(np.asarray(self.spawn, dtype=np.float32)),
-            tuple(np.asarray(self.noise, dtype=np.float32)),
+            self.spawn,
+            self.noise,
             writes={"position": BodyPositionWrite((base_link,))},
         )
 ```
@@ -242,21 +255,21 @@ class BodyPosResetCfg(ResetTermCfg):
 ## Command terms (commands)
 
 **What they do**: maintain command state and advance it every cycle — velocity command
-sampling, curriculum, reference-motion progression, ... A command term also produces
-per-environment metrics: write `ctx.metrics["name"]` inside a dispatch and read it back
-through `env.state.metrics` / `env.metrics`. Most tasks can reuse built-in commands and
+sampling, curriculum, reference-motion progression, ... A command term also publishes
+per-environment metrics: declare tensor fields with `metric(name=...)` (or
+`metric(name=..., scalar=True)` for batch-level gauges) and read them back through
+`env.state.metrics` / `env.metrics`. Most tasks can reuse built-in commands and
 never need a custom one.
 
 **How to define one**: a command term is a `CommandCfg` subclass whose `__call__(env)`
-returns a `CommandTerm` subclass decorated with `@kernel_data`, implementing four
-callbacks:
+returns a `CommandTerm` subclass — a plain frozen dataclass — implementing three
+instance-method callbacks:
 
 | Callback          | Runs in           | Responsibility                                              |
 | ----------------- | ----------------- | ------------------------------------------------------------ |
 | `update(ctx)`     | evaluate kernel   | update this cycle's derived command data                     |
 | `advance(ctx)`    | transition kernel | advance persistent command state; setting `ctx.sim_reset_requested` requests the row's simulator state be recomputed at the end of the step |
-| `reset(ctx)`      | host side         | prepare host data for the rows being reset (including termination statistics) |
-| `reset_env(ctx)`  | reset kernel      | reset persistent command state                               |
+| `reset(ctx)`      | reset kernel      | reset persistent command state; `ctx.reset_ids` carries this pass's compact reset rows, `ctx.reset_episode` marks the episode resets, and `ctx.terminated` mirrors the latest termination union for episode-boundary statistics |
 
 ## Queries (queries)
 
@@ -284,9 +297,9 @@ the config fails. How queries are compiled and executed is covered in
 
 ## Registration and variants
 
-- **The config is registered before the environment class**; the registry infers the
-  frontend type from the class hierarchy (`ManagerEnv` and `DirectEnv` both belong to
-  the `"np"` data backend), so never specify it manually.
+- **The config is registered before the environment class**; the registry validates
+  that the class inherits an `ArrayEnv` frontend base (`ManagerEnv` or `DirectEnv`),
+  so never specify a frontend type manually.
 - The first docstring line and the `zh_CN:` line serve as the environment's English and
   Chinese descriptions.
 - Multiple presets of one environment are derived through config factories: a variant

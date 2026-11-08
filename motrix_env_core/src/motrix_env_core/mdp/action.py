@@ -3,17 +3,20 @@
 
 """Generic joint-position action terms for manager-based environments."""
 
+import math
+from dataclasses import dataclass
+
 import gymnasium as gym
-import numpy as np
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import RobotCfg
-from motrix_env_core.manager import ActionCfg, ActionState, ActionTerm, ManagerEnv, SharedArray, kernel_data
+from motrix_env_core.manager import ActionCfg, ActionState, ActionTerm, ManagerEnv
 from motrix_env_core.mdp.action_space import joint_position_action_space_from_ctrl_ranges
 from motrix_env_core.sim.model import ActuatorSpec, ActuatorType
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class JointPositionActionState(ActionState):
     """Persistent joint-position action pipeline, history, and shared model data.
 
@@ -41,11 +44,11 @@ class JointPositionActionState(ActionState):
             path entirely.
     """
 
-    default_angles: SharedArray
-    joint_lower: SharedArray
-    joint_upper: SharedArray
-    action_scales: SharedArray
-    delay_steps: np.ndarray
+    default_angles: torch.Tensor
+    joint_lower: torch.Tensor
+    joint_upper: torch.Tensor
+    action_scales: torch.Tensor
+    delay_steps: torch.Tensor
     delay_lo: int
     delay_hi: int
 
@@ -57,27 +60,38 @@ class JointPositionActionTerm(ActionTerm):
 
     def __init__(self, space: gym.spaces.Box, state: JointPositionActionState) -> None:
         super().__init__(space, state)
+        # Seeded generator driving reset-time delay resampling; lives on the
+        # term (not the kernel-data state) because it is host-only.
+        self.generator = torch.Generator()
 
-    def _process(self, actions: np.ndarray) -> np.ndarray:
-        """Map raw policy actions to targets using manager-owned action history."""
+    def _process(self, actions: torch.Tensor) -> torch.Tensor:
+        """Map raw policy actions to targets using manager-owned action history.
+
+        Stays on tensors end to end: the delayed-slot lookup uses
+        ``torch.take_along_dim`` and the affine target map multiplies torch
+        buffers directly, mirroring
+        ``motrix_env_core.torch_manager.actions.process_joint_position_actions``.
+        """
         state = self.state
         ptr = int(state.action_ptr[0])
         target_raw = actions
         if state.delay_hi > 0:
-            width = state.action_queue.shape[1]
+            queue = state.action_queue
+            width = queue.shape[1]
             delay_indices = (ptr - state.delay_steps) % width
-            target_raw = np.take_along_axis(
-                state.action_queue,
-                delay_indices[:, None, None],
-                axis=1,
-            )[:, 0, :]
+            target_raw = torch.take_along_dim(queue, delay_indices[:, None, None], dim=1)[:, 0, :]
         return target_raw * state.action_scales + state.default_angles
 
-    def _reset(self, env_ids: np.ndarray) -> None:
+    def _reset(self, env_ids: torch.Tensor) -> None:
         """Resample per-episode delay after the base term clears raw history."""
         state = self.state
         if state.delay_hi > 0:
-            state.delay_steps[env_ids] = np.random.randint(state.delay_lo, state.delay_hi + 1, size=env_ids.size)
+            state.delay_steps[env_ids] = torch.randint(
+                state.delay_lo,
+                state.delay_hi + 1,
+                (env_ids.numel(),),
+                generator=self.generator,
+            )
 
 
 @configclass(kw_only=True)
@@ -125,25 +139,20 @@ class JointPositionActionCfg(ActionCfg):
             )
         actuator_names = tuple(spec.name for spec in actuators)
         all_names = tuple(spec.name for spec in env.model.actuators)
-        indices = np.asarray([all_names.index(name) for name in actuator_names], dtype=np.int64)
-        joint_lower = joint_lower[indices]
-        joint_upper = joint_upper[indices]
+        indices = torch.tensor([all_names.index(name) for name in actuator_names], dtype=torch.int64)
         lo, hi = self.action_delay_steps
         if lo < 0 or hi < lo:
             raise ValueError(f"action_delay_steps must be 0 <= lo <= hi, got {self.action_delay_steps!r}")
         # Keep current and previous actions even when delay is disabled.
         width = max(hi + 1, 2)
-        action_queue = np.zeros((env.num_envs, width, len(actuators)), dtype=np.float32)
-        delay_steps = np.zeros(env.num_envs, dtype=np.int64)
-        action_ptr = np.zeros(1, dtype=np.int64)
         state = JointPositionActionState(
-            action_queue=action_queue,
+            action_queue=torch.zeros((env.num_envs, width, len(actuators)), dtype=torch.float32),
             default_angles=default_angles[indices],
-            joint_lower=joint_lower,
-            joint_upper=joint_upper,
+            joint_lower=joint_lower[indices],
+            joint_upper=joint_upper[indices],
             action_scales=action_scales[indices],
-            delay_steps=delay_steps,
-            action_ptr=action_ptr,
+            delay_steps=torch.zeros(env.num_envs, dtype=torch.int64),
+            action_ptr=torch.zeros(1, dtype=torch.int64),
             delay_lo=int(lo),
             delay_hi=int(hi),
         )
@@ -155,16 +164,19 @@ class JointPositionActionCfg(ActionCfg):
                 raise ValueError(f"position actuator {spec.name!r} must define or inherit ctrl_range")
             ctrl_ranges.append(spec.ctrl_range)
         space = joint_position_action_space_from_ctrl_ranges(
-            np.asarray(ctrl_ranges, dtype=np.float32), state.default_angles, state.action_scales
+            torch.tensor(ctrl_ranges, dtype=torch.float32), state.default_angles, state.action_scales
         )
-        return JointPositionActionTerm(space, state)
+        term = JointPositionActionTerm(space, state)
+        # Reset-time delay resampling is reproducible per environment seed.
+        term.generator.manual_seed(int(getattr(env, "_rand_seed", 0)) + 0x5EED)
+        return term
 
     @staticmethod
     def _resolve_default_pose(
         env: ManagerEnv,
         joint_names: tuple[str, ...],
         joint_positions: tuple[float, ...],
-    ) -> np.ndarray:
+    ) -> torch.Tensor:
         if len(joint_names) != len(joint_positions):
             raise ValueError(
                 f"default pose must contain one position per joint: {len(joint_names)} names, "
@@ -180,36 +192,35 @@ class JointPositionActionCfg(ActionCfg):
             raise ValueError(
                 f"robot key pose 'default' must match actuator joint targets exactly: missing={missing}, extra={extra}"
             )
-        return np.asarray([positions[name] for name in actuator_joint_names], dtype=np.float32)
+        return torch.tensor([positions[name] for name in actuator_joint_names], dtype=torch.float32)
 
     @staticmethod
-    def _read_position_actuator_kps(env: ManagerEnv) -> np.ndarray:
-        return np.asarray(env.model.others["actuator_kp"], dtype=np.float32)
+    def _read_position_actuator_kps(env: ManagerEnv) -> torch.Tensor:
+        return torch.as_tensor(env.model.others["actuator_kp"]).detach().cpu()
 
     @staticmethod
-    def _read_position_actuator_effort_limits(env: ManagerEnv) -> np.ndarray:
-        actuators = env.model.actuators
-        effort_limits = np.empty(len(actuators), dtype=np.float32)
-        for index, spec in enumerate(actuators):
-            if spec.force_range is None:
-                raise ValueError(f"actuator '{spec.name}' must define force_range")
-            force_range = np.asarray(spec.force_range, dtype=np.float32)
-            if force_range.shape != (2,) or not np.all(np.isfinite(force_range)):
+    def _read_position_actuator_effort_limits(env: ManagerEnv) -> torch.Tensor:
+        effort_limits = []
+        for spec in env.model.actuators:
+            if spec.force_range is None or len(spec.force_range) != 2:
+                raise ValueError(f"actuator '{spec.name}' must define a two-valued force_range")
+            low, high = float(spec.force_range[0]), float(spec.force_range[1])
+            if not (math.isfinite(low) and math.isfinite(high)):
                 raise ValueError(f"actuator '{spec.name}' force_range must contain two finite values")
-            effort_limit = float(np.max(np.abs(force_range)))
+            effort_limit = max(abs(low), abs(high))
             if effort_limit <= 0.0:
                 raise ValueError(f"actuator '{spec.name}' force_range must define a positive effort limit")
-            effort_limits[index] = effort_limit
-        return effort_limits
+            effort_limits.append(effort_limit)
+        return torch.tensor(effort_limits, dtype=torch.float32)
 
-    def _init_action_scales(self, env: ManagerEnv, kps: np.ndarray) -> np.ndarray:
-        if not np.isfinite(self.action_scale) or self.action_scale <= 0.0:
+    def _init_action_scales(self, env: ManagerEnv, kps: torch.Tensor) -> torch.Tensor:
+        if not math.isfinite(self.action_scale) or self.action_scale <= 0.0:
             raise ValueError(f"action_scale must be positive and finite, got {self.action_scale}")
         if self.action_scales_by_effort_limit_over_p_gain:
             effort = self._read_position_actuator_effort_limits(env)
-            safe_kp = np.where(kps == 0.0, 1.0, kps)
-            return np.where(kps == 0.0, 0.0, self.action_scale * effort / safe_kp).astype(np.float32)
-        return np.full(env.num_actuators, self.action_scale, dtype=np.float32)
+            safe_kp = torch.where(kps == 0.0, torch.ones_like(kps), kps)
+            return torch.where(kps == 0.0, torch.zeros_like(kps), self.action_scale * effort / safe_kp)
+        return torch.full((env.num_actuators,), self.action_scale, dtype=torch.float32)
 
 
 __all__ = ["JointPositionActionState", "JointPositionActionTerm", "JointPositionActionCfg"]

@@ -9,9 +9,7 @@ import numpy as np
 import torch
 
 from motrix_env_core import registry as env_registry
-from motrix_env_core.array.env import ArrayEnv
 from motrix_env_core.renderer import RenderConfig
-from motrix_env_motrixsim.torch_env import TorchEnv
 from motrix_rl import checkpoints
 from motrix_rl.console import EpisodeWindow, PanelSystemSampler, TrainingPanelSession, TrainingPanelStats
 from motrix_rl.contracts import TrainerBase, TrainerContext
@@ -21,8 +19,6 @@ from motrix_rl_builtin.fastsac.agent import FastSacAgent
 from motrix_rl_builtin.fastsac.config import FastSacCfg
 from motrix_rl_builtin.fastsac.live_metrics import ROLLOUT_MEANS, system_scalars
 from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap
-from motrix_rl_builtin.fastsac.wrap_np import FastSacNpEnvWrap
-from motrix_rl_builtin.fastsac.wrap_torch import FastSacTorchEnvWrap
 
 # Enable TF32 matmul on Ampere+ GPUs. SAC training has no precision concern with
 # TF32 (10 mantissa bits), and the speedup is meaningful when AMP is off.
@@ -57,11 +53,7 @@ class Trainer(TrainerBase):
         mode: str = "train",
     ) -> FastSacEnvWrap:
         env = self._env_spec.make(num_envs=num_envs, mode=mode, seed=self._context.seed)
-        if isinstance(env, TorchEnv):
-            return FastSacTorchEnvWrap(env, self._device(), render=render)
-        if isinstance(env, ArrayEnv):
-            return FastSacNpEnvWrap(env, self._device(), render=render)
-        raise TypeError(f"FastSAC does not support environment type '{type(env).__name__}'.")
+        return FastSacEnvWrap(env, self._device(), render=render)
 
     def _make_agent(self, env: FastSacEnvWrap) -> FastSacAgent:
         inner = env.env

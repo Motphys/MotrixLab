@@ -60,7 +60,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 The default runtime environment includes `motrixlab`, repository tasks and the required plugins, the required SKRL Torch provider, and built-in FastSAC. The installer detects NVIDIA / AMD GPUs and selects the corresponding CUDA / ROCm PyTorch wheels. It falls back to the CUDA profile when detection is unavailable. ROCm installation is supported only on Linux.
 
-Linux installation enables Intel TBB by default for Numba parallel kernels. Development tools, documentation tools, RSL-RL, and SKRL JAX are not all enabled in the default runtime environment; add them using the options below when needed.
+Development tools, documentation tools, RSL-RL, and SKRL JAX are not all enabled in the default runtime environment; add them using the options below when needed.
 
 ### Activate the environment and check the installation
 
@@ -121,7 +121,6 @@ When reinstalling, include any other options you still need in the same invocati
 | `--rslrl` | Add the RSL-RL provider |
 | `--skrl-jax` | Add the SKRL JAX runtime, Linux-only |
 | `--skrl-torch` | Compatibility option; SKRL Torch is already a required repository dependency |
-| `--tbb` | Enable Intel TBB explicitly; already enabled by the Linux installer |
 | `--docs` | Add documentation tools |
 | `--all` | Full development environment, Python 3.10 only |
 | `--help` | Show the full installer option reference |

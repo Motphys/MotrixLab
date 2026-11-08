@@ -24,7 +24,7 @@ import abc
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-import numpy as np
+import torch
 
 
 class SimWrite(abc.ABC):
@@ -342,11 +342,11 @@ class WriteProgram(abc.ABC):
     """
 
     @abc.abstractmethod
-    def buffer(self, name: str) -> np.ndarray:
+    def buffer(self, name: str) -> torch.Tensor:
         """Return the program-owned buffer of one declaration."""
 
     @abc.abstractmethod
-    def execute(self, env_ids: np.ndarray | None = None) -> None:
+    def execute(self, env_ids: torch.Tensor | None = None) -> None:
         """Write every op's buffer to the backend.
 
         ``env_ids`` selects rows; ``None`` means every row. Reset-before-write

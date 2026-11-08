@@ -17,9 +17,10 @@ from collections.abc import Iterable
 
 import numpy as np
 import pytest
+import torch
 
 from motrix_env_core import registry
-from motrix_env_core.array.env import ArrayEnvState, NpObs
+from motrix_env_core.array.env import ArrayEnvState, EnvObs
 
 # One registered name per basic DirectEnv family.
 _BASIC_ENVS = [
@@ -48,7 +49,7 @@ def _random_actions(env, rng: np.random.Generator) -> np.ndarray:
     finite = np.isfinite(low) & np.isfinite(high)
     shape = (env.num_envs, *env.action_space.shape)
     action = rng.uniform(-0.1, 0.1, size=shape).astype(env.action_space.dtype)
-    return np.where(finite, np.clip(action, low, high), action)
+    return torch.from_numpy(np.where(finite, np.clip(action, low, high), action))
 
 
 def _spy_execute(env) -> list:
@@ -64,13 +65,13 @@ def _spy_execute(env) -> list:
 
 
 def _assert_finite_state(state: ArrayEnvState, num_envs: int, obs_dim: Iterable[int]) -> None:
-    assert isinstance(state.obs, NpObs)
+    assert isinstance(state.obs, EnvObs)
     assert state.obs.policy.shape == (num_envs, *obs_dim)
-    assert not np.isnan(state.obs.policy).any()
+    assert not torch.isnan(state.obs.policy).any()
     assert state.reward.shape == (num_envs,)
     assert state.terminated.shape == (num_envs,)
     assert state.truncated.shape == (num_envs,)
-    assert not np.isnan(state.reward).any()
+    assert not torch.isnan(state.reward).any()
 
 
 @pytest.mark.parametrize("env_name", _BASIC_ENVS)
@@ -98,7 +99,7 @@ def test_compute_transition_executes_once_and_never_touches_obs(env_name: str) -
         env.step(_random_actions(env, rng))
 
     state = env.state
-    obs_before = state.obs.policy.copy()
+    obs_before = state.obs.policy.clone()
 
     calls = _spy_execute(env)
     transitioned = env.compute_transition(state)
@@ -122,9 +123,9 @@ def test_compute_observation_reads_cache_without_executing(env_name: str) -> Non
         env.step(_random_actions(env, rng))
 
     state = env.state
-    reward_before = state.reward.copy()
-    terminated_before = state.terminated.copy()
-    truncated_before = state.truncated.copy()
+    reward_before = state.reward.clone()
+    terminated_before = state.terminated.clone()
+    truncated_before = state.truncated.clone()
     reward_terms_before = {
         key: np.copy(value) if isinstance(value, np.ndarray) else value for key, value in state.reward_terms.items()
     }
@@ -134,7 +135,7 @@ def test_compute_observation_reads_cache_without_executing(env_name: str) -> Non
 
     # Observation must be served purely from cache.
     assert calls == []
-    obs = observed.obs.policy if isinstance(observed.obs, NpObs) else observed.obs
+    obs = observed.obs.policy if isinstance(observed.obs, EnvObs) else observed.obs
     assert obs.shape == (num_envs, *env.observation_space.shape)
     assert not np.isnan(obs).any()
     # Reward / termination / reward_terms must not be modified by observation.
@@ -156,8 +157,8 @@ def test_reset_only_writes_reset_state(env_name: str) -> None:
     for _ in range(2):
         env.step(_random_actions(env, rng))
 
-    env_ids = np.array([0], dtype=np.int64)
-    obs_before = env.state.obs.policy.copy()
+    env_ids = torch.tensor([0], dtype=torch.long)
+    obs_before = env.state.obs.policy.clone()
 
     result = env.reset(env_ids)
 

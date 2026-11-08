@@ -6,25 +6,25 @@
 import subprocess
 import sys
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SceneCfg
-from motrix_env_core.numba.kernel_data import kernel_data
-from motrix_env_core.numba.manager.actions import ActionCfg, ActionState, ActionTerm, ManagerActionsCfg
-from motrix_env_core.numba.manager.context import ManagerContext
-from motrix_env_core.numba.manager.dispatch import dispatch
-from motrix_env_core.numba.manager.env import ManagerBasedEnvCfg, ManagerEnv
-from motrix_env_core.numba.manager.observations import (
+from motrix_env_core.manager.actions import ActionCfg, ActionState, ActionTerm, ManagerActionsCfg
+from motrix_env_core.manager.context import ManagerContext
+from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
+from motrix_env_core.manager.observations import (
     ManagerObservationGroupCfg,
     ManagerObservationsCfg,
     ObservationTermCfg,
     ObsTerm,
 )
-from motrix_env_core.numba.manager.rewards import ManagerRewardsCfg, RewardTerm, RewardTermCfg
-from motrix_env_core.numba.manager.terminations import (
+from motrix_env_core.manager.rewards import ManagerRewardsCfg, RewardTerm, RewardTermCfg
+from motrix_env_core.manager.terminations import (
     ManagerTerminationsCfg,
     TerminationTerm,
     TerminationTermCfg,
@@ -62,7 +62,7 @@ def _core_model() -> SimModel:
     """The required core layout every backend must surface as ``env.model``."""
     return SimModel(
         actuators=_ACTUATORS,
-        init_dof_pos=np.asarray([0.5, -0.5], dtype=np.float32),
+        init_dof_pos=torch.tensor([0.5, -0.5], dtype=torch.float32),
     )
 
 
@@ -81,25 +81,26 @@ class _FakeWriteProgram(WriteProgram):
                     else tuple(all_names.index(target) for target in write.actuators)
                 )
                 self._routes[name] = route
-                self._buffers[name] = np.zeros((backend.num_envs, len(route)), dtype=np.float32)
+                self._buffers[name] = torch.zeros((backend.num_envs, len(route)), dtype=torch.float32)
 
-    def buffer(self, name: str) -> np.ndarray:
+    def buffer(self, name: str) -> torch.Tensor:
         return self._buffers[name]
 
-    def execute(self, env_ids=None) -> None:
-        ids = np.arange(self._backend.num_envs, dtype=np.int64) if env_ids is None else env_ids
+    def execute(self, env_ids: torch.Tensor | None = None) -> None:
+        ids = torch.arange(self._backend.num_envs, dtype=torch.int64) if env_ids is None else env_ids
         if self._reset:
-            self._backend.dof_pos[ids] = [0.5, -0.5]
+            self._backend.dof_pos[ids] = torch.tensor([0.5, -0.5], dtype=torch.float32)
             self._backend.dof_vel[ids] = 0.0
             for name, buffer in self._buffers.items():
                 if name.endswith("_position"):
                     self._backend.dof_pos[ids] = buffer[ids]
                 elif name.endswith("_velocity"):
                     self._backend.dof_vel[ids] = buffer[ids]
-            self._backend.reset_calls.append((ids.copy(), self._backend.dof_pos[ids].copy()))
+            self._backend.reset_calls.append((ids.clone(), self._backend.dof_pos[ids].clone()))
             self._backend.ctrl_targets[ids] = 0.0
         for name, route in self._routes.items():
-            self._backend.ctrl_targets[ids[:, None], route] = self.buffer(name)[ids]
+            route_index = torch.tensor(route, dtype=torch.int64)
+            self._backend.ctrl_targets[ids[:, None], route_index] = self.buffer(name)[ids]
         if self._routes:
             self._backend.ctrl_write_count += 1
 
@@ -121,17 +122,15 @@ class _FakeReadProgram(PhysicsReadProgram):
         self._queries = dict(queries)
         keys = tuple(queries)
         width = 2
-        self._arena = np.zeros((backend.num_envs * width,), dtype=np.float32)
+        self._arena = torch.zeros((backend.num_envs * width,), dtype=torch.float32)
         self._output = self._arena.reshape(backend.num_envs, width)
         self._views = {key: self._arena.reshape(backend.num_envs, width) for key in keys}
-        for value in self._views.values():
-            value.flags.writeable = False
 
     @property
     def arena_bytes(self) -> int:
-        return int(self._arena.nbytes)
+        return self._arena.numel() * self._arena.element_size()
 
-    def view(self, key: str) -> np.ndarray:
+    def view(self, key: str) -> torch.Tensor:
         return self._views[key]
 
     @property
@@ -141,9 +140,9 @@ class _FakeReadProgram(PhysicsReadProgram):
     def query(self, key: str):
         return self._queries[key]
 
-    def execute(self, env_ids=None) -> None:
+    def execute(self, env_ids: torch.Tensor | None = None) -> None:
         if env_ids is None:
-            self._output[:] = self._backend.dof_pos
+            self._output.copy_(self._backend.dof_pos)
         else:
             self._output[env_ids] = self._backend.dof_pos[env_ids]
 
@@ -158,11 +157,11 @@ class _FakeBackend(SimBackend):
     def __init__(self, scene, sim, num_envs: int) -> None:
         super().__init__(scene, sim, num_envs)
         self.num_envs = num_envs
-        self.dof_pos = np.zeros((num_envs, self.num_dof_pos), dtype=np.float32)
-        self.dof_vel = np.zeros((num_envs, self.num_dof_vel), dtype=np.float32)
-        self.ctrl_targets = np.zeros((num_envs, self.num_actuators), dtype=np.float32)
+        self.dof_pos = torch.zeros((num_envs, self.num_dof_pos), dtype=torch.float32)
+        self.dof_vel = torch.zeros((num_envs, self.num_dof_vel), dtype=torch.float32)
+        self.ctrl_targets = torch.zeros((num_envs, self.num_actuators), dtype=torch.float32)
         self.step_calls: list[int] = []
-        self.reset_calls: list[tuple[np.ndarray, np.ndarray | None]] = []
+        self.reset_calls: list[tuple[torch.Tensor, torch.Tensor | None]] = []
         self.ctrl_write_count = 0
         self._write_compiler = _FakeWriteCompiler(self)
         _FakeBackend.last = self
@@ -181,7 +180,7 @@ class _FakeBackend(SimBackend):
 
     def step(self, substeps: int) -> None:
         self.step_calls.append(substeps)
-        self.dof_pos += np.float32(0.25 * substeps)
+        self.dof_pos += 0.25 * substeps
 
     @property
     def model_compiler(self):
@@ -199,18 +198,18 @@ class _FakeBackend(SimBackend):
         return self._write_compiler
 
 
-@kernel_data
+@dataclass(frozen=True, slots=True)
 class _CtrlActionState(ActionState):
-    source: np.ndarray
+    source: torch.Tensor
 
 
 class _CtrlActionTerm(ActionTerm):
     def __init__(self, action_space: gym.spaces.Box, state: _CtrlActionState) -> None:
         super().__init__(action_space, state)
 
-    def _process(self, actions: np.ndarray) -> np.ndarray:
-        self.state.source[...] = actions
-        return actions * np.float32(2.0)
+    def _process(self, actions: torch.Tensor) -> torch.Tensor:
+        self.state.source.copy_(actions)
+        return actions * 2.0
 
     def _reset(self, env_ids: np.ndarray) -> None:
         self.state.source[env_ids] = 0.0
@@ -229,24 +228,20 @@ class _CtrlActionCfg(ActionCfg):
         return _CtrlActionTerm(
             _ctrl_action_space(env, actuator_indices),
             _CtrlActionState(
-                np.zeros((env.num_envs, 2, 1), dtype=np.float32),
-                np.zeros(1, dtype=np.int64),
-                np.zeros((env.num_envs, 1), dtype=np.float32),
+                torch.from_numpy(np.zeros((env.num_envs, 2, 1), dtype=np.float32)),
+                torch.from_numpy(np.zeros(1, dtype=np.int64)),
+                torch.from_numpy(np.zeros((env.num_envs, 1), dtype=np.float32)),
             ),
         )
 
 
-@dispatch
-def _sim_reading_observation(ctx: ManagerContext, out: np.ndarray) -> None:
-    dof_pos = ctx.sim["dof_pos"]
-    out[0] = dof_pos[0]
-    out[1] = dof_pos[1]
+def _sim_reading_observation(ctx: ManagerContext, out: torch.Tensor) -> None:
+    out.copy_(ctx.sim["dof_pos"])
 
 
 @configclass(kw_only=True)
 class _SimReadingObservationCfg(ObservationTermCfg):
     def __call__(self, env):
-        del env
         return ObsTerm(2, _sim_reading_observation)
 
 
@@ -260,9 +255,8 @@ class _FakeObservationsCfg(ManagerObservationsCfg):
     policy: _FakePolicyObsCfg = _FakePolicyObsCfg()
 
 
-@dispatch
-def _unit_reward(ctx: ManagerContext) -> float:
-    return 1.0
+def _unit_reward(ctx: ManagerContext) -> torch.Tensor:
+    return torch.ones_like(ctx.env_id, dtype=torch.float32)
 
 
 @configclass(kw_only=True)
@@ -270,7 +264,6 @@ class _UnitRewardCfg(RewardTermCfg):
     weight: float = 1.0
 
     def __call__(self, env):
-        del env
         return RewardTerm(_unit_reward)
 
 
@@ -279,15 +272,13 @@ class _FakeRewardsCfg(ManagerRewardsCfg):
     unit: _UnitRewardCfg = _UnitRewardCfg()
 
 
-@dispatch
-def _never_termination(ctx: ManagerContext) -> bool:
-    return False
+def _never_termination(ctx: ManagerContext) -> torch.Tensor:
+    return torch.zeros_like(ctx.env_id, dtype=torch.bool)
 
 
 @configclass(kw_only=True)
 class _NeverTerminationCfg(TerminationTermCfg):
     def __call__(self, env):
-        del env
         return TerminationTerm(_never_termination)
 
 
@@ -322,7 +313,7 @@ def test_manager_env_steps_on_fake_backend() -> None:
     env = _make_env()
     runtime = _FakeBackend.last
 
-    state = env.step(np.full((3, 1), 0.5, dtype=np.float32))
+    state = env.step(torch.full((3, 1), 0.5, dtype=torch.float32))
 
     assert runtime.step_calls == [env.cfg.sim_substeps]
     # ctrl routing: only the "routed" actuator receives the doubled action.
@@ -341,10 +332,10 @@ def test_partial_reset_hands_canonical_rows_to_runtime_and_clears_ctrl() -> None
 
     env.init_state()
     runtime.reset_calls.clear()
-    env.step(np.full((3, 1), 0.5, dtype=np.float32))
+    env.step(torch.full((3, 1), 0.5, dtype=torch.float32))
     assert runtime.ctrl_targets[1, 1] == np.float32(1.0)
 
-    env._state.terminated[:] = [False, True, False]
+    env._state.terminated[:] = torch.tensor([False, True, False])
     env._reset_done_envs()
 
     assert len(runtime.reset_calls) == 1
@@ -358,8 +349,6 @@ def test_partial_reset_hands_canonical_rows_to_runtime_and_clears_ctrl() -> None
 
 
 def test_manager_frontend_does_not_import_motrixsim() -> None:
-    code = (
-        "import sys\nimport motrix_env_core.numba.manager.env\nsys.exit(0 if 'motrixsim' not in sys.modules else 1)\n"
-    )
+    code = "import sys\nimport motrix_env_core.manager.env\nsys.exit(0 if 'motrixsim' not in sys.modules else 1)\n"
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

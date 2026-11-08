@@ -10,6 +10,7 @@ from collections.abc import Mapping
 import gymnasium as gym
 import numpy as np
 import pytest
+import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SceneCfg
@@ -205,21 +206,24 @@ class _FakeDirectEnv(DirectEnv[_FakeDirectCfg]):
     def action_space(self):
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
         ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = actions.astype(np.float32, copy=False)
+        ctrl[:] = actions.detach().cpu().numpy().astype(np.float32, copy=False)
         self._ctrl_writes.execute()
         return state
 
     def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
         inputs = self.sim_data
-        state.obs.policy[:] = np.concatenate([inputs["dof_pos"], inputs["dof_vel"], inputs["actuator_ctrls"]], axis=-1)
-        state.reward = np.ones((self.num_envs,), dtype=np.float32)
-        state.terminated = np.zeros((self.num_envs,), dtype=bool)
+        state.obs.policy[:] = torch.from_numpy(
+            np.concatenate([inputs["dof_pos"], inputs["dof_vel"], inputs["actuator_ctrls"]], axis=-1)
+        )
+        state.reward = torch.ones((self.num_envs,), dtype=torch.float32)
+        state.terminated = torch.zeros((self.num_envs,), dtype=torch.bool)
         self.sim_data.execute()
         return state
 
-    def reset(self, env_ids: np.ndarray):
+    def reset(self, env_ids: torch.Tensor):
+        env_ids = env_ids.detach().cpu().numpy()
         rows = len(env_ids)
         dof_pos = np.full((rows, self.num_dof_pos), 2.0, dtype=np.float32)
         dof_vel = np.full((rows, self.num_dof_vel), 1.0, dtype=np.float32)
@@ -237,7 +241,7 @@ def test_direct_env_step_writes_ctrl_and_reads_inputs() -> None:
     env = _make_env()
     runtime = _FakeBackend.last
 
-    state = env.step(np.full((3, 2), 0.5, dtype=np.float32))
+    state = env.step(torch.full((3, 2), 0.5, dtype=torch.float32))
 
     assert runtime.step_calls == [env.cfg.sim_substeps]
     assert runtime.ctrl_writes == 1
@@ -267,7 +271,7 @@ def test_direct_env_partial_reset_passes_canonical_rows() -> None:
 
     env.init_state()
     runtime.reset_calls.clear()
-    env._state.terminated[:] = [False, True, False]
+    env._state.terminated[:] = torch.tensor([False, True, False])
     env._reset_done_envs()
 
     assert len(runtime.reset_calls) == 1

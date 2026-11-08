@@ -20,6 +20,7 @@ import os
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
@@ -74,21 +75,20 @@ class CartPoleEnv(DirectEnv):
     def action_space(self):
         return self._action_space
 
-    def reset(self, env_ids: np.ndarray):
-        rows = len(env_ids)
+    def reset(self, env_ids: torch.Tensor) -> None:
+        rows = env_ids.numel()
         scale = self._cfg.reset_noise_scale
-        self._reset_program.buffer("position")[env_ids] = np.random.uniform(
-            -scale, scale, (rows, 2)
-        ).astype(np.float32)
-        self._reset_program.buffer("velocity")[env_ids] = np.random.uniform(
-            -scale, scale, (rows, 2)
-        ).astype(np.float32)
+        self._reset_program.buffer("position")[env_ids] = (
+            torch.rand(rows, 2, dtype=torch.float32) * 2.0 - 1.0
+        ) * scale
+        self._reset_program.buffer("velocity")[env_ids] = (
+            torch.rand(rows, 2, dtype=torch.float32) * 2.0 - 1.0
+        ) * scale
         self._reset_program.execute(env_ids)
         self.sim_data.execute(env_ids)
-        return {}
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState):
-        self._ctrl_writes.buffer("ctrl")[:] = actions.astype(np.float32, copy=False)
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
         return state
 
@@ -96,17 +96,12 @@ class CartPoleEnv(DirectEnv):
         self.sim_data.execute()
         dof_pos = self.sim_data["dof_pos"]
         cart_pos, angle = dof_pos[:, 0], dof_pos[:, 1]
-        state.reward = np.ones((self.num_envs,), dtype=np.float32)
-        state.terminated = (
-            np.isnan(angle)
-            | (np.abs(angle) > 0.2)
-            | (cart_pos < -0.8)
-            | (cart_pos > 0.8)
-        )
+        state.reward[:] = 1.0
+        state.terminated[:] = angle.isnan() | (angle.abs() > 0.2) | (cart_pos < -0.8) | (cart_pos > 0.8)
         return state
 
     def compute_observation(self, state: ArrayEnvState):
-        obs = np.concatenate([self.sim_data["dof_pos"], self.sim_data["dof_vel"]], axis=-1)
+        obs = torch.cat([self.sim_data["dof_pos"], self.sim_data["dof_vel"]], dim=-1)
         return state.replace(obs=obs)
 ```
 

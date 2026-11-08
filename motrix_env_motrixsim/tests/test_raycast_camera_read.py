@@ -3,6 +3,7 @@
 
 import numpy as np
 import pytest
+import torch
 
 from motrix_env_core.config import SimCfg, configclass
 from motrix_env_core.config.scene.base import SceneCfg, SceneSensorsCfg
@@ -74,12 +75,12 @@ def test_image_fields_match_geometry_and_native_flat_layout(tmp_path):
     np.testing.assert_array_equal(program["distance"], flat[..., 1])
     np.testing.assert_array_equal(points, flat[..., 2:5])
     np.testing.assert_array_equal(normals, flat[..., 5:8])
-    # Disjoint interleaved channels share an allocation, not overlapping bytes.
-    assert depth.base is points.base
+    # Disjoint interleaved channels alias one allocation: points start two
+    # float32 channels after depth inside the same interleaved row.
+    assert points.data_ptr() - depth.data_ptr() == 2 * depth.element_size()
     assert program["alias"] is depth
-    assert not depth.flags.writeable
-    before = depth.copy()
-    program.execute(np.array([1], dtype=np.int64))
+    before = depth.clone()
+    program.execute(torch.tensor([1], dtype=torch.int64))
     np.testing.assert_array_equal(depth, before)
     # Camera field layout is independent of declaration order.
     reverse = backend.compile_reads(
@@ -107,12 +108,12 @@ def test_reset_invalidates_cached_image_but_intra_episode_fk_respects_update_per
     reads.execute()
     np.testing.assert_allclose(reads["depth"], 4.9, atol=1e-5)
 
-    fk.buffer("q")[:] = [[1.0], [2.0]]
+    fk.buffer("q")[:] = torch.tensor([[1.0], [2.0]], dtype=torch.float32)
     fk.execute()
     reads.execute()
     np.testing.assert_allclose(reads["depth"], 4.9, atol=1e-5)
 
-    reset.buffer("q")[:] = [[1.0], [2.0]]
+    reset.buffer("q")[:] = torch.tensor([[1.0], [2.0]], dtype=torch.float32)
     reset.execute()
     reads.execute()
     np.testing.assert_allclose(reads["depth"][0], 3.9, atol=1e-5)
@@ -125,8 +126,8 @@ def test_partial_reset_resamples_only_selected_rows(tmp_path):
     reset = backend.compile_writes({"q": JointPositionWrite(joints=("slide",))}, reset=True, forward_kinematics=True)
     backend.step(1)
     reads.execute()
-    reset.buffer("q")[:] = [[0.0], [2.0]]
-    reset.execute(np.array([1], dtype=np.int64))
+    reset.buffer("q")[:] = torch.tensor([[0.0], [2.0]], dtype=torch.float32)
+    reset.execute(torch.tensor([1], dtype=torch.int64))
     reads.execute()
     np.testing.assert_allclose(reads["depth"][0], 4.9, atol=1e-5)
     np.testing.assert_allclose(reads["depth"][1], 2.9, atol=1e-5)
@@ -137,7 +138,7 @@ def test_non_integer_update_period_resamples_on_step_at_elapsed_times(tmp_path):
     reads = backend.compile_reads({"depth": RaycastCameraImageQuery(sensor="camera")})
     vel = backend.compile_writes({"v": JointVelocityWrite(joints=("slide",))})
     backend.step(1)
-    vel.buffer("v")[:] = [[1.0], [1.0]]
+    vel.buffer("v")[:] = torch.tensor([[1.0], [1.0]], dtype=torch.float32)
     vel.execute()
     backend.step(1)
     backend.step(2)  # resamples at t=0.015 and t=0.03; sampling precedes integration, so z=0.02 at t=0.03
@@ -156,12 +157,12 @@ def test_partial_read_updates_only_selected_row_with_interleaved_fields(tmp_path
     )
     backend.step(1)
     reads.execute()
-    before = reads["depth"].copy()
+    before = reads["depth"].clone()
     writes = backend.compile_writes({"q": JointPositionWrite(joints=("slide",))})
-    writes.buffer("q")[:] = [[1.0], [2.0]]
+    writes.buffer("q")[:] = torch.tensor([[1.0], [2.0]], dtype=torch.float32)
     writes.execute()
     backend.step(1)
-    reads.execute(np.array([1], dtype=np.int64))
+    reads.execute(torch.tensor([1], dtype=torch.int64))
     np.testing.assert_array_equal(reads["depth"][0], before[0])
     np.testing.assert_allclose(reads["depth"][1], 2.9, atol=1e-5)
     np.testing.assert_array_equal(reads["q"], [[0], [2]])

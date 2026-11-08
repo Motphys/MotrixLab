@@ -7,8 +7,7 @@ Importing this package never imports a simulator. Simulator backends live in
 their own distributions (``motrix-env-motrixsim``, ``motrix-env-mujoco``) and
 register through the ``motrix_env.sim_backends`` entry-point group; the
 backend-neutral boundary is :mod:`motrix_env_core.sim` and its registry is
-:mod:`motrix_env_core.sim.registry`. The torch-tensor frontend for MotrixSim
-lives in :mod:`motrix_env_motrixsim.torch_env`, not here.
+:mod:`motrix_env_core.sim.registry`.
 """
 
 from motrix_env_core import registry

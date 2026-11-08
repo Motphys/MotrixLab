@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from motrix_env_core.config.decorate import configclass
 
 if TYPE_CHECKING:
-    from motrix_env_core.numba.manager.sim_reset import ResetTerm
+    from motrix_env_core.manager.sim_reset import ResetTerm
 
 
 @configclass(kw_only=True)

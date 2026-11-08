@@ -10,13 +10,10 @@ import numpy as np
 import pytest
 import torch
 
-from motrix_env_core.array.env import ArrayEnvState, NpObs
+from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.direct.env import DirectEnv
-from motrix_env_motrixsim.torch_env import TorchEnv, TorchEnvState, TorchObs
 
 _TRAINERS = ["skrl.torch", "skrl.jax"]
-
-_SIM_BACKENDS = ["np", "torch"]
 
 
 _NUM_ENVS = 2
@@ -28,33 +25,20 @@ _OBS_DIM = 3
 _ACT_DIM = 2
 
 
-def _make_env(sim_backend: str):
+def _make_env():
     policy_space = gym.spaces.Box(-np.inf, np.inf, (_OBS_DIM,), dtype=np.float32)
     action_space = gym.spaces.Box(
         low=np.array([-2.0, -1.0], dtype=np.float32),
         high=np.array([2.0, 3.0], dtype=np.float32),
     )
-    if sim_backend == "np":
-        env = Mock(spec=DirectEnv)
-        state = ArrayEnvState(
-            obs=NpObs(np.zeros((_NUM_ENVS, _OBS_DIM), dtype=np.float32)),
-            reward=np.ones(_NUM_ENVS, dtype=np.float32),
-            terminated=np.zeros(_NUM_ENVS, dtype=bool),
-            truncated=np.zeros(_NUM_ENVS, dtype=bool),
-            episode_steps=np.zeros(_NUM_ENVS, dtype=np.uint64),
-        )
-    else:
-        env = Mock(spec=TorchEnv)
-        env.device = torch.device("cpu")
-        state = TorchEnvState(
-            data=None,
-            obs=TorchObs(torch.zeros((_NUM_ENVS, _OBS_DIM), device=env.device)),
-            reward=torch.ones(_NUM_ENVS, device=env.device),
-            terminated=torch.zeros(_NUM_ENVS, dtype=torch.bool, device=env.device),
-            truncated=torch.zeros(_NUM_ENVS, dtype=torch.bool, device=env.device),
-            episode_steps=torch.zeros(_NUM_ENVS, dtype=torch.int64, device=env.device),
-        )
-
+    env = Mock(spec=DirectEnv)
+    state = ArrayEnvState(
+        obs=EnvObs(torch.zeros((_NUM_ENVS, _OBS_DIM), dtype=torch.float32)),
+        reward=torch.ones(_NUM_ENVS, dtype=torch.float32),
+        terminated=torch.zeros(_NUM_ENVS, dtype=torch.bool),
+        truncated=torch.zeros(_NUM_ENVS, dtype=torch.bool),
+        episode_steps=torch.zeros(_NUM_ENVS, dtype=torch.int64),
+    )
     env.cfg = SimpleNamespace(max_episode_steps=100)
     env.num_envs = _NUM_ENVS
     env.action_space = action_space
@@ -67,23 +51,22 @@ def _make_env(sim_backend: str):
     return env
 
 
-def _wrap_env(monkeypatch, trainer: str, sim_backend: str, env, renderer):
+def _wrap_env(monkeypatch, trainer: str, env, renderer):
     pytest.importorskip("skrl")
     if trainer == "skrl.jax":
         pytest.importorskip("jax")
     package = {"skrl.torch": "motrix_rl_skrl.torch", "skrl.jax": "motrix_rl_skrl.jax"}[trainer]
-    wrapper_module = importlib.import_module(f"{package}.wrap_{sim_backend}")
+    wrapper_module = importlib.import_module(f"{package}.wrap")
     monkeypatch.setattr(wrapper_module, "create_renderer", Mock(return_value=renderer))
     trainer_module = importlib.import_module(package)
     return trainer_module.wrap_env(env, render=object())
 
 
 @pytest.mark.parametrize("trainer", _TRAINERS)
-@pytest.mark.parametrize("sim_backend", _SIM_BACKENDS)
-def test_rl_trainer_supports_sim_backend(monkeypatch, trainer: str, sim_backend: str) -> None:
-    env = _make_env(sim_backend)
+def test_rl_trainer_supports_sim_backend(monkeypatch, trainer: str) -> None:
+    env = _make_env()
     renderer = Mock()
-    wrapped = _wrap_env(monkeypatch, trainer, sim_backend, env, renderer)
+    wrapped = _wrap_env(monkeypatch, trainer, env, renderer)
 
     if trainer == "skrl.torch":
         obs, _ = wrapped.reset()
@@ -97,9 +80,8 @@ def test_rl_trainer_supports_sim_backend(monkeypatch, trainer: str, sim_backend:
         assert all(isinstance(array, jax.Array) for array in (obs, *result[:4]))
         assert all(array.device == wrapped.device for array in (obs, *result[:4]))
     actions = env.step.call_args.args[0]
-    assert isinstance(actions, np.ndarray if sim_backend == "np" else torch.Tensor)
-    if sim_backend == "torch":
-        assert actions.device == env.device
+    assert isinstance(actions, torch.Tensor)
+    assert actions.device.type == "cpu"
 
     wrapped.render("ignored", ignored=True)
     wrapped.close()

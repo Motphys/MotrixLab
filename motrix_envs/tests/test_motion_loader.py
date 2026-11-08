@@ -147,7 +147,7 @@ def test_wbt_motion_clip_builds_name_ordered_numeric_views(tmp_path):
     joint_pos = wbt.joint_pos
     motion.joint_pos = np.zeros_like(motion.joint_pos)
     assert wbt.joint_pos is joint_pos
-    assert np.any(wbt.joint_pos)
+    assert bool(wbt.joint_pos.any())
 
     array_fields = (
         "joint_pos",
@@ -163,4 +163,4 @@ def test_wbt_motion_clip_builds_name_ordered_numeric_views(tmp_path):
         "reference_body_pos_w",
         "reference_body_quat_w",
     )
-    assert all(getattr(wbt, name).flags.c_contiguous for name in array_fields)
+    assert all(getattr(wbt, name).is_contiguous() for name in array_fields)

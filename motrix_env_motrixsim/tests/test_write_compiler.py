@@ -3,8 +3,8 @@
 
 """Execution-level behavior of compiled MotrixSim write programs."""
 
-import numpy
 import pytest
+import torch
 
 from motrix_env_motrixsim.write_compiler import _MotrixSimWriteProgram
 
@@ -30,7 +30,7 @@ def test_write_program_executes_native_program_with_selected_ids() -> None:
     data = _Data()
     program = _program(native, data)
 
-    program.execute(numpy.asarray([2, 0], dtype=numpy.int64))
+    program.execute(torch.tensor([2, 0], dtype=torch.int64))
 
     assert len(native.execute_calls) == 1
     executed_data, selected_ids = native.execute_calls[0]
@@ -53,34 +53,34 @@ def test_write_program_executes_full_batch_without_env_ids() -> None:
 def test_write_program_without_native_plan_is_a_no_op() -> None:
     program = _program()
 
-    program.execute(numpy.asarray([0, 1], dtype=numpy.int64))
+    program.execute(torch.tensor([0, 1], dtype=torch.int64))
 
 
 @pytest.mark.parametrize(
     "env_ids",
     [
-        numpy.asarray([0], dtype=numpy.int32),
-        numpy.asarray([[0, 1]], dtype=numpy.int64),
+        torch.tensor([0], dtype=torch.float32),
+        torch.tensor([[0, 1]], dtype=torch.int64),
         [0, 1],
     ],
 )
-def test_write_program_rejects_non_int64_1d_ids(env_ids) -> None:
-    with pytest.raises(TypeError, match="int64 ndarray"):
+def test_write_program_rejects_non_integer_1d_ids(env_ids) -> None:
+    with pytest.raises(TypeError, match="integer tensor|one-dimensional"):
         _program().execute(env_ids)
 
 
 def test_write_program_rejects_out_of_range_ids() -> None:
     with pytest.raises(IndexError, match="out of range"):
-        _program().execute(numpy.asarray([3], dtype=numpy.int64))
+        _program().execute(torch.tensor([3], dtype=torch.int64))
 
 
 def test_write_program_rejects_duplicate_ids() -> None:
     with pytest.raises(ValueError, match="duplicates"):
-        _program().execute(numpy.asarray([0, 0], dtype=numpy.int64))
+        _program().execute(torch.tensor([0, 0], dtype=torch.int64))
 
 
 def test_write_program_skips_empty_selection() -> None:
     native = _NativeProgram()
-    _program(native).execute(numpy.asarray([], dtype=numpy.int64))
+    _program(native).execute(torch.tensor([], dtype=torch.int64))
 
     assert native.execute_calls == []

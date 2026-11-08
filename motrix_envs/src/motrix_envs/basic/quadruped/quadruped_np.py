@@ -1,14 +1,14 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
-# SPDX-License-Identifier: Apache-2.0
+
+import math
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
-from motrix_env_core.direct import reward
 from motrix_env_core.direct.env import DirectEnv
-from motrix_env_core.math import quaternion
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     BodyAngularVelocityWrite,
@@ -28,6 +28,7 @@ from motrix_env_core.sim import (
     SitePositionQuery,
 )
 from motrix_env_core.sim.write import BodyJointVelocityWrite, CtrlTargetsWrite
+from motrix_env_core.torch import reward
 from motrix_envs.basic.quadruped.cfg import _LEG_BODY_GEOM_NAMES, QuadrupedBaseCfg
 
 _RANGEFINDER_SENSORS = [f"rf_{row}{col}" for row in range(4) for col in range(5)]
@@ -106,10 +107,10 @@ _FETCH_DATA_QUERIES = {
 _FETCH_MODEL_QUERIES = {"geoms": GeomSpecsQuery(names=("floor", "ball", *_LEG_GEOM_NAMES))}
 
 
-def _quat_to_rotation_mats(quats: np.ndarray) -> np.ndarray:
+def _quat_to_rotation_mats(quats: torch.Tensor) -> torch.Tensor:
     """Convert (x, y, z, w) quaternions, shape (..., 4), to rotation mats (..., 3, 3)."""
     x, y, z, w = quats[..., 0], quats[..., 1], quats[..., 2], quats[..., 3]
-    mats = np.empty(quats.shape[:-1] + (3, 3), dtype=quats.dtype)
+    mats = quats.new_empty(quats.shape[:-1] + (3, 3))
     mats[..., 0, 0] = 1 - 2 * (y * y + z * z)
     mats[..., 0, 1] = 2 * (x * y - z * w)
     mats[..., 0, 2] = 2 * (x * z + y * w)
@@ -120,6 +121,15 @@ def _quat_to_rotation_mats(quats: np.ndarray) -> np.ndarray:
     mats[..., 2, 1] = 2 * (y * z + x * w)
     mats[..., 2, 2] = 1 - 2 * (x * x + y * y)
     return mats
+
+
+def _rotate_z_axis(quat: torch.Tensor) -> torch.Tensor:
+    """Forward-rotate the world Z axis by (x, y, z, w) quaternions, shape (..., 4)."""
+    axis = quat.new_tensor([0.0, 0.0, 1.0])
+    w = quat[..., 3:4]
+    im = quat[..., :3]
+    t = 2.0 * torch.cross(im, axis.expand_as(im), dim=-1)
+    return axis + w * t + torch.cross(im, t, dim=-1)
 
 
 class QuadrupedEnv(DirectEnv):
@@ -197,12 +207,12 @@ class QuadrupedEnv(DirectEnv):
             # size) in every quadruped asset, so the capsule branch of the
             # legacy shape check reduces to the size tuple length.
             self._leg_geom_sizes = {
-                name: np.atleast_1d(np.asarray(self.model.others["geoms"][name].size, dtype=np.float32))
+                name: torch.as_tensor(self.model.others["geoms"][name].size, dtype=torch.float32).flatten()
                 for name in self._leg_geom_names
             }
 
-        self._init_dof_pos = self.model.init_dof_pos.copy()
-        self._default_body_dof_pos = self._init_dof_pos[self._dof_pos_slice].copy()
+        self._init_dof_pos = self.model.init_dof_pos.clone()
+        self._default_body_dof_pos = self._init_dof_pos[self._dof_pos_slice].clone()
         # The legacy constructor took max(cfg.terrain_size, |hfield bound[3]|)
         # when the scene defined height fields. Only quadruped_escape.xml has
         # an hfield and its bound[3] is 0.1 < cfg default 30.0, so the config
@@ -234,11 +244,13 @@ class QuadrupedEnv(DirectEnv):
         self._action_space = gym.spaces.Box(
             ctrl_ranges[:, 0], ctrl_ranges[:, 1], (self.num_actuators,), dtype=np.float32
         )
+        self._act_low = torch.from_numpy(ctrl_ranges[:, 0])
+        self._act_high = torch.from_numpy(ctrl_ranges[:, 1])
 
         # Episode-scoped action history: full-batch buffers, reset writes the
         # done rows in place.
-        self._actions = np.zeros((self._num_envs, self.num_actuators), dtype=np.float32)
-        self._last_actions = np.zeros((self._num_envs, self.num_actuators), dtype=np.float32)
+        self._actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32)
+        self._last_actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32)
 
     @property
     def observation_space(self) -> gym.spaces.Box:
@@ -248,53 +260,53 @@ class QuadrupedEnv(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
         if self._cfg.clip_env_actions:
-            actions = np.clip(actions, self._action_space.low, self._action_space.high)
-        actions = actions.astype(np.float32)
-        self._last_actions[:] = self._actions
-        self._actions[:] = actions
+            actions = torch.clamp(actions, self._act_low, self._act_high)
+        actions = actions.to(torch.float32)
+        self._last_actions.copy_(self._actions)
+        self._actions.copy_(actions)
         ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = np.asarray(actions, dtype=np.float32)
+        ctrl.copy_(actions)
         self._ctrl_writes.execute()
         return state
 
-    def _torso_frame(self, rows) -> np.ndarray:
+    def _torso_frame(self, rows) -> torch.Tensor:
         return _quat_to_rotation_mats(self.sim_data["torso_quat"][rows])
 
-    def _egocentric_state(self, rows) -> np.ndarray:
+    def _egocentric_state(self, rows) -> torch.Tensor:
         inputs = self.sim_data
         dof_pos = inputs["dof_pos"][rows][:, self._dof_pos_slice]
         dof_vel = inputs["dof_vel"][rows][:, self._dof_vel_slice]
         act = inputs["actuator_ctrls"][rows]
-        return np.concatenate([dof_pos, dof_vel, act], axis=-1)
+        return torch.cat([dof_pos, dof_vel, act], dim=-1)
 
-    def _torso_upright(self, rows) -> np.ndarray:
+    def _torso_upright(self, rows) -> torch.Tensor:
         return self._torso_frame(rows)[:, 2, 2]
 
-    def _torso_velocity(self, rows) -> np.ndarray:
+    def _torso_velocity(self, rows) -> torch.Tensor:
         return self.sim_data["velocimeter"][rows]
 
-    def _imu(self, rows) -> np.ndarray:
+    def _imu(self, rows) -> torch.Tensor:
         return self.sim_data["imu"][rows]
 
-    def _rangefinder(self, rows) -> np.ndarray:
+    def _rangefinder(self, rows) -> torch.Tensor:
         # Shipped scenes define no rf_* sensors, so enabling include_rangefinder
         # fails loudly here exactly like the legacy model-level sensor lookup.
-        readings = np.concatenate([self.sim_data[name][rows] for name in _RANGEFINDER_SENSORS], axis=-1)
+        readings = torch.cat([self.sim_data[name][rows] for name in _RANGEFINDER_SENSORS], dim=-1)
         no_intersection = -1.0
-        return np.where(readings == no_intersection, 1.0, np.tanh(readings))
+        return torch.where(readings == no_intersection, torch.ones_like(readings), torch.tanh(readings))
 
-    def _origin(self, rows) -> np.ndarray:
+    def _origin(self, rows) -> torch.Tensor:
         torso_pos = self.sim_data["torso_pos"][rows]
         torso_frame = self._torso_frame(rows)
-        return -np.einsum("ni,nij->nj", torso_pos, torso_frame)
+        return -torch.einsum("ni,nij->nj", torso_pos, torso_frame)
 
-    def _origin_distance(self, rows) -> np.ndarray:
+    def _origin_distance(self, rows) -> torch.Tensor:
         workspace_pos = self.sim_data["workspace_pos"][rows]
-        return np.linalg.norm(workspace_pos, axis=-1)
+        return torch.norm(workspace_pos, dim=-1)
 
-    def _ball_state(self, rows) -> np.ndarray:
+    def _ball_state(self, rows) -> torch.Tensor:
         inputs = self.sim_data
         ball_pos = inputs["ball_pos"][rows]
         torso_pos = inputs["torso_pos"][rows]
@@ -306,63 +318,68 @@ class QuadrupedEnv(DirectEnv):
         ball_rel_vel = ball_vel[:, :3] - root_linvel
         ball_rot_vel = ball_vel[:, 3:]
 
-        stacked = np.stack([ball_rel_pos, ball_rel_vel, ball_rot_vel], axis=1)
-        local = np.einsum("nij,njk->nik", stacked, torso_frame)
+        stacked = torch.stack([ball_rel_pos, ball_rel_vel, ball_rot_vel], dim=1)
+        local = torch.einsum("nij,njk->nik", stacked, torso_frame)
         return local.reshape(-1, 9)
 
-    def _target_position(self, rows) -> np.ndarray:
+    def _target_position(self, rows) -> torch.Tensor:
         torso_pos = self.sim_data["torso_pos"][rows]
         torso_frame = self._torso_frame(rows)
         to_target = self.sim_data["target_pos"][rows] - torso_pos
-        return np.einsum("ni,nij->nj", to_target, torso_frame)
+        return torch.einsum("ni,nij->nj", to_target, torso_frame)
 
-    def _ball_to_target_distance(self, rows) -> np.ndarray:
+    def _ball_to_target_distance(self, rows) -> torch.Tensor:
         ball_pos = self.sim_data["ball_pos"][rows]
         target_pos = self.sim_data["target_pos"][rows]
-        return np.linalg.norm((target_pos - ball_pos)[:, :2], axis=-1)
+        return torch.norm((target_pos - ball_pos)[:, :2], dim=-1)
 
-    def _aggregate_leg_ball_proximity(self, geom_penalties: np.ndarray) -> np.ndarray:
+    def _aggregate_leg_ball_proximity(self, geom_penalties: torch.Tensor) -> torch.Tensor:
         num_legs = len(self._leg_geom_slices)
         if num_legs == 0:
-            return np.zeros((geom_penalties.shape[0], 0), dtype=np.float32)
+            return geom_penalties.new_zeros((geom_penalties.shape[0], 0))
 
         leg_penalties = []
         for geom_slice in self._leg_geom_slices:
             if geom_slice.start == geom_slice.stop:
-                leg_penalties.append(np.zeros((geom_penalties.shape[0],), dtype=np.float32))
+                leg_penalties.append(geom_penalties.new_zeros((geom_penalties.shape[0],)))
             else:
-                leg_penalties.append(geom_penalties[:, geom_slice].max(axis=-1))
-        return np.stack(leg_penalties, axis=-1)
+                leg_penalties.append(geom_penalties[:, geom_slice].max(dim=-1).values)
+        return torch.stack(leg_penalties, dim=-1)
 
-    def _point_to_segment_distance(self, point: np.ndarray, start: np.ndarray, end: np.ndarray) -> np.ndarray:
+    def _point_to_segment_distance(self, point: torch.Tensor, start: torch.Tensor, end: torch.Tensor) -> torch.Tensor:
         segment = end - start
-        segment_sq_norm = np.sum(segment * segment, axis=-1)
-        safe_norm = np.where(segment_sq_norm > 1e-8, segment_sq_norm, 1.0)
-        t = np.sum((point - start) * segment, axis=-1) / safe_norm
-        t = np.where(segment_sq_norm > 1e-8, np.clip(t, 0.0, 1.0), 0.0)
+        segment_sq_norm = torch.sum(segment * segment, dim=-1)
+        safe_norm = torch.where(segment_sq_norm > 1e-8, segment_sq_norm, torch.ones_like(segment_sq_norm))
+        t = torch.sum((point - start) * segment, dim=-1) / safe_norm
+        t = torch.where(segment_sq_norm > 1e-8, t.clamp(0.0, 1.0), torch.zeros_like(t))
         closest = start + t[:, None] * segment
-        return np.linalg.norm(point - closest, axis=-1)
+        return torch.norm(point - closest, dim=-1)
 
     def _geom_ball_surface_clearance(
-        self, geom_name: str, geom_pos: np.ndarray, geom_quat: np.ndarray, ball_pos: np.ndarray, ball_radius: float
-    ) -> np.ndarray:
+        self,
+        geom_name: str,
+        geom_pos: torch.Tensor,
+        geom_quat: torch.Tensor,
+        ball_pos: torch.Tensor,
+        ball_radius: float,
+    ) -> torch.Tensor:
         geom_size = self._leg_geom_sizes[geom_name]
         geom_radius = float(geom_size[0])
 
-        if geom_size.shape[0] > 1 and geom_size[1] > 0.0:
+        if geom_size.shape[0] > 1 and float(geom_size[1]) > 0.0:
             half_length = float(geom_size[1])
-            axis = quaternion.rotate_vector(geom_quat, np.array([0.0, 0.0, 1.0], dtype=np.float32))
+            axis = _rotate_z_axis(geom_quat)
             start = geom_pos - axis * half_length
             end = geom_pos + axis * half_length
             center_distance = self._point_to_segment_distance(ball_pos, start, end)
         else:
-            center_distance = np.linalg.norm(ball_pos - geom_pos, axis=-1)
+            center_distance = torch.norm(ball_pos - geom_pos, dim=-1)
 
         return center_distance - (ball_radius + geom_radius)
 
-    def _leg_body_ball_penalty(self, rows) -> np.ndarray:
+    def _leg_body_ball_penalty(self, rows) -> torch.Tensor:
         if not self._leg_geom_names:
-            return np.zeros((self._num_envs,), dtype=np.float32)
+            return torch.zeros((self._num_envs,), dtype=torch.float32)
 
         inputs = self.sim_data
         ball_pos = inputs["ball_geom_pos"][rows]
@@ -386,11 +403,11 @@ class QuadrupedEnv(DirectEnv):
                 )
             )
 
-        proximity = np.stack(geom_penalties, axis=-1).astype(np.float32)
+        proximity = torch.stack(geom_penalties, dim=-1)
         leg_penalties = self._aggregate_leg_ball_proximity(proximity)
-        return leg_penalties.sum(axis=-1).astype(np.float32)
+        return leg_penalties.sum(dim=-1)
 
-    def _fetch_stability_gate(self, torso_upright: np.ndarray, torso_height: np.ndarray) -> np.ndarray:
+    def _fetch_stability_gate(self, torso_upright: torch.Tensor, torso_height: torch.Tensor) -> torch.Tensor:
         upright_gate = reward.tolerance(
             torso_upright,
             bounds=(self._cfg.fetch_stability_upright_min, float("inf")),
@@ -407,11 +424,11 @@ class QuadrupedEnv(DirectEnv):
         )
         return upright_gate * height_gate
 
-    def _fetch_fall_terminated(self, torso_upright: np.ndarray, torso_height: np.ndarray) -> np.ndarray:
+    def _fetch_fall_terminated(self, torso_upright: torch.Tensor, torso_height: torch.Tensor) -> torch.Tensor:
         return (torso_upright < self._cfg.fetch_fall_upright_min) | (torso_height < self._cfg.fetch_fall_height_min)
 
-    def _upright_reward(self, torso_upright: np.ndarray) -> np.ndarray:
-        deviation = float(np.cos(np.deg2rad(self._cfg.deviation_angle)))
+    def _upright_reward(self, torso_upright: torch.Tensor) -> torch.Tensor:
+        deviation = math.cos(math.radians(self._cfg.deviation_angle))
         return reward.tolerance(
             torso_upright,
             bounds=(deviation, float("inf")),
@@ -420,7 +437,7 @@ class QuadrupedEnv(DirectEnv):
             sigmoid="linear",
         )
 
-    def _move_reward(self, torso_vel: np.ndarray) -> np.ndarray:
+    def _move_reward(self, torso_vel: torch.Tensor) -> torch.Tensor:
         return reward.tolerance(
             torso_vel[:, 0],
             bounds=(self._cfg.desired_speed, float("inf")),
@@ -429,10 +446,10 @@ class QuadrupedEnv(DirectEnv):
             sigmoid="linear",
         )
 
-    def _backward_penalty(self, torso_vel: np.ndarray) -> np.ndarray:
-        return np.maximum(0.0, -torso_vel[:, 0])
+    def _backward_penalty(self, torso_vel: torch.Tensor) -> torch.Tensor:
+        return (-torso_vel[:, 0]).clamp(min=0.0)
 
-    def _escape_reward(self, rows) -> np.ndarray:
+    def _escape_reward(self, rows) -> torch.Tensor:
         return reward.tolerance(
             self._origin_distance(rows),
             bounds=(self._terrain_size, float("inf")),
@@ -441,17 +458,17 @@ class QuadrupedEnv(DirectEnv):
             sigmoid="linear",
         )
 
-    def _radial_speed_reward(self) -> np.ndarray:
-        radial_speed_reward = np.zeros((self._num_envs,), dtype=np.float32)
+    def _radial_speed_reward(self) -> torch.Tensor:
+        radial_speed_reward = torch.zeros((self._num_envs,), dtype=torch.float32)
         if not self._cfg.include_origin:
             return radial_speed_reward
 
         torso_pos = self.sim_data["torso_pos"]
         radial_vec = torso_pos[:, :2]
-        radial_norm = np.linalg.norm(radial_vec, axis=-1, keepdims=True)
-        radial_dir = np.divide(radial_vec, radial_norm, out=np.zeros_like(radial_vec), where=radial_norm > 1e-6)
-        radial_speed = np.sum(self.sim_data["dof_vel"][:, :2] * radial_dir, axis=-1)
-        radial_speed = np.maximum(0.0, radial_speed)
+        radial_norm = torch.norm(radial_vec, dim=-1, keepdim=True)
+        radial_dir = torch.where(radial_norm > 1e-6, radial_vec / radial_norm, torch.zeros_like(radial_vec))
+        radial_speed = torch.sum(self.sim_data["dof_vel"][:, :2] * radial_dir, dim=-1)
+        radial_speed = radial_speed.clamp(min=0.0)
         return reward.tolerance(
             radial_speed,
             bounds=(self._cfg.desired_speed, float("inf")),
@@ -460,15 +477,15 @@ class QuadrupedEnv(DirectEnv):
             sigmoid="linear",
         )
 
-    def _heading_reward(self) -> np.ndarray:
-        heading_reward = np.zeros((self._num_envs,), dtype=np.float32)
+    def _heading_reward(self) -> torch.Tensor:
+        heading_reward = torch.zeros((self._num_envs,), dtype=torch.float32)
         if self._cfg.heading_reward_weight <= 0.0:
             return heading_reward
 
         torso_frame = self._torso_frame(slice(None))
         heading_xy = torso_frame[:, 0, :2]
-        heading_norm = np.linalg.norm(heading_xy, axis=-1, keepdims=True)
-        heading_dir = np.divide(heading_xy, heading_norm, out=np.zeros_like(heading_xy), where=heading_norm > 1e-6)
+        heading_norm = torch.norm(heading_xy, dim=-1, keepdim=True)
+        heading_dir = torch.where(heading_norm > 1e-6, heading_xy / heading_norm, torch.zeros_like(heading_xy))
         heading_align = heading_dir[:, 0]
         return reward.tolerance(
             heading_align,
@@ -478,7 +495,7 @@ class QuadrupedEnv(DirectEnv):
             sigmoid="linear",
         )
 
-    def _height_reward(self) -> np.ndarray:
+    def _height_reward(self) -> torch.Tensor:
         torso_height = self.sim_data["torso_pos"][:, 2]
         return reward.tolerance(
             torso_height,
@@ -488,18 +505,18 @@ class QuadrupedEnv(DirectEnv):
             sigmoid="linear",
         )
 
-    def _lateral_reward(self, torso_vel: np.ndarray) -> np.ndarray:
+    def _lateral_reward(self, torso_vel: torch.Tensor) -> torch.Tensor:
         return reward.tolerance(
-            np.abs(torso_vel[:, 1]),
+            torch.abs(torso_vel[:, 1]),
             bounds=(0.0, self._cfg.lateral_velocity_limit),
             margin=self._cfg.lateral_velocity_margin,
             value_at_margin=0.0,
             sigmoid="linear",
         )
 
-    def _smooth_reward(self, state: ArrayEnvState) -> np.ndarray:
+    def _smooth_reward(self, state: ArrayEnvState) -> torch.Tensor:
         delta = self._actions - self._last_actions
-        delta_norm = np.linalg.norm(delta, axis=-1)
+        delta_norm = torch.norm(delta, dim=-1)
         return reward.tolerance(
             delta_norm,
             bounds=(0.0, 0.0),
@@ -508,30 +525,30 @@ class QuadrupedEnv(DirectEnv):
             sigmoid="linear",
         )
 
-    def _lin_vel_z_penalty(self, torso_vel: np.ndarray) -> np.ndarray:
-        return np.square(torso_vel[:, 2]).astype(np.float32)
+    def _lin_vel_z_penalty(self, torso_vel: torch.Tensor) -> torch.Tensor:
+        return torch.square(torso_vel[:, 2])
 
-    def _ang_vel_xy_penalty(self) -> np.ndarray:
+    def _ang_vel_xy_penalty(self) -> torch.Tensor:
         imu = self.sim_data["imu"]
-        return np.sum(np.square(imu[:, 3:5]), axis=1).astype(np.float32)
+        return torch.sum(torch.square(imu[:, 3:5]), dim=1)
 
-    def _similar_to_default_penalty(self) -> np.ndarray:
+    def _similar_to_default_penalty(self) -> torch.Tensor:
         body_dof_pos = self.sim_data["dof_pos"][:, self._dof_pos_slice]
-        return np.sum(np.abs(body_dof_pos - self._default_body_dof_pos), axis=1).astype(np.float32)
+        return torch.sum(torch.abs(body_dof_pos - self._default_body_dof_pos), dim=1)
 
     def _locomotion_reward_terms(
         self,
-        upright_reward: np.ndarray,
-        move_reward: np.ndarray,
-        backward_penalty: np.ndarray,
-        height_reward: np.ndarray,
-        lateral_reward: np.ndarray,
-        heading_reward: np.ndarray,
-        smooth_reward: np.ndarray,
-        lin_vel_z_penalty: np.ndarray,
-        ang_vel_xy_penalty: np.ndarray,
-        similar_to_default_penalty: np.ndarray,
-    ) -> dict[str, np.ndarray]:
+        upright_reward: torch.Tensor,
+        move_reward: torch.Tensor,
+        backward_penalty: torch.Tensor,
+        height_reward: torch.Tensor,
+        lateral_reward: torch.Tensor,
+        heading_reward: torch.Tensor,
+        smooth_reward: torch.Tensor,
+        lin_vel_z_penalty: torch.Tensor,
+        ang_vel_xy_penalty: torch.Tensor,
+        similar_to_default_penalty: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
         return {
             "move": upright_reward * move_reward,
             "backward": backward_penalty,
@@ -558,8 +575,8 @@ class QuadrupedEnv(DirectEnv):
         }
 
     def _escape_reward_terms(
-        self, upright_reward: np.ndarray, escape_reward: np.ndarray, radial_speed_reward: np.ndarray
-    ) -> dict[str, np.ndarray]:
+        self, upright_reward: torch.Tensor, escape_reward: torch.Tensor, radial_speed_reward: torch.Tensor
+    ) -> dict[str, torch.Tensor]:
         return {
             "escape": upright_reward * escape_reward,
             "radial": radial_speed_reward,
@@ -571,7 +588,9 @@ class QuadrupedEnv(DirectEnv):
             "radial": self._cfg.radial_velocity_weight,
         }
 
-    def _sum_scaled_rewards(self, reward_terms: dict[str, np.ndarray], reward_scales: dict[str, float]) -> np.ndarray:
+    def _sum_scaled_rewards(
+        self, reward_terms: dict[str, torch.Tensor], reward_scales: dict[str, float]
+    ) -> torch.Tensor:
         rewards = {name: value * reward_scales[name] for name, value in reward_terms.items()}
         return sum(rewards.values())
 
@@ -592,9 +611,9 @@ class QuadrupedEnv(DirectEnv):
         if self._cfg.include_target:
             parts.append(self._target_position(slice(None)))
 
-        return state.replace(obs=np.concatenate(parts, axis=-1).astype(np.float32))
+        return state.replace(obs=torch.cat(parts, dim=-1))
 
-    def _base_locomotion_components(self, state: ArrayEnvState) -> dict[str, np.ndarray]:
+    def _base_locomotion_components(self, state: ArrayEnvState) -> dict[str, torch.Tensor]:
         torso_vel = self._torso_velocity(slice(None))
         return {
             "move": self._move_reward(torso_vel),
@@ -608,7 +627,7 @@ class QuadrupedEnv(DirectEnv):
             "similar_to_default": self._similar_to_default_penalty(),
         }
 
-    def _locomotion_reward(self, upright_reward: np.ndarray, components: dict[str, np.ndarray]) -> np.ndarray:
+    def _locomotion_reward(self, upright_reward: torch.Tensor, components: dict[str, torch.Tensor]) -> torch.Tensor:
         reward_terms = self._locomotion_reward_terms(
             upright_reward,
             components["move"],
@@ -623,17 +642,16 @@ class QuadrupedEnv(DirectEnv):
         )
         return self._sum_scaled_rewards(reward_terms, self._locomotion_reward_scales())
 
-    def _random_quaternion(self, num: int) -> np.ndarray:
-        q = np.random.randn(num, 4).astype(np.float32)
-        q /= np.linalg.norm(q, axis=-1, keepdims=True)
-        return q
+    def _random_quaternion(self, num: int) -> torch.Tensor:
+        q = torch.randn(num, 4, dtype=torch.float32)
+        return q / torch.norm(q, dim=-1, keepdim=True)
 
-    def _yaw_quaternion(self, yaw: np.ndarray) -> np.ndarray:
-        zeros = np.zeros_like(yaw)
+    def _yaw_quaternion(self, yaw: torch.Tensor) -> torch.Tensor:
+        zeros = torch.zeros_like(yaw)
         half = yaw * 0.5
-        return np.stack([zeros, zeros, np.sin(half), np.cos(half)], axis=-1).astype(np.float32)
+        return torch.stack([zeros, zeros, torch.sin(half), torch.cos(half)], dim=-1)
 
-    def _execute_reset(self, env_ids: np.ndarray, dof_pos: np.ndarray, dof_vel: np.ndarray) -> None:
+    def _execute_reset(self, env_ids: torch.Tensor, dof_pos: torch.Tensor, dof_vel: torch.Tensor) -> None:
         _torso_pose = dof_pos[:, :7]
         self._torso_reset_position[env_ids] = _torso_pose[:, :3]
         self._torso_reset_rotation[env_ids] = _torso_pose[:, 3:7]
@@ -649,29 +667,25 @@ class QuadrupedEnv(DirectEnv):
             self._ball_reset_angular_velocity[env_ids] = dof_vel[:, self._ball_vel_slice][:, 3:6]
         self._reset_program.execute(env_ids)
 
-    def _lift_non_contacting(self, env_ids: np.ndarray, dof_pos: np.ndarray, dof_vel: np.ndarray) -> np.ndarray:
-        row_ids = np.asarray(env_ids, dtype=np.int64)
-        dof_vel = np.ascontiguousarray(dof_vel, dtype=np.float32)
-        z = dof_pos[:, 2].copy()
-        pending = np.ones((len(env_ids),), dtype=bool)
+    def _lift_non_contacting(self, env_ids: torch.Tensor, dof_pos: torch.Tensor, dof_vel: torch.Tensor) -> torch.Tensor:
+        z = dof_pos[:, 2].clone()
+        pending = torch.ones((env_ids.numel(),), dtype=torch.bool)
         for _ in range(1000):
             if not pending.any():
                 break
             dof_pos[pending, 2] = z[pending]
-            self._execute_reset(env_ids, np.ascontiguousarray(dof_pos, dtype=np.float32), dof_vel)
-            self.sim_data.execute(row_ids)
+            self._execute_reset(env_ids, dof_pos, dof_vel)
+            self.sim_data.execute(env_ids)
             # Contact iff any declared collidable geom pair is colliding; this
             # reproduces the legacy global ``num_contacts > 0`` check exactly.
-            pending = self.sim_data["colliding"][env_ids].max(axis=-1) > 0
+            pending = self.sim_data["colliding"][env_ids].max(dim=-1).values > 0
             z[pending] += 0.01
         return dof_pos
 
-    def _finish_reset(self, env_ids: np.ndarray, dof_pos: np.ndarray, dof_vel: np.ndarray) -> None:
+    def _finish_reset(self, env_ids: torch.Tensor, dof_pos: torch.Tensor, dof_vel: torch.Tensor) -> None:
         dof_pos = self._lift_non_contacting(env_ids, dof_pos, dof_vel)
-        self._execute_reset(
-            env_ids, np.ascontiguousarray(dof_pos, dtype=np.float32), np.ascontiguousarray(dof_vel, dtype=np.float32)
-        )
-        self.sim_data.execute(np.asarray(env_ids, dtype=np.int64))
+        self._execute_reset(env_ids, dof_pos, dof_vel)
+        self.sim_data.execute(env_ids)
 
         self._actions[env_ids] = 0.0
         self._last_actions[env_ids] = 0.0
@@ -692,19 +706,21 @@ class QuadrupedLocomotionEnv(QuadrupedEnv):
         reward_components.update(locomotion_components)
         reward_components["total"] = rwd
 
-        terminated = np.isnan(inputs["dof_pos"]).any(axis=-1) | np.isnan(inputs["dof_vel"]).any(axis=-1)
-        rwd = np.where(terminated, 0.0, rwd).astype(np.float32)
+        terminated = inputs["dof_pos"].isnan().any(dim=-1) | inputs["dof_vel"].isnan().any(dim=-1)
+        rwd = torch.where(terminated, torch.zeros_like(rwd), rwd)
         state.reward_terms = reward_components
 
-        return state.replace(reward=rwd, terminated=terminated)
+        state.reward[:] = rwd
+        state.terminated[:] = terminated
+        return state
 
-    def reset(self, env_ids: np.ndarray) -> None:
-        num = len(env_ids)
-        dof_pos = np.tile(self._init_dof_pos, (num, 1))
-        dof_vel = np.zeros((num, self.num_dof_vel), dtype=np.float32)
+    def reset(self, env_ids: torch.Tensor) -> None:
+        num = env_ids.numel()
+        dof_pos = self._init_dof_pos.unsqueeze(0).repeat(num, 1).contiguous()
+        dof_vel = torch.zeros((num, self.num_dof_vel), dtype=torch.float32)
 
         if self._cfg.fix_heading:
-            dof_pos[:, 3:7] = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32), (num, 1))
+            dof_pos[:, 3:7] = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32)
         else:
             dof_pos[:, 3:7] = self._random_quaternion(num)
 
@@ -749,11 +765,13 @@ class QuadrupedEscapeEnv(QuadrupedLocomotionEnv):
             }
         )
 
-        terminated = np.isnan(inputs["dof_pos"]).any(axis=-1) | np.isnan(inputs["dof_vel"]).any(axis=-1)
-        rwd = np.where(terminated, 0.0, rwd).astype(np.float32)
+        terminated = inputs["dof_pos"].isnan().any(dim=-1) | inputs["dof_vel"].isnan().any(dim=-1)
+        rwd = torch.where(terminated, torch.zeros_like(rwd), rwd)
         state.reward_terms = reward_components
 
-        return state.replace(reward=rwd, terminated=terminated)
+        state.reward[:] = rwd
+        state.terminated[:] = terminated
+        return state
 
 
 @registry.env("dm-quadruped-fetch")
@@ -773,17 +791,17 @@ class QuadrupedFetchEnv(QuadrupedEnv):
         target_pos = inputs["target_pos"]
         torso_pos = inputs["torso_pos"]
         to_target = target_pos[:, :2] - ball_pos[:, :2]
-        to_target_norm = np.linalg.norm(to_target, axis=-1, keepdims=True)
-        to_target_dir = np.where(to_target_norm > 1e-6, to_target / to_target_norm, 0.0)
+        to_target_norm = torch.norm(to_target, dim=-1, keepdim=True)
+        to_target_dir = torch.where(to_target_norm > 1e-6, to_target / to_target_norm, torch.zeros_like(to_target))
         torso_frame = self._torso_frame(slice(None))
         heading_xy = torso_frame[:, 0, :2]
-        heading_norm = np.linalg.norm(heading_xy, axis=-1, keepdims=True)
-        heading_dir = np.where(heading_norm > 1e-6, heading_xy / heading_norm, 0.0)
+        heading_norm = torch.norm(heading_xy, dim=-1, keepdim=True)
+        heading_dir = torch.where(heading_norm > 1e-6, heading_xy / heading_norm, torch.zeros_like(heading_xy))
         to_ball = ball_pos[:, :2] - torso_pos[:, :2]
-        to_ball_norm = np.linalg.norm(to_ball, axis=-1, keepdims=True)
-        to_ball_dir = np.where(to_ball_norm > 1e-6, to_ball / to_ball_norm, 0.0)
+        to_ball_norm = torch.norm(to_ball, dim=-1, keepdim=True)
+        to_ball_dir = torch.where(to_ball_norm > 1e-6, to_ball / to_ball_norm, torch.zeros_like(to_ball))
 
-        behind_align = np.sum(to_ball_dir * to_target_dir, axis=-1)
+        behind_align = torch.sum(to_ball_dir * to_target_dir, dim=-1)
         behind_align_reward = reward.tolerance(
             behind_align,
             bounds=(1.0, 1.0),
@@ -791,7 +809,7 @@ class QuadrupedFetchEnv(QuadrupedEnv):
             value_at_margin=0.0,
             sigmoid="linear",
         )
-        heading_align = np.sum(heading_dir * to_ball_dir, axis=-1)
+        heading_align = torch.sum(heading_dir * to_ball_dir, dim=-1)
         face_ball_reward = reward.tolerance(
             heading_align,
             bounds=(1.0, 1.0),
@@ -801,9 +819,9 @@ class QuadrupedFetchEnv(QuadrupedEnv):
         )
         ball_to_robot = torso_pos[:, :2] - ball_pos[:, :2]
         back_dir = -to_target_dir
-        corridor_lat = np.linalg.norm(
-            ball_to_robot - np.sum(ball_to_robot * back_dir, axis=-1, keepdims=True) * back_dir,
-            axis=-1,
+        corridor_lat = torch.norm(
+            ball_to_robot - torch.sum(ball_to_robot * back_dir, dim=-1, keepdim=True) * back_dir,
+            dim=-1,
         )
         corridor_reward = reward.tolerance(
             corridor_lat,
@@ -812,7 +830,7 @@ class QuadrupedFetchEnv(QuadrupedEnv):
             value_at_margin=0.0,
             sigmoid="linear",
         )
-        ball_dist = np.linalg.norm(to_ball, axis=-1)
+        ball_dist = torch.norm(to_ball, dim=-1)
         near_ball_reward = reward.tolerance(
             ball_dist,
             bounds=(0.0, self._cfg.fetch_ready_ball_distance),
@@ -833,22 +851,22 @@ class QuadrupedFetchEnv(QuadrupedEnv):
         ahead_pos = ball_pos[:, :2] + to_target_dir * self._cfg.fetch_ahead_distance
         stage_pos = (1.0 - ready_gate)[:, None] * behind_pos + ready_gate[:, None] * ahead_pos
         if self._cfg.fetch_side_stage_offset > 0.0:
-            side_dir = np.stack([-back_dir[:, 1], back_dir[:, 0]], axis=-1)
-            ball_to_robot_side = np.sum(ball_to_robot * side_dir, axis=-1)
-            side_sign = np.where(ball_to_robot_side >= 0.0, 1.0, -1.0)
+            side_dir = torch.stack([-back_dir[:, 1], back_dir[:, 0]], dim=-1)
+            ball_to_robot_side = torch.sum(ball_to_robot * side_dir, dim=-1)
+            side_sign = torch.where(ball_to_robot_side >= 0.0, 1.0, -1.0)
             side_pos = behind_pos + (side_sign[:, None] * side_dir * self._cfg.fetch_side_stage_offset)
             use_side_stage = (
                 (ready_gate < self._cfg.fetch_side_stage_gate_threshold)
                 & (ball_dist < self._cfg.fetch_side_stage_ball_distance)
                 & (behind_align < self._cfg.fetch_side_stage_align_threshold)
             )
-            stage_pos = np.where(use_side_stage[:, None], side_pos, stage_pos)
+            stage_pos = torch.where(use_side_stage[:, None], side_pos, stage_pos)
 
         to_stage = stage_pos - torso_pos[:, :2]
-        stage_dist = np.linalg.norm(to_stage, axis=-1)
-        stage_dir = np.where(stage_dist[:, None] > 1e-6, to_stage / stage_dist[:, None], 0.0)
+        stage_dist = torch.norm(to_stage, dim=-1)
+        stage_dir = torch.where(stage_dist[:, None] > 1e-6, to_stage / stage_dist[:, None], torch.zeros_like(to_stage))
 
-        speed_to_stage = np.sum(inputs["dof_vel"][:, :2] * stage_dir, axis=-1)
+        speed_to_stage = torch.sum(inputs["dof_vel"][:, :2] * stage_dir, dim=-1)
         stage_move = reward.tolerance(
             speed_to_stage,
             bounds=(self._cfg.fetch_stage_speed, float("inf")),
@@ -856,7 +874,7 @@ class QuadrupedFetchEnv(QuadrupedEnv):
             value_at_margin=0.0,
             sigmoid="linear",
         )
-        backward_penalty = np.maximum(0.0, -speed_to_stage)
+        backward_penalty = (-speed_to_stage).clamp(min=0.0)
         stage_reach = reward.tolerance(
             stage_dist,
             bounds=(0.0, self._cfg.fetch_stage_radius),
@@ -873,15 +891,15 @@ class QuadrupedFetchEnv(QuadrupedEnv):
             sigmoid="linear",
         )
         ball_vel = inputs["dof_vel"][:, self._ball_vel_slice][:, :2]
-        ball_speed_to_target = np.sum(ball_vel * to_target_dir, axis=-1)
+        ball_speed_to_target = torch.sum(ball_vel * to_target_dir, dim=-1)
         push_reward = reward.tolerance(
-            np.maximum(0.0, ball_speed_to_target),
+            ball_speed_to_target.clamp(min=0.0),
             bounds=(self._cfg.fetch_push_speed, float("inf")),
             margin=self._cfg.fetch_push_speed,
             value_at_margin=0.0,
             sigmoid="linear",
         )
-        away_penalty = (1.0 - ready_gate) * np.maximum(0.0, -ball_speed_to_target)
+        away_penalty = (1.0 - ready_gate) * (-ball_speed_to_target).clamp(min=0.0)
         leg_ball_penalty = self._leg_body_ball_penalty(slice(None))
 
         rwd = stability_gate * upright_reward * stage_move
@@ -912,36 +930,36 @@ class QuadrupedFetchEnv(QuadrupedEnv):
             "total": rwd,
         }
 
-        terminated = np.isnan(inputs["dof_pos"]).any(axis=-1) | np.isnan(inputs["dof_vel"]).any(axis=-1)
+        terminated = inputs["dof_pos"].isnan().any(dim=-1) | inputs["dof_vel"].isnan().any(dim=-1)
         terminated |= self._fetch_fall_terminated(torso_upright, torso_height)
-        rwd = np.where(terminated, 0.0, rwd).astype(np.float32)
+        rwd = torch.where(terminated, torch.zeros_like(rwd), rwd)
         for key, value in reward_components.items():
-            reward_components[key] = np.where(terminated, 0.0, value).astype(np.float32)
+            reward_components[key] = torch.where(terminated, torch.zeros_like(value), value)
         state.reward_terms = reward_components
 
-        return state.replace(reward=rwd, terminated=terminated)
+        state.reward[:] = rwd
+        state.terminated[:] = terminated
+        return state
 
-    def reset(self, env_ids: np.ndarray) -> None:
-        num = len(env_ids)
-        dof_pos = np.tile(self._init_dof_pos, (num, 1))
-        dof_vel = np.zeros((num, self.num_dof_vel), dtype=np.float32)
+    def reset(self, env_ids: torch.Tensor) -> None:
+        num = env_ids.numel()
+        dof_pos = self._init_dof_pos.unsqueeze(0).repeat(num, 1).contiguous()
+        dof_vel = torch.zeros((num, self.num_dof_vel), dtype=torch.float32)
 
         floor_radius = self._floor_geom_size0
         if floor_radius <= 0.0:
             floor_radius = self._terrain_size
         spawn_radius = 0.12 * floor_radius
-        yaw = np.random.uniform(0.0, 2 * np.pi, size=(num,))
-        dof_pos[:, 0] = np.random.uniform(-spawn_radius, spawn_radius, size=(num,))
-        dof_pos[:, 1] = np.random.uniform(-spawn_radius, spawn_radius, size=(num,))
+        yaw = torch.rand(num, dtype=torch.float32) * 2.0 * torch.pi
+        dof_pos[:, 0] = (torch.rand(num, dtype=torch.float32) * 2.0 - 1.0) * spawn_radius
+        dof_pos[:, 1] = (torch.rand(num, dtype=torch.float32) * 2.0 - 1.0) * spawn_radius
         dof_pos[:, 3:7] = self._yaw_quaternion(yaw)
 
-        ball_xy = np.random.uniform(-spawn_radius, spawn_radius, size=(num, 2))
+        ball_xy = (torch.rand(num, 2, dtype=torch.float32) * 2.0 - 1.0) * spawn_radius
         ball_qpos = self._ball_pos_slice
         dof_pos[:, ball_qpos.start : ball_qpos.start + 2] = ball_xy
         dof_pos[:, ball_qpos.start + 2] = self._ball_geom_size0
-        dof_pos[:, ball_qpos.start + 3 : ball_qpos.stop] = np.tile(
-            np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32), (num, 1)
-        )
+        dof_pos[:, ball_qpos.start + 3 : ball_qpos.stop] = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32)
 
         ball_qvel = self._ball_vel_slice
         dof_vel[:, ball_qvel.start : ball_qvel.stop] = 0.0

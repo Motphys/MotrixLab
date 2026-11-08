@@ -9,7 +9,7 @@ manager models in one process is not a supported runtime contract, so the
 contract under test is per-env build/step in isolation.
 
 The first whole-body-tracking case runs serially as a warmup: on a cold
-numba kernel cache it pays the one-time kernel compilation cost, so the
+kernel cache it pays the one-time compilation cost, so the
 parallel pool only ever hits the warm cache.
 """
 

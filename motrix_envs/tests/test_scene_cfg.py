@@ -8,6 +8,7 @@ import gymnasium as gym
 import motrixsim as mtx
 import numpy as np
 import pytest
+import torch
 from omegaconf import MISSING, OmegaConf
 
 from motrix_env_core.array.env import ArrayEnvState
@@ -1170,14 +1171,14 @@ class SceneBackedCartPoleEnv(DirectEnv[SceneBackedCartPoleCfg]):
     def action_space(self) -> gym.spaces.Box:
         return gym.spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
         return state
 
     def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
         return state
 
-    def reset(self, env_ids) -> dict:
-        return {}
+    def reset(self, env_ids: torch.Tensor) -> None:
+        return None
 
 
 def test_direct_env_loads_model_from_scene_cfg():

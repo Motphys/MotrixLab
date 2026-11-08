@@ -9,11 +9,11 @@
 ### 核心设计
 
 - [Manager Runtime 设计](./runtime.md)
-  ManagerEnv 的运行时边界、配置到 term 的构造链路、step/reset 生命周期、term 协议和 Numba 性能约束。
+  ManagerEnv 的运行时边界、配置到 term 的构造链路、step/reset 生命周期、term 协议和执行/性能约束。
 - [Manager Task API](./task-authoring.md)
   面向任务开发者的 ManagerBasedEnvCfg、manager groups、term 创建、query 声明、action、observation、reward、termination 和 reset 指南。
 - [Manager Kernel ABI](./kernel-abi.md)
-  定义 ManagerContext、KernelData tree、leaf scope、term ownership、metric backing 和 fused kernel fingerprint。
+  定义 ManagerContext、KernelData tree、leaf scope、term ownership、metric backing 和 resolved layout。
 
 ### Simulator 集成
 
@@ -27,9 +27,11 @@
 ### 专题设计
 
 - [Term 自声明 Sim Query 设计](./term-required-queries.md)
-  定义 observation term 的 `required_queries()`、任务声明与 term 贡献的合并和冲突规则。
+  定义 term 通过 `SimDataQuery` 参数自声明 sim 数据需求、与任务声明合并的 key 单一属主规则，以及 resolver 到批量 sim 视图的映射。
 - [IsaacLab ManagerCfg Adapter 设计](./isaaclab-manager-cfg-adapter.md)
   定义 IsaacLab-like ManagerCfg 到 MotrixLab native term/query 配置的适配边界；本文是目标设计，尚未表示全部 API 已实现。
+- [Torch Manager 执行器设计](./torch-executor.md)
+  定义 Torch 执行器（唯一数值执行器）的调度语义、批量 term ctx 约定与 resolver 分工。
 
 ## 使用说明
 

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-import numpy as np
+import torch
 
 from motrix_env_core.config.scene import SceneCfg
 
@@ -114,13 +114,13 @@ class BodyModel:
     base_link_name: str
     link_names: tuple[str, ...]
     joint_names: tuple[str, ...]
-    joint_pos_limits: tuple[np.ndarray, np.ndarray] | None
+    joint_pos_limits: tuple[torch.Tensor, torch.Tensor] | None
     actuators: tuple[ActuatorSpec, ...]
-    init_base_position: np.ndarray
-    init_base_quat: np.ndarray
-    init_joint_pos: np.ndarray
-    init_link_positions: np.ndarray
-    init_link_quats: np.ndarray
+    init_base_position: torch.Tensor
+    init_base_quat: torch.Tensor
+    init_joint_pos: torch.Tensor
+    init_link_positions: torch.Tensor
+    init_link_quats: torch.Tensor
 
 
 @dataclass(frozen=True)
@@ -135,7 +135,7 @@ class SimModel:
     """
 
     actuators: tuple[ActuatorSpec, ...]
-    init_dof_pos: np.ndarray
+    init_dof_pos: torch.Tensor
     others: Mapping[str, Any] = field(default_factory=dict)
     # Keyed by SceneObjsCfg field name; backends assemble entries at compile
     # time from their engine model plus the originating BodyCfg.

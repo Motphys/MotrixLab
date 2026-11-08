@@ -5,7 +5,7 @@
 
 Drives MotrixSim directly: builds a robot-on-flat-ground scene via the scene
 compiler, allocates batched SceneData, and times ``model.step_n(data, nstep)``.
-No task env, no observation/reward/termination, no numba -- the number is
+No task env, no observation/reward/termination -- the number is
 MotrixSim rigid-body simulation alone.
 
 State drift is eliminated by re-applying ``data.reset(model)`` before every
@@ -18,7 +18,7 @@ NUMA modes (``--numa``):
   shard   spawn one worker per NUMA node, each pinned via numactl, each running
           ``--num-envs / num_nodes`` envs concurrently; aggregate throughput is
           the sum across workers. Reproduces the per-node process sharding
-          validated in wiki/design/numba-server-perf.md section 6.3.
+          validated for per-node process sharding on a many-core host.
 
 Reports per-call latency (median + p10/p90), batch steps/s (step_n calls per
 second over all parallel envs in the process), and total env steps/s.
@@ -81,13 +81,6 @@ def _device_context() -> dict:
         "num_numa_nodes": _detect_num_nodes(),
         "binding": _current_binding(),
     }
-    try:
-        import numba as _numba
-
-        ctx["numba_threads"] = _numba.get_num_threads()
-        ctx["numba_layer"] = _numba.threading_layer()
-    except Exception:
-        pass
     return ctx
 
 
@@ -324,7 +317,7 @@ def run_shard(args) -> tuple[list[list[str]], list[str]]:
         f"sum total env steps/s {aggregate_env_steps:,.0f}",
         f"slowest worker median {slowest_median:.3f} ms -> "
         f"{args.num_envs / slowest_median * 1000:,.0f} env steps/s at wall-clock",
-        "compare: single-process total env steps/s is the number to beat; see wiki/design/numba-server-perf.md 6.3",
+        "compare: single-process total env steps/s is the number to beat",
     ]
     rows = [_result_row(f"shard node {r['node']}", r) for r in results]
     return rows, notes

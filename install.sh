@@ -12,9 +12,6 @@
 #
 # Built-in FastSAC and SKRL on Torch are always installed. --skrl-jax adds
 # the JAX runtime, and --rslrl adds the RSLRL plugin; multiple flags combine.
-# Linux installs Intel TBB by default so numba parallel kernels use its threading
-# layer (avoids the OpenMP per-region thread-wakeup storm on many-core hosts).
-# --tbb remains available to explicitly request TBB on other platforms.
 
 set -e
 
@@ -31,7 +28,6 @@ usage() {
     echo "  --skrl-torch           Training backend: SKRL on PyTorch (default)"
     echo "  --skrl-jax             Training backend: SKRL on JAX (Linux only)"
     echo "  --rslrl                Training backend: RSL-RL on PyTorch"
-    echo "  --tbb                  Install Intel TBB for numba parallel kernels (default on Linux)"
     echo "  -h, --help             Show this help"
 }
 
@@ -41,7 +37,6 @@ PYTHON=""
 SKRL_JAX=""
 RSLRL=""
 DOCS=""
-TBB=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -72,9 +67,6 @@ while [ $# -gt 0 ]; do
             ;;
         --rslrl)
             RSLRL=1
-            ;;
-        --tbb)
-            TBB=1
             ;;
         -h|--help)
             usage
@@ -201,7 +193,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 case "$(uname -s 2>/dev/null)" in
-    Linux) IS_WINDOWS=""; TBB=1 ;;
+    Linux) IS_WINDOWS="" ;;
     MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
     *) IS_WINDOWS="" ;;
 esac
@@ -210,9 +202,6 @@ if [ "$GPU" = rocm ] && [ -n "$IS_WINDOWS" ]; then
     echo "error: --gpu rocm is not available on Windows; ROCm wheels are Linux-only" >&2
     exit 1
 fi
-
-TBB_EXTRA=""
-[ -n "$TBB" ] && TBB_EXTRA=" --extra tbb"
 
 if [ "$GPU" = hygon ]; then
     echo "==> Install DTK-compatible Torch yourself in the Python environment used by .venv."
@@ -240,7 +229,6 @@ if [ "$GPU" = hygon ]; then
         [ -n "$RSLRL" ] && set -- "$@" --extra rslrl
         [ -n "$DOCS" ] && set -- "$@" --extra docs
     fi
-    [ -n "$TBB" ] && set -- "$@" --extra tbb
     # Prune transitive accelerator dependencies too. --no-deps below prevents
     # editable workspace packages from pulling the skipped stack back in.
     uv export "$@" --prune torch --prune torchvision --prune torchaudio \
@@ -252,7 +240,7 @@ if [ "$GPU" = hygon ]; then
 elif [ -n "$ALL" ]; then
     if [ "$GPU" = rocm ]; then
         set -x
-        uv sync "$@" --all-packages --all-groups --extra rocm --extra rslrl --extra unitree --extra docs$TBB_EXTRA
+        uv sync "$@" --all-packages --all-groups --extra rocm --extra rslrl --extra unitree --extra docs
     else
         set -x
         uv sync "$@" --all-packages --all-groups --all-extras --no-extra rocm
@@ -262,7 +250,6 @@ else
     [ -n "$SKRL_JAX" ] && EXTRAS="$EXTRAS --extra skrl-jax"
     [ -n "$RSLRL" ] && EXTRAS="$EXTRAS --extra rslrl"
     [ -n "$DOCS" ] && EXTRAS="$EXTRAS --extra docs"
-    EXTRAS="$EXTRAS$TBB_EXTRA"
     set -x
     uv sync "$@" --no-default-groups --extra "$GPU"$EXTRAS
 fi

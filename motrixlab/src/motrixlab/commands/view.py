@@ -5,7 +5,7 @@ import argparse
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import gymnasium as gym
 import hydra
@@ -24,9 +24,6 @@ from motrix_env_core.config.scene.geometry import FlatTerrainCfg
 from motrix_env_core.config.scene.light import LightCfg
 from motrix_env_core.renderer import RenderConfig, create_renderer
 from motrix_env_motrixsim.compiler import build_scene_model
-
-if TYPE_CHECKING:
-    from motrix_env_motrixsim.torch_env import TorchEnv
 
 DEFAULT_ENV_NAME = "cartpole"
 ROBOT_VIEW_FPS = 60
@@ -56,11 +53,15 @@ def _sample_random_action_np(env: ABEnv) -> np.ndarray:
 
 
 def _run_np(env: ArrayEnv):
+    import torch
+
     renderer = create_renderer(env, RenderConfig())
     env_dt = env.cfg.ctrl_dt
+    # ArrayEnv frontends (DirectEnv and ManagerEnv alike) consume torch
+    # tensor actions; sample in numpy and hand the env its tensor currency.
     while True:
         t0 = time.monotonic()
-        actions = _sample_random_action_np(env)
+        actions = torch.from_numpy(_sample_random_action_np(env))
         env.step(actions)
         renderer.render()
         real_dt = time.monotonic() - t0
@@ -165,32 +166,11 @@ def _run_robot(robot_cfg: RobotCfg, sim: str | None = None) -> None:
         raise ValueError(f"Unsupported robot view sim {backend!r}; expected 'motrixsim' or 'mujoco'")
 
 
-def _run_torch(env: "TorchEnv"):
-    import torch
-
-    renderer = create_renderer(env, RenderConfig())
-    env.init_state()
-    env_dt = env.cfg.ctrl_dt
-    action_space = env.action_space
-    if not isinstance(action_space, gym.spaces.Box):
-        raise NotImplementedError("Only Box action space is supported")
-    low = torch.as_tensor(np.where(np.isneginf(action_space.low), -1e6, action_space.low))
-    high = torch.as_tensor(np.where(np.isposinf(action_space.high), 1e6, action_space.high))
-    while True:
-        t0 = time.monotonic()
-        actions = low + torch.rand((env.num_envs, *action_space.shape)) * (high - low)
-        env.step(actions)
-        renderer.render()
-        real_dt = time.monotonic() - t0
-        sleep_dt = env_dt - real_dt
-        if sleep_dt > 0:
-            time.sleep(sleep_dt)
-
-
 def _torch_frontend_missing(env_name: str) -> ModuleNotFoundError:
     return ModuleNotFoundError(
         f"Environment '{env_name}' uses the torch frontend, but PyTorch is not installed; install torch "
-        f"(for example `uv sync --all-packages`) or view a NumPy-frontend environment such as '{DEFAULT_ENV_NAME}'"
+        f"(for example `uv sync --all-packages`) or view an environment that does not require torch such as "
+        f"'{DEFAULT_ENV_NAME}'"
     )
 
 
@@ -217,17 +197,7 @@ def run(cfg: ViewConfig) -> None:
         _run_np(env)
         return
 
-    try:
-        from motrix_env_motrixsim.torch_env import TorchEnv
-    except ModuleNotFoundError as exc:
-        if exc.name == "torch":
-            raise _torch_frontend_missing(env_name) from exc
-        raise
-
-    if isinstance(env, TorchEnv):
-        _run_torch(env)
-    else:
-        raise TypeError(f"Unsupported environment type '{type(env).__name__}'.")
+    raise TypeError(f"Unsupported environment type '{type(env).__name__}'.")
 
 
 def _hydra_main(cfg: DictConfig) -> None:

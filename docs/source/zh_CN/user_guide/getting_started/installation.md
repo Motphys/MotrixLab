@@ -60,7 +60,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 默认运行环境包含 `motrixlab`、仓库任务和所需插件，以及必需的 SKRL Torch provider 和内置 FastSAC。安装脚本自动探测 NVIDIA / AMD GPU，选择对应的 CUDA / ROCm PyTorch wheel；不能自动探测时回退到 CUDA 配置。ROCm 安装仅支持 Linux。
 
-Linux 安装默认启用 Intel TBB，用于 Numba 并行 kernel。开发工具、文档工具、RSL-RL 和 SKRL JAX 不会在默认运行环境中全部启用，需要时使用下面的参数追加。
+开发工具、文档工具、RSL-RL 和 SKRL JAX 不会在默认运行环境中全部启用，需要时使用下面的参数追加。
 
 ### 激活环境并检查安装
 
@@ -121,7 +121,6 @@ sh install.sh --docs
 | `--rslrl` | 添加 RSL-RL provider |
 | `--skrl-jax` | 添加 SKRL JAX runtime，仅 Linux |
 | `--skrl-torch` | 兼容性参数；SKRL Torch 已是仓库必需依赖 |
-| `--tbb` | 显式启用 Intel TBB；Linux 安装脚本默认启用 |
 | `--docs` | 添加文档工具链 |
 | `--all` | 完整开发环境，仅 Python 3.10 |
 | `--help` | 查看脚本的完整参数说明 |

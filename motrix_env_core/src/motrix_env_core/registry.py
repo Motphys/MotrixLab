@@ -10,24 +10,6 @@ from typing import Any, get_type_hints
 
 from motrix_env_core.base import ABEnv, EnvCfg
 from motrix_env_core.config.scene import RobotCfg
-from motrix_env_core.sim.registry import default_sim_backend_name
-
-_BACKEND_BASE_CLASSES = {
-    "np": ("ArrayEnv", "DirectEnv"),
-    "torch": ("TorchEnv",),
-}
-
-
-def _infer_sim_backend(cls: type[ABEnv]) -> str:
-    """Infer the environment data backend from its base class."""
-    if not isinstance(cls, type) or not issubclass(cls, ABEnv):
-        raise TypeError(f"Environment class must inherit ABEnv, got {cls!r}")
-    ancestor_names = {base.__name__ for base in cls.__mro__}
-    for backend, base_names in _BACKEND_BASE_CLASSES.items():
-        if any(base_name in ancestor_names for base_name in base_names):
-            return backend
-    raise ValueError(f"Environment class '{cls.__name__}' must inherit DirectEnv or TorchEnv.")
-
 
 EnvCfgFactory = Callable[[], EnvCfg]
 RobotCfgFactory = Callable[[], RobotCfg]
@@ -37,12 +19,8 @@ RobotCfgFactory = Callable[[], RobotCfg]
 class EnvMeta:
     env_cfg_cls: type[EnvCfg]
     env_cfg_factory: EnvCfgFactory
-    env_cls_dict: dict[str, type[ABEnv]] = field(default_factory=dict)
+    env_cls: type[ABEnv] | None = None
     description: dict[str, str] = field(default_factory=dict)
-
-    def available_sim_backend(self) -> str | None:
-        """Return the first available simulation backend."""
-        return next(iter(self.env_cls_dict), None)
 
 
 @dataclass(frozen=True)
@@ -64,30 +42,19 @@ class EnvBuildSpec:
 def _construct_env(
     env_cls: type[ABEnv], env_cfg: EnvCfg, num_envs: int, sim: str | None, seed: int | None = None
 ) -> ABEnv:
-    """Instantiate ``env_cls``, resolving ``sim`` into a SimBackend for backend-injected envs.
+    """Instantiate ``env_cls``, passing ``sim`` through to the env constructor.
 
-    Direct and manager environments receive a backend: ``sim=None`` falls back
-    to the registered default simulator. TorchEnv constructs its own simulator
-    runtime and rejects an explicit ``sim``.
+    ``sim=None`` lets the constructor fall back to the registered default
+    simulator.
     """
     from motrix_env_core.direct.env import DirectEnv
-    from motrix_env_core.numba.manager.env import ManagerEnv
+    from motrix_env_core.manager.env import ManagerEnv
 
     if issubclass(env_cls, ManagerEnv):
-        return env_cls(
-            env_cfg,
-            num_envs=num_envs,
-            backend=sim or default_sim_backend_name(),
-            seed=seed,
-        )
+        return env_cls(env_cfg, num_envs=num_envs, backend=sim, seed=seed)
     if issubclass(env_cls, DirectEnv):
-        return env_cls(env_cfg, num_envs=num_envs, backend=sim or default_sim_backend_name())
-    if sim is not None:
-        raise ValueError(
-            f"sim={sim!r} is only used by backend-injected environments; "
-            f"{env_cls.__name__} constructs its own simulator runtime."
-        )
-    return env_cls(env_cfg, num_envs=num_envs)
+        return env_cls(env_cfg, num_envs=num_envs, backend=sim)
+    raise TypeError(f"Unsupported environment class '{env_cls.__name__}': must inherit DirectEnv or ManagerEnv.")
 
 
 ENV_ENTRY_POINT_GROUP = "motrix_env_core.envs"
@@ -186,12 +153,11 @@ def _get_env_meta(name: str) -> EnvMeta:
         raise ValueError(f"Environment '{name}' is not registered.") from None
 
 
-def _resolve_backend(name: str, meta: EnvMeta) -> tuple[str, type[ABEnv]]:
+def _env_cls_or_raise(name: str, meta: EnvMeta) -> type[ABEnv]:
     """Return the registered environment class for ``name``."""
-    resolved_backend = meta.available_sim_backend()
-    if resolved_backend is None:
-        raise ValueError(f"Environment '{name}' does not support any simulation backend.")
-    return resolved_backend, meta.env_cls_dict[resolved_backend]
+    if meta.env_cls is None:
+        raise ValueError(f"Environment '{name}' has no registered environment class.")
+    return meta.env_cls
 
 
 def contains(name: str) -> bool:
@@ -364,23 +330,24 @@ def make_env_config(
 
 
 def register_env(name: str, env_cls: type[ABEnv]):
-    """Register an environment class with a name. Backend is inferred from the class hierarchy."""
-    sim_backend = _infer_sim_backend(env_cls)
+    """Register an environment class with a name."""
+    from motrix_env_core.array.env import ArrayEnv
+
+    if not issubclass(env_cls, ArrayEnv):
+        raise TypeError(f"Environment class '{env_cls.__name__}' must inherit DirectEnv or ManagerEnv.")
 
     if name not in _envs:
         raise ValueError(f"Environment '{name}' is not registered. Please register the config first.")
 
-    if sim_backend in _envs[name].env_cls_dict:
-        raise ValueError(f"Environment '{name}' with sim backend '{sim_backend}' is already registered.")
+    if _envs[name].env_cls is not None:
+        raise ValueError(f"Environment '{name}' is already registered.")
 
-    _envs[name].env_cls_dict[sim_backend] = env_cls
+    _envs[name].env_cls = env_cls
 
 
 def env(name: str) -> Callable[[type[ABEnv]], type[ABEnv]]:
     """
     Decorator to register an environment class with a name.
-    The simulation backend is automatically inferred from the class hierarchy
-    (ArrayEnv/DirectEnv -> "np").
 
     Usage:
         @registry.env("my-env")
@@ -403,7 +370,7 @@ def resolve(
     """Resolve a registered environment into spawn-safe construction metadata."""
 
     meta = _get_env_meta(name)
-    _, env_cls = _resolve_backend(name, meta)
+    env_cls = _env_cls_or_raise(name, meta)
     if env_cfg is None:
         env_cfg = make_env_config(name)
     else:
@@ -447,18 +414,17 @@ def make(
         env_cfg_override=env_cfg_override,
         mode=mode,
     )
-    _, env_cls = _resolve_backend(name, meta)
+    env_cls = _env_cls_or_raise(name, meta)
     return _construct_env(env_cls, env_cfg, num_envs, sim, seed)
 
 
 def list_registered_envs() -> dict[str, dict[str, Any]]:
-    """Discover plugins and list environments with backends and localized summaries."""
+    """Discover plugins and list environments with localized summaries."""
     _discover_envs()
     result = {}
     for name, meta in _envs.items():
         result[name] = {
             "config_class": meta.env_cfg_cls.__name__,
-            "available_backends": list(meta.env_cls_dict.keys()),
             "description": dict(meta.description),
         }
     return result

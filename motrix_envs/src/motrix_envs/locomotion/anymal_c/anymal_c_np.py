@@ -1,13 +1,15 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
-# SPDX-License-Identifier: Apache-2.0
+
+import math
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
-from motrix_env_core.math import quaternion
+from motrix_env_core.math.quaternion import rotate_inverse
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     BodyAngularVelocityWrite,
@@ -31,6 +33,30 @@ from motrix_env_core.sim.write import (
 )
 
 from .cfg import AnymalCEnvCfg
+
+_GRAVITY = torch.tensor([0.0, 0.0, -1.0], dtype=torch.float32)
+
+
+def _yaw(quat: torch.Tensor) -> torch.Tensor:
+    x, y, z, w = quat[..., 0], quat[..., 1], quat[..., 2], quat[..., 3]
+    return torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def _yaw_quaternion(yaw: torch.Tensor) -> torch.Tensor:
+    half = yaw * 0.5
+    zeros = torch.zeros_like(yaw)
+    return torch.stack((zeros, zeros, torch.sin(half), torch.cos(half)), dim=-1)
+
+
+def _rotate_vector(quat: torch.Tensor, vector: torch.Tensor) -> torch.Tensor:
+    """Forward-rotate ``vector`` by ``[x, y, z, w]`` quaternions (inverse-rotate by the conjugate)."""
+    conjugate = torch.cat((-quat[..., :3], quat[..., 3:]), dim=-1)
+    return rotate_inverse(conjugate, vector)
+
+
+def _wrap_pi(angle: torch.Tensor) -> torch.Tensor:
+    angle = torch.where(angle > math.pi, angle - 2 * math.pi, angle)
+    return torch.where(angle < -math.pi, angle + 2 * math.pi, angle)
 
 
 def _sim_data_queries(cfg: AnymalCEnvCfg):
@@ -103,18 +129,18 @@ class AnymalCEnv(DirectEnv):
         self._observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(54,), dtype=np.float32)
         self._num_action = self.num_actuators
 
-        self._init_base_pose = self.model.init_dof_pos[:7].copy()
+        self._init_base_pose = self.model.init_dof_pos[:7].clone()
 
         self._init_buffer()
 
     def _init_buffer(self):
         cfg = self._cfg
-        self.default_angles = np.zeros(self._num_action, dtype=np.float32)
+        self.default_angles = torch.zeros(self._num_action, dtype=torch.float32)
         # PD parameters controlled by kp and kv in XML
 
         # Normalization coefficients
-        self.commands_scale = np.array(
-            [cfg.normalization.lin_vel, cfg.normalization.lin_vel, cfg.normalization.ang_vel], dtype=np.float32
+        self.commands_scale = torch.tensor(
+            [cfg.normalization.lin_vel, cfg.normalization.lin_vel, cfg.normalization.ang_vel], dtype=torch.float32
         )
 
         # Set default joint angles
@@ -124,16 +150,16 @@ class AnymalCEnv(DirectEnv):
                 if name in actuator_names[i]:
                     self.default_angles[i] = angle
 
-        self._init_joint_position = self.default_angles.copy()
+        self._init_joint_position = self.default_angles.clone()
 
         # Episode-scoped navigation state: full-batch buffers, reset writes the
         # done rows in place.
         num_envs = self._num_envs
-        self._pose_commands = np.zeros((num_envs, 3), dtype=np.float32)
-        self._last_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
-        self._current_actions = np.zeros((num_envs, self._num_action), dtype=np.float32)
-        self._ever_reached = np.zeros(num_envs, dtype=bool)
-        self._min_distance = np.zeros(num_envs, dtype=np.float32)
+        self._pose_commands = torch.zeros((num_envs, 3), dtype=torch.float32)
+        self._last_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32)
+        self._current_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32)
+        self._ever_reached = torch.zeros(num_envs, dtype=torch.bool)
+        self._min_distance = torch.zeros(num_envs, dtype=torch.float32)
 
     def _init_contact_geometry(self):
         """Initialize geometry name pairs required for contact detection"""
@@ -199,19 +225,20 @@ class AnymalCEnv(DirectEnv):
     def action_space(self):
         return self._action_space
 
-    def apply_action(self, actions: np.ndarray, state: ArrayEnvState):
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        actions = torch.as_tensor(actions, dtype=torch.float32)
         # Save current action for incremental control
-        self._last_actions[:] = self._current_actions
-        self._current_actions[:] = actions
+        self._last_actions.copy_(self._current_actions)
+        self._current_actions.copy_(actions)
 
         # Position control mode: directly input target angles
         actions_scaled = actions * self._cfg.control_config.action_scale
         ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = np.asarray(self.default_angles + actions_scaled, dtype=np.float32)
+        ctrl.copy_(self.default_angles + actions_scaled)
         self._ctrl_writes.execute()
         return state
 
-    def _navigation_state(self, pose_commands: np.ndarray):
+    def _navigation_state(self, pose_commands: torch.Tensor):
         """Derive navigation commands from cached sim reads and pose commands.
 
         Pure physics-derived quantities shared by ``compute_transition``
@@ -222,31 +249,31 @@ class AnymalCEnv(DirectEnv):
         root_quat = self.sim_data["root_quat"]
 
         robot_position = root_pos[:, :2]
-        robot_heading = quaternion.get_yaw(root_quat)
+        robot_heading = _yaw(root_quat)
         target_position = pose_commands[:, :2]
         target_heading = pose_commands[:, 2]
 
         position_error = target_position - robot_position
-        distance_to_target = np.linalg.norm(position_error, axis=1)
+        distance_to_target = torch.linalg.vector_norm(position_error, dim=1)
 
-        heading_diff = target_heading - robot_heading
-        heading_diff = np.where(heading_diff > np.pi, heading_diff - 2 * np.pi, heading_diff)
-        heading_diff = np.where(heading_diff < -np.pi, heading_diff + 2 * np.pi, heading_diff)
+        heading_diff = _wrap_pi(target_heading - robot_heading)
 
         position_threshold = 0.3
-        heading_threshold = np.deg2rad(15)
-        reached_all = np.logical_and(distance_to_target < position_threshold, np.abs(heading_diff) < heading_threshold)
+        heading_threshold = math.radians(15)
+        reached_all = (distance_to_target < position_threshold) & (heading_diff.abs() < heading_threshold)
 
-        desired_vel_xy = np.clip(position_error * 1.0, -1.0, 1.0)  # Simple P controller
-        desired_vel_xy = np.where(reached_all[:, np.newaxis], 0.0, desired_vel_xy)
+        desired_vel_xy = torch.clamp(position_error * 1.0, -1.0, 1.0)  # Simple P controller
+        desired_vel_xy = torch.where(reached_all[:, None], torch.zeros_like(desired_vel_xy), desired_vel_xy)
 
         # Angular velocity command calculation + deadband
-        deadband_yaw = np.deg2rad(8)
-        desired_yaw_rate = np.clip(heading_diff * 1.0, -1.0, 1.0)
-        desired_yaw_rate = np.where(np.abs(heading_diff) < deadband_yaw, 0.0, desired_yaw_rate)
-        desired_yaw_rate = np.where(reached_all, 0.0, desired_yaw_rate)
+        deadband_yaw = math.radians(8)
+        desired_yaw_rate = torch.clamp(heading_diff * 1.0, -1.0, 1.0)
+        desired_yaw_rate = torch.where(
+            heading_diff.abs() < deadband_yaw, torch.zeros_like(desired_yaw_rate), desired_yaw_rate
+        )
+        desired_yaw_rate = torch.where(reached_all, torch.zeros_like(desired_yaw_rate), desired_yaw_rate)
 
-        velocity_commands = np.concatenate([desired_vel_xy, desired_yaw_rate[:, np.newaxis]], axis=-1)
+        velocity_commands = torch.cat([desired_vel_xy, desired_yaw_rate[:, None]], dim=-1)
         return position_error, heading_diff, distance_to_target, reached_all, desired_vel_xy, velocity_commands
 
     def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
@@ -271,15 +298,15 @@ class AnymalCEnv(DirectEnv):
 
         # Calculate task-related observations
         position_error_normalized = position_error / 5.0  # Normalize to reasonable range
-        heading_error_normalized = heading_diff / np.pi  # Normalize to [-1, 1]
-        distance_normalized = np.clip(distance_to_target / 5.0, 0, 1)  # Normalize distance
-        reached_flag = reached_all.astype(np.float32)  # Whether target is reached
+        heading_error_normalized = heading_diff / math.pi  # Normalize to [-1, 1]
+        distance_normalized = torch.clamp(distance_to_target / 5.0, 0.0, 1.0)  # Normalize distance
+        reached_flag = reached_all.to(torch.float32)  # Whether target is reached
 
         # Calculate if zero_ang standard is met: reached and angular velocity close to zero
-        stop_ready = np.logical_and(reached_all, np.abs(gyro[:, 2]) < 5e-2)
-        stop_ready_flag = stop_ready.astype(np.float32)
+        stop_ready = reached_all & (gyro[:, 2].abs() < 5e-2)
+        stop_ready_flag = stop_ready.to(torch.float32)
 
-        obs = np.concatenate(
+        obs = torch.cat(
             [
                 noisy_linvel,  # 3
                 noisy_gyro,  # 3
@@ -289,12 +316,12 @@ class AnymalCEnv(DirectEnv):
                 last_actions,  # 12
                 command_normalized,  # 3
                 position_error_normalized,  # 2 - Position error vector to target
-                heading_error_normalized[:, np.newaxis],  # 1 - Heading error
-                distance_normalized[:, np.newaxis],  # 1 - Distance to target
-                reached_flag[:, np.newaxis],  # 1 - Whether reached
-                stop_ready_flag[:, np.newaxis],  # 1 - Whether stop standard is met
+                heading_error_normalized[:, None],  # 1 - Heading error
+                distance_normalized[:, None],  # 1 - Distance to target
+                reached_flag[:, None],  # 1 - Whether reached
+                stop_ready_flag[:, None],  # 1 - Whether stop standard is met
             ],
-            axis=-1,
+            dim=-1,
         )
         assert obs.shape == (self._num_envs, 54)
         return state.replace(obs=obs)
@@ -311,10 +338,12 @@ class AnymalCEnv(DirectEnv):
 
         # Update target position marker
         num_envs = self._num_envs
-        self._update_target_marker(np.arange(num_envs, dtype=np.int64), self._pose_commands)
+        self._update_target_marker(torch.arange(num_envs, dtype=torch.int64), self._pose_commands)
         # Update arrow visualization (no physical effect)
         base_lin_vel_xy = base_lin_vel[:, :2]
-        self._update_heading_arrows(np.arange(num_envs, dtype=np.int64), root_pos, desired_vel_xy, base_lin_vel_xy)
+        self._update_heading_arrows(
+            torch.arange(num_envs, dtype=torch.int64), root_pos, desired_vel_xy, base_lin_vel_xy
+        )
 
         # Calculate reward
         state.reward = self._compute_reward(velocity_commands)
@@ -325,7 +354,11 @@ class AnymalCEnv(DirectEnv):
         return state
 
     def _update_heading_arrows(
-        self, env_ids: np.ndarray, robot_pos: np.ndarray, desired_vel_xy: np.ndarray, base_lin_vel_xy: np.ndarray
+        self,
+        env_ids: torch.Tensor,
+        robot_pos: torch.Tensor,
+        desired_vel_xy: torch.Tensor,
+        base_lin_vel_xy: torch.Tensor,
     ):
         """
         Update arrow positions (mocap bodies, no physical effect)
@@ -335,117 +368,117 @@ class AnymalCEnv(DirectEnv):
         """
 
         arrow_height = 0.76  # Arrow height (base=0.56 + 0.2)
-        cur_yaw = np.where(
-            np.linalg.norm(base_lin_vel_xy, axis=1) > 1e-3,
-            np.arctan2(base_lin_vel_xy[:, 1], base_lin_vel_xy[:, 0]),
-            0.0,
+        cur_yaw = torch.where(
+            torch.linalg.vector_norm(base_lin_vel_xy, dim=1) > 1e-3,
+            torch.atan2(base_lin_vel_xy[:, 1], base_lin_vel_xy[:, 0]),
+            torch.zeros((), dtype=torch.float32),
         )
-        robot_arrow_pos = robot_pos.copy()
+        robot_arrow_pos = robot_pos.clone()
         robot_arrow_pos[:, 2] = arrow_height
-        robot_arrow_quat = quaternion.from_euler(0, 0, cur_yaw).astype(np.float32)
-        self._heading_writes.buffer("robot_pos")[env_ids, 0] = robot_arrow_pos.astype(np.float32)
-        self._heading_writes.buffer("robot_rot")[env_ids, 0] = robot_arrow_quat
+        self._heading_writes.buffer("robot_pos")[env_ids, 0] = robot_arrow_pos
+        self._heading_writes.buffer("robot_rot")[env_ids, 0] = _yaw_quaternion(cur_yaw)
 
-        des_yaw = np.where(
-            np.linalg.norm(desired_vel_xy, axis=1) > 1e-6, np.arctan2(desired_vel_xy[:, 1], desired_vel_xy[:, 0]), 0.0
+        des_yaw = torch.where(
+            torch.linalg.vector_norm(desired_vel_xy, dim=1) > 1e-6,
+            torch.atan2(desired_vel_xy[:, 1], desired_vel_xy[:, 0]),
+            torch.zeros((), dtype=torch.float32),
         )
-        desired_arrow_quat = quaternion.from_euler(0, 0, des_yaw).astype(np.float32)
-        self._heading_writes.buffer("desired_pos")[env_ids, 0] = robot_arrow_pos.astype(np.float32)
-        self._heading_writes.buffer("desired_rot")[env_ids, 0] = desired_arrow_quat
+        self._heading_writes.buffer("desired_pos")[env_ids, 0] = robot_arrow_pos
+        self._heading_writes.buffer("desired_rot")[env_ids, 0] = _yaw_quaternion(des_yaw)
         # Both heading markers go to the backend in one crossing.
         self._heading_writes.execute(env_ids)
 
-    def _compute_reward(self, velocity_commands: np.ndarray) -> np.ndarray:
+    def _compute_reward(self, velocity_commands: torch.Tensor) -> torch.Tensor:
         """
         Velocity tracking reward mechanism
         velocity_commands: [num_envs, 3] - (vx, vy, vyaw)
         """
         num_envs = self._num_envs
         # Calculate termination condition penalties
-        termination_penalty = np.zeros(num_envs, dtype=np.float32)
+        termination_penalty = torch.zeros(num_envs, dtype=torch.float32)
 
         # Check if DOF velocity exceeds limit
         dof_vel = self.get_dof_vel()
-        vel_max = np.abs(dof_vel).max(axis=1)
+        vel_max = dof_vel.abs().max(dim=1).values
         vel_overflow = vel_max > self._cfg.max_dof_vel
-        vel_extreme = (np.isnan(dof_vel).any(axis=1)) | (np.isinf(dof_vel).any(axis=1)) | (vel_max > 1e6)
-        termination_penalty = np.where(vel_overflow | vel_extreme, -20.0, termination_penalty)
+        vel_extreme = dof_vel.isnan().any(dim=1) | dof_vel.isinf().any(dim=1) | (vel_max > 1e6)
+        termination_penalty = torch.where(vel_overflow | vel_extreme, -20.0, termination_penalty)
 
         # Robot base contacts ground penalty
         termination_check = self.sim_data["termination_colliding"]
-        base_contact = termination_check.any(axis=1)
-        termination_penalty = np.where(base_contact, -20.0, termination_penalty)
+        base_contact = termination_check.any(dim=1)
+        termination_penalty = torch.where(base_contact, -20.0, termination_penalty)
 
         # Side flip penalty
         root_quat = self.sim_data["root_quat"]
         proj_g = self._compute_projected_gravity(root_quat)
-        gxy = np.linalg.norm(proj_g[:, :2], axis=1)
+        gxy = torch.linalg.vector_norm(proj_g[:, :2], dim=1)
         gz = proj_g[:, 2]
-        tilt_angle = np.arctan2(gxy, np.abs(gz))
-        side_flip_mask = tilt_angle > np.deg2rad(75)
-        termination_penalty = np.where(side_flip_mask, -20.0, termination_penalty)
+        tilt_angle = torch.atan2(gxy, gz.abs())
+        side_flip_mask = tilt_angle > math.radians(75)
+        termination_penalty = torch.where(side_flip_mask, -20.0, termination_penalty)
 
         # 1. Linear velocity tracking reward
         base_lin_vel = self.sim_data["base_linvel"]
-        lin_vel_error = np.sum(np.square(velocity_commands[:, :2] - base_lin_vel[:, :2]), axis=1)
-        tracking_lin_vel = np.exp(-lin_vel_error / 0.25)  # tracking_sigma = 0.25
+        lin_vel_error = torch.sum(torch.square(velocity_commands[:, :2] - base_lin_vel[:, :2]), dim=1)
+        tracking_lin_vel = torch.exp(-lin_vel_error / 0.25)  # tracking_sigma = 0.25
 
         # 2. Angular velocity tracking reward / heading error penalty (mixed strategy)
         gyro = self.sim_data["base_gyro"]
-        ang_vel_error = np.square(velocity_commands[:, 2] - gyro[:, 2])
-        tracking_ang_vel = np.exp(-ang_vel_error / 0.25)
+        ang_vel_error = torch.square(velocity_commands[:, 2] - gyro[:, 2])
+        tracking_ang_vel = torch.exp(-ang_vel_error / 0.25)
 
         # Get robot position and heading for arrival determination, derived
         # directly from the cached reads and pose commands
         (_, _, distance_to_target, reached_all, _, _) = self._navigation_state(self._pose_commands)
 
         # One-time reward for first time reaching position
-        first_time_reach = np.logical_and(reached_all, ~self._ever_reached)
+        first_time_reach = reached_all & ~self._ever_reached
         self._ever_reached |= reached_all
-        arrival_bonus = np.where(first_time_reach, 10.0, 0.0)
+        arrival_bonus = torch.where(first_time_reach, 10.0, torch.zeros((), dtype=torch.float32))
 
         # Distance approach reward: incentivize getting closer to target
         # Use historical minimum distance to calculate progress
         distance_improvement = self._min_distance - distance_to_target
-        np.minimum(self._min_distance, distance_to_target, out=self._min_distance)
-        approach_reward = np.clip(distance_improvement * 4.0, -1.0, 1.0)  # Reward 5 points for every 1 meter closer
+        torch.minimum(self._min_distance, distance_to_target, out=self._min_distance)
+        approach_reward = torch.clamp(distance_improvement * 4.0, -1.0, 1.0)  # Reward 5 points for every 1 meter closer
 
         # 3. Orientation stability reward (penalize deviation from normal standing posture)
         # When standing normally, projected_gravity ≈ [0, 0, -1]
         projected_gravity = self._compute_projected_gravity(root_quat)
         orientation_penalty = (
-            np.square(projected_gravity[:, 0])
-            + np.square(projected_gravity[:, 1])
-            + np.square(projected_gravity[:, 2] + 1.0)
+            torch.square(projected_gravity[:, 0])
+            + torch.square(projected_gravity[:, 1])
+            + torch.square(projected_gravity[:, 2] + 1.0)
         )
 
         # Arrival and stop determination (reward bonus)
-        speed_xy = np.linalg.norm(base_lin_vel[:, :2], axis=1)
-        zero_ang_mask = np.abs(gyro[:, 2]) < 0.05  # Relax to 0.05 rad/s ≈ 2.86°/s
-        zero_ang_bonus = np.where(np.logical_and(reached_all, zero_ang_mask), 6.0, 0.0)
-        stop_base = 2 * (0.8 * np.exp(-((speed_xy / 0.2) ** 2)) + 1.2 * np.exp(-((np.abs(gyro[:, 2]) / 0.1) ** 4)))
-        stop_bonus = np.where(reached_all, stop_base + zero_ang_bonus, 0.0)
+        speed_xy = torch.linalg.vector_norm(base_lin_vel[:, :2], dim=1)
+        zero_ang_mask = gyro[:, 2].abs() < 0.05  # Relax to 0.05 rad/s ≈ 2.86°/s
+        zero_ang_bonus = torch.where(reached_all & zero_ang_mask, 6.0, torch.zeros((), dtype=torch.float32))
+        stop_base = 2 * (0.8 * torch.exp(-((speed_xy / 0.2) ** 2)) + 1.2 * torch.exp(-((gyro[:, 2].abs() / 0.1) ** 4)))
+        stop_bonus = torch.where(reached_all, stop_base + zero_ang_bonus, torch.zeros((), dtype=torch.float32))
 
         # 4. Z-axis linear velocity penalty
-        lin_vel_z_penalty = np.square(base_lin_vel[:, 2])
+        lin_vel_z_penalty = torch.square(base_lin_vel[:, 2])
 
         # 5. XY-axis angular velocity penalty
-        ang_vel_xy_penalty = np.sum(np.square(gyro[:, :2]), axis=1)
+        ang_vel_xy_penalty = torch.sum(torch.square(gyro[:, :2]), dim=1)
 
         # 6. Torque penalty
-        torque_penalty = np.sum(np.square(self.sim_data["actuator_ctrls"]), axis=1)
+        torque_penalty = torch.sum(torch.square(self.sim_data["actuator_ctrls"]), dim=1)
 
         # 7. Joint velocity penalty
         joint_vel = self.get_dof_vel()
-        dof_vel_penalty = np.sum(np.square(joint_vel), axis=1)
+        dof_vel_penalty = torch.sum(torch.square(joint_vel), dim=1)
 
         # 8. Action change penalty
         action_diff = self._current_actions - self._last_actions
-        action_rate_penalty = np.sum(np.square(action_diff), axis=1)
+        action_rate_penalty = torch.sum(torch.square(action_diff), dim=1)
 
         # Combined reward
         # After reaching: stop all positive rewards, only keep stop reward and penalties
-        reward = np.where(
+        reward = torch.where(
             reached_all,
             # After reaching: only stop reward and penalties
             (
@@ -476,81 +509,74 @@ class AnymalCEnv(DirectEnv):
 
         return reward
 
-    def _update_target_marker(self, env_ids: np.ndarray, pose_commands: np.ndarray):
+    def _update_target_marker(self, env_ids: torch.Tensor, pose_commands: torch.Tensor):
         """
         Update position and orientation of target marker
         """
         num_envs = pose_commands.shape[0]
-        arrow_pos = pose_commands.copy()
+        arrow_pos = pose_commands.clone()
         arrow_pos[:, 2] = 0.05
-        arrow_pos = np.column_stack([pose_commands[:, 0], pose_commands[:, 1], np.full((num_envs, 1), 0.5)])
-        arrow_quat = quaternion.from_euler(0, 0, pose_commands[:, 2]).astype(np.float32)
-        self._target_writes.buffer("target_pos")[env_ids, 0] = arrow_pos.astype(np.float32)
+        arrow_pos = torch.stack([pose_commands[:, 0], pose_commands[:, 1], torch.full((num_envs,), 0.5)], dim=1)
+        arrow_quat = _yaw_quaternion(pose_commands[:, 2])
+        self._target_writes.buffer("target_pos")[env_ids, 0] = arrow_pos
         self._target_writes.buffer("target_rot")[env_ids, 0] = arrow_quat
         self._target_writes.execute(env_ids)
 
     def _compute_terminated(self, state: ArrayEnvState) -> ArrayEnvState:
-        terminated = np.zeros(self._num_envs, dtype=bool)
+        terminated = torch.zeros(self._num_envs, dtype=torch.bool)
 
         # Check if DOF velocity exceeds limit (prevent inf/numerical divergence)
         dof_vel = self.get_dof_vel()
-        vel_max = np.abs(dof_vel).max(axis=1)
+        vel_max = dof_vel.abs().max(dim=1).values
         vel_overflow = vel_max > self._cfg.max_dof_vel
         # Extreme velocity/NaN/Inf protection
-        vel_extreme = (np.isnan(dof_vel).any(axis=1)) | (np.isinf(dof_vel).any(axis=1)) | (vel_max > 1e6)
-        terminated = np.logical_or(terminated, vel_overflow)
-        terminated = np.logical_or(terminated, vel_extreme)
+        vel_extreme = dof_vel.isnan().any(dim=1) | dof_vel.isinf().any(dim=1) | (vel_max > 1e6)
+        terminated = terminated | vel_overflow
+        terminated = terminated | vel_extreme
 
         # Robot base contacts ground termination
         termination_check = self.sim_data["termination_colliding"]
-        base_contact = termination_check.any(axis=1)
-        terminated = np.logical_or(terminated, base_contact)
+        base_contact = termination_check.any(dim=1)
+        terminated = terminated | base_contact
 
         # Side flip termination: tilt angle exceeds 75°
         root_quat = self.sim_data["root_quat"]
         proj_g = self._compute_projected_gravity(root_quat)
-        gxy = np.linalg.norm(proj_g[:, :2], axis=1)
+        gxy = torch.linalg.vector_norm(proj_g[:, :2], dim=1)
         gz = proj_g[:, 2]
-        tilt_angle = np.arctan2(gxy, np.abs(gz))
-        side_flip_mask = tilt_angle > np.deg2rad(75)
-        terminated = np.logical_or(terminated, side_flip_mask)
+        tilt_angle = torch.atan2(gxy, gz.abs())
+        side_flip_mask = tilt_angle > math.radians(75)
+        terminated = terminated | side_flip_mask
 
         return state.replace(terminated=terminated)
 
-    def reset(self, env_ids: np.ndarray) -> None:
+    def reset(self, env_ids: torch.Tensor) -> None:
         cfg: AnymalCEnvCfg = self._cfg
-        num_envs = len(env_ids)
+        num_envs = env_ids.numel()
 
         # First generate robot initial position (in world coordinates)
         pos_range = cfg.init_state.pos_randomization_range
-        robot_init_x = np.random.uniform(
-            pos_range[0],
-            pos_range[2],  # x_min, x_max
-            num_envs,
-        ).astype(np.float32)
-        robot_init_y = np.random.uniform(
-            pos_range[1],
-            pos_range[3],  # y_min, y_max
-            num_envs,
-        ).astype(np.float32)
-        robot_init_pos = np.stack([robot_init_x, robot_init_y], axis=1)  # [num_envs, 2]
+        robot_init_x = pos_range[0] + (pos_range[2] - pos_range[0]) * torch.rand(num_envs, dtype=torch.float32)
+        robot_init_y = pos_range[1] + (pos_range[3] - pos_range[1]) * torch.rand(num_envs, dtype=torch.float32)
+        robot_init_pos = torch.stack([robot_init_x, robot_init_y], dim=1)  # [num_envs, 2]
 
         # Generate target position: offset relative to robot initial position
         # pose_command_range now represents offset range relative to robot
-        target_offset = np.random.uniform(
-            low=cfg.commands.pose_command_range[:2], high=cfg.commands.pose_command_range[3:5], size=(num_envs, 2)
-        ).astype(np.float32)
+        pose_command_range = cfg.commands.pose_command_range
+        offset_low = torch.tensor(pose_command_range[:2], dtype=torch.float32)
+        offset_high = torch.tensor(pose_command_range[3:5], dtype=torch.float32)
+        target_offset = offset_low + (offset_high - offset_low) * torch.rand((num_envs, 2), dtype=torch.float32)
         target_positions = robot_init_pos + target_offset  # Target position in world coordinates
 
         # Generate target heading (absolute heading, random in horizontal direction)
-        target_headings = np.random.uniform(
-            low=cfg.commands.pose_command_range[2], high=cfg.commands.pose_command_range[5], size=(num_envs, 1)
-        ).astype(np.float32)
+        target_headings = pose_command_range[2] + (pose_command_range[5] - pose_command_range[2]) * torch.rand(
+            (num_envs, 1), dtype=torch.float32
+        )
 
-        pose_commands = np.concatenate([target_positions, target_headings], axis=1)
+        pose_commands = torch.cat([target_positions, target_headings], dim=1)
 
         # Set initial state without perturbing the base quaternion.
-        base_pose = np.tile(self._init_base_pose, (num_envs, 1))
+        base_pose = self._init_base_pose.repeat(num_envs, 1)
         base_pose[:, 0] = robot_init_x
         base_pose[:, 1] = robot_init_y
         # Keep the configured/default Z height and reset all velocities to zero.
@@ -565,13 +591,13 @@ class AnymalCEnv(DirectEnv):
 
         # Update target position marker (after the row reset so its default
         # mocap pose restoration cannot wipe it)
-        self._update_target_marker(np.asarray(env_ids, dtype=np.int64), pose_commands)
-        self.sim_data.execute(np.asarray(env_ids, dtype=np.int64))
+        self._update_target_marker(env_ids, pose_commands)
+        self.sim_data.execute(env_ids)
 
         # Get root state for the reset rows only: the cached views are
         # full-batch, while pose_commands and the arrow writes below are
         # sized to this reset batch.
-        rows = np.asarray(env_ids, dtype=np.int64)
+        rows = env_ids
         root_pos = self.sim_data["root_pos"][rows]
         root_quat = self.sim_data["root_quat"][rows]
         root_vel = self.sim_data["base_linvel"][rows]
@@ -580,38 +606,38 @@ class AnymalCEnv(DirectEnv):
 
         # Calculate velocity commands (consistent with update_state)
         robot_position = root_pos[:, :2]
-        robot_heading = quaternion.get_yaw(root_quat)
+        robot_heading = _yaw(root_quat)
         target_position = pose_commands[:, :2]
         target_heading = pose_commands[:, 2]
 
         position_error = target_position - robot_position
-        distance_to_target = np.linalg.norm(position_error, axis=1)
+        distance_to_target = torch.linalg.vector_norm(position_error, dim=1)
 
         # Position threshold: considered reached within 0.1 meters
         position_threshold = 0.1
         reached_position = distance_to_target < position_threshold
 
-        desired_vel_xy = np.clip(position_error * 1.0, -1.0, 1.0)
-        desired_vel_xy = np.where(reached_position[:, np.newaxis], 0.0, desired_vel_xy)  # Velocity is 0 after reaching
+        desired_vel_xy = torch.clamp(position_error * 1.0, -1.0, 1.0)
+        # Velocity is 0 after reaching
+        desired_vel_xy = torch.where(reached_position[:, None], torch.zeros_like(desired_vel_xy), desired_vel_xy)
 
         # Actual linear velocity XY
         base_lin_vel_xy = base_lin_vel[:, :2]
 
         # Update arrow visualization (no physical effect)
-        self._update_heading_arrows(np.asarray(env_ids, dtype=np.int64), root_pos, desired_vel_xy, base_lin_vel_xy)
+        self._update_heading_arrows(env_ids, root_pos, desired_vel_xy, base_lin_vel_xy)
 
-        heading_diff = target_heading - robot_heading
-        heading_diff = np.where(heading_diff > np.pi, heading_diff - 2 * np.pi, heading_diff)
-        heading_diff = np.where(heading_diff < -np.pi, heading_diff + 2 * np.pi, heading_diff)
+        heading_diff = _wrap_pi(target_heading - robot_heading)
 
         # Heading threshold: considered reached within 15 degrees
-        heading_threshold = np.deg2rad(15)
-        reached_heading = np.abs(heading_diff) < heading_threshold
+        heading_threshold = math.radians(15)
+        reached_heading = heading_diff.abs() < heading_threshold
 
-        desired_yaw_rate = np.clip(heading_diff * 1.0, -1.0, 1.0)
-        reached_all = np.logical_and(reached_position, reached_heading)
-        desired_yaw_rate = np.where(reached_all, 0.0, desired_yaw_rate)  # Velocity is 0 after reaching
-        desired_vel_xy = np.where(reached_all[:, np.newaxis], 0.0, desired_vel_xy)  # Velocity is 0 after reaching
+        desired_yaw_rate = torch.clamp(heading_diff * 1.0, -1.0, 1.0)
+        reached_all = reached_position & reached_heading
+        # Velocity is 0 after reaching
+        desired_yaw_rate = torch.where(reached_all, torch.zeros_like(desired_yaw_rate), desired_yaw_rate)
+        desired_vel_xy = torch.where(reached_all[:, None], torch.zeros_like(desired_vel_xy), desired_vel_xy)
 
         # Ensure desired_yaw_rate is 1D array
         if desired_yaw_rate.ndim > 1:
@@ -624,6 +650,5 @@ class AnymalCEnv(DirectEnv):
         self._ever_reached[rows] = False
         self._min_distance[rows] = distance_to_target
 
-    def _compute_projected_gravity(self, quat: np.ndarray) -> np.ndarray:
-        gravity = np.array([0.0, 0.0, -1.0], dtype=np.float32)
-        return quaternion.rotate_vector(quat, gravity)
+    def _compute_projected_gravity(self, quat: torch.Tensor) -> torch.Tensor:
+        return _rotate_vector(quat, _GRAVITY)

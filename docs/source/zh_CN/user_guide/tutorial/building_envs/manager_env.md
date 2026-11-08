@@ -1,8 +1,8 @@
 # 编写 ManagerEnv 环境
 
 `ManagerEnv` 是 Manager 工作流前端：动作、命令、重置、观测、奖励与终止不在环境类中手写，
-而是作为逐项（term）的声明式配置写入 `ManagerBasedEnvCfg` 的各个配置组，由 manager 编译器
-生成融合的 Numba 任务程序。它适合项数量多、需要组合复用 mdp 项的任务
+而是作为逐项（term）的声明式配置写入 `ManagerBasedEnvCfg` 的各个配置组，由 manager 运行时
+以批量 torch kernel 的方式执行。它适合项数量多、需要组合复用 mdp 项的任务
 （如 locomotion、whole-body tracking）。
 
 与 DirectEnv 的选型对比见[环境构建总览](index.md)。本页先用一个最小骨架展示全貌，
@@ -44,8 +44,12 @@ registry.env("my-task")(ManagerEnv)
 ## 生命周期
 
 `ManagerEnv` 同样继承 `ArrayEnv`，step 时序与 auto-reset / truncation 语义与 DirectEnv 一致。
-下图把各回调整合进流水线：绿色是 manager kernel（`@dispatch`）执行的部分，
-紫色是 manager 的主机侧 Python 回调，蓝色是框架——编排各阶段的宿主与其自身的数据通路：
+Manager 前端的公开接口统一使用 torch：`step(actions)` 与 `reset(env_ids)`（含 `sim_reset_ids`）
+接收整数 `torch.Tensor`，例如 `env.reset(torch.tensor([0, 2], dtype=torch.long))`；
+传入 numpy 数组会抛出 `TypeError`。
+下图把各回调整合进流水线：绿色是 manager kernel 执行的部分——普通函数，
+由 manager 运行时按签名解析并批量调度；紫色是 manager 的主机侧 Python 回调，
+蓝色是框架——编排各阶段的宿主与其自身的数据通路：
 
 ```{image} /_static/images/tutorial/manager-env-lifecycle-light.svg
 :alt: ManagerEnv 单个控制步流水线，包含 done 行分支：apply_action → physics_step → compute_transition → 截断判定 → done? 将 done 行送入 auto-reset 微流程、存活行送往 compute_observation
@@ -57,8 +61,8 @@ registry.env("my-task")(ManagerEnv)
 :class: only-dark
 ```
 
-与 DirectEnv 的两点区别：各项回调不在环境类里手写，而由配置组声明、manager 编译器
-编译成融合 kernel；kernel 的编译与预热发生在首次 `init_state()`（启动阶段），
+与 DirectEnv 的两点区别：各项回调不在环境类里手写，而由配置组声明、manager 运行时
+以批量 torch kernel 执行；kernel 的编译与预热发生在首次 `init_state()`（启动阶段），
 step 循环内不再编译。
 
 ## 动作项（actions）
@@ -72,34 +76,45 @@ step 循环内不再编译。
 1. `ActionCfg` 子类：声明静态参数与执行器路由，`__call__(env, actuators)` 返回运行时 term。
    `actuator_names` 为空元组 `()` 时控制全部执行器，写显式名称时只控制列出的执行器；
    一个执行器只能归属一项。设为 `None` 表示本项不写执行器目标。
-2. `@kernel_data` 装饰的 `ActionTerm` 子类：持有持久状态（`np.ndarray` 字段，按环境行）与
-   共享模型数据（`SharedArray` 字段），实现三个方法：`action_space()` 给出本项的动作空间、
-   `process(actions)` 把动作批次变换为路由执行器的控制量、`reset(env_ids)` 清理持久状态。
+2. plain frozen dataclass 的 `ActionState` 子类：持有持久状态（`torch.Tensor` 字段，
+   按环境行）与静态模型数据（标量或无 batch 维的 tensor 字段）；manager 会附加共享的
+   原始动作历史（`action_queue`、`action_ptr`）。`ActionTerm` 子类在 `__init__` 中接收
+   `(action_space, state)` 并实现两个方法：`_process(actions)` 把动作批次变换为本项
+   路由执行器的控制量，`_reset(env_ids)` 清理选中行的持久状态。基类持有原始动作
+   历史：它的 `process()` / `reset()` 会包一层调用你实现的方法。
 
 ```python
+@dataclass(frozen=True, slots=True)
+class MyJointActionState(ActionState):
+    default_angles: torch.Tensor     # 静态模型数据：各执行器默认角 (A,)
+    action_scales: torch.Tensor      # 静态模型数据：各执行器缩放 (A,)
+
+
+class MyJointAction(ActionTerm):
+    state: MyJointActionState
+
+    def _process(self, actions: torch.Tensor) -> torch.Tensor:
+        return actions * self.state.action_scales + self.state.default_angles
+
+    def _reset(self, env_ids: torch.Tensor) -> None:
+        ...  # 为重置行重采样每回合随机化
+
+
 @configclass(kw_only=True)
 class MyJointActionCfg(ActionCfg):
     actuator_names: tuple[str, ...] = ()
     scale: float = 0.5
 
     def __call__(self, env: ManagerEnv, actuators) -> ActionTerm:
-        return MyJointAction(scale=np.float32(self.scale), num_envs=env.num_envs,
-                             actuators=actuators)
-
-
-@kernel_data
-class MyJointAction(ActionTerm):
-    current: np.ndarray              # 持久状态：上一动作缓存（num_envs 行）
-    scale: SharedArray               # 静态参数：由 __call__ 传入
-
-    def action_space(self, env, actuators) -> gym.spaces.Box:
-        ...  # 由执行器 ctrl_range 推导
-
-    def process(self, actions: np.ndarray) -> np.ndarray:
-        ...  # 变换动作，返回本项路由的执行器控制量
-
-    def reset(self, env_ids: np.ndarray) -> None:
-        self.current[env_ids] = 0.0
+        default_angles = ...  # (A,) 从机器人默认 key pose 解析
+        state = MyJointActionState(
+            action_queue=torch.zeros((env.num_envs, 2, len(actuators)), dtype=torch.float32),
+            action_ptr=torch.zeros(1, dtype=torch.int64),
+            default_angles=default_angles,
+            action_scales=torch.full((len(actuators),), self.scale),
+        )
+        space = joint_position_action_space(actuators, default_angles, self.scale)
+        return MyJointAction(space, state)
 ```
 
 ## 观测项（observations）
@@ -114,19 +129,18 @@ class MyJointAction(ActionTerm):
 读取 `queries` 声明的数据，噪声等作为标量参数传入、在 dispatch 内部添加。
 
 ```python
-@dispatch
-def projected_gravity_obs(ctx: ManagerContext, out: np.ndarray,
-                          noise_amplitude: np.float32) -> None:
+def projected_gravity_obs(ctx: ManagerContext, out: torch.Tensor,
+                          noise_amplitude: float) -> None:
     ...  # 计算并写入 out（宽度 3）
-    add_uniform_noise(out, noise_amplitude, ctx.rand.state)
+    out.add_(ctx.rand.next_uniform(3) * noise_amplitude)
 
 
 @configclass(kw_only=True)
 class ProjectedGravityObsCfg(ObservationTermCfg):
-    noise: UniformNoiseCfg = UniformNoiseCfg()
+    noise_amplitude: float = 0.05
 
     def __call__(self, env: ManagerEnv) -> ObsTerm:
-        return ObsTerm(3, projected_gravity_obs, np.float32(self.noise.amplitude))
+        return ObsTerm(3, projected_gravity_obs, self.noise_amplitude)
 ```
 
 观测依赖的仿真数据通过环境 `queries` 组或项的 `required_sim_queries()` 声明，
@@ -139,14 +153,14 @@ class ProjectedGravityObsCfg(ObservationTermCfg):
 
 **如何定义**：一个奖励 term 是 `RewardTermCfg` 子类（自带 `weight: float` 字段），
 `__call__(env)` 返回 `RewardTerm(dispatch, *args)`。dispatch 形如
-`def xxx_reward(ctx, *args) -> float`，从 `ctx.sim["key"]` 读取 `queries` 声明的数据。
+`def xxx_reward(ctx, *args) -> torch.Tensor`（每环境一个评价值），
+从 `ctx.sim["key"]` 读取 `queries` 声明的数据。
 
 ```python
-@dispatch
-def base_height_reward(ctx: ManagerContext, target_z: np.float32,
-                       sigma: np.float32) -> float:
-    error = ctx.sim["robot_base_pos"][2] - target_z
-    return math.exp(-(error * error) / (sigma * sigma))
+def base_height_reward(ctx: ManagerContext, target_z: float,
+                       sigma: float) -> torch.Tensor:
+    error = ctx.sim["robot_base_pos"][:, 2] - target_z
+    return torch.exp(-(error * error) / (sigma * sigma))
 
 
 @configclass(kw_only=True)
@@ -155,8 +169,7 @@ class BaseHeightRewardCfg(RewardTermCfg):
     sigma: float
 
     def __call__(self, env: ManagerEnv) -> RewardTerm:
-        return RewardTerm(base_height_reward,
-                          np.float32(self.target_z), np.float32(self.sigma))
+        return RewardTerm(base_height_reward, self.target_z, self.sigma)
 ```
 
 ## 终止项（terminations）
@@ -166,13 +179,13 @@ class BaseHeightRewardCfg(RewardTermCfg):
 
 **如何定义**：一个终止 term 是 `TerminationTermCfg` 子类，`__call__(env)` 返回
 `TerminationTerm(dispatch, *args, metric_names=(...))`。dispatch 形如
-`def xxx_termination(ctx, *args) -> bool`；`metric_names` 可选，把 dispatch 写入
-`ctx.metrics` 的每环境量登记为可读指标。
+`def xxx_termination(ctx, *args) -> torch.Tensor`（每环境一个布尔掩码）；
+`metric_names` 可选，把 dispatch 写入 `ctx.metrics` 的每环境量登记为可读指标。
 
 ```python
-@dispatch
-def bad_orientation_termination(ctx: ManagerContext, threshold: np.float32) -> bool:
-    ...
+def bad_orientation_termination(ctx: ManagerContext, threshold: float) -> torch.Tensor:
+    tilt_sq = ...  # 各环境基座倾斜角的平方
+    ctx.metrics["base_tilt"][:, 0] = tilt_sq
     return tilt_sq > threshold * threshold
 
 
@@ -182,7 +195,7 @@ class BadOrientationTerminationCfg(TerminationTermCfg):
 
     def __call__(self, env: ManagerEnv) -> TerminationTerm:
         return TerminationTerm(bad_orientation_termination,
-                               np.float32(self.threshold),
+                               self.threshold,
                                metric_names=("base_tilt",))
 ```
 
@@ -197,9 +210,10 @@ class BadOrientationTerminationCfg(TerminationTermCfg):
 dispatch 计算写入值。
 
 ```python
-@dispatch
-def _reset_body_pos(ctx: ManagerContext, sim_writes, spawn, noise) -> None:
-    position = sim_writes["position"]
+def _reset_body_pos(ctx: ManagerContext, sim_writes: Map[torch.Tensor],
+                    spawn: tuple[float, float, float],
+                    noise: tuple[float, float, float]) -> None:
+    position = sim_writes["position"]  # 本次 reset 的紧凑 (K, ...) 行
     ...  # 写入带随机化的初始位置
 
 
@@ -211,8 +225,8 @@ class BodyPosResetCfg(ResetTermCfg):
     def __call__(self, env: ManagerEnv) -> ResetTerm:
         return ResetTerm(
             _reset_body_pos,
-            tuple(np.asarray(self.spawn, dtype=np.float32)),
-            tuple(np.asarray(self.noise, dtype=np.float32)),
+            self.spawn,
+            self.noise,
             writes={"position": BodyPositionWrite((base_link,))},
         )
 ```
@@ -220,19 +234,18 @@ class BodyPosResetCfg(ResetTermCfg):
 ## 命令项（commands）
 
 **做什么**：维护命令状态并在每个周期推进——速度指令采样、curriculum、参考动作推进等。
-命令项还产出每环境指标：dispatch 内写入 `ctx.metrics["name"]`，即可通过
-`env.state.metrics` / `env.metrics` 读取。大多数任务直接复用内置命令即可，
-不需要自定义。
+命令项还产出指标：用 `metric(name=...)` 声明 tensor 字段（批级指标用
+`metric(name=..., scalar=True)`），即可通过 `env.state.metrics` / `env.metrics` 读取。
+大多数任务直接复用内置命令即可，不需要自定义。
 
 **如何定义**：一个命令 term 是 `CommandCfg` 子类，`__call__(env)` 返回
-`@kernel_data` 的 `CommandTerm` 子类，实现四个回调：
+plain frozen dataclass 的 `CommandTerm` 子类，实现三个实例方法回调：
 
 | 回调                     | 执行位置          | 职责                                       |
 | ------------------------ | ----------------- | ------------------------------------------ |
 | `update(ctx)`            | evaluate kernel   | 更新本周期派生命令数据                     |
 | `advance(ctx)`           | transition kernel | 推进持久命令状态；置 `ctx.sim_reset_requested` 可请求该行在步骤末尾重算仿真状态 |
-| `reset(ctx)`             | 主机侧            | 为重置的环境行准备数据（含终止统计）       |
-| `reset_env(ctx)`         | reset kernel      | 重置持久命令状态                           |
+| `reset(ctx)`             | reset kernel      | 重置持久命令状态；`ctx.reset_ids` 是本次 reset 的紧凑行，`ctx.reset_episode` 标记其中的回合重置，`ctx.terminated` 镜像最近一次转移的终止并集，供回合边界统计使用 |
 
 ## 查询（queries）
 
@@ -256,8 +269,8 @@ def __post_init__(self) -> None:
 
 ## 注册与变体
 
-- **配置先于环境类注册**；registry 根据类继承关系推断前端类型
-  （`ManagerEnv` 与 `DirectEnv` 同属 `"np"` 数据后端），不要手动指定。
+- **配置先于环境类注册**；registry 校验环境类继承 `ArrayEnv` 前端基类
+  （`ManagerEnv` 或 `DirectEnv`），不要手动指定前端类型。
 - 配置 docstring 首行与 `zh_CN:` 行分别作为环境的英文、中文描述。
 - 同一环境的多个 preset 通过配置 factory 派生：子变体只覆写与共享配置的差异项
   （例如调低某个奖励权重）。

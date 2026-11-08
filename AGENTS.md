@@ -13,7 +13,7 @@ MotrixLab 是构建在 MotrixSim 仿真后端之上的强化学习框架，提�
 
 - `motrixlab`：提供统一 CLI `mxlab` 与跨组件可视化的应用集成包，默认安装 core、deploy、RL、builtin provider 与 MotrixSim 环境后端
 - `motrix_env_core`：backend 无关的环境框架、配置与机器人 registry
-- `motrix_env_motrixsim`：MotrixSim 仿真后端（SimBackend、scene compiler、renderer、torch frontend）
+- `motrix_env_motrixsim`：MotrixSim 仿真后端（SimBackend、scene compiler、renderer）
 - `motrix_env_mujoco`：仅用于编译的 MuJoCo scene 后端
 - `motrix_robots`：可复用机器人配置、默认姿态与模型资产；仅依赖 core。框架代码从定义模块导入模型类，例如 `motrix_robots.unitree`
 - `motrix_envs`：内置环境与任务资产
@@ -76,18 +76,21 @@ README 从宏观上说明 package：它提供什么能力、如何安装与使�
 框架级契约（Runtime/ControlSession/Controller 语义、rollout result 口径等）只在一处维护——对应框架 package 的
 README 或教程；插件与任务 package 的 README 不重复这些内容，只描述本 package 特有的部分。
 
-### Manager Kernel 入口方法
+### Manager term 入口方法
 
-Manager fused-kernel 入口方法必须用 `@dispatch` 装饰，绝不使用 `@njit`——Numba 编译、缓存和内联由 manager
-编译器统一管理。`@njit` 只用于被编译 kernel 调用的独立 Numba 兼容 helper。哪些方法是 kernel 入口、哪些是普通
-Python 方法，由 manager 运行时契约定义（`wiki/design/manager/runtime.md`）。
+Manager 数值 term 是普通 Python 函数，契约由签名注解表达并由 resolver 校验（首参数注解
+`ManagerContext`，observation 的 `out` 注解 `torch.Tensor`，reset 的 `sim_writes` 注解
+`Map[torch.Tensor]`）；数值执行由 Torch 执行器按整批张量调度。kernel_data 类上的钩子方法
+（`ActionState.current/previous`、CommandTerm 的 `update`/`advance`/`reset`——
+实例方法，签名为 `(self, ctx)`）由 resolver 按方法名与签名注解解析。运行时
+契约见 `wiki/design/manager/runtime.md`。
 
 ### 环境配置与注册规范
 
 - 环境配置使用 `@configclass`，并继承与运行时一致的配置基类：直接工作流继承 `DirectEnvCfg`，Manager 工作流继承 `ManagerBasedEnvCfg`；其他公共配置基类不得重复继承 `EnvCfg`。
 - 环境配置通过 `@registry.envcfg("name")` 注册。注册对象可以是配置类，也可以是返回具体 `EnvCfg` 子类的零参数 factory；factory 必须提供返回类型标注。
 - 配置注册必须先于环境类注册。环境类通过 `@registry.env("name")` 或等价的 `registry.env("name")(EnvClass)` 注册。
-- 环境类必须继承受支持的运行时基类：直接 NumPy 工作流使用 `DirectEnv`，Manager 工作流使用 `ManagerEnv`，Torch 工作流使用 `TorchEnv`。registry 根据类继承关系推断前端类型，不要手动指定 backend 类型。
+- 环境类必须继承受支持的运行时基类：直接工作流使用 `DirectEnv`，Manager 工作流使用 `ManagerEnv`（均为 torch 张量前端）。registry 根据类继承关系推断前端类型，不要手动指定 backend 类型。
 - Simulator backend 是配置级别的字符串选择：`EnvCfg.backend` 使用 registry 中的 backend 名称；`None` 使用默认 backend。Direct/Manager 环境通过 `self.sim` 使用 backend-neutral `SimBackend` 接口，不得让具体 simulator 类型跨越 core 边界。
 
 ### RL 任务配置规范
@@ -238,10 +241,10 @@ tensorboard --logdir runs/{env-name}
 ### 测试
 
 ```bash
-# 与 PR CI 一致的快速测试（不执行集成、慢速或 Numba 编译测试）
-python -m pytest -m "not slow and not integration and not numba"
-# CPU 编译回归、跨模块/进程集成分别执行
-python -m pytest -m "not integration and (slow or numba)"
+# 与 PR CI 一致的快速测试（不执行集成、慢速测试）
+python -m pytest -m "not slow and not integration"
+# 慢速回归、跨模块/进程集成分别执行
+python -m pytest -m "not integration and slow"
 python -m pytest -m integration
 ```
 

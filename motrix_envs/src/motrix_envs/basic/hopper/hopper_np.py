@@ -3,10 +3,10 @@
 
 import gymnasium as gym
 import numpy as np
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
-from motrix_env_core.direct import reward
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
@@ -18,6 +18,7 @@ from motrix_env_core.sim import (
     SensorValuesQuery,
 )
 from motrix_env_core.sim.write import BodyJointVelocityWrite, CtrlTargetsWrite
+from motrix_env_core.torch import reward
 from motrix_envs.basic.hopper.cfg import HopperStandCfg
 
 _SIM_DATA_QUERIES = {
@@ -81,9 +82,8 @@ class HopperEnv(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions, state: ArrayEnvState):
-        ctrl = self._ctrl_writes.buffer("ctrl")
-        ctrl[:] = np.asarray(actions, dtype=np.float32)
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
+        self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
         return state
 
@@ -93,19 +93,19 @@ class HopperEnv(DirectEnv):
         qvel = inputs["dof_vel"]
         num_env = qpos.shape[0]
 
-        toe = np.log1p(inputs["touch_toe"].reshape(num_env, -1)[:, 0])
-        heel = np.log1p(inputs["touch_heel"].reshape(num_env, -1)[:, 0])
+        toe = torch.log1p(inputs["touch_toe"].reshape(num_env, -1)[:, 0])
+        heel = torch.log1p(inputs["touch_heel"].reshape(num_env, -1)[:, 0])
 
-        touch = np.stack([toe, heel], axis=-1)  # shape -> (num_env, 2)
-        obs = np.concatenate([qpos, qvel, touch], axis=-1)
+        touch = torch.stack([toe, heel], dim=-1)  # shape -> (num_env, 2)
+        obs = torch.cat([qpos, qvel, touch], dim=-1)
         return state.replace(obs=obs)
 
     def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
         self.sim_data.execute()
         inputs = self.sim_data
 
-        toe = np.log1p(inputs["touch_toe"][:, 0])
-        heel = np.log1p(inputs["touch_heel"][:, 0])
+        toe = torch.log1p(inputs["touch_toe"][:, 0])
+        heel = torch.log1p(inputs["touch_heel"][:, 0])
 
         # === physical values ===
         torso_pos = inputs["torso_pos"]
@@ -119,66 +119,75 @@ class HopperEnv(DirectEnv):
         dof_vel = inputs["dof_vel"]
 
         # === terminated ===
-        over_speed = np.sum(np.square(dof_vel[:, 4:7]), axis=-1) > 1e8
+        over_speed = torch.sum(torch.square(dof_vel[:, 4:7]), dim=-1) > 1e8
         terminated = (
-            np.isnan(dof_pos).any(axis=-1)
-            | np.isnan(dof_vel).any(axis=-1)
-            | np.isnan(inputs["touch_toe"][:, 0])
-            | np.isnan(inputs["touch_heel"][:, 0])
+            dof_pos.isnan().any(dim=-1)
+            | dof_vel.isnan().any(dim=-1)
+            | inputs["touch_toe"][:, 0].isnan()
+            | inputs["touch_heel"][:, 0].isnan()
         )
         terminated |= over_speed
 
-        standing = reward.tolerance(
-            torso_height,
-            bounds=(self._stand_height, 2.0),
-            margin=self._stand_height * 0.5,
+        standing = torch.as_tensor(
+            reward.tolerance(
+                torso_height,
+                bounds=(self._stand_height, 2.0),
+                margin=self._stand_height * 0.5,
+            ),
+            dtype=torch.float32,
         )
 
         if self._hop_speed > 0.0:
-            hopping = reward.tolerance(
-                speed,
-                bounds=(self._hop_speed * 0.3, float("inf")),
-                margin=self._hop_speed * 0.3,
-                value_at_margin=0.0,
-                sigmoid="linear",
+            hopping = torch.as_tensor(
+                reward.tolerance(
+                    speed,
+                    bounds=(self._hop_speed * 0.3, float("inf")),
+                    margin=self._hop_speed * 0.3,
+                    value_at_margin=0.0,
+                    sigmoid="linear",
+                ),
+                dtype=torch.float32,
             )
 
-            leg_vel = np.linalg.norm(dof_vel[:, 4:7], axis=-1)
-            leg_bonus = np.tanh(leg_vel * 0.3) * 0.2 * standing
+            leg_vel = torch.linalg.norm(dof_vel[:, 4:7], dim=-1)
+            leg_bonus = torch.tanh(leg_vel * 0.3) * 0.2 * standing
 
             knee_vel = dof_vel[:, 5]
-            extend_reward = np.maximum(knee_vel, 0) * 0.2 * standing
+            extend_reward = torch.clamp(knee_vel, min=0.0) * 0.2 * standing
 
-            stand_condition = (torso_height > self._stand_height * 0.8).astype(np.float32)
+            stand_condition = (torso_height > self._stand_height * 0.8).float()
             effective_hop_reward = hopping * stand_condition
 
             contact_strength = toe + heel
-            contact_reward = np.clip(contact_strength, 0.0, 1.0) * 0.1 * standing
+            contact_reward = torch.clamp(contact_strength, 0.0, 1.0) * 0.1 * standing
 
             rwd = standing * 0.8 + effective_hop_reward * 0.8 + leg_bonus * 0.5 + extend_reward + contact_reward
             state.reward_terms = {"stand": standing, "hop": effective_hop_reward, "total": rwd}
-            if np.average(rwd) > 1000:
+            if rwd.mean() > 1000:
                 print(
                     "standing",
-                    np.sum(standing),
+                    torch.sum(standing),
                     "effective_hop_reward",
-                    np.sum(effective_hop_reward),
+                    torch.sum(effective_hop_reward),
                     "leg_bonus",
-                    np.sum(leg_bonus),
+                    torch.sum(leg_bonus),
                     "extend_reward",
-                    np.sum(extend_reward),
+                    torch.sum(extend_reward),
                     "contact_reward",
-                    np.sum(contact_reward),
+                    torch.sum(contact_reward),
                 )
 
         else:
-            control_magnitude = np.linalg.norm(inputs["actuator_ctrls"], axis=-1)
-            small_control = reward.tolerance(
-                control_magnitude,
-                bounds=(0, 1),
-                margin=1,
-                value_at_margin=0,
-                sigmoid="quadratic",
+            control_magnitude = torch.linalg.norm(inputs["actuator_ctrls"], dim=-1)
+            small_control = torch.as_tensor(
+                reward.tolerance(
+                    control_magnitude,
+                    bounds=(0, 1),
+                    margin=1,
+                    value_at_margin=0,
+                    sigmoid="quadratic",
+                ),
+                dtype=torch.float32,
             )
             small_control = (small_control + 4) / 5
 
@@ -187,28 +196,28 @@ class HopperEnv(DirectEnv):
 
         rwd[terminated] = 0.0
 
-        return state.replace(
-            reward=rwd,
-            terminated=terminated,
-        )
+        state.reward[:] = rwd
+        state.terminated[:] = terminated
+        return state
 
-    def reset(self, env_ids: np.ndarray) -> None:
-        num_reset = len(env_ids)
+    def reset(self, env_ids: torch.Tensor) -> None:
+        num_reset = env_ids.numel()
 
-        dof_pos = np.zeros((num_reset, self._reset_position.shape[1]))
+        dof_pos = torch.zeros((num_reset, self._reset_position.shape[1]), dtype=torch.float32)
 
         dof_pos[:, 2] = 0
 
         if self._reset_position.shape[1] > 3:
-            dof_pos[:, 3:] = np.random.uniform(
-                low=self._joint_pos_lower[3:],
-                high=self._joint_pos_upper[3:],
-                size=(num_reset, self._reset_position.shape[1] - 3),
+            lower = self._joint_pos_lower[3:]
+            upper = self._joint_pos_upper[3:]
+            dof_pos[:, 3:] = (
+                torch.rand((num_reset, self._reset_position.shape[1] - 3), dtype=torch.float32) * (upper - lower)
+                + lower
             )
 
-        dof_vel = np.zeros((num_reset, self._reset_velocity.shape[1]), dtype=np.float32)
+        dof_vel = torch.zeros((num_reset, self._reset_velocity.shape[1]), dtype=torch.float32)
 
-        self._reset_position[env_ids] = np.asarray(dof_pos, np.float32)
+        self._reset_position[env_ids] = dof_pos
         self._reset_velocity[env_ids] = dof_vel
         self._reset_program.execute(env_ids)
-        self.sim_data.execute(np.asarray(env_ids, np.int64))
+        self.sim_data.execute(env_ids)

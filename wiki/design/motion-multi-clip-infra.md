@@ -34,7 +34,7 @@ main 上唯一的 motion 消费者是 `WbtMotionCommand`，"单 clip"假设同�
 
 ### 数据平面：`MotionLibrary`
 
-位置 `motrix_envs/src/motrix_envs/motion/`，kernel_data 纯数值对象。
+位置 `motrix_envs/src/motrix_envs/motion/`，kernel-data dataclass 纯数值对象（torch tensor 字段）。
 
 - 输入：有序的 MotrixMotion npz v1 文件列表（cfg 显式列表或目录展开，顺序固定可复现）；
 - 逐文件：`MotrixMotion` 加载校验（schema、fps、finite、单位四元数）→ 按任务 joint/body 顺序重排 →
@@ -84,7 +84,7 @@ kernel 编译按声明的通道键集合区分）；未声明的通道不装载�
 ## 验收门
 
 - **WBT 行为不变**：同 seed 下起始帧抽样序列与 main 逐位一致（`g1-wbt-dance` 回归）；
-- **单 clip 等价**：`frame_clip_end ≡ T-1` 时泛化后的 advance/reset_env 与旧实现路径等价；
+- **单 clip 等价**：`frame_clip_end ≡ T-1` 时泛化后的 advance/reset 与旧实现路径等价；
 - 新增多 clip 单测：多文件 fixture 的边界/重排/通道装载/跨文件契约负向校验。
 
 ## 未来消费者示例（SONIC 类任务）

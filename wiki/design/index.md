@@ -29,8 +29,6 @@
   定义标准 dataclass 兼容的配置装饰器语义：直接声明可变容器与嵌套配置默认值、逐实例深拷贝隔离、显式 `field()` 优先，以及类型检查和 Hydra/OmegaConf 兼容契约。
 - [Scene / Robot 配置设计](./scene-model-config.md)
   使用字段式 `SceneAssetsCfg` 与 `SceneObjsCfg` 声明具名 asset 和有序 scene object，通过 `SceneVisualCfg` 配置全局视觉环境，并由可继承的 `StandardSceneCfg` 提供标准 skybox、地面、材质、贴图、haze 和方向光。
-- [G1 WBT 环境设计](./g1-wbt-env.md)
-  MotrixLab 中 G1 whole-body tracking 环境（direct `DirectEnv`，注册 `g1-29dof-wbt-largebox` / `g1-wbt-dance`）的设计：`WbtMotion` 数据加载与 name-based 状态映射、reset/step 时间推进、effort-scaled PD 控制、actor/critic observation、tracking reward、bad-tracking termination、adaptive timestep sampler、`motrix.fastsac` 执行拓扑切换与 play 变体。
 - [MotrixLab Motion NPZ Schema 设计](./motrixlab-motion-npz-schema.md)
   MotrixLab 自己的 WBT `.npz` 动作文件格式 v1：在 BeyondMimic 原生 schema 上加 `schema_version / joint_names / body_names / num_frames` 与 `ext_*` 扩展槽位，四元数约定切到 xyzw 与 MotrixSim 内部 API 对齐。提供通用 `MotrixMotion` loader、Holosoma/BeyondMimic → MotrixLab 一次性 converter、`scripts/motion/replay.py` 通用化。
 - [多 Motion Clip 训练基础设施设计](./motion-multi-clip-infra.md)

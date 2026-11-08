@@ -442,7 +442,7 @@ class Trainer(TrainerBase):
                 p.start()
 
         # -------------------------------------------------- startup panel + barrier
-        # Workers boot at different speeds (env/numba compile vs CUDA init and
+        # Workers boot at different speeds (env/kernel compile vs CUDA init and
         # the DDP rendezvous). The parent tracks readiness on a live table and
         # releases everyone at once, so stepping starts in lockstep. A worker
         # crash or the boot timeout aborts via the shared stop flag.
@@ -578,6 +578,7 @@ class Trainer(TrainerBase):
                             process_name = None
                         if process_name is not None:
                             control.set_stop()
+                            _record_error_trace(process_name, traceback_text)
                             abort_reason = f"worker {process_name} failed after startup"
                             break
                         if interactive:
