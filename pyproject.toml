@@ -34,7 +34,7 @@ docs = [
     "sphinxcontrib-video",
     "sphinx-togglebutton",
     "sphinx-design",
-    "tensorboard==2.20.0",
+    "tensorboard==2.21.0",
 ]
 # GPU profiles are owned by the installable RL package. Keep the workspace
 # installation entry points without duplicating versions or index routing.
