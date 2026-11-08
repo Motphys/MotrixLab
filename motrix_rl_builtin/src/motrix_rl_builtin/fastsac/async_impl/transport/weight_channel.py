@@ -50,10 +50,11 @@ import torch
 import torch.multiprocessing  # noqa: F401  registers CUDA-IPC reducers in every importing process
 from torch import nn
 
-from motrix_rl_builtin.fastsac.async_impl.transport.common import _NORM_KEYS, _shared, flatten_params, load_flat_params
+from motrix_rl.transport.common import _shared, flatten_params, load_flat_params
 
 # obs-normalizer stat buffers that the collector needs (read-only) to reproduce
 # the sync ``act()`` path (normalize with update=False, see agent.act).
+_NORM_KEYS = ("_mean", "_std", "_var", "count")
 
 
 class WeightChannelShared:

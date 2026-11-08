@@ -3,24 +3,25 @@
 
 """CUDA-IPC transition ring: SPSC ring with device-resident slots.
 
-Used when collector inference and the learner share one GPU. The six
-transition fields are fused into a single ``(capacity, num_envs, feat)``
-float32 device tensor (``feat = obs_dim + critic_obs_dim + act_dim + 3``;
-reward / done / truncation ride as floats, with 0/1 exactly representable and
-converted back to int64 by the replay buffer's ``copy_``). This lets the
-collector publish one env-step batch with a **single** H2D copy from one
-pinned staging buffer, and lets the learner ingest with pure D2D strided
-copies — no host transfer stays on the learner's critical path.
+Used when collector inference and the learner share one GPU. All schema
+fields are **fused** into a single ``(capacity, num_envs, feat)`` float32
+device tensor (``feat = schema.feature_width``): integer and boolean fields
+ride as floats (0/1 exactly representable; larger integers are converted
+back losslessly by the consumer's ``copy_`` only while they stay
+float32-exact — a schema carrying wide counters should use the host ring).
+Fusion lets the collector publish one env-step batch with a **single** H2D
+copy from one pinned staging buffer, and lets the learner ingest with pure
+D2D strided copies — no host transfer stays on the learner's critical path.
 
 Ownership and handoff
 ~~~~~~~~~~~~~~~~~~~~~
 The owner (learner process, which owns the CUDA context) allocates the fused
 slot tensor and must keep it alive for the process lifetime. The tensor is
-shipped to the collector through the existing one-shot ``slot_queue``
-handshake — ``torch.multiprocessing`` registers CUDA-IPC reducers for CUDA
-tensors, so the queue transfer maps the same device memory into the collector
-process. The receiver constructs its endpoint from the arrived tensor. Both
-sides share the parent-created host :class:`~.ring.RingCursors`.
+shipped to the collector through a one-shot ``slot_queue`` handshake —
+``torch.multiprocessing`` registers CUDA-IPC reducers for CUDA tensors, so
+the queue transfer maps the same device memory into the collector process.
+The receiver constructs its endpoint from the arrived tensor. Both sides
+share the parent-created host :class:`~motrix_rl.transport.ring.RingCursors`.
 
 Publish ordering (the correctness core)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -31,11 +32,13 @@ events:
 
 * producer: after the slot's H2D is enqueued, record a per-slot event;
   ``_write`` advances only up to the boundary of completed events (lazily
-  flushed by :meth:`push` / :meth:`is_full`). The single pinned staging
-  buffer is likewise not reused until the previous H2D's event completed.
+  flushed by :meth:`GpuIpcTransitionRing.push` / :meth:`GpuIpcTransitionRing.is_full`).
+  The single pinned staging buffer is likewise not reused until the previous
+  H2D's event completed.
 * consumer: ``commit_reads`` records an event after the run's D2D reads are
   enqueued; ``_read`` advances only up to the boundary of completed events
-  (lazily flushed by :meth:`read_span` / :meth:`has_next` / :meth:`size`).
+  (lazily flushed by :meth:`GpuIpcTransitionRing.read_span` /
+  :meth:`GpuIpcTransitionRing.has_next` / :meth:`GpuIpcTransitionRing.size`).
 
 Both cursor stores remain single-writer aligned int64 host stores, so the
 host-side protocol of the shared-memory ring carries over unchanged.
@@ -44,10 +47,12 @@ host-side protocol of the shared-memory ring carries over unchanged.
 from __future__ import annotations
 
 from collections import deque, namedtuple
+from collections.abc import Mapping
 
 import torch
 
-from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsPayload, FinalObsStorage, RingCursors
+from motrix_rl.transport.ring import RingCursors, SlotPayloadStore
+from motrix_rl.transport.schema import TransitionSchema
 
 # A slot-boundary event and the cursor value it certifies once complete:
 # the write (or read) cursor value the entry advances the shared cursor to
@@ -55,7 +60,7 @@ from motrix_rl_builtin.fastsac.async_impl.transport.ring import FinalObsPayload,
 _PendingEvent = namedtuple("_PendingEvent", ["cursor", "event"])
 
 
-class IpcTransitionRing:
+class GpuIpcTransitionRing:
     """SPSC transition ring backed by one fused CUDA-IPC device tensor.
 
     The producer endpoint is built in the collector process from the shipped
@@ -64,39 +69,41 @@ class IpcTransitionRing:
 
     producer: :meth:`is_full`, :meth:`push`
     consumer: :meth:`has_next`, :meth:`read_span`, :meth:`commit_reads`
+
+    Field layout along the fused last dimension follows ``schema.fields``
+    order; vector fields keep their shape, multi-dim fields come back
+    flattened (``(count, num_envs, prod)``).
     """
 
     def __init__(
         self,
         cursors: RingCursors,
         slots: torch.Tensor,
+        schema: TransitionSchema,
         capacity: int,
         num_envs: int,
-        obs_dim: int,
-        critic_obs_dim: int,
-        act_dim: int,
-        final_obs_store: FinalObsStorage | None = None,
+        payload_store: SlotPayloadStore | None = None,
     ):
         if not slots.is_cuda:
             raise ValueError(f"IPC transition ring requires CUDA slots, got device {slots.device}")
-        expected = (capacity, num_envs, obs_dim + critic_obs_dim + act_dim + 3)
+        expected = (capacity, num_envs, schema.feature_width)
         if tuple(slots.shape) != expected:
             raise ValueError(f"IPC slot tensor shape {tuple(slots.shape)} does not match {expected}")
+        if slots.dtype != torch.float32:
+            raise ValueError(f"IPC slots must be float32, got {slots.dtype}")
         self.cursors = cursors
         self.slots = slots
+        self.schema = schema
         self.capacity = capacity
         self.num_envs = num_envs
-        self.obs_dim = obs_dim
-        self.critic_obs_dim = critic_obs_dim
-        self.act_dim = act_dim
-        self.final_obs_store = final_obs_store
-        # Field layout along the fused last dimension.
-        self._o0 = 0
-        self._o1 = obs_dim
-        self._o2 = obs_dim + critic_obs_dim
-        self._o3 = self._o2 + act_dim
-        self._o4 = self._o3 + 1  # reward
-        self._o5 = self._o4 + 1  # done
+        self.payload_store = payload_store
+        # Field layout along the fused last dimension, in schema order.
+        self._offsets: dict[str, tuple[int, int]] = {}
+        offset = 0
+        for field in schema.fields:
+            width = field.per_env_numel
+            self._offsets[field.name] = (offset, offset + width)
+            offset += width
         # Endpoint-local issued counts. The shared cursors hold only the
         # event-proven (published) values, which LAG the issued counts while
         # copies are in flight — so slot indexing and publish targets must come
@@ -111,7 +118,7 @@ class IpcTransitionRing:
         # Consumer-side: events of committed-but-not-yet-advanced reads.
         self._read_events: deque[_PendingEvent] = deque()
         # Single pinned staging reused by every push; guarded by _staging_event.
-        self._staging = torch.empty((num_envs, expected[2]), dtype=torch.float32, pin_memory=True)
+        self._staging = torch.empty((num_envs, schema.feature_width), dtype=torch.float32, pin_memory=True)
         self._staging_event = torch.cuda.Event()
         self._staging_used = False
 
@@ -156,47 +163,38 @@ class IpcTransitionRing:
         completed_reads = self.read_completed_count
         if self._write_issued_count - completed_reads >= self.capacity:
             return True
-        store = self.final_obs_store
+        store = self.payload_store
         return store is not None and not store.can_write_rows(self.num_envs, completed_reads)
 
-    def push(
-        self,
-        obs: torch.Tensor,
-        critic_obs: torch.Tensor,
-        actions: torch.Tensor,
-        rewards: torch.Tensor,
-        dones: torch.Tensor,
-        truncations: torch.Tensor,
-        final_obs: FinalObsPayload | None = None,
-    ) -> bool:
+    def push(self, batch: Mapping[str, torch.Tensor], payload=None) -> bool:
         """Publish one env-step batch into the next slot. Returns False if full.
 
-        Inputs are the collector's CPU tensors (``dones``/``truncations`` may
-        be any numeric dtype; they are stored as 0/1 floats). One fused H2D
-        lands the whole slot; the cursor publishes lazily once it completes.
+        ``batch`` maps every schema field name to one of the collector's CPU
+        tensors (integer / boolean fields may be any numeric dtype; they are
+        stored as floats). One fused H2D lands the whole slot; the cursor
+        publishes lazily once it completes.
         """
+        if set(batch) != set(self._offsets):
+            raise ValueError(f"transition batch fields {sorted(batch)} do not match the schema {list(self._offsets)}")
         if self.is_full():
             return False
-        store = self.final_obs_store
-        if final_obs is not None and store is None:
-            raise ValueError("final payload requires a slot final-observation store")
-        if store is not None and not store.can_write(final_obs, self.cursors.read_completed_count):
+        store = self.payload_store
+        if payload is not None and store is None:
+            raise ValueError("slot payload requires a payload store")
+        if store is not None and not store.can_write(payload, self.cursors.read_completed_count):
             return False
         if self._staging_used and not self._staging_event.query():
             # The previous H2D still reads the staging buffer; it completes in
             # well under one env step, so this is normally a no-op wait.
             self._staging_event.synchronize()
         s = self._staging
-        s[:, self._o0 : self._o1].copy_(obs)
-        s[:, self._o1 : self._o2].copy_(critic_obs)
-        s[:, self._o2 : self._o3].copy_(actions)
-        s[:, self._o3 : self._o4].copy_(rewards.reshape(-1, 1))
-        s[:, self._o4 : self._o5].copy_(dones.reshape(-1, 1))
-        s[:, self._o5 :].copy_(truncations.reshape(-1, 1))
+        for name, value in batch.items():
+            begin, end = self._offsets[name]
+            s[:, begin:end].copy_(value.reshape(self.num_envs, -1))
         issued = self._write_issued_count
         slot = issued % self.capacity
         if store is not None:
-            store.write(issued, final_obs)
+            store.write(issued, payload)
         stream = torch.cuda.current_stream(self.slots.device)
         self.slots[slot].copy_(s, non_blocking=True)
         event = torch.cuda.Event()
@@ -220,35 +218,37 @@ class IpcTransitionRing:
         self._flush_reads()
         return self.write_completed_count > self._read_issued_count
 
-    def read_span(self) -> tuple[int, tuple[torch.Tensor, ...]]:
+    def read_span(self) -> tuple[int, dict[str, torch.Tensor]]:
         """Longest contiguous unread run, as ``(count, field_views)``.
 
         The views are strided slices of the fused slot tensor — device tensors
-        of shape ``(count, num_envs, dim)`` (``(count, num_envs)`` for the
-        scalar fields). Their data is complete: the producer only publishes a
-        slot after its H2D event completed. Returns ``(0, ())`` when empty.
+        keyed by field name. Vector fields have shape ``(count, num_envs,
+        dim)``; scalar fields ``(count, num_envs)``; multi-dim fields come
+        back flattened (see the class docstring). Their data is complete: the
+        producer only publishes a slot after its H2D event completed. Returns
+        ``(0, {})`` when empty.
         """
         self._flush_reads()
         available = self.write_completed_count - self._read_issued_count
         if available <= 0:
-            return 0, ()
+            return 0, {}
         slot = self._read_issued_count % self.capacity
         count = min(available, self.capacity - slot)
         run = self.slots[slot : slot + count]
-        return count, (
-            run[:, :, self._o0 : self._o1],
-            run[:, :, self._o1 : self._o2],
-            run[:, :, self._o2 : self._o3],
-            run[:, :, self._o3],
-            run[:, :, self._o4],
-            run[:, :, self._o5],
-        )
+        views = {}
+        for field in self.schema.fields:
+            begin, end = self._offsets[field.name]
+            if field.per_env_shape == ():
+                views[field.name] = run[:, :, begin]
+            else:
+                views[field.name] = run[:, :, begin:end]
+        return count, views
 
-    def read_final_span(self, count: int) -> list[FinalObsPayload | None]:
+    def read_payload_span(self, count: int) -> list:
         """Copy host payloads belonging to the next issued read span."""
-        if self.final_obs_store is None:
+        if self.payload_store is None:
             return [None] * count
-        return self.final_obs_store.read(self._read_issued_count, count)
+        return self.payload_store.read(self._read_issued_count, count)
 
     def commit_reads(self, n: int) -> None:
         """Release ``n`` slots of a consumed run once their reads completed.

@@ -19,10 +19,11 @@ import pytest
 import torch
 from fastsac_async_mocks import make_mock_learner
 from motrix_rl_builtin.fastsac.async_impl.learner import DrainStaging
-from motrix_rl_builtin.fastsac.async_impl.transport.ring import (
+from motrix_rl_builtin.fastsac.async_impl.transport import (
     FinalObsPayload,
     FinalObsStorage,
-    SharedTransitionRing,
+    HostTransitionRing,
+    fastsac_transition_schema,
 )
 from motrix_rl_builtin.fastsac.buffer import SimpleReplayBuffer
 from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap
@@ -161,7 +162,8 @@ def test_buffer_without_final_obs_bootstrap_unchanged():
 
 
 def _ring(capacity=4, num_envs=3):
-    return SharedTransitionRing(capacity, num_envs, 2, 3, 1, final_obs_store=FinalObsStorage(capacity, num_envs, 2, 3))
+    schema = fastsac_transition_schema(2, 3, 1)
+    return HostTransitionRing(schema, capacity, num_envs, payload_store=FinalObsStorage(capacity, num_envs, 2, 3))
 
 
 def _push(ring, tag, ids):
@@ -172,31 +174,33 @@ def _push(ring, tag, ids):
             torch.tensor(ids), torch.full((len(ids), 2), float(tag)), torch.full((len(ids), 3), float(tag + 100))
         )
     return ring.push(
-        torch.full((n, 2), float(tag)),
-        torch.full((n, 3), float(tag)),
-        torch.zeros(n, 1),
-        torch.zeros(n),
-        torch.zeros(n, dtype=torch.long),
-        torch.ones(n, dtype=torch.long),
-        final_obs=payload,
+        {
+            "obs": torch.full((n, 2), float(tag)),
+            "critic_obs": torch.full((n, 3), float(tag)),
+            "actions": torch.zeros(n, 1),
+            "rewards": torch.zeros(n),
+            "dones": torch.zeros(n, dtype=torch.long),
+            "truncations": torch.ones(n, dtype=torch.long),
+        },
+        payload,
     )
 
 
 def test_sparse_capacity_backpressure_is_atomic_and_acknowledgement_bound():
     ring = _ring(capacity=16)
-    batches = ring.final_obs_store.capacity // ring.num_envs
+    batches = ring.payload_store.capacity // ring.num_envs
     ids = list(range(ring.num_envs))
     for tag in range(1, batches + 1):
         assert not ring.is_full()
         assert _push(ring, tag, ids)
     count, fields = ring.read_span()
     assert count == batches
-    payloads = ring.read_final_span(count)
+    payloads = ring.read_payload_span(count)
     assert ring.size() < ring.capacity  # transition slots remain available
     assert ring.is_full()
     assert not _push(ring, batches + 1, [0])
     assert ring.write_completed_count == batches
-    torch.testing.assert_close(fields[0][:, 0, 0], torch.arange(1, batches + 1, dtype=torch.float32))
+    torch.testing.assert_close(fields["obs"][:, 0, 0], torch.arange(1, batches + 1, dtype=torch.float32))
     # Reading/copying payloads does not release the rows; only acknowledgement does.
     assert ring.is_full()
     ring.commit_reads(1)
@@ -211,17 +215,17 @@ def test_sparse_capacity_backpressure_is_atomic_and_acknowledgement_bound():
 
 def test_sparse_pre_step_gate_reserves_rows_for_every_environment():
     ring = _ring(capacity=16)
-    used = ring.final_obs_store.capacity - ring.num_envs + 1
+    used = ring.payload_store.capacity - ring.num_envs + 1
     for tag in range(used):
         assert not ring.is_full()
         assert _push(ring, tag, [0])
-    store = ring.final_obs_store
+    store = ring.payload_store
     assert ring.size() < ring.capacity
     assert store.can_write_rows(1, ring.read_completed_count)
     assert not store.can_write_rows(ring.num_envs, ring.read_completed_count)
     assert ring.is_full()  # a sparse next payload might fit, but a full one would not
     count, _ = ring.read_span()
-    ring.read_final_span(count)
+    ring.read_payload_span(count)
     assert ring.is_full()
     ring.commit_reads(1)
     assert store.can_write_rows(ring.num_envs, ring.read_completed_count)
@@ -236,8 +240,8 @@ def test_slot_and_sparse_row_wrap_keep_payload_alignment():
         assert _push(ring, tag, ids)
         count, fields = ring.read_span()
         assert count == 1
-        payload = ring.read_final_span(count)[0]
-        assert float(fields[0][0, 0, 0]) == tag
+        payload = ring.read_payload_span(count)[0]
+        assert float(fields["obs"][0, 0, 0]) == tag
         if ids:
             assert payload.env_ids.tolist() == ids
             torch.testing.assert_close(payload.obs, torch.full((len(ids), 2), float(tag)))
@@ -251,10 +255,10 @@ def test_main_ring_full_leaves_sparse_payload_unpublished():
     ring = _ring(capacity=1)
     assert _push(ring, 1, [])
     assert not _push(ring, 2, [0, 1, 2])
-    assert ring.read_final_span(1) == [None]
+    assert ring.read_payload_span(1) == [None]
     ring.commit_reads(1)
     assert _push(ring, 2, [0, 1, 2])
-    assert ring.read_final_span(1)[0].env_ids.tolist() == [0, 1, 2]
+    assert ring.read_payload_span(1)[0].env_ids.tolist() == [0, 1, 2]
 
 
 def _producer(ring, count):
@@ -284,11 +288,11 @@ def test_spawned_producer_and_slow_consumer_preserve_slot_payloads():
                 assert process.exitcode in (None, 0)
                 time.sleep(0.0001)
                 continue
-            payloads = ring.read_final_span(n)
+            payloads = ring.read_payload_span(n)
             time.sleep(0.001)  # allow producer to try reusing unacknowledged rows
             for offset, payload in enumerate(payloads):
                 tag = consumed + offset
-                assert float(fields[0][offset, 0, 0]) == tag
+                assert float(fields["obs"][offset, 0, 0]) == tag
                 assert payload.env_ids.tolist() == list(range(tag % ring.num_envs + 1))
                 assert payload.obs.eq(tag).all()
                 assert payload.critic_obs.eq(tag + 100).all()
@@ -365,7 +369,8 @@ def test_sample_uses_final_rows_after_pool_growth(n_steps):
 def test_final_payload_ingested_and_released_during_warmup(device):
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA unavailable")
-    ring = SharedTransitionRing(4, 2, 1, 1, 1, final_obs_store=FinalObsStorage(4, 2, 1, 1))
+    schema = fastsac_transition_schema(1, 1, 1)
+    ring = HostTransitionRing(schema, 4, 2, payload_store=FinalObsStorage(4, 2, 1, 1))
     learner = make_mock_learner([ring], [])
     learner.agent.device = torch.device(device)
     learner.agent.rb = SimpleReplayBuffer(2, 4, 1, 1, 1, device=device, final_obs_bootstrap=True)
@@ -376,13 +381,28 @@ def test_final_payload_ingested_and_released_during_warmup(device):
     learner.agent.cfg = SimpleNamespace(num_updates=4)
     learner.async_options.utd_mode = "strict"
     if device == "cuda":
-        learner._staging = DrainStaging(learner.agent.rb, 4, torch.device(device))
+        learner._staging = DrainStaging(
+            learner.agent.rb,
+            4,
+            torch.device(device),
+            tuple((f.name, f.per_env_shape, f.dtype) for f in ring.schema.fields),
+        )
     rows = torch.full((2, 1), 99.0)
     final = FinalObsPayload(torch.arange(2), rows, rows + 1)
     flags = torch.ones(2, dtype=torch.long)
     for step in range(12):
         obs = torch.full((2, 1), float(step))
-        assert ring.push(obs, obs, obs, torch.zeros(2), torch.zeros_like(flags), flags, final_obs=final)
+        assert ring.push(
+            {
+                "obs": obs,
+                "critic_obs": obs,
+                "actions": obs,
+                "rewards": torch.zeros(2),
+                "dones": torch.zeros_like(flags),
+                "truncations": flags,
+            },
+            final,
+        )
         assert learner.drain() == 1
         assert learner.maybe_train(step + 1) is False
         assert ring.size() == 0
