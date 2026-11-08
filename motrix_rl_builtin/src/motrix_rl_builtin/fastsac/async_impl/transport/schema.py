@@ -15,6 +15,11 @@ from __future__ import annotations
 
 import torch
 
+from motrix_rl.transport.inference_bundle import (
+    InferenceBundleSpec,
+    ModuleSection,
+    NormalizerSection,
+)
 from motrix_rl.transport.schema import TransitionField, TransitionSchema
 
 
@@ -29,4 +34,12 @@ def fastsac_transition_schema(obs_dim: int, critic_obs_dim: int, act_dim: int) -
             TransitionField("dones", (), torch.int64),
             TransitionField("truncations", (), torch.int64),
         )
+    )
+
+
+def fastsac_inference_bundle_spec(obs_dim: int, param_numel: int) -> InferenceBundleSpec:
+    """Build the FastSAC inference bundle spec: one actor module + one obs normalizer."""
+    return InferenceBundleSpec(
+        modules=(ModuleSection("actor", param_numel),),
+        normalizers=(NormalizerSection("obs", obs_dim),),
     )

@@ -19,8 +19,10 @@ Local submodules:
 * :mod:`.final_obs`      — the sparse per-slot final-observation store for
   auto-reset envs.
 * :mod:`.handshake`      — one-shot startup handshake queues.
-* :mod:`.weight_channel` — the seqlock weight channel (learner -> collector)
-  with host-shm and CUDA-IPC endpoint implementations.
+* the seqlock weight channel (learner -> collector) lives in
+  :mod:`motrix_rl.transport.weight_channel` with the other transport
+  primitives; the FastSAC bundle layout (actor + obs normalizer) is declared
+  in :mod:`.schema` via :func:`.fastsac_inference_bundle_spec`.
 """
 
 from motrix_rl.transport.common import (
@@ -30,15 +32,14 @@ from motrix_rl.transport.common import (
     load_flat_params,
 )
 from motrix_rl.transport.gpu_ipc_ring import GpuIpcTransitionRing
+from motrix_rl.transport.inference_bundle import (
+    InferenceBundleSpec,
+    ModuleSection,
+    NormalizerSection,
+)
 from motrix_rl.transport.ring import HostTransitionRing, RingCursors
 from motrix_rl.transport.schema import TransitionField, TransitionSchema
-from motrix_rl_builtin.fastsac.async_impl.transport.final_obs import (
-    FinalObsPayload,
-    FinalObsStorage,
-)
-from motrix_rl_builtin.fastsac.async_impl.transport.handshake import StartupHandshake
-from motrix_rl_builtin.fastsac.async_impl.transport.schema import fastsac_transition_schema
-from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import (
+from motrix_rl.transport.weight_channel import (
     GpuIpcWeightReceiver,
     GpuIpcWeightSender,
     HostWeightReceiver,
@@ -46,6 +47,16 @@ from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import (
     WeightChannelShared,
     WeightReceiver,
     WeightSender,
+    weight_receiver_for,
+)
+from motrix_rl_builtin.fastsac.async_impl.transport.final_obs import (
+    FinalObsPayload,
+    FinalObsStorage,
+)
+from motrix_rl_builtin.fastsac.async_impl.transport.handshake import StartupHandshake
+from motrix_rl_builtin.fastsac.async_impl.transport.schema import (
+    fastsac_inference_bundle_spec,
+    fastsac_transition_schema,
 )
 
 __all__ = [
@@ -59,6 +70,9 @@ __all__ = [
     "GpuIpcTransitionRing",
     "RingCursors",
     "HostTransitionRing",
+    "InferenceBundleSpec",
+    "ModuleSection",
+    "NormalizerSection",
     "StartupHandshake",
     "TransitionField",
     "TransitionSchema",
@@ -66,7 +80,9 @@ __all__ = [
     "WeightReceiver",
     "WeightSender",
     "bind_flat_params",
+    "fastsac_inference_bundle_spec",
     "fastsac_transition_schema",
     "flatten_params",
     "load_flat_params",
+    "weight_receiver_for",
 ]

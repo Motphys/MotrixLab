@@ -25,9 +25,9 @@ from motrix_rl_builtin.fastsac.async_impl.transport import (
     FinalObsPayload,
     GpuIpcTransitionRing,
     HostTransitionRing,
+    WeightReceiver,
     bind_flat_params,
 )
-from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import WeightReceiver
 from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
 from motrix_rl_builtin.fastsac.config import FastSacAgentCfg, FastSacCfg
 from motrix_rl_builtin.fastsac.networks import Actor
@@ -208,9 +208,9 @@ class Collector:
 
     def sync_weights(self, *, record_timing: bool = False) -> None:
         version, wait_writer_s, host_snapshot_s, actor_load_s = self.weights.maybe_load(
-            self.actor,
-            self.obs_normalizer,
-            flat_params=self._flat_params,
+            {"actor": self.actor},
+            {"obs": self.obs_normalizer},
+            flat_params=None if self._flat_params is None else {"actor": self._flat_params},
         )
         if record_timing:
             self._sync_wait_writer_t += wait_writer_s
