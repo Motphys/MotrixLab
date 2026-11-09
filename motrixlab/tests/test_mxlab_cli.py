@@ -20,6 +20,7 @@ from motrixlab import cli
         ("export-onnx", "motrix_rl.commands.export_onnx"),
         ("export-deploy", "motrix_rl.commands.export_deploy"),
         ("deploy", "motrix_deploy.cli"),
+        ("bench", "motrixlab.commands.bench"),
     ],
 )
 def test_dispatch_forwards_arguments_and_exit_status(monkeypatch, command, module):

@@ -18,9 +18,10 @@ def load_runtime():
     import numpy as np
 
     from motrix_env_core import registry
+    from motrix_env_core.direct.env import DirectEnv
     from motrix_env_core.manager import ManagerEnv
 
-    return np, registry, ManagerEnv
+    return np, registry, (DirectEnv, ManagerEnv)
 
 
 def prepare_env(
@@ -32,7 +33,7 @@ def prepare_env(
 ):
     """Create an environment and compatible fixed actions, checking comparisons."""
     np, registry, manager_env_type = load_runtime()
-    kwargs = {"mode": args.mode, "num_envs": num_envs}
+    kwargs = {"mode": args.env_mode, "num_envs": num_envs}
     if args.sim_backend is not None:
         kwargs["sim_backend"] = args.sim_backend
     env = registry.make(name, **kwargs)
@@ -61,8 +62,8 @@ def prepare_env(
             # Compare runs pass the previous env's actions through; canonicalize
             # back to numpy so every env receives identically valued actions.
             actions = np.asarray(actions)
-        # Manager environments consume tensor actions; hand each env a
-        # zero-copy tensor view of the same canonical numpy values.
+        # Direct and Manager environments both consume tensor actions; hand each
+        # env a zero-copy tensor view of the same canonical numpy values.
         if isinstance(env, manager_env_type):
             import torch
 

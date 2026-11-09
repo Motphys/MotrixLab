@@ -5,8 +5,8 @@ import argparse
 import multiprocessing as mp
 
 import pytest
+from motrixlab.benchmark import runner as duration
 
-from bench.env_benchmark import runner as duration
 from motrix_rl.numa import NodePlacement
 
 
@@ -91,7 +91,13 @@ def test_startup_timeout_reaps_spawn_workers(monkeypatch):
 
 def _args():
     return argparse.Namespace(
-        numa="shard", duration=0.05, env="reference", compare_env="compared", mode="train", warmup=0, zero_actions=True
+        numa="shard",
+        duration=0.05,
+        env="reference",
+        compare_env="compared",
+        env_mode="train",
+        warmup=0,
+        zero_actions=True,
     )
 
 
