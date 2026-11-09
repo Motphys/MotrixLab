@@ -3,8 +3,8 @@
 
 """Contract tests for the schema-driven seqlock inference-weight channel.
 
-These tests deliberately use a NON-FastSAC payload — two inference modules,
-two normalizers and a counter — to pin the public contract: the bundle
+These tests deliberately use a NON-FastSAC payload — two inference modules
+and two normalizers — to pin the public contract: the bundle
 layout follows the declared :class:`~motrix_rl.transport.inference_bundle.InferenceBundleSpec`,
 not any particular trainer's section names. A regression here is what lets a
 new asynchronous backend adopt the channel without touching it.
@@ -56,7 +56,6 @@ class _Norm(nn.Module):
 SPEC = InferenceBundleSpec(
     modules=(ModuleSection("policy", 2 * 2), ModuleSection("critic_head", 3 * 3)),
     normalizers=(NormalizerSection("obs", 4), NormalizerSection("command", 6)),
-    counters=("norm_steps",),
 )
 
 
@@ -74,14 +73,12 @@ def test_spec_layouts_and_validation():
         InferenceBundleSpec(modules=(ModuleSection("a", 2),), normalizers=(NormalizerSection("a", 2),))
     with pytest.raises(ValueError, match="at least one module"):
         InferenceBundleSpec(modules=())
+    with pytest.raises(ValueError, match="dim"):
+        InferenceBundleSpec(modules=(ModuleSection("policy", 4),), normalizers=(NormalizerSection("obs", 0),))
 
 
-def _publish(sender, policy, head, obs, command, steps):
-    sender.publish(
-        {"policy": policy, "critic_head": head},
-        {"obs": obs, "command": command},
-        {"norm_steps": steps},
-    )
+def _publish(sender, policy, head, obs, command):
+    sender.publish({"policy": policy, "critic_head": head}, {"obs": obs, "command": command})
 
 
 def test_multi_section_roundtrip_updates_every_consumer_module():
@@ -93,7 +90,7 @@ def test_multi_section_roundtrip_updates_every_consumer_module():
     obs, command = _Norm(4), _Norm(6)
     obs.fill(0.5, 2.0, 11)
     command.fill(-1.0, 0.5, 22)
-    _publish(sender, policy, head, obs, command, steps=1234)
+    _publish(sender, policy, head, obs, command)
 
     rx_policy, rx_head = _Module(2, 9.0), _Module(3, 9.0)
     rx_obs, rx_command = _Norm(4), _Norm(6)
@@ -107,7 +104,6 @@ def test_multi_section_roundtrip_updates_every_consumer_module():
     torch.testing.assert_close(rx_command._std, command._std)
     assert int(rx_obs.count) == 11
     assert int(rx_command.count) == 22
-    assert shared.counter[version % 2][0].item() == 1234
 
 
 def test_versions_advance_and_lag_semantics_hold():
@@ -123,7 +119,7 @@ def test_versions_advance_and_lag_semantics_hold():
     for tag in range(1, 4):
         with torch.no_grad():
             policy.linear.weight.fill_(float(tag))
-        _publish(sender, policy, head, obs, command, steps=tag)
+        _publish(sender, policy, head, obs, command)
     assert receiver.version == 3
     assert receiver.lag == 3
     version, *_ = receiver.maybe_load(modules, normals)
@@ -139,13 +135,28 @@ def test_publish_rejects_sections_that_do_not_match_the_spec():
     sender = HostWeightSender(shared)
     policy, head = _Module(2, 1.0), _Module(3, 1.0)
     obs, command = _Norm(4), _Norm(6)
-    _publish(sender, policy, head, obs, command, steps=1)  # the matching bundle publishes fine
+    _publish(sender, policy, head, obs, command)  # the matching bundle publishes fine
     with pytest.raises(ValueError, match="modules"):
         sender.publish({"policy": policy}, {"obs": obs, "command": command})
     with pytest.raises(ValueError, match="normalizers"):
         sender.publish({"policy": policy, "critic_head": head}, {"obs": obs})
-    with pytest.raises(ValueError, match="counters"):
-        sender.publish({"policy": policy, "critic_head": head}, {"obs": obs, "command": command})
+
+
+def test_maybe_load_rejects_flat_params_that_do_not_match_the_spec():
+    """flat_params is the CUDA-IPC path's actual write target, so a partial or
+    extra-key mapping must fail fast instead of silently leaving a module's
+    weights stale (IPC) or degrading to per-parameter copies (host)."""
+    shared = WeightChannelShared(SPEC)
+    sender = HostWeightSender(shared)
+    receiver = HostWeightReceiver(shared, sender.params)
+    modules = {"policy": _Module(2, 9.0), "critic_head": _Module(3, 9.0)}
+    normals = {"obs": _Norm(4), "command": _Norm(6)}
+    with pytest.raises(ValueError, match="flat_params"):
+        receiver.maybe_load(modules, normals, flat_params={"policy": torch.empty(4)})
+    with pytest.raises(ValueError, match="flat_params"):
+        receiver.maybe_load(
+            modules, normals, flat_params={"policy": torch.empty(4), "critic_head": torch.empty(9), "extra": None}
+        )
 
 
 def test_statless_normalizer_sections_roundtrip_symmetrically():

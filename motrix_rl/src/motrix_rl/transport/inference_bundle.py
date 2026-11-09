@@ -5,9 +5,8 @@
 
 An :class:`InferenceBundleSpec` declares what one published inference bundle
 contains: named flat-parameter sections (one per inference module the
-collector runs), named normalizer stat sections (``mean/std/var/count`` per
-normalizer), and named integer counters (e.g. normalizer step counts the
-collector may want to report). Like the transition schema, the bundle layout
+collector runs) and named normalizer stat sections (``mean/std/var/count`` per
+normalizer). Like the transition schema, the bundle layout
 is a provider-level decision: the seqlock weight channel transports whatever
 the spec declares, addressed by name.
 """
@@ -54,18 +53,20 @@ class InferenceBundleSpec:
 
     modules: tuple[ModuleSection, ...]
     normalizers: tuple[NormalizerSection, ...] = ()
-    counters: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.modules:
             raise ValueError("InferenceBundleSpec requires at least one module section")
-        names = [m.name for m in self.modules] + [n.name for n in self.normalizers] + list(self.counters)
+        names = [m.name for m in self.modules] + [n.name for n in self.normalizers]
         duplicates = sorted({name for name in names if names.count(name) > 1})
         if duplicates:
             raise ValueError(f"InferenceBundleSpec section names must be unique, got duplicates: {duplicates}")
         for module in self.modules:
             if module.param_numel < 0:
                 raise ValueError(f"module section '{module.name}' needs a non-negative param count")
+        for normalizer in self.normalizers:
+            if normalizer.dim < 1:
+                raise ValueError(f"normalizer section '{normalizer.name}' needs a positive dim, got {normalizer.dim}")
 
     @property
     def params_numel(self) -> int:

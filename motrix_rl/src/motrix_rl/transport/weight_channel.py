@@ -8,9 +8,8 @@ always loads a complete, consistent snapshot even when the writer publishes
 twice during one read. What a bundle contains is declared by an
 :class:`~motrix_rl.transport.inference_bundle.InferenceBundleSpec` — named
 module sections share one fused flat-parameter vector (one copy per publish
-on either transport), normalizer sections share one fused stat row, and
-integer counters ride along; ``publish`` / ``maybe_load`` address everything
-by section name.
+on either transport), normalizer sections share one fused stat row;
+``publish`` / ``maybe_load`` address everything by section name.
 
 Two physical transports share the seqlock protocol:
 
@@ -54,7 +53,7 @@ class WeightChannelShared:
     def __init__(self, spec: InferenceBundleSpec):
         self.spec = spec
         # Two slots (double buffer) for the fused normalizer stat row and the
-        # per-normalizer counts + named counters. Even seq = quiescent, odd =
+        # per-normalizer counts. Even seq = quiescent, odd =
         # write in progress. Public version = seq // 2; starts at 0 (matching
         # the receiver's ``loaded_version = 0`` initial state so the first
         # publish is seen).
@@ -62,7 +61,6 @@ class WeightChannelShared:
         self.std = [_shared((1, spec.normalizer_dim), torch.float32) for _ in range(2)]
         self.var = [_shared((1, spec.normalizer_dim), torch.float32) for _ in range(2)]
         self.count = [_shared((max(len(spec.normalizers), 1),), torch.int64) for _ in range(2)]
-        self.counter = [_shared((len(spec.counters),), torch.int64) for _ in range(2)]
         self.seq = _shared((1,), torch.int64)
 
 
@@ -99,15 +97,27 @@ class WeightSender(ABC):
         self,
         modules: Mapping[str, nn.Module],
         normalizers: Mapping[str, nn.Module] | None = None,
-        counters: Mapping[str, int] | None = None,
     ) -> None:
         """Write one bundle (module params + normalizer stats) and flip the seqlock.
 
-        ``modules`` / ``normalizers`` / ``counters`` are keyed by the spec's
-        section names and must match its key sets exactly. A normalizer
-        section is published when its module carries every stat in
-        ``NORM_KEYS``; modules without stats (e.g. ``Identity``) publish
-        nothing for it, matching the sync-path convention.
+        Args:
+            modules: The learner-side inference modules to publish, keyed by
+                the spec's module section names. Each module's parameters are
+                flattened into its section's segment of the fused
+                flat-parameter vector; the total element count must match the
+                section's declared ``param_numel``.
+            normalizers: The learner-side normalizer modules, keyed by the
+                spec's normalizer section names. A section is published when
+                its module carries every stat in ``NORM_KEYS``
+                (``_mean``/``_std``/``_var``/``count``); modules without
+                stats (e.g. ``Identity``) publish nothing for their section,
+                matching the sync-path convention. ``None`` is only valid
+                when the spec declares no normalizer sections.
+
+        Raises:
+            ValueError: If ``modules`` / ``normalizers`` key sets do not
+                match the spec exactly, or a module's flattened parameter
+                count differs from its section's declared ``param_numel``.
         """
         spec = self.shared.spec
         layout = spec.module_layout
@@ -119,9 +129,6 @@ class WeightSender(ABC):
                 f"bundle normalizers {sorted(normalizers)} do not match the spec "
                 f"{sorted(n.name for n in spec.normalizers)}"
             )
-        counters = counters or {}
-        if set(counters) != set(spec.counters):
-            raise ValueError(f"bundle counters {sorted(counters)} do not match the spec {sorted(spec.counters)}")
 
         sections = []
         stats = []
@@ -147,7 +154,6 @@ class WeightSender(ABC):
                 )
             else:
                 stats.append(None)
-        counter_values = [int(counters[name]) for name in spec.counters]
 
         prev = int(self.shared.seq[0])
         # 1) Mark "write in progress" (odd). Readers seeing this retry.
@@ -172,8 +178,6 @@ class WeightSender(ABC):
             self.shared.std[slot][:, begin:end].copy_(stat[1])
             self.shared.var[slot][:, begin:end].copy_(stat[2])
             self.shared.count[slot][index] = stat[3]
-        for index, value in enumerate(counter_values):
-            self.shared.counter[slot][index] = value
         # Land the slot write before announcing the version: a reader that
         # observes the new even seq value must be guaranteed to see the data.
         self._complete_slot_write()
@@ -280,11 +284,6 @@ class WeightReceiver(ABC):
         return self._loaded_version
 
     @property
-    def counters(self) -> dict[str, int]:
-        """Counter values of the last loaded bundle (empty until the first load)."""
-        return self._last_counters
-
-    @property
     def lag(self) -> int:
         """How many published versions behind the loaded policy is."""
         return max(0, self.version - self._loaded_version)
@@ -295,12 +294,6 @@ class WeightReceiver(ABC):
             pinned = any(next(m.parameters()).is_cuda for m in modules.values())
             self._norm_staging = tuple(torch.empty((1, dim), dtype=torch.float32, pin_memory=pinned) for _ in range(3))
         return self._norm_staging
-
-    #: Counters of the last completed :meth:`maybe_load`, keyed by spec name.
-    _last_counters: dict[str, int] = {}
-
-    def _read_counters(self, slot: int) -> dict[str, int]:
-        return {name: int(self.shared.counter[slot][i]) for i, name in enumerate(self.shared.spec.counters)}
 
     @abstractmethod
     def _snapshot(
@@ -367,6 +360,8 @@ class WeightReceiver(ABC):
             raise ValueError(
                 f"normalizers {sorted(normalizers)} do not match the spec {sorted(n.name for n in spec.normalizers)}"
             )
+        if flat_params is not None and set(flat_params) != set(spec.module_layout):
+            raise ValueError(f"flat_params {sorted(flat_params)} do not match the spec {sorted(spec.module_layout)}")
         wait_writer_s = 0.0
         host_snapshot_s = 0.0
         local_version = self._loaded_version
@@ -398,7 +393,6 @@ class WeightReceiver(ABC):
                 std.copy_(self.shared.std[slot])
                 var.copy_(self.shared.var[slot])
                 counts = [int(self.shared.count[slot][i]) for i in range(len(spec.normalizers))]
-            self._last_counters = self._read_counters(slot)
             # Re-check seq. If it changed, the writer published (at least
             # once) during our copy and the slot may have been overwritten
             # — discard and retry. This is the line that closes the race
