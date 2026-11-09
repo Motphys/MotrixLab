@@ -1,11 +1,13 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Benchmark the public ``env.step()`` contract for one or two environments.
+"""``mxlab bench``: performance measurement entry point.
 
-The reported CPU utilization is process CPU time divided by wall-clock time
-over the timed ``env.step()`` calls. It is an aggregate across the process's
-threads and can therefore exceed 100% when multiple CPU cores are busy.
+``bench env`` benchmarks the public ``env.step()`` contract for one or two
+environments. The reported CPU utilization is process CPU time divided by
+wall-clock time over the timed ``env.step()`` calls. It is an aggregate across
+the process's threads and can therefore exceed 100% when multiple CPU cores
+are busy.
 """
 
 from __future__ import annotations
@@ -15,12 +17,8 @@ import json
 import math
 from typing import TYPE_CHECKING
 
-if __package__:
-    from .env_benchmark import runner
-    from .report import render_table
-else:
-    from env_benchmark import runner
-    from report import render_table
+from motrixlab.benchmark import runner
+from motrixlab.benchmark.report import render_table
 
 if TYPE_CHECKING:
     from motrix_env_core.perf import PerfNode
@@ -69,31 +67,57 @@ def _result_row(result: dict[str, object], speedup: float | None) -> list[str]:
     ]
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", default="cartpole", help="Reference registered environment name.")
-    parser.add_argument("--compare-env", help="Optional registered environment to compare with --env.")
-    parser.add_argument("--mode", default="train", help="Environment mode (train/play).")
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="mxlab bench", description=__doc__)
+    parser.add_argument("--mode", choices=("env", "physics"), required=True, help="Benchmark target.")
+    parser.add_argument("--env", default="cartpole", help="(env) Reference registered environment name.")
+    parser.add_argument("--compare-env", help="(env) Optional registered environment to compare with --env.")
+    parser.add_argument("--env-mode", default="train", help="(env) Environment mode (train/play).", dest="env_mode")
+    parser.add_argument("--robot", default="g1-29dof", help="(physics) Registered robot name.")
     parser.add_argument(
-        "--num-envs", type=int, nargs="+", default=[2048], help="Total environment batch sizes to benchmark."
+        "--num-envs",
+        type=int,
+        nargs="+",
+        default=[2048],
+        help="Total environment batch sizes to benchmark.",
     )
     measurement = parser.add_mutually_exclusive_group()
-    measurement.add_argument("--steps", type=int, help="Timed calls; selects legacy single-process mode.")
-    measurement.add_argument("--duration", type=float, help="Positive finite measurement seconds (default: 10).")
+    measurement.add_argument("--steps", type=int, help="(env) Timed calls; selects legacy single-process mode.")
+    measurement.add_argument("--duration", type=float, help="(env) Positive finite measurement seconds (default: 10).")
     parser.add_argument(
-        "--numa", choices=("single", "shard"), help="Placement (default: shard for duration, single for steps)."
+        "--numa",
+        choices=("single", "node", "shard", "_worker"),
+        help="Placement (env: single/shard, default shard for duration and single for steps; "
+        "physics: single/node/shard, default single).",
     )
-    parser.add_argument("--warmup", type=int, default=10, help="Untimed env.step() calls per measurement.")
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        help="Untimed calls per measurement (default: 10 for env, 20 for physics).",
+    )
     parser.add_argument("--seed", type=int, default=20260808)
     parser.add_argument(
         "--zero-actions",
         action="store_true",
-        help="Use zero actions instead of seeded random actions.",
+        help="(env) Use zero actions instead of seeded random actions.",
     )
-    parser.add_argument("--sim-backend", help="Optional simulation backend override.")
-    parser.add_argument("--breakdown", action="store_true", help="Print the environment Perf scope tree.")
-    parser.add_argument("--json", action="store_true", help="Print one JSON object per result.")
-    args = parser.parse_args()
+    parser.add_argument("--sim-backend", help="(env) Optional simulation backend override.")
+    parser.add_argument("--breakdown", action="store_true", help="(env) Print the environment Perf scope tree.")
+    parser.add_argument("--json", action="store_true", help="(env) Print one JSON object per result.")
+    parser.add_argument("--dt", type=float, default=0.005, help="(physics) Simulation timestep in seconds.")
+    parser.add_argument("--solver-iterations", type=int, default=3, help="(physics) Constraint solver iterations.")
+    parser.add_argument("--nstep", type=int, default=1, help="(physics) Native substeps per step_n call.")
+    parser.add_argument("--iters", type=int, default=200, help="(physics) Timed step_n calls per measurement.")
+    parser.add_argument("--node", type=int, default=0, help="(physics, internal worker) which NUMA node.")
+    parser.add_argument("--out-json", default="", help="(physics, internal worker) JSON output path.")
+    return parser
+
+
+def _run_env(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.numa not in (None, "single", "shard"):
+        parser.error("--numa node/_worker only apply to --mode physics")
+    if args.warmup is None:
+        args.warmup = 10
     if args.steps is None and args.duration is None:
         args.duration = 10.0
     if args.numa is None:
@@ -160,7 +184,7 @@ def main() -> None:
         return
 
     rows: list[list[str]] = []
-    perf_sections: list[tuple[str, int, runner.ProfileResult]] = []
+    perf_sections: list[tuple[str, int, object]] = []
     for num_envs in args.num_envs:
         results, profiles = runner.run_steps(args, num_envs)
         reference = results[0]
@@ -185,6 +209,21 @@ def main() -> None:
             print()
             print(f"{name}, num_envs={num_envs} step breakdown ({profile.elapsed_seconds:.3f}s wall time)")
             _print_perf_tree(profile.root)
+
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+    if args.mode == "env":
+        _run_env(parser, args)
+    else:
+        # Imported lazily so the env mode (and the parent process of shard
+        # workers) never loads the simulation runtime.
+        from motrixlab.benchmark import physics
+
+        if args.numa is None:
+            args.numa = "single"
+        physics.main(parser, args)
 
 
 if __name__ == "__main__":

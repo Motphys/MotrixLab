@@ -18,10 +18,13 @@ NUMA modes (``--numa``):
   shard   spawn one worker per NUMA node, each pinned via numactl, each running
           ``--num-envs / num_nodes`` envs concurrently; aggregate throughput is
           the sum across workers. Reproduces the per-node process sharding
-          validated for per-node process sharding on a many-core host.
+          validated on a many-core host.
 
 Reports per-call latency (median + p10/p90), batch steps/s (step_n calls per
 second over all parallel envs in the process), and total env steps/s.
+
+This module imports the simulation runtime at import time and is therefore
+loaded lazily by ``motrixlab.commands.bench`` only for ``--mode physics``.
 """
 
 from __future__ import annotations
@@ -38,12 +41,25 @@ from pathlib import Path
 
 import motrixsim as mtx
 import numpy as np
-from report import render_table
 
 from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
 from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler
 from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
+from motrixlab.benchmark.report import render_table
+
+RESULT_HEADERS = [
+    "mode",
+    "robot",
+    "num_envs",
+    "median ms",
+    "p10 ms",
+    "p90 ms",
+    "batch steps/s",
+    "total env steps/s",
+]
+
+_WARMUP_DEFAULT = 20
 
 
 def _detect_num_nodes() -> int:
@@ -76,12 +92,11 @@ def _current_binding() -> str:
 
 
 def _device_context() -> dict:
-    ctx = {
+    return {
         "num_cpus": os.cpu_count(),
         "num_numa_nodes": _detect_num_nodes(),
         "binding": _current_binding(),
     }
-    return ctx
 
 
 def measure(
@@ -151,18 +166,6 @@ def measure(
     }
 
 
-_RESULT_HEADERS = [
-    "mode",
-    "robot",
-    "num_envs",
-    "median ms",
-    "p10 ms",
-    "p90 ms",
-    "batch steps/s",
-    "total env steps/s",
-]
-
-
 def _result_row(label: str, r: dict) -> list[str]:
     return [
         label,
@@ -176,22 +179,13 @@ def _result_row(label: str, r: dict) -> list[str]:
     ]
 
 
-def run_single(args) -> tuple[list[list[str]], list[str]]:
-    r = measure(
-        robot=args.robot,
-        num_envs=args.num_envs,
-        dt=args.dt,
-        solver_iterations=args.solver_iterations,
-        nstep=args.nstep,
-        warmup=args.warmup,
-        iters=args.iters,
-    )
+def run_single(args: argparse.Namespace) -> tuple[list[list[str]], list[str]]:
+    r = _measure_from_args(args)
     return ([_result_row(f"single-process ({args.numa})", r)], [])
 
 
-def _worker_entry(args) -> None:
-    """Internal: run one measurement and write JSON to --out-json. Used by node/shard drivers."""
-    r = measure(
+def _measure_from_args(args: argparse.Namespace) -> dict:
+    return measure(
         robot=args.robot,
         num_envs=args.num_envs,
         dt=args.dt,
@@ -200,23 +194,31 @@ def _worker_entry(args) -> None:
         warmup=args.warmup,
         iters=args.iters,
     )
+
+
+def _worker_entry(args: argparse.Namespace) -> None:
+    """Internal: run one measurement and write JSON to --out-json. Used by node/shard drivers."""
+    r = _measure_from_args(args)
     r["node"] = args.node
     Path(args.out_json).write_text(json.dumps(r), encoding="utf-8")
 
 
-def _numactl_wrap(node: int, py_args: list[str]) -> list[str]:
+def _worker_command(args: argparse.Namespace, node: int, num_envs: int, out_json: str) -> list[str]:
+    """Build a numactl-wrapped ``python -m`` command for one pinned worker."""
     numactl = shutil.which("numactl")
     if numactl is None:
         raise RuntimeError("numactl not found on PATH; install numactl for --numa node/shard")
-    return [numactl, "--cpunodebind", str(node), "--membind", str(node)] + py_args
-
-
-def _measure_via_subprocess(args, node: int, num_envs: int, out_json: str) -> dict:
-    """Spawn a pinned worker that runs `measure` and writes JSON; block until done."""
-    script = str(Path(sys.argv[0]).resolve())
-    py_args = [
+    return [
+        numactl,
+        "--cpunodebind",
+        str(node),
+        "--membind",
+        str(node),
         sys.executable,
-        script,
+        "-m",
+        "motrixlab.commands.bench",
+        "--mode",
+        "physics",
         "--numa",
         "_worker",
         "--node",
@@ -234,17 +236,13 @@ def _measure_via_subprocess(args, node: int, num_envs: int, out_json: str) -> di
         "--warmup",
         str(args.warmup),
         "--iters",
-        args.iters if isinstance(args.iters, str) else str(args.iters),
+        str(args.iters),
         "--out-json",
         out_json,
     ]
-    cmd = _numactl_wrap(node, py_args)
-    env = os.environ.copy()
-    subprocess.run(cmd, check=True, env=env)
-    return json.loads(Path(out_json).read_text())
 
 
-def run_node(args) -> tuple[list[list[str]], list[str]]:
+def run_node(args: argparse.Namespace) -> tuple[list[list[str]], list[str]]:
     """Re-exec the measurement pinned to NUMA node 0."""
     notes: list[str] = []
     num_nodes = _detect_num_nodes()
@@ -253,13 +251,15 @@ def run_node(args) -> tuple[list[list[str]], list[str]]:
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
         out_json = f.name
     try:
-        r = _measure_via_subprocess(args, node=0, num_envs=args.num_envs, out_json=out_json)
+        cmd = _worker_command(args, node=0, num_envs=args.num_envs, out_json=out_json)
+        subprocess.run(cmd, check=True, env=os.environ.copy())
+        r = json.loads(Path(out_json).read_text())
         return ([_result_row("node-pinned (cpunodebind=0, membind=0)", r)], notes)
     finally:
         Path(out_json).unlink(missing_ok=True)
 
 
-def run_shard(args) -> tuple[list[list[str]], list[str]]:
+def run_shard(args: argparse.Namespace) -> tuple[list[list[str]], list[str]]:
     """Spawn one pinned worker per NUMA node, each running num_envs/num_nodes envs."""
     num_nodes = _detect_num_nodes()
     if num_nodes < 2:
@@ -273,32 +273,7 @@ def run_shard(args) -> tuple[list[list[str]], list[str]]:
         fd, tmp_path = tempfile.mkstemp(suffix=f"_node{node}.json")
         os.close(fd)
         tmp_paths.append(tmp_path)
-        script = str(Path(sys.argv[0]).resolve())
-        py_args = [
-            sys.executable,
-            script,
-            "--numa",
-            "_worker",
-            "--node",
-            str(node),
-            "--num-envs",
-            str(per_node),
-            "--robot",
-            args.robot,
-            "--dt",
-            str(args.dt),
-            "--solver-iterations",
-            str(args.solver_iterations),
-            "--nstep",
-            str(args.nstep),
-            "--warmup",
-            str(args.warmup),
-            "--iters",
-            args.iters if isinstance(args.iters, str) else str(args.iters),
-            "--out-json",
-            tmp_path,
-        ]
-        cmd = _numactl_wrap(node, py_args)
+        cmd = _worker_command(args, node=node, num_envs=per_node, out_json=tmp_path)
         procs.append((node, subprocess.Popen(cmd, env=os.environ.copy())))
     for node, p in procs:
         rc = p.wait()
@@ -323,46 +298,24 @@ def run_shard(args) -> tuple[list[list[str]], list[str]]:
     return rows, notes
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--robot", default="g1-29dof")
-    parser.add_argument(
-        "--num-envs",
-        type=int,
-        nargs="+",
-        default=[2048],
-        help="Batch sizes to benchmark. Multiple values run a sweep.",
-    )
-    parser.add_argument("--dt", type=float, default=0.005)
-    parser.add_argument("--solver-iterations", type=int, default=3)
-    parser.add_argument("--nstep", type=int, default=1, help="Native substeps per step_n call.")
-    parser.add_argument("--warmup", type=int, default=20)
-    parser.add_argument("--iters", type=int, default=200)
-    parser.add_argument(
-        "--numa",
-        choices=["single", "node", "shard", "_worker"],
-        default="single",
-        help="single=in-process; node=re-exec pinned to node 0; shard=one worker per NUMA node.",
-    )
-    parser.add_argument("--node", type=int, default=0, help="(internal worker) which node.")
-    parser.add_argument("--out-json", type=str, default="", help="(internal worker) JSON output path.")
-    args = parser.parse_args()
+def main(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     if any(num_envs < 1 for num_envs in args.num_envs):
         parser.error("--num-envs values must be positive")
+    if args.warmup is None:
+        args.warmup = _WARMUP_DEFAULT
 
     if args.numa == "_worker":
         if not args.out_json:
-            raise SystemExit("--numa _worker requires --out-json")
+            parser.error("--numa _worker requires --out-json")
         if len(args.num_envs) != 1:
             parser.error("internal worker mode requires exactly one --num-envs value")
         args.num_envs = args.num_envs[0]
         _worker_entry(args)
         return
 
-    num_envs_values = args.num_envs
     rows: list[list[str]] = []
     notes: list[str] = []
-    for num_envs in num_envs_values:
+    for num_envs in args.num_envs:
         args.num_envs = num_envs
         if args.numa == "single":
             batch_rows, batch_notes = run_single(args)
@@ -376,7 +329,7 @@ def main() -> None:
                 notes.append(note)
 
     context = _device_context()
-    print(render_table(_RESULT_HEADERS, rows))
+    print(render_table(RESULT_HEADERS, rows))
     print(
         f"sim: robot={args.robot} dt={args.dt}s solver_iterations={args.solver_iterations} "
         f"nstep={args.nstep} warmup={args.warmup} iters={args.iters}"
@@ -384,7 +337,3 @@ def main() -> None:
     print(f"context: cpus={context['num_cpus']} numa_nodes={context['num_numa_nodes']} binding=[{context['binding']}]")
     for note in notes:
         print(note)
-
-
-if __name__ == "__main__":
-    main()

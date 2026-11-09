@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from motrixlab.benchmark.runner import split_num_envs
 
-from bench.env_benchmark.runner import split_num_envs
 from motrix_rl import numa
 
 
