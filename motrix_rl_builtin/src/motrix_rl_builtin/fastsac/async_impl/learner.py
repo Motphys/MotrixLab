@@ -29,8 +29,8 @@ from motrix_rl_builtin.fastsac.async_impl.transport import (
     FinalObsPayload,
     GpuIpcTransitionRing,
     HostTransitionRing,
+    WeightSender,
 )
-from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import WeightSender
 from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
 from motrix_rl_builtin.fastsac.config import FastSacCfg
 
@@ -494,7 +494,7 @@ class Learner:
         if self.agent.world_size > 1:
             self._sync_normalizer_stats()
         for weights in self.weights:
-            weights.publish(self.agent.actor, self.agent.obs_normalizer)
+            weights.publish({"actor": self.agent.actor}, {"obs": self.agent.obs_normalizer})
 
     def publish_if_due(self) -> None:
         if self.agent.update_idx % max(self.async_options.weight_publish_interval, 1) == 0:

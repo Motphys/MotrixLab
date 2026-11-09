@@ -47,17 +47,15 @@ from motrix_rl_builtin.fastsac.async_impl.transport import (
     Control,
     FinalObsStorage,
     GpuIpcTransitionRing,
-    HostTransitionRing,
-    RingCursors,
-    fastsac_transition_schema,
-)
-from motrix_rl_builtin.fastsac.async_impl.transport.handshake import StartupHandshake
-from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import (
     GpuIpcWeightSender,
+    HostTransitionRing,
     HostWeightSender,
+    RingCursors,
     WeightChannelShared,
+    fastsac_transition_schema,
     weight_receiver_for,
 )
+from motrix_rl_builtin.fastsac.async_impl.transport.handshake import StartupHandshake
 from motrix_rl_builtin.fastsac.config import FastSacCfg
 from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap
 
@@ -560,10 +558,10 @@ def run_learner_process(
         # (it allocated the device tensor and must keep it alive), the
         # collector maps it through the queue's CUDA-IPC reducers.
         # Transport per channel was decided by the parent topology pass
-        # (weight_channels, indexed per collector); this process
-        # only constructs the endpoints. One throwaway CPU actor counts the
-        # parameters that size both transports' buffers.
-        param_numel = actor_param_numel(cfg, dims, action_scale, action_bias)
+        # (weight_channels, indexed per collector); this process only
+        # constructs the endpoints — the bundle spec (sized by the parent
+        # with one throwaway CPU actor) already fixes both transports'
+        # buffer sizes.
         weight_txs = []
         for j, shared in enumerate(weights):
             channel = collector_ids[j]
@@ -571,11 +569,7 @@ def run_learner_process(
             # channel (the collector infers on this rank's GPU), host
             # shared-memory slots otherwise; this rank is the exporter (its
             # CUDA context must keep the slot tensors alive).
-            tx = (
-                GpuIpcWeightSender(shared, param_numel, device)
-                if weight_ipc[j]
-                else HostWeightSender(shared, param_numel)
-            )
+            tx = GpuIpcWeightSender(shared, device) if weight_ipc[j] else HostWeightSender(shared)
             handshake.ship_weight_slots(channel, tx.params)
             weight_txs.append(tx)
         # Wrap RingCursors into GpuIpcTransitionRing (allocating the device slots
