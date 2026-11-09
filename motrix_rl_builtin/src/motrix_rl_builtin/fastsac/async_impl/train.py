@@ -49,10 +49,11 @@ from motrix_rl_builtin.fastsac.async_impl.transport import (
     FinalObsStorage,
     HostTransitionRing,
     RingCursors,
+    WeightChannelShared,
+    fastsac_inference_bundle_spec,
     fastsac_transition_schema,
 )
 from motrix_rl_builtin.fastsac.async_impl.transport.handshake import StartupHandshake
-from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import WeightChannelShared
 from motrix_rl_builtin.fastsac.async_impl.worker import (
     actor_param_numel,
     build_env,
@@ -241,7 +242,9 @@ class Trainer(TrainerBase):
             )
             for i, (ipc, shard) in enumerate(zip(ring_ipc, env_shards))
         ]
-        weights = [WeightChannelShared(obs_dim=obs_dim) for _ in range(num_collectors)]
+        weights = [
+            WeightChannelShared(fastsac_inference_bundle_spec(obs_dim, param_numel)) for _ in range(num_collectors)
+        ]
         control = Control(num_collectors)
 
         resume_step = 0

@@ -14,10 +14,12 @@ import torch.multiprocessing as mp
 from motrix_rl_builtin.fastsac.async_impl.transport import (
     Control,
     HostTransitionRing,
+    HostWeightSender,
     StartupHandshake,
+    WeightChannelShared,
+    fastsac_inference_bundle_spec,
     fastsac_transition_schema,
 )
-from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import HostWeightSender, WeightChannelShared
 from motrix_rl_builtin.fastsac.async_impl.worker import actor_param_numel, run_collector_process
 from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap, FastSacStepResult
 
@@ -188,12 +190,14 @@ def _collect_in_spawn(tmp_path) -> tuple[torch.Tensor, ...]:
     action_scale = torch.ones(_ACT_DIM)
     action_bias = torch.zeros(_ACT_DIM)
     ring = HostTransitionRing(fastsac_transition_schema(*dims), 2, _NUM_ENVS)
-    weights = WeightChannelShared(_OBS_DIM)
+    weights = WeightChannelShared(
+        fastsac_inference_bundle_spec(_OBS_DIM, actor_param_numel(cfg, dims, action_scale, action_bias))
+    )
     control = Control()
     ctx = mp.get_context("spawn")
     collector_data_queue = ctx.Queue(maxsize=2)
     error_queue = ctx.Queue(maxsize=2)
-    weight_tx = HostWeightSender(weights, actor_param_numel(cfg, dims, action_scale, action_bias))
+    weight_tx = HostWeightSender(weights)
     # Ship the real handshake messages: weight slots (publisher learner) and
     # ring slots (draining learner; None for the host HostTransitionRing).
     handshake = StartupHandshake(ctx, num_collectors=1, barrier=False)

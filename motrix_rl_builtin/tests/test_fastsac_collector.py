@@ -13,12 +13,11 @@ from motrix_rl_builtin.fastsac.async_impl.transport import (
     Control,
     FinalObsStorage,
     HostTransitionRing,
-    fastsac_transition_schema,
-)
-from motrix_rl_builtin.fastsac.async_impl.transport.weight_channel import (
     HostWeightReceiver,
     HostWeightSender,
     WeightChannelShared,
+    fastsac_inference_bundle_spec,
+    fastsac_transition_schema,
 )
 from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization
 from motrix_rl_builtin.fastsac.networks import Actor
@@ -131,10 +130,12 @@ def _collector(device: str, *, compile: bool = False, amp: bool = False):
     cfg = _cfg(device, compile=compile, amp=amp)
     ring = HostTransitionRing(fastsac_transition_schema(_OBS_DIM, _CRITIC_OBS_DIM, _ACT_DIM), 2, _NUM_ENVS)
     source_actor, source_normalizer = _source_policy()
-    shared = WeightChannelShared(_OBS_DIM)
-    weight_tx = HostWeightSender(shared, sum(p.numel() for p in source_actor.parameters()))
+    shared = WeightChannelShared(
+        fastsac_inference_bundle_spec(_OBS_DIM, sum(p.numel() for p in source_actor.parameters()))
+    )
+    weight_tx = HostWeightSender(shared)
     weight_rx = HostWeightReceiver(shared, weight_tx.params)
-    weight_tx.publish(source_actor, source_normalizer)
+    weight_tx.publish({"actor": source_actor}, {"obs": source_normalizer})
     resolved_device = torch.device(device)
     if resolved_device.type == "cuda" and resolved_device.index is None:
         resolved_device = torch.device("cuda", torch.cuda.current_device())
@@ -157,8 +158,10 @@ def _collector(device: str, *, compile: bool = False, amp: bool = False):
 
 def test_weight_publish_prepares_params_before_opening_seqlock_write(monkeypatch) -> None:
     actor, normalizer = _source_policy()
-    shared = WeightChannelShared(_OBS_DIM)
-    weight_tx = HostWeightSender(shared, sum(param.numel() for param in actor.parameters()))
+    shared = WeightChannelShared(
+        fastsac_inference_bundle_spec(_OBS_DIM, sum(param.numel() for param in actor.parameters()))
+    )
+    weight_tx = HostWeightSender(shared)
     weight_rx = HostWeightReceiver(shared, weight_tx.params)
     weight_channel_module = sys.modules[WeightChannelShared.__module__]
     original_flatten = weight_channel_module.flatten_params
@@ -169,8 +172,8 @@ def test_weight_publish_prepares_params_before_opening_seqlock_write(monkeypatch
         return original_flatten(module)
 
     monkeypatch.setattr(weight_channel_module, "flatten_params", observe_flatten)
-    weight_tx.publish(actor, normalizer)
-    weight_tx.publish(actor, normalizer)
+    weight_tx.publish({"actor": actor}, {"obs": normalizer})
+    weight_tx.publish({"actor": actor}, {"obs": normalizer})
 
     assert observed_sequences == [0, 2]
     assert weight_tx.version == 2
@@ -186,14 +189,16 @@ def test_seqlock_read_is_nonblocking_during_publish() -> None:
     eventually consistent and the next poll picks up the new version.
     """
     actor, normalizer = _source_policy()
-    shared = WeightChannelShared(_OBS_DIM)
-    weight_tx = HostWeightSender(shared, sum(param.numel() for param in actor.parameters()))
+    shared = WeightChannelShared(
+        fastsac_inference_bundle_spec(_OBS_DIM, sum(param.numel() for param in actor.parameters()))
+    )
+    weight_tx = HostWeightSender(shared)
     weight_rx = HostWeightReceiver(shared, weight_tx.params)
-    weight_tx.publish(actor, normalizer)
+    weight_tx.publish({"actor": actor}, {"obs": normalizer})
 
     shared.seq[0] = 3  # simulate a publish in progress (odd)
     start = time.perf_counter()
-    version, wait_writer_s, _, _ = weight_rx.maybe_load(actor, normalizer)
+    version, wait_writer_s, _, _ = weight_rx.maybe_load({"actor": actor}, {"obs": normalizer})
     elapsed = time.perf_counter() - start
 
     assert version == 0  # keeps the receiver's current version (nothing loaded yet)
@@ -201,7 +206,7 @@ def test_seqlock_read_is_nonblocking_during_publish() -> None:
     assert elapsed < 1.0  # returned immediately, did not spin until seq closes
 
     shared.seq[0] = 4  # publish completed
-    version, _, _, _ = weight_rx.maybe_load(actor, normalizer)
+    version, _, _, _ = weight_rx.maybe_load({"actor": actor}, {"obs": normalizer})
     assert version == 2  # picked up on the next poll
 
 
@@ -236,10 +241,12 @@ def test_collector_reports_env_step_substage_timing() -> None:
     cfg = _cfg("cpu")
     ring = HostTransitionRing(fastsac_transition_schema(_OBS_DIM, _CRITIC_OBS_DIM, _ACT_DIM), 2, _NUM_ENVS)
     source_actor, source_normalizer = _source_policy()
-    shared = WeightChannelShared(_OBS_DIM)
-    weight_tx = HostWeightSender(shared, sum(p.numel() for p in source_actor.parameters()))
+    shared = WeightChannelShared(
+        fastsac_inference_bundle_spec(_OBS_DIM, sum(p.numel() for p in source_actor.parameters()))
+    )
+    weight_tx = HostWeightSender(shared)
     weight_rx = HostWeightReceiver(shared, weight_tx.params)
-    weight_tx.publish(source_actor, source_normalizer)
+    weight_tx.publish({"actor": source_actor}, {"obs": source_normalizer})
     collector = Collector(
         env,
         cfg,
@@ -312,7 +319,7 @@ def test_cuda_collector_uses_flat_weight_copy_and_reuses_staging() -> None:
     with torch.no_grad():
         source_actor.fc_mu.bias.add_(0.25)
         source_normalizer._mean.add_(0.5)
-    weight_tx.publish(source_actor, source_normalizer)
+    weight_tx.publish({"actor": source_actor}, {"obs": source_normalizer})
     assert collector.policy_lag == 1
     collector.sync_weights()
     assert collector.policy_lag == 0
