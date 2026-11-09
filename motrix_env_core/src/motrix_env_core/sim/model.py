@@ -171,6 +171,24 @@ class BodyJointPositionLimitsQuery(ModelQuery):
 
 
 @dataclass(frozen=True)
+class KinematicTreeQuery(ModelQuery):
+    """Differentiable :class:`~motrix_env_core.math.kinematics.KinematicTree` of one body tree.
+
+    ``body`` names the body tree root; the tree's root row takes the
+    floating-base state and ``tree.joint_names`` gives the q-vector order
+    (the backend's own joint order, like every other body-scoped query —
+    resolve joints by name). The resolved value is backend-neutral torch
+    data, so consumers such as MBRL task models never touch a simulator.
+    """
+
+    body: str
+    device: str = "cpu"
+
+    def compile_with(self, compiler: SimModelCompiler, *, key: str) -> None:
+        compiler.compile_kinematic_tree(key, self.body, self.device)
+
+
+@dataclass(frozen=True)
 class DofPositionLimitsQuery(ModelQuery):
     """``(lower, upper)`` float32 arrays in global DOF-position order."""
 
@@ -328,6 +346,16 @@ class SimModelCompiler(abc.ABC):
         Args:
             key: Logical key under which the result is stored.
             body: Name of the body whose joint limits are read.
+        """
+
+    @abc.abstractmethod
+    def compile_kinematic_tree(self, key: str, body: str, device: str) -> None:
+        """Compile the differentiable kinematic tree of one body tree.
+
+        Args:
+            key: Logical key under which the result is stored.
+            body: Name of the body tree root whose links are extracted.
+            device: Device for the tree's constant buffers.
         """
 
     @abc.abstractmethod
