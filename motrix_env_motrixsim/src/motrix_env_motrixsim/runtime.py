@@ -29,6 +29,7 @@ from motrix_env_core.sim.model import (
 )
 from motrix_env_core.sim.read import PhysicsReadProgram, SimDataQuery
 from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler
+from motrix_env_motrixsim.kinematics import kinematic_tree
 from motrix_env_motrixsim.renderer import MotrixSimRenderer
 from motrix_env_motrixsim.sim_data import compile_read_program
 from motrix_env_motrixsim.write_compiler import MotrixSimWriteCompiler
@@ -98,6 +99,12 @@ class MotrixSimModelCompiler(SimModelCompiler):
     def compile_body_joint_position_limits(self, key: str, body: str) -> None:
         lower, upper = _body_joint_position_limits(self._model, body)
         self._others[key] = (torch.from_numpy(lower), torch.from_numpy(upper))
+
+    def compile_kinematic_tree(self, key: str, body: str, device: str) -> None:
+        scene_body = self._model.get_body(body)
+        if scene_body is None:
+            raise KeyError(f"Unknown body {body!r}.")
+        self._others[key] = kinematic_tree(self._model, scene_body.base_link.name, device=device)
 
     def compile_dof_position_limits(self, key: str) -> None:
         lower, upper = _dof_position_limits(self._model)

@@ -12,6 +12,7 @@ from motrix_env_core.sim import (
     GeomFrictionQuery,
     GeomSpecsQuery,
     HeightFieldDataQuery,
+    KinematicTreeQuery,
     LinkCenterOfMassQuery,
     LinkMassQuery,
     SimModelCompiler,
@@ -70,6 +71,10 @@ class _DispatchCompiler(SimModelCompiler):
         del geom
         self.dispatched[key] = "heightfield"
 
+    def compile_kinematic_tree(self, key, body, device) -> None:
+        del body, device
+        self.dispatched[key] = "kinematic_tree"
+
 
 def test_model_queries_dispatch_to_typed_compiler_methods() -> None:
     compiler = _DispatchCompiler()
@@ -83,6 +88,7 @@ def test_model_queries_dispatch_to_typed_compiler_methods() -> None:
         "com": LinkCenterOfMassQuery(name="body"),
         "friction": GeomFrictionQuery(name="geom"),
         "heightfield": HeightFieldDataQuery(geom="floor"),
+        "kinematic_tree": KinematicTreeQuery(body="robot", device="cpu"),
     }
 
     model = compiler.compile(SceneCfg(), queries)
