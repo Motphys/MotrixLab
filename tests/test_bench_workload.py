@@ -8,8 +8,7 @@ from unittest.mock import Mock
 
 import numpy as np
 import pytest
-
-from bench.env_benchmark import workload
+from motrixlab.benchmark import workload
 
 
 def test_benchmark_modules_import_without_runtime():
@@ -17,8 +16,8 @@ def test_benchmark_modules_import_without_runtime():
         [
             sys.executable,
             "-c",
-            "import sys; import bench.bench_env; import bench.env_benchmark.runner; "
-            "import bench.env_benchmark.workload; "
+            "import sys; import motrixlab.commands.bench; import motrixlab.benchmark.runner; "
+            "import motrixlab.benchmark.workload; "
             "assert not {'numpy', 'torch', 'motrixsim'} & sys.modules.keys()",
         ],
         check=True,
@@ -39,7 +38,7 @@ def test_comparison_reuses_actions_and_closes_incompatible_environment(monkeypat
     environments = iter([reference, compared, incompatible])
     registry = SimpleNamespace(make=lambda *args, **kwargs: next(environments))
     monkeypatch.setattr(workload, "load_runtime", lambda: (np, registry, dict))
-    args = SimpleNamespace(mode="train", sim_backend=None, zero_actions=False, seed=123)
+    args = SimpleNamespace(env_mode="train", sim_backend=None, zero_actions=False, seed=123)
     env, actions, spec = workload.prepare_env("reference", args, 3)
     assert env is reference
     assert actions.shape == (3, 2)

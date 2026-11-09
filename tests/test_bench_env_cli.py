@@ -4,19 +4,18 @@
 import sys
 
 import pytest
-
-from bench import bench_env
-from bench.env_benchmark import runner, workload
+from motrixlab.benchmark import runner, workload
+from motrixlab.commands import bench
 
 
 @pytest.fixture
 def benchmark():
-    return bench_env
+    return bench
 
 
 def test_default_is_whole_machine_duration_without_parent_runtime_import(benchmark, monkeypatch):
     calls = []
-    monkeypatch.setattr(sys, "argv", ["bench_env.py", "--json"])
+    monkeypatch.setattr(sys, "argv", ["mxlab bench", "--mode", "env", "--json"])
     monkeypatch.setattr(workload, "load_runtime", lambda: pytest.fail("parent must stay lightweight"))
 
     def run(args, total):
@@ -45,7 +44,7 @@ def test_default_is_whole_machine_duration_without_parent_runtime_import(benchma
     ],
 )
 def test_invalid_measurement_options_fail_before_runtime(benchmark, monkeypatch, arguments):
-    monkeypatch.setattr(sys, "argv", ["bench_env.py", *arguments])
+    monkeypatch.setattr(sys, "argv", ["mxlab bench", "--mode", "env", *arguments])
     monkeypatch.setattr(workload, "load_runtime", lambda: pytest.fail("must not load runtime"))
     with pytest.raises(SystemExit) as error:
         benchmark.main()

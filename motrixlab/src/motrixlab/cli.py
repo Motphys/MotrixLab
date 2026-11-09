@@ -15,6 +15,7 @@ _COMMANDS = {
     "export-onnx": "motrix_rl.commands.export_onnx",
     "export-deploy": "motrix_rl.commands.export_deploy",
     "deploy": "motrix_deploy.cli",
+    "bench": "motrixlab.commands.bench",
 }
 
 

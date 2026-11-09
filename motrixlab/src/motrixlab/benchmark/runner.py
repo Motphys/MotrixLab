@@ -87,7 +87,7 @@ def run_steps(
                 results.append(
                     {
                         "env": name,
-                        "mode": args.mode,
+                        "mode": args.env_mode,
                         "num_envs": num_envs,
                         "steps": args.steps,
                         "warmup": args.warmup,
@@ -222,7 +222,7 @@ def run_duration(args: argparse.Namespace, num_envs: int) -> list[dict[str, obje
             results.append(
                 {
                     "env": name,
-                    "mode": args.mode,
+                    "mode": args.env_mode,
                     "num_envs": num_envs,
                     "num_envs_scope": "total",
                     "duration_seconds": args.duration,
