@@ -217,6 +217,14 @@
                         class="collision" conaffinity="1" size="0.04 0.06"
                         quat="1 1 0 0" pos="0 0 0.03" />
                       <site name="gripper" pos="0 0 0.1" />
+                      <!-- Welded peg: grasp-failure-free variant. The peg rides
+                           rigidly with the hand (the flat Panda pads cannot hold
+                           it through the contact solver); socket insertion
+                           physics stays fully real via peg_collision. -->
+                      <body name="peg" pos="0 0 0.14">
+                        <geom name="peg_collision" type="box" size="0.017 0.017 0.040" condim="6"
+                          friction="0.3 0.005 0.0001" rgba="0.85 0.6 0.15 1" />
+                      </body>
                       <body name="left_finger" pos="0 0 0.0584">
                         <inertial mass="0.015" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7" />
                         <joint name="finger_joint1" class="finger" damping="10" />

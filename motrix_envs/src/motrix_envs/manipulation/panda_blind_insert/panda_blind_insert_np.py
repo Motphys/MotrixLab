@@ -101,10 +101,6 @@ class PandaBlindInsertEnv(DirectEnv):
             {
                 "robot_position": BodyJointPositionWrite("link0"),
                 "robot_velocity": BodyJointVelocityWrite("link0"),
-                "peg_position": BodyPositionWrite(("peg",)),
-                "peg_rotation": BodyRotationWrite(("peg",)),
-                "peg_linear_velocity": BodyLinearVelocityWrite(("peg",)),
-                "peg_angular_velocity": BodyAngularVelocityWrite(("peg",)),
                 "socket_position": KinematicBodyPositionWrite(("blind_socket",)),
                 "socket_rotation": KinematicBodyRotationWrite(("blind_socket",)),
             },
@@ -162,7 +158,7 @@ class PandaBlindInsertEnv(DirectEnv):
             return value.detach().cpu().numpy()
         return np.asarray(value)
 
-    def _write_rows(self, env_ids: torch.Tensor, *, robot_pos, peg_pos, socket_pos) -> None:
+    def _write_rows(self, env_ids: torch.Tensor, *, robot_pos, socket_pos) -> None:
         row_ids = env_ids.detach().cpu().to(torch.int64)
         count = int(row_ids.numel())
         device = self._reset_program.buffer("robot_position").device
@@ -170,14 +166,8 @@ class PandaBlindInsertEnv(DirectEnv):
             np.asarray(robot_pos, dtype=np.float32), device=device
         )
         self._reset_program.buffer("robot_velocity")[row_ids] = 0.0
-        peg = torch.zeros((count, 1, 3), dtype=torch.float32, device=device)
-        peg[:, 0, :] = torch.as_tensor(np.asarray(peg_pos, dtype=np.float32), device=device)
-        self._reset_program.buffer("peg_position")[row_ids] = peg
         quat = torch.zeros((count, 1, 4), dtype=torch.float32, device=device)
         quat[:, 0, 3] = 1.0
-        self._reset_program.buffer("peg_rotation")[row_ids] = quat
-        self._reset_program.buffer("peg_linear_velocity")[row_ids] = 0.0
-        self._reset_program.buffer("peg_angular_velocity")[row_ids] = 0.0
         sock = torch.zeros((count, 1, 3), dtype=torch.float32, device=device)
         sock[:, 0, :] = torch.as_tensor(np.asarray(socket_pos, dtype=np.float32), device=device)
         self._reset_program.buffer("socket_position")[row_ids] = sock
@@ -199,18 +189,13 @@ class PandaBlindInsertEnv(DirectEnv):
         robot_pos = self._default_joint_pos[None, :] + noise
         robot_pos = np.clip(robot_pos, self._joint_limits[0], self._joint_limits[1])
 
-        # Place the arm first; seed the peg between the finger pads.
+        # The peg is welded to the hand: its pose follows the arm FK, so the
+        # first placement already carries it. Read the live peg pose to
+        # anchor the socket distribution.
         zero = np.zeros((count, 3), dtype=np.float32)
-        self._write_rows(row_ids, robot_pos=robot_pos, peg_pos=zero, socket_pos=zero)
+        self._write_rows(row_ids, robot_pos=robot_pos, socket_pos=zero)
         self.sim_data.execute(row_ids)
-        # Hold the peg centered between the finger pads, measured from the
-        # live state for a repeatable grasp.
-        left = self._np(self.sim_data["left_finger_pos"][row_ids])
-        right = self._np(self.sim_data["right_finger_pos"][row_ids])
-        pad_center = 0.5 * (left + right)
-        peg_pos = np.zeros((count, 3), dtype=np.float32)
-        peg_pos[:, :2] = pad_center[:, :2]
-        peg_pos[:, 2] = pad_center[:, 2] - _PEG_HALF + self._cfg.reset.peg_hold_height
+        peg_pos = self._np(self.sim_data["peg_pos"][row_ids])
 
         # Stratified socket placement around the peg start.
         angles = self._rng.uniform(0.0, 2.0 * np.pi, count)
@@ -231,7 +216,7 @@ class PandaBlindInsertEnv(DirectEnv):
                 np.zeros(count, dtype=np.float32),
             ]
         ).astype(np.float32)
-        self._write_rows(row_ids, robot_pos=robot_pos, peg_pos=peg_pos, socket_pos=socket_pos)
+        self._write_rows(row_ids, robot_pos=robot_pos, socket_pos=socket_pos)
         device = self._ctrl_writes.buffer("ctrl").device
         ctrl = torch.zeros((count, len(_ACTUATORS)), dtype=torch.float32, device=device)
         ctrl[:, :_NUM_ARM] = torch.as_tensor(robot_pos[:, :_NUM_ARM], device=device)
@@ -348,11 +333,9 @@ class PandaBlindInsertEnv(DirectEnv):
         peg_ee_quat = quaternion.mul(quaternion.inverse(gripper_quat), peg_quat)
         peg_ee_drift = np.linalg.norm(peg_ee_rel - self._initial_peg_ee_rel, axis=-1)
         peg_ee_angle = quaternion.rotation_distance(peg_ee_quat, self._initial_peg_ee_quat)
-        drop = self._grasped & (
-            (peg_ee_drift > self._cfg.termination.drop_drift)
-            | (np.degrees(peg_ee_angle) > self._cfg.termination.drop_angle_deg)
-        )
-        self._grasped[drop] = False
+        # Welded peg: grasp failure is structurally impossible; drop stays
+        # False and termination is governed by success/penetration/tilt.
+        drop = np.zeros(self.num_envs, dtype=bool)
         new_contact = metrics["contact"] & ~self._contacted
         self._contacted |= metrics["contact"]
         mouth = (metrics["depth"] > 0.0015) & (metrics["xy"] < 0.003) & (metrics["tilt"] < 10.0)

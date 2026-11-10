@@ -56,9 +56,12 @@ def test_panda_blind_insert_reset_places_peg_near_hole() -> None:
     metrics = env._metrics()
     peg = env.sim_data["peg_pos"].numpy()
     gap_mm = (peg[:, 2] - 0.040 - 0.040) * 1000.0
-    # Settled airborne start: near-contact but not inserted, no ground contact.
+    # Welded-peg variant: the peg rides with the hand and settles onto the
+    # socket TOP PLATE (contact start is legal — the hole position is the
+    # unknown), but it must NOT start inside the hole.
     assert float(np.median(gap_mm)) < 8.0
-    assert not metrics["contact"].any()
+    assert float(np.median(metrics["depth"])) < 0.001
+    assert float(np.percentile(metrics["tilt"], 95)) < 8.0
 
 
 def test_panda_blind_insert_closed_hold_survives_one_hundred_steps() -> None:

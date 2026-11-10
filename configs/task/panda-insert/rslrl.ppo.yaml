@@ -27,7 +27,7 @@ algo:
   actor:
     # Noise-std band: floor stops the PPO sigma collapse, ceiling stops the
     # entropy blow-up (both measured on the piper predecessor task).
-    class_name: motrix_envs.manipulation.piper_insert_peg.bounded_noise_mlp:BoundedNoiseMLPModel
+    class_name: motrix_envs.manipulation.common.bounded_noise_mlp:BoundedNoiseMLPModel
     min_noise_std: 0.20
     max_noise_std: 0.80
     hidden_dims: [256, 256, 128]
