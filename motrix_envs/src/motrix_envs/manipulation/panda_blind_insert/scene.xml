@@ -1,0 +1,52 @@
+<mujoco model="panda_blind_insert">
+  <!-- Franka Panda (Apache-2.0, MJX panda) + parametric blind-hole socket.
+       Pure primitives: 24 wall boxes ring + closed bottom. 1.0 mm radial
+       clearance peg R12mm / hole R13mm. -->
+  <include file="mjx_panda.xml" />
+
+  <statistic center="0.4 0 0.4" extent="1" />
+
+  <option timestep="0.001" iterations="10" ls_iterations="12" integrator="implicitfast">
+    <flag eulerdamp="disable" />
+  </option>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
+    <global azimuth="130" elevation="-25" />
+  </visual>
+
+  <worldbody>
+    <light diffuse="0.7 0.7 0.7" pos="0.4 0 1.5" dir="0 0 -1" directional="true" />
+    <geom name="floor" size="0 0 0.05" pos="0 0 -0.02" type="plane" rgba="0.35 0.35 0.38 1" />
+
+    <!-- Blind-hole socket: kinematic mocap body (reset re-places it).
+         NIST-style square: 34 mm square peg, 36 mm square hole (1 mm
+         clearance per side; the peg is sized to the Panda pads minimum
+         grasp opening), four primitive walls + floor + a flat top
+         plate whose 60 mm extent keeps off-hole starts on a flat face. -->
+    <body name="blind_socket" mocap="true" pos="0.45 0.0 0.0">
+      <geom name="socket_top" type="box" size="0.040 0.040 0.0005" pos="0 0 0.0405"
+        group="3" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_floor" type="box" size="0.018 0.018 0.0005" pos="0 0 0.0015"
+        group="3" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_wall_xp" type="box" size="0.002 0.020 0.020" pos="0.020 0 0.021"
+        group="3" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_wall_xn" type="box" size="0.002 0.020 0.020" pos="-0.020 0 0.021"
+        group="3" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_wall_yp" type="box" size="0.020 0.002 0.020" pos="0 0.020 0.021"
+        group="3" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_wall_yn" type="box" size="0.020 0.002 0.020" pos="0 -0.020 0.021"
+        group="3" condim="6" friction="0.3 0.005 0.0001" />
+      <!-- visual-only outer shell -->
+      <geom name="socket_visual" type="box" size="0.042 0.042 0.020" pos="0 0 0.020"
+        rgba="0.25 0.27 0.3 1" contype="0" conaffinity="0" group="2" />
+    </body>
+
+    <!-- Peg: free body, starts held between fingers at reset -->
+    <body name="peg" pos="0.45 0.0 0.2">
+      <freejoint />
+      <geom name="peg_collision" type="box" size="0.017 0.017 0.040" condim="6"
+        friction="0.9 0.02 0.001" rgba="0.85 0.6 0.15 1" />
+    </body>
+  </worldbody>
+</mujoco>
