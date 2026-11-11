@@ -25,17 +25,34 @@
          grasp opening), four primitive walls + floor + a flat top
          plate whose 60 mm extent keeps off-hole starts on a flat face. -->
     <body name="blind_socket" mocap="true" pos="0.45 0.0 0.0">
-      <geom name="socket_top" type="box" size="0.040 0.040 0.0005" pos="0 0 0.0405"
+      <!-- Ring-shaped top plate (four strips, hole mouth left open):
+           a solid plate here physically blocked insertion (peg stopped at
+           the plate top). Strips span outer 80 mm to hole edge 18 mm. -->
+      <geom name="socket_top_xp" type="box" size="0.011 0.040 0.0005" pos="0.029 0 0.0405"
+        group="3" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_top_xn" type="box" size="0.011 0.040 0.0005" pos="-0.029 0 0.0405"
+        group="3" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_top_yp" type="box" size="0.018 0.011 0.0005" pos="0 0.029 0.0405"
+        group="3" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_top_yn" type="box" size="0.018 0.011 0.0005" pos="0 -0.029 0.0405"
         group="3" condim="6" friction="0.3 0.005 0.0001" />
       <geom name="socket_floor" type="box" size="0.018 0.018 0.0005" pos="0 0 0.0015"
         group="3" condim="6" friction="0.3 0.005 0.0001" />
-      <geom name="socket_wall_xp" type="box" size="0.002 0.020 0.020" pos="0.020 0 0.021"
+      <geom name="socket_wall_xp" type="box" size="0.002 0.020 0.017" pos="0.020 0 0.018"
         group="3" condim="6" friction="0.3 0.005 0.0001" />
-      <geom name="socket_wall_xn" type="box" size="0.002 0.020 0.020" pos="-0.020 0 0.021"
+      <geom name="socket_wall_xn" type="box" size="0.002 0.020 0.017" pos="-0.020 0 0.018"
         group="3" condim="6" friction="0.3 0.005 0.0001" />
-      <geom name="socket_wall_yp" type="box" size="0.020 0.002 0.020" pos="0 0.020 0.021"
+      <geom name="socket_wall_yp" type="box" size="0.020 0.002 0.017" pos="0 0.020 0.018"
         group="3" condim="6" friction="0.3 0.005 0.0001" />
-      <geom name="socket_wall_yn" type="box" size="0.020 0.002 0.020" pos="0 -0.020 0.021"
+      <geom name="socket_wall_yn" type="box" size="0.020 0.002 0.017" pos="0 -0.020 0.018"
+        group="3" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_cham_xp" type="box" size="0.005 0.0215 0.0025" pos="0.0265 0 0.0385"
+        group="3" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_cham_xn" type="box" size="0.005 0.0215 0.0025" pos="-0.0265 0 0.0385"
+        group="3" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_cham_yp" type="box" size="0.0215 0.005 0.0025" pos="0 0.0265 0.0385"
+        group="3" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_cham_yn" type="box" size="0.0215 0.005 0.0025" pos="0 -0.0265 0.0385"
         group="3" condim="6" friction="0.3 0.005 0.0001" />
       <!-- visual-only outer shell -->
       <geom name="socket_visual" type="box" size="0.042 0.042 0.020" pos="0 0 0.020"

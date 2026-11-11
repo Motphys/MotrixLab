@@ -54,7 +54,7 @@ _PEG_HALF = 0.040
 _CONTACT_PAIRS = tuple(
     [("peg_collision", "socket_floor")]
     + [("peg_collision", f"socket_wall_{side}") for side in ("xp", "xn", "yp", "yn")]
-    + [("peg_collision", "socket_top")]
+    + [("peg_collision", f"socket_top_{side}") for side in ("xp", "xn", "yp", "yn")]
 )
 
 _SIM_DATA_QUERIES = {
@@ -190,14 +190,41 @@ class PandaBlindInsertEnv(DirectEnv):
         robot_pos = np.clip(robot_pos, self._joint_limits[0], self._joint_limits[1])
 
         # The peg is welded to the hand: its pose follows the arm FK, so the
-        # first placement already carries it. Read the live peg pose to
-        # anchor the socket distribution.
+        # first placement already carries it. Park the socket at the origin
+        # for now — it is placed AFTER the settle, once the arm has reached
+        # its gravity equilibrium (placing it earlier booked the settle sag
+        # as a constant ~7 mm hole-offset error).
         zero = np.zeros((count, 3), dtype=np.float32)
         self._write_rows(row_ids, robot_pos=robot_pos, socket_pos=zero)
+        device = self._ctrl_writes.buffer("ctrl").device
+        ctrl = torch.zeros((count, len(_ACTUATORS)), dtype=torch.float32, device=device)
+        ctrl[:, :_NUM_ARM] = torch.as_tensor(robot_pos[:, :_NUM_ARM], device=device)
+        ctrl[:, _NUM_ARM] = self._cfg.action.gripper_close_ctrl
+        self._ctrl_writes.buffer("ctrl")[row_ids] = ctrl
+        self._ctrl_writes.execute(row_ids)
         self.sim_data.execute(row_ids)
-        peg_pos = self._np(self.sim_data["peg_pos"][row_ids])
 
-        # Stratified socket placement around the peg start.
+        self._current_actions[np_rows] = 0.0
+        self._last_actions[np_rows] = 0.0
+        self._joint_targets[np_rows] = robot_pos[:, :_NUM_ARM]
+        self._grasped[np_rows] = True
+        self._contacted[np_rows] = False
+        self._mouth_seen[np_rows] = False
+        self._hold_count[np_rows] = 0
+        self._xy_watermark[np_rows] = np.inf
+        self._history_initialized[np_rows] = False
+        self._physics_failed[np_rows] = False
+
+        # Settle the arm under the reset ctrl targets: the placement pose is
+        # not a gravity equilibrium (measured hand sag of a few mm within the
+        # first control steps). The peg rides with the hand, so all anchors
+        # and the socket distribution are taken AFTER this settle.
+        for _ in range(25):
+            self.physics_step()
+        self.sim_data.execute(row_ids)
+
+        # Stratified socket placement around the SETTLED peg position.
+        peg_pos = self._np(self.sim_data["peg_pos"][row_ids])
         angles = self._rng.uniform(0.0, 2.0 * np.pi, count)
         w_near, w_mid = self._cfg.reset.bucket_weights
         bucket = self._rng.uniform(0.0, 1.0, count)
@@ -216,36 +243,11 @@ class PandaBlindInsertEnv(DirectEnv):
                 np.zeros(count, dtype=np.float32),
             ]
         ).astype(np.float32)
-        self._write_rows(row_ids, robot_pos=robot_pos, socket_pos=socket_pos)
-        device = self._ctrl_writes.buffer("ctrl").device
-        ctrl = torch.zeros((count, len(_ACTUATORS)), dtype=torch.float32, device=device)
-        ctrl[:, :_NUM_ARM] = torch.as_tensor(robot_pos[:, :_NUM_ARM], device=device)
-        ctrl[:, _NUM_ARM] = self._cfg.action.gripper_close_ctrl
-        self._ctrl_writes.buffer("ctrl")[row_ids] = ctrl
-        self._ctrl_writes.execute(row_ids)
+        settled_robot = self._np(self.sim_data["robot_joint_pos"][row_ids])
+        self._write_rows(row_ids, robot_pos=settled_robot, socket_pos=socket_pos)
         self.sim_data.execute(row_ids)
-
-        self._current_actions[np_rows] = 0.0
-        self._last_actions[np_rows] = 0.0
-        self._joint_targets[np_rows] = robot_pos[:, :_NUM_ARM]
         self._socket_xy[np_rows] = socket_pos[:, :2]
-        self._grasped[np_rows] = True
-        self._contacted[np_rows] = False
-        self._mouth_seen[np_rows] = False
-        self._hold_count[np_rows] = 0
-        self._xy_watermark[np_rows] = np.inf
-        self._history_initialized[np_rows] = False
-        self._physics_failed[np_rows] = False
 
-        # Settle the freshly placed grasp: advance physics while holding the
-        # reset ctrl targets so the peg slides to its contact equilibrium
-        # INSIDE the fingers (the placement pose is not an equilibrium —
-        # measured drift reaches ~17 mm within 3 control steps of placement).
-        # The drop anchor and obs/watermark baselines are re-taken from the
-        # settled state so that transient is never booked as policy drift.
-        for _ in range(25):
-            self.physics_step()
-        self.sim_data.execute(row_ids)
         metrics = self._metrics(row_ids)
         gripper_pos = self._np(self.sim_data["gripper_pos"][row_ids])
         gripper_quat = self._np(self.sim_data["gripper_quat"][row_ids])
@@ -371,7 +373,10 @@ class PandaBlindInsertEnv(DirectEnv):
             self._xy_watermark[improved] = metrics["xy"][improved]
         depth_gain = depth_progress
         depth_fraction = np.clip(metrics["depth"] / self._cfg.termination.target_depth, 0.0, 1.0)
-        in_mouth = metrics["xy"] <= self._cfg.termination.xy_tolerance * 2.0
+        # Mouth residency is gated on actual insertion depth: paying it for
+        # mere top-plate proximity let the stage-1 policy farm ~4/episode by
+        # parking at the hole mouth without ever pressing in.
+        in_mouth = (metrics["xy"] <= self._cfg.termination.xy_tolerance * 2.0) & (metrics["depth"] > 0.001)
 
         reward = reward_cfg.reach_scale * np.where(
             self._contacted, np.maximum(xy_progress, -0.5 * self._prev_xy), 0.0
