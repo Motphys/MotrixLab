@@ -71,12 +71,19 @@ class RewardConfig:
     reach_scale: float = 2.0
     xy_scale: float = 2.0
     depth_scale: float = 120.0
-    contact_bonus: float = 0.5
+    # First-touch pay reduced: at 0.5 it combined with passive sag into a
+    # reliable ~2-4/episode for mere plate-resting (stage-1 v2 success 0.002
+    # while reward hit 11.2).
+    contact_bonus: float = 0.2
     contact_residency: float = 0.01
     contact_maintenance: float = 0.002
-    insert_residency: float = 0.02
+    # Depth-linear insertion residency, slightly raised: real insertion pay
+    # must dominate every passive leak combined.
+    insert_residency: float = 0.03
     mouth_bonus: float = 1.0
-    success_bonus: float = 5.0
+    # Dominant terminal pay: the coordinated vertical press is HARD (single
+    # joints carry lateral drift); the bonus must crush all farmable income.
+    success_bonus: float = 30.0
     action_penalty: float = 0.0002
     drop_penalty: float = 10.0
     descent_scale: float = 100.0
