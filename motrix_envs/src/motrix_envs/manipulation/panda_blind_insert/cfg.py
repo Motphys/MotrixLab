@@ -69,7 +69,7 @@ class ActionControllerCfg:
 @configclass
 class RewardConfig:
     reach_scale: float = 2.0
-    xy_scale: float = 2.0
+    xy_scale: float = 0.5
     depth_scale: float = 120.0
     # First-touch pay reduced: at 0.5 it combined with passive sag into a
     # reliable ~2-4/episode for mere plate-resting (stage-1 v2 success 0.002

@@ -264,9 +264,16 @@ class PandaBlindInsertEnv(DirectEnv):
         acts = np.clip(acts, -1.0, 1.0)
         self._last_actions[:] = self._current_actions
         self._current_actions[:] = acts
-        q = self._np(self.sim_data["robot_joint_pos"])[:, :_NUM_ARM]
-        target = q + self._cfg.action.action_scale * acts
+        # ACCUMULATING integrator (target += scale * a), NOT qpos-rebased:
+        # the qpos-rebase form deadlocks against contact — when the peg meets
+        # the socket, q stops moving, so target = q + scale*a never builds
+        # press force beyond one increment (measured |target - q| frozen at
+        # 0.0014 rad, ~1 Nm; an oracle straight-down with sustained ctrl
+        # targets inserts to 37.7 mm of the 38 mm hole). Anti-windup clip
+        # below still bounds the sustained force.
+        target = self._joint_targets + self._cfg.action.action_scale * acts
         target = np.clip(target, self._joint_limits[0][:_NUM_ARM], self._joint_limits[1][:_NUM_ARM])
+        q = self._np(self.sim_data["robot_joint_pos"])[:, :_NUM_ARM]
         max_err = self._cfg.action.max_tracking_error
         target = np.clip(target, q - max_err, q + max_err)
         self._joint_targets[:] = target
@@ -372,7 +379,10 @@ class PandaBlindInsertEnv(DirectEnv):
             xy_pay[improved] = kernel_at(metrics["xy"][improved]) - kernel_at(self._xy_watermark[improved])
             self._xy_watermark[improved] = metrics["xy"][improved]
         depth_gain = depth_progress
-        depth_fraction = np.clip(metrics["depth"] / self._cfg.termination.target_depth, 0.0, 1.0)
+        # Quadratic depth fraction: residency pay is negligible at the 1-2 mm
+        # mouth (where passive sag parks the peg) and only becomes real
+        # income toward the 15 mm target.
+        depth_fraction = np.clip(metrics["depth"] / self._cfg.termination.target_depth, 0.0, 1.0) ** 2
         # Mouth residency is gated on actual insertion depth: paying it for
         # mere top-plate proximity let the stage-1 policy farm ~4/episode by
         # parking at the hole mouth without ever pressing in.
