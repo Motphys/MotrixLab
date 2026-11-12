@@ -310,9 +310,18 @@ class PandaBlindInsertEnv(DirectEnv):
         depth = np.where(inside_outer, np.clip(self._cfg.reset.socket_top_z - bottom, 0.0, 0.040), 0.0)
         tilt = np.degrees(np.arccos(np.clip(np.abs(axis[:, 2]), -1.0, 1.0)))
         contacts = self._np(self.sim_data["contact"][rows]).astype(bool).any(axis=-1)
+        # Penetration witness:横向压入壁体的深度。Peg fits the hole with
+        # lateral slack (hole half 19 - peg half 17 = 2 mm); xy INSIDE that
+        # slack is normal in-hole geometry, NOT penetration. Only lateral
+        # overlap beyond the slack (peg edge pressed INTO the wall body)
+        # counts. The old form used hole_clearance (1 mm) directly, which
+        # booked every legitimate in-hole pose (xy ~1.5 mm) as 0.5-1.9 mm
+        # "penetration" and executed the episode on entry — the oracle audit
+        # showed 215 consecutive kill-frames during a clean 37.7 mm insertion.
+        lateral_press = np.maximum(xy - 0.002, 0.0)
         penetration = np.where(
             (depth > 0.002) & inside_outer & contacts,
-            np.maximum(xy - self._cfg.reset.hole_clearance, 0.0),
+            lateral_press,
             0.0,
         )
         return {
