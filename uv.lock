@@ -115,6 +115,7 @@ members = [
     "motrix-rl-builtin",
     "motrix-rl-rslrl",
     "motrix-rl-skrl",
+    "motrix-rl-supermimic",
     "motrix-robots",
     "motrix-unitree-native",
     "motrixlab",
@@ -1771,6 +1772,25 @@ requires-dist = [
     { name = "torch", specifier = ">=2.7,<3" },
 ]
 provides-extras = ["jax"]
+
+[[package]]
+name = "motrix-rl-supermimic"
+version = "0.4.0"
+source = { editable = "motrix_rl_supermimic" }
+dependencies = [
+    { name = "motrix-env-core" },
+    { name = "motrix-rl" },
+    { name = "torch", version = "2.7.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-cuda') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-cuda') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra != 'extra-9-motrix-rl-cuda' and extra != 'extra-9-motrix-rl-rocm')" },
+    { name = "torch", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-rocm' and extra == 'extra-9-motrix-rl-rocm') or (sys_platform != 'darwin' and extra != 'extra-10-motrix-lab-cuda' and extra == 'extra-9-motrix-rl-rocm') or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "motrix-env-core", editable = "motrix_env_core" },
+    { name = "motrix-rl", editable = "motrix_rl" },
+    { name = "torch", specifier = ">=2.7,<3" },
+]
 
 [[package]]
 name = "motrix-robots"

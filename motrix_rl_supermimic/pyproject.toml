@@ -1,0 +1,20 @@
+[build-system]
+requires = ["uv_build>=0.11.23,<0.12"]
+build-backend = "uv_build"
+
+[project]
+name = "motrix-rl-supermimic"
+version = "0.4.0"
+description = "MotrixLab SuperMimic world-model MBRL provider."
+authors = [{ name = "Motphys", email = "developers@motphys.com" }]
+requires-python = ">=3.10,<3.14"
+readme = "README.md"
+license = "Apache-2.0"
+dependencies = [
+    "motrix-env-core==0.4.0",
+    "motrix-rl==0.4.0",
+    "torch>=2.7,<3",
+]
+
+[project.entry-points."motrix_rl.frameworks"]
+supermimic = "motrix_rl_supermimic.plugin:register"
