@@ -4,6 +4,7 @@
 from . import (
     franka_lift_cube,
     franka_open_cabinet,
+    panda_blind_insert,
     rm65_insert_peg,
     rm65_open_cabinet,
     shadow_hand,

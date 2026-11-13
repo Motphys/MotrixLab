@@ -44,7 +44,20 @@ class Trainer(TrainerBase):
             context: Trainer runtime context.
         """
         if context.resume_from is not None:
-            raise ValueError("Resume is not implemented for RSLRL PPO Trainer yet.")
+            # Warm-start contract (see make_warmstart.py): a checkpoint whose
+            # infos carry warm_start_from loads ONLY actor/critic weights —
+            # optimizer moments re-initialize and iteration counting restarts
+            # at zero. Full state restore stays unsupported.
+            ck = torch.load(context.resume_from, map_location="cpu", weights_only=False)
+            if not (isinstance(ck, dict) and isinstance(ck.get("infos"), dict) and ck["infos"].get("warm_start_from")):
+                raise ValueError(
+                    "Resume is not implemented for RSLRL PPO Trainer yet. "
+                    "For a stage warm start pass a checkpoint prepared by "
+                    "make_warmstart.py (actor/critic only, std reset, optimizer discarded)."
+                )
+            self._warm_start = ck
+        else:
+            self._warm_start = None
         env_name = context.env_name
         self._rlcfg = context.rl_cfg
         self._env_name = env_name
@@ -87,6 +100,15 @@ class Trainer(TrainerBase):
             log_dir=str(run_dir),
             device=device,
         )
+        if self._warm_start is not None:
+            # Load actor/critic weights only; the fresh runner keeps its new
+            # optimizer and normalizer state. std was reset by make_warmstart.
+            runner.alg.actor.load_state_dict(self._warm_start["actor_state_dict"])
+            runner.alg.critic.load_state_dict(self._warm_start["critic_state_dict"])
+            logger.info(
+                "Warm start: loaded actor/critic from %s (optimizer discarded)",
+                self._warm_start["infos"].get("warm_start_from"),
+            )
 
         # Start training
         logger.info(f"Starting training for {self._env_name}")

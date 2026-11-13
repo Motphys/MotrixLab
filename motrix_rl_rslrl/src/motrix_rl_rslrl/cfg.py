@@ -29,6 +29,13 @@ class RslRlActorCfg:
     init_noise_std: float = MISSING
     noise_std_type: str = MISSING  # one of: "scalar", "log"
     state_dependent_std: bool = MISSING
+    # Only consumed by models that support a noise band (e.g.
+    # motrix_envs.manipulation.piper_insert_peg.bounded_noise_mlp); the stock
+    # MLPModel ignores it because construct_algorithm drops unknown kwargs
+    # only via signature — passing it to stock models raises, so recipes that
+    # use it must also set class_name to a model that accepts it.
+    min_noise_std: float | None = None
+    max_noise_std: float | None = None
 
 
 @dataclass
