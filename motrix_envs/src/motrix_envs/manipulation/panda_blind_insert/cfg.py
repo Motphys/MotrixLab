@@ -37,7 +37,7 @@ class ResetConfig:
     # offset_cap is the OUTER radius. The reset() sampler stratifies into
     # 30/30/40 over (0, 0.3cap] / (0.3cap, 0.6cap] / (0.6cap, cap] — the
     # reference protocol. Stage-1 runs cap=0.002; stage-2 restores 0.010.
-    offset_cap: float = 0.002
+    offset_cap: float = 0.010
     bucket_weights: tuple = (0.3, 0.3)
     socket_top_z: float = 0.040
     # Square peg (22 mm) seated between flat pads at matched opening
