@@ -104,7 +104,8 @@ def test_provider_applies_render_init_kwargs_before_wrapping(monkeypatch, mode):
         _env_name="cartpole",
         _sim="test-sim",
         _render=recording,
-        _context=SimpleNamespace(seed=7, num_envs=4, play_num_envs=2),
+        _context=SimpleNamespace(seed=7, num_envs=4, play_num_envs=2, resume_from=None),
+        _rlcfg=SimpleNamespace(warm_start=False),
         _set_seed=Mock(),
     )
     make = Mock()

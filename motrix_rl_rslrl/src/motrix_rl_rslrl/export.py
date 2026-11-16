@@ -5,7 +5,6 @@
 
 import io
 from collections.abc import Mapping
-from dataclasses import asdict
 
 import numpy as np
 
@@ -33,7 +32,7 @@ class RslrlPpoOnnxExporter(OnnxPolicyExporter):
             raise ValueError(
                 "RSL-RL ONNX export currently requires obs_groups.actor=['policy'] for a single ONNX input"
             )
-        actor_config = asdict(algo_cfg.actor)
+        actor_config = algo_cfg.actor.to_dict()
         class_name = actor_config.pop("class_name")
         if class_name != "MLPModel":
             raise ValueError(f"RSL-RL ONNX export supports actor.class_name=MLPModel, got {class_name!r}")

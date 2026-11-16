@@ -1,0 +1,68 @@
+<mujoco model="panda_blind_insert">
+  <statistic center="0.4 0 0.4" extent="1" />
+
+  <option timestep="0.001" iterations="10" ls_iterations="12" integrator="implicitfast">
+    <flag eulerdamp="disable" />
+  </option>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
+    <global azimuth="130" elevation="-25" />
+  </visual>
+
+  <worldbody>
+    <light diffuse="0.7 0.7 0.7" pos="0.4 0 1.5" dir="0 0 -1" directional="true" />
+    <geom name="floor" size="0 0 0.05" pos="0 0 -0.02" type="plane" rgba="0.35 0.35 0.38 1" />
+
+    <!-- Blind-hole socket: kinematic mocap body (reset re-places it).
+         NIST-style square: 34 mm square peg, 36 mm square hole (1 mm
+         clearance per side; the peg is sized to the Panda pads minimum
+         grasp opening), four straight walls, a wider entrance and a floor. -->
+    <body name="blind_socket" mocap="true" pos="0.45 0.0 0.0">
+      <!-- Ring-shaped top plate (four strips, hole mouth left open):
+           a solid plate here physically blocked insertion (peg stopped at
+           the plate top). Strips span outer 80 mm to hole edge 18 mm. -->
+      <geom name="socket_top_xp" type="box" size="0.011 0.040 0.0005" pos="0.029 0 0.0405"
+        group="3" contype="2" conaffinity="1" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_top_xn" type="box" size="0.011 0.040 0.0005" pos="-0.029 0 0.0405"
+        group="3" contype="2" conaffinity="1" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_top_yp" type="box" size="0.018 0.011 0.0005" pos="0 0.029 0.0405"
+        group="3" contype="2" conaffinity="1" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_top_yn" type="box" size="0.018 0.011 0.0005" pos="0 -0.029 0.0405"
+        group="3" contype="2" conaffinity="1" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_floor" type="box" size="0.018 0.018 0.0005" pos="0 0 0.0015"
+        group="3" contype="2" conaffinity="1" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_wall_xp" type="box" size="0.002 0.020 0.017" pos="0.020 0 0.018"
+        group="3" contype="2" conaffinity="1" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_wall_xn" type="box" size="0.002 0.020 0.017" pos="-0.020 0 0.018"
+        group="3" contype="2" conaffinity="1" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_wall_yp" type="box" size="0.020 0.002 0.017" pos="0 0.020 0.018"
+        group="3" contype="2" conaffinity="1" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_wall_yn" type="box" size="0.020 0.002 0.017" pos="0 -0.020 0.018"
+        group="3" contype="2" conaffinity="1" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_cham_xp" type="box" size="0.005 0.0215 0.0025" pos="0.0265 0 0.0385"
+        group="3" contype="2" conaffinity="1" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_cham_xn" type="box" size="0.005 0.0215 0.0025" pos="-0.0265 0 0.0385"
+        group="3" contype="2" conaffinity="1" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_cham_yp" type="box" size="0.0215 0.005 0.0025" pos="0 0.0265 0.0385"
+        group="3" contype="2" conaffinity="1" condim="6" friction="0.3 0.005 0.0001" />
+      <geom name="socket_cham_yn" type="box" size="0.0215 0.005 0.0025" pos="0 -0.0265 0.0385"
+        group="3" contype="2" conaffinity="1" condim="6" friction="0.3 0.005 0.0001" />
+      <!-- visual-only outer shell -->
+      <geom name="socket_visual" type="box" size="0.042 0.042 0.020" pos="0 0 0.020"
+        rgba="0.25 0.27 0.3 1" contype="0" conaffinity="0" group="2" />
+    </body>
+
+  </worldbody>
+
+  <sensor>
+    <contact name="wall_xp" geom1="peg_collision" geom2="socket_wall_xp" data="dist" reduce="mindist" num="1" />
+    <contact name="wall_xn" geom1="peg_collision" geom2="socket_wall_xn" data="dist" reduce="mindist" num="1" />
+    <contact name="wall_yp" geom1="peg_collision" geom2="socket_wall_yp" data="dist" reduce="mindist" num="1" />
+    <contact name="wall_yn" geom1="peg_collision" geom2="socket_wall_yn" data="dist" reduce="mindist" num="1" />
+    <contact name="cham_xp" geom1="peg_collision" geom2="socket_cham_xp" data="dist" reduce="mindist" num="1" />
+    <contact name="cham_xn" geom1="peg_collision" geom2="socket_cham_xn" data="dist" reduce="mindist" num="1" />
+    <contact name="cham_yp" geom1="peg_collision" geom2="socket_cham_yp" data="dist" reduce="mindist" num="1" />
+    <contact name="cham_yn" geom1="peg_collision" geom2="socket_cham_yn" data="dist" reduce="mindist" num="1" />
+  </sensor>
+</mujoco>

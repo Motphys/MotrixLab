@@ -43,8 +43,10 @@ class Trainer(TrainerBase):
         Args:
             context: Trainer runtime context.
         """
-        if context.resume_from is not None:
-            raise ValueError("Resume is not implemented for RSLRL PPO Trainer yet.")
+        if context.resume_from is not None and not context.rl_cfg.warm_start:
+            raise ValueError(
+                "Full resume is unavailable for RSLRL PPO. Use algo.warm_start=true to load model weights."
+            )
         env_name = context.env_name
         self._rlcfg = context.rl_cfg
         self._env_name = env_name
@@ -57,6 +59,9 @@ class Trainer(TrainerBase):
 
         Creates the environment, wraps it for RSLRL, and runs the training loop.
         """
+        if self._rlcfg.warm_start and self._context.resume_from is None:
+            raise ValueError("RSLRL PPO warm start requires a checkpoint passed with resume=.")
+
         # Determine device for training
         device = resolve_default_device()
 
@@ -89,6 +94,8 @@ class Trainer(TrainerBase):
             log_dir=str(run_dir),
             device=device,
         )
+        if self._context.resume_from is not None:
+            self._load_warm_start(runner, self._context.resume_from)
 
         # Start training
         logger.info(f"Starting training for {self._env_name}")
@@ -118,6 +125,19 @@ class Trainer(TrainerBase):
         )
 
         logger.info("Training completed")
+
+    @staticmethod
+    def _load_warm_start(runner: OnPolicyRunner, checkpoint: str) -> None:
+        # Keep the newly configured exploration parameters when loading the model state.
+        actor = runner.alg.actor
+        initial_noise = {
+            name: value.detach().clone() for name, value in actor.named_parameters() if name in {"std", "log_std"}
+        }
+        runner.load(checkpoint, load_cfg={"actor": True, "critic": True}, map_location="cpu")
+        with torch.no_grad():
+            for name, value in initial_noise.items():
+                actor.get_parameter(name).copy_(value)
+        logger.info("Warm start: loaded actor/critic from %s with a fresh optimizer", checkpoint)
 
     def play(self, policy_path: str) -> None:
         """Evaluate a trained policy.

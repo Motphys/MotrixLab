@@ -26,6 +26,7 @@ _MANIPULATION_ENVS = [
     "franka-lift-cube",
     "shadow-hand-repose",
     "franka-open-cabinet",
+    "panda-blind-insertion",
     "rm65_insert_peg",
     "rm65-open-cabinet",
 ]
