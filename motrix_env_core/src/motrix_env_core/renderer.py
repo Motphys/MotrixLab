@@ -15,6 +15,7 @@ import torch
 
 from motrix_env_core.base import EnvCfg
 from motrix_env_core.sim.backend import (
+    RecordConfig,
     RenderConfig,
     SimRenderer,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "RendererHost",
     "SimRenderer",
     "VideoRecorder",
+    "RecordConfig",
     "create_renderer",
 ]
 
@@ -116,7 +118,7 @@ class VideoRecorder:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             # macro_block_size=None keeps the configured frame size untouched;
             # the yuv420p pixel format still requires even dimensions, which
-            # RenderConfig validates up front.
+            # RecordConfig validates up front.
             self._writer = imageio.get_writer(
                 str(self._path),
                 fps=self._fps,
@@ -130,22 +132,21 @@ class VideoRecorder:
 
 
 def create_renderer(env: RendererHost, config: RenderConfig | None) -> SimRenderer | VideoRecorder | None:
-    """Create the environment's renderer selected by ``config``.
+    """Create a frame source, optionally wrapped with video pacing/encoding.
 
-    Interactive configs return the backend renderer directly; headless configs
-    wrap it in a :class:`VideoRecorder` that paces frame capture against the
-    control step and encodes the video. Both expose ``render`` / ``close``.
+    A record configuration without a destination captures still frames; only a
+    video destination enables the recorder.
     """
     if config is None:
         return None
     renderer = env.create_renderer(config)
-    if config.headless:
-        assert config.path is not None and config.fps is not None and config.num_frames is not None
+    record = config.record
+    if record is not None and record.path is not None:
         return VideoRecorder(
             renderer,
             control_dt=env.cfg.ctrl_dt,
-            path=config.path,
-            fps=config.fps,
-            num_frames=config.num_frames,
+            path=record.path,
+            fps=record.fps,
+            num_frames=record.num_frames,
         )
     return renderer

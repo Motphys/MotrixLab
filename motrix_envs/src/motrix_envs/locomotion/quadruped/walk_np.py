@@ -126,7 +126,13 @@ def _resolve_key_pose(
 class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
     """Base quadruped walk task driven by a :class:`QuadrupedRobotCfg`."""
 
-    def __init__(self, cfg: QuadrupedWalkEnvCfg, num_envs=1, backend: str | None = None):
+    def __init__(
+        self,
+        cfg: QuadrupedWalkEnvCfg,
+        num_envs=1,
+        backend: str | None = None,
+        **kwargs,
+    ):
         robot = cfg.scene.objs.robot
         if not isinstance(robot, QuadrupedRobotCfg):
             raise TypeError(f"Quadruped walk scene robot must be QuadrupedRobotCfg, got {type(robot).__name__}")
@@ -144,7 +150,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         if len(set(foot_position_sensors)) != len(foot_position_sensors):
             raise ValueError("Quadruped walk foot position sensor names must be unique")
 
-        super().__init__(cfg, num_envs, backend=backend)
+        super().__init__(cfg, num_envs, backend=backend, **kwargs)
         self.model = self.sim.compile_model(_sim_model_queries(cfg))
         self.sim_data = self.sim.compile_reads(_sim_data_queries(cfg))
         self._ctrl_writes = self.sim.write_compiler.compile({"ctrl": CtrlTargetsWrite()})

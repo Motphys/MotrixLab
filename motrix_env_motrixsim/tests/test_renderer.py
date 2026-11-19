@@ -3,16 +3,18 @@
 
 """MotrixSim renderer contract tests (issue #222): RenderApp wiring and modes."""
 
-from pathlib import Path
 from unittest.mock import MagicMock, Mock
 
 import numpy as np
 import pytest
 import torch
 
+import motrix_env_motrixsim.compiler as motrixsim_compiler
 import motrix_env_motrixsim.renderer as motrixsim_renderer
-from motrix_env_core.config.scene import SystemCameraCfg
-from motrix_env_core.sim.backend import RenderConfig, SimRenderer
+from motrix_env_core.base import SimCfg
+from motrix_env_core.config.scene import SceneCfg, SystemCameraCfg
+from motrix_env_core.sim.backend import RecordConfig, RenderConfig, SimRenderer
+from motrix_env_motrixsim.runtime import MotrixSimBackend
 
 
 def _system_camera() -> SystemCameraCfg:
@@ -26,7 +28,7 @@ def _system_camera() -> SystemCameraCfg:
 
 def test_interactive_renderer_launches_with_system_camera(monkeypatch):
     render_app = MagicMock()
-    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False, fps=None: render_app)
+    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False: render_app)
     model = object()
     data = object()
 
@@ -59,7 +61,7 @@ def test_interactive_renderer_launches_with_system_camera(monkeypatch):
 def test_interactive_renderer_space_key_toggles_data_sync(monkeypatch):
     render_app = MagicMock()
     render_app.input.is_key_just_pressed.return_value = True
-    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False, fps=None: render_app)
+    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False: render_app)
     data = object()
 
     renderer = motrixsim_renderer.MotrixSimRenderer(
@@ -79,7 +81,7 @@ def test_interactive_renderer_space_key_toggles_data_sync(monkeypatch):
 
 def test_interactive_renderer_rejects_capture(monkeypatch):
     render_app = MagicMock()
-    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False, fps=None: render_app)
+    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False: render_app)
 
     renderer = motrixsim_renderer.MotrixSimRenderer(
         object(),
@@ -94,7 +96,48 @@ def test_interactive_renderer_rejects_capture(monkeypatch):
         renderer.capture()
 
 
-def test_headless_renderer_configures_camera_resolution_and_captures(monkeypatch):
+@pytest.mark.parametrize("headless", [False, True])
+@pytest.mark.parametrize("record", [None, RecordConfig(width=128, height=64)])
+def test_compiler_configures_camera_target_and_optional_record_resolution(monkeypatch, headless, record):
+    world = MagicMock()
+    # Preserve the model camera's configured size unless recording requests one.
+    world.system_camera.resolution = [320, 240]
+    compiler = motrixsim_compiler.MotrixSimSceneCompiler()
+    monkeypatch.setattr(compiler, "build_world", lambda scene: world)
+
+    model = compiler.compile(SceneCfg(), SimCfg(), render=RenderConfig(headless=headless, record=record))
+
+    assert model is world.build.return_value
+    target = motrixsim_compiler.mtx.msd.RenderTarget
+    assert world.system_camera.render_target == (target.Image if headless else target.Window)
+    assert world.system_camera.resolution == ([record.width, record.height] if record is not None else [320, 240])
+
+
+def test_backend_headless_target_preserves_live_simulation(monkeypatch):
+    # Use the real MSD/model API without starting a GPU render service. Camera
+    # output must be configured before build, without changing the live model.
+    render_app = MagicMock()
+    monkeypatch.setattr(motrixsim_renderer, "RenderApp", lambda headless=False: render_app)
+    config = RenderConfig(headless=True, record=RecordConfig(width=128, height=64))
+    backend = MotrixSimBackend(SceneCfg(), SimCfg(), 1, render=config)
+    live_data = backend._data
+    live_model = backend._model
+    renderer = backend.create_renderer(
+        config,
+        num_envs=1,
+        render_spacing=1.0,
+    )
+    render_model = render_app.launch.call_args.args[0]
+    assert render_model is live_model
+    assert backend._model is live_model
+    assert live_model.cameras.system_render_target == "image"
+    assert backend._data is live_data
+    renderer.render()
+    render_app.sync.assert_called_once_with(data=live_data)
+    renderer.close()
+
+
+def test_headless_renderer_captures(monkeypatch):
     render_app = MagicMock()
     monkeypatch.setattr(motrixsim_renderer, "RenderApp", MagicMock(return_value=render_app))
     image = MagicMock()
@@ -102,15 +145,7 @@ def test_headless_renderer_configures_camera_resolution_and_captures(monkeypatch
     render_app.system_camera.capture.return_value.take_image.return_value = image
     model = Mock()
     data = object()
-    config = RenderConfig(
-        headless=True,
-        path=Path("/tmp/video.mp4"),
-        fps=20,
-        num_frames=10,
-        width=128,
-        height=64,
-        camera_lookat=(0.5, 0.5, 0.5),
-    )
+    config = RenderConfig(headless=True, record=RecordConfig(width=128, height=64))
 
     renderer = motrixsim_renderer.MotrixSimRenderer(
         model,
@@ -121,10 +156,9 @@ def test_headless_renderer_configures_camera_resolution_and_captures(monkeypatch
         system_camera=_system_camera(),
     )
     assert isinstance(renderer, SimRenderer)
-    model.cameras.set_system_render_target.assert_called_once_with("image", 128, 64)
+    assert render_app.launch.call_args.args[0] is model
     assert render_app.launch.call_args.kwargs["batch"] == 2
-    # Headless default is the render service's on-demand runner (no loop cap).
-    assert motrixsim_renderer.RenderApp.call_args.kwargs == {"headless": True, "fps": None}
+    assert motrixsim_renderer.RenderApp.call_args.kwargs == {"headless": True}
 
     frame = renderer.capture()
     assert frame.shape == (4, 6, 3)

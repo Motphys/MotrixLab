@@ -19,7 +19,7 @@ from motrix_env_core.config.scene import MjcfFileCfg, RobotCfg, SceneCfg
 from motrix_env_core.direct.env import DirectEnv, DirectEnvCfg
 from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
 from motrix_env_core.sim import ModelQuery
-from motrix_env_core.sim.backend import SimBackend
+from motrix_env_core.sim.backend import RecordConfig, RenderConfig, SimBackend
 from motrix_env_core.sim.model import SimModel
 from motrix_env_core.sim.read import PhysicsReadProgram
 from motrix_env_core.sim.registry import register_sim_backend
@@ -51,8 +51,8 @@ class _FakeRegistryBackend(SimBackend):
 
     name = "fake-registry"
 
-    def __init__(self, scene, sim, num_envs: int) -> None:
-        super().__init__(scene, sim, num_envs)
+    def __init__(self, scene, sim, num_envs: int, *, render=None) -> None:
+        super().__init__(scene, sim, num_envs, render=render)
         self.num_envs = num_envs
 
     @property
@@ -171,6 +171,95 @@ def test_manager_seed_is_passed_to_manager_environment():
     registry._construct_env(FakeManagerEnv, cfg, 1, "fake-registry", 17)
 
     assert captured["seed"] == 17
+
+
+@pytest.mark.parametrize("use_spec", [False, True], ids=["registry", "build-spec"])
+@pytest.mark.parametrize("mode", ["train", "play"])
+@pytest.mark.parametrize("headless", [False, True])
+@pytest.mark.parametrize("workflow", ["direct", "manager"])
+def test_runtime_output_settings_survive_play_variants(use_spec, mode, headless, workflow):
+    """Explicit runtime settings apply after play variants, even when they return fresh configs."""
+    env_name = "core-test-render-env"
+    cfg_base = DirectEnvCfg if workflow == "direct" else ManagerBasedEnvCfg
+    env_base = DirectEnv if workflow == "direct" else ManagerEnv
+
+    @registry.envcfg(env_name)
+    @configclass
+    class RenderEnvCfg(cfg_base):
+        scene: SceneCfg = SceneCfg()
+
+        def for_play(self):
+            return type(self)(max_episode_seconds=5.0)
+
+    @registry.env(env_name)
+    class RenderEnv(env_base):
+        def __init__(self, cfg, num_envs=1, backend=None, seed=None, *, headless=False, record=None):
+            self.cfg_at_construction = cfg
+            self.output_at_construction = (headless, record)
+
+        observation_space = property(lambda self: None)
+        action_space = property(lambda self: None)
+
+        def apply_action(self, actions, state):
+            return state
+
+        def compute_transition(self, state):
+            return state
+
+        def reset(self, env_ids):
+            pass
+
+    record = RecordConfig(width=640, height=480)
+    spec = registry.resolve(env_name)
+    if use_spec:
+        env = spec.make(mode=mode, headless=headless, record=record)
+    else:
+        env = registry.make(env_name, mode=mode, headless=headless, record=record)
+
+    cfg = env.cfg_at_construction
+    assert env.output_at_construction == (headless, record)
+    assert env.output_at_construction[1] is record
+    assert cfg.max_episode_seconds == (5.0 if mode == "play" else None)
+    # Output requests belong to the rollout, not the reusable spec or task config.
+    assert spec.make().output_at_construction == (False, None)
+    assert not hasattr(cfg, "headless")
+
+
+@pytest.mark.parametrize("workflow", ["direct", "manager"])
+@pytest.mark.parametrize("headless", [False, True])
+@pytest.mark.parametrize("record", [None, RecordConfig(width=640, height=480)])
+def test_render_config_reaches_backend_construction(workflow, headless, record, monkeypatch):
+    from motrix_env_core.sim import registry as sim_registry
+
+    class DirectRenderEnv(DirectEnv):
+        observation_space = property(lambda self: None)
+        action_space = property(lambda self: None)
+
+        def apply_action(self, actions, state):
+            return state
+
+        def compute_transition(self, state):
+            return state
+
+        def reset(self, env_ids):
+            pass
+
+    class BackendConstructionReached(Exception):
+        pass
+
+    cfg_type = DirectEnvCfg if workflow == "direct" else ManagerBasedEnvCfg
+    cfg = cfg_type(scene=SceneCfg())
+
+    def factory(scene, sim, num_envs, *, render: RenderConfig):
+        assert render == RenderConfig(headless=headless, record=record)
+        assert render.record is record
+        assert scene is cfg.scene
+        raise BackendConstructionReached
+
+    monkeypatch.setattr(sim_registry, "create_sim_backend", lambda name: factory)
+    env_type = DirectRenderEnv if workflow == "direct" else ManagerEnv
+    with pytest.raises(BackendConstructionReached):
+        env_type(cfg, backend="render-test", headless=headless, record=record)
 
 
 def test_custom_environment_can_be_registered_and_created_without_builtins():
@@ -316,7 +405,7 @@ def test_env_plugins_are_lazy_sorted_once_at_every_query_boundary(monkeypatch, q
         return [b, a]
 
     monkeypatch.setattr(registry, "entry_points", entry_points)
-    monkeypatch.setattr(registry, "_construct_env", lambda cls, cfg, *args: (cls, cfg))
+    monkeypatch.setattr(registry, "_construct_env", lambda cls, cfg, *args, **kwargs: (cls, cfg))
     _register_plugin_env("manual")
     assert metadata_queries == []
     if query == "contains":

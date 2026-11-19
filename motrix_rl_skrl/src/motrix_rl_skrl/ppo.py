@@ -225,8 +225,10 @@ class SkrlPpoTrainerBase(TrainerBase):
         obs, _ = env.reset()
         state = env.state()
 
-        recording = self._render is not None and self._render.headless
-        fps = self._render.fps if recording else 60
+        recording = (
+            self._render is not None and self._render.record is not None and self._render.record.path is not None
+        )
+        fps = self._render.record.fps if recording else 60
         try:
             with self._play_context():
                 while True:

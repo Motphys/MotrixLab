@@ -8,7 +8,7 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig
 
-from motrix_env_core.renderer import RenderConfig
+from motrix_env_core.renderer import RecordConfig, RenderConfig
 from motrix_rl import checkpoints, runner, runs
 from motrix_rl.cli import run_cli, to_typed_config
 from motrix_rl.config import PlayConfig
@@ -95,11 +95,13 @@ def _play_render_config(target: PlayTarget, cfg: PlayConfig) -> RenderConfig:
     num_frames = max(1, int(round(cfg.record_seconds * PLAY_RECORDING_FPS)))
     return RenderConfig(
         headless=True,
-        path=path,
-        fps=PLAY_RECORDING_FPS,
-        num_frames=num_frames,
-        width=cfg.record_width,
-        height=cfg.record_height,
+        record=RecordConfig(
+            width=cfg.record_width,
+            height=cfg.record_height,
+            path=path,
+            fps=PLAY_RECORDING_FPS,
+            num_frames=num_frames,
+        ),
     )
 
 

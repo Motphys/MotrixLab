@@ -125,8 +125,8 @@ class _FakeBackend(SimBackend):
 
     last: "_FakeBackend | None" = None
 
-    def __init__(self, scene, sim, num_envs: int) -> None:
-        super().__init__(scene, sim, num_envs)
+    def __init__(self, scene, sim, num_envs: int, *, render=None) -> None:
+        super().__init__(scene, sim, num_envs, render=render)
         self.num_envs = num_envs
         self.dof_pos = np.zeros((num_envs, self.num_dof_pos), dtype=np.float32)
         self.dof_vel = np.zeros((num_envs, self.num_dof_vel), dtype=np.float32)

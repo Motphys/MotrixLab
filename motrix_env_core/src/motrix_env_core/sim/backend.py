@@ -12,14 +12,14 @@ interact with the backend through the shared query and write interfaces.
 from __future__ import annotations
 
 import abc
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 import torch
 
 from motrix_env_core.config import SimCfg
-from motrix_env_core.config.scene import SceneCfg, SystemCameraCfg
+from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.sim.model import ModelQuery, SimModel, SimModelCompiler
 from motrix_env_core.sim.read import PhysicsReadProgram
 from motrix_env_core.sim.write import SimWrite, SimWriteCompiler, WriteProgram
@@ -27,43 +27,41 @@ from motrix_env_core.sim.write import SimWrite, SimWriteCompiler, WriteProgram
 
 @dataclass(frozen=True)
 class RenderConfig:
-    """Rendering settings; ``headless`` selects windowed vs offscreen mode.
+    """Runtime rendering settings, independent of scene and video encoding.
 
-    Interactive (``headless=False``) rendering opens a viewer window. Headless
-    rendering captures offscreen frames and records them to a video file, so
-    ``path`` / ``fps`` / ``num_frames`` are required in that mode.
+    Environments derive these settings from their headless/record initialization
+    arguments so immutable models configure output before build. Headless rendering provides
+    offscreen frames for screenshots or an optional video recorder.
     """
 
     headless: bool = False
-    path: Path | None = None
-    fps: int | None = None
-    num_frames: int | None = None
-    width: int = 256
-    height: int = 256
-    camera_lookat: Sequence[float] | None = None
-    camera_distance: float | None = None
-    camera_elevation: float | None = None
-    camera_azimuth: float | None = None
+    record: RecordConfig | None = None
 
     def __post_init__(self) -> None:
-        if not self.headless:
-            if self.path is not None:
-                raise ValueError("path is a headless recording field; pass headless=True or remove it.")
-            return
-        if self.path is None:
-            raise ValueError("headless recording requires a path.")
-        if self.fps is None or self.fps <= 0:
-            raise ValueError(f"fps must be positive, got {self.fps}")
-        if self.num_frames is None or self.num_frames <= 0:
-            raise ValueError(f"num_frames must be positive, got {self.num_frames}")
-        if self.width <= 0:
-            raise ValueError(f"width must be positive, got {self.width}")
-        if self.height <= 0:
-            raise ValueError(f"height must be positive, got {self.height}")
-        if self.width % 2 != 0:
-            raise ValueError(f"width must be even for yuv420p encoding, got {self.width}")
-        if self.height % 2 != 0:
-            raise ValueError(f"height must be even for yuv420p encoding, got {self.height}")
+        if not self.headless and self.record is not None and self.record.path is not None:
+            raise ValueError("video recording requires headless=True")
+
+
+@dataclass(frozen=True)
+class RecordConfig:
+    """Capture dimensions and optional video output; no destination means still capture."""
+
+    width: int = 256
+    height: int = 256
+    path: Path | None = None
+    fps: int = 60
+    num_frames: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("record width and height must be positive")
+        if self.path is not None:
+            if self.fps <= 0:
+                raise ValueError(f"fps must be positive, got {self.fps}")
+            if self.num_frames is None or self.num_frames <= 0:
+                raise ValueError("video recording requires positive num_frames")
+            if self.width % 2 or self.height % 2:
+                raise ValueError("video width and height must be even for yuv420p encoding")
 
 
 class SimRenderer(abc.ABC):
@@ -107,7 +105,7 @@ class SimBackend(abc.ABC):
 
     name: str
 
-    def __init__(self, scene: SceneCfg, sim: SimCfg, num_envs: int) -> None:
+    def __init__(self, scene: SceneCfg, sim: SimCfg, num_envs: int, *, render: RenderConfig | None = None) -> None:
         """Compile ``scene`` and allocate ``num_envs`` batched data rows.
 
         Concrete backends own this contract: they must finish all scene
@@ -117,7 +115,7 @@ class SimBackend(abc.ABC):
         feed the model compiler both of its inputs.
         """
         self._scene = scene
-        del sim, num_envs
+        del sim, num_envs, render
 
     @property
     @abc.abstractmethod
@@ -159,7 +157,6 @@ class SimBackend(abc.ABC):
         *,
         num_envs: int,
         render_spacing: float,
-        system_camera: SystemCameraCfg,
     ) -> SimRenderer:
         """Create this backend's renderer using its own model and data.
 

@@ -80,7 +80,13 @@ def build_env(
     mode: str = "train",
     seed: int | None = None,
 ) -> FastSacEnvWrap:
-    env = env_spec.make(num_envs=num_envs, mode=mode, seed=seed)
+    env = env_spec.make(
+        num_envs=num_envs,
+        mode=mode,
+        seed=seed,
+        headless=render.headless if render else False,
+        record=render.record if render else None,
+    )
     return FastSacEnvWrap(env, device, render=render)
 
 

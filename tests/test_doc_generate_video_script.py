@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from motrix_env_core.renderer import RenderConfig
+from motrix_env_core.renderer import RecordConfig, RenderConfig
 from motrix_envs.locomotion.wbt.g1.common import G1WbtEnvCfg
 from motrix_rl import checkpoints, runs
 
@@ -76,8 +76,11 @@ def test_video_config_records_by_default_and_places_bare_output_in_docs_video_di
     assert args.num_envs == 16
     assert isinstance(render, RenderConfig)
     assert render.headless
-    assert render.path == generate_video.VIDEO_DIR / "demo.mp4"
-    assert render.num_frames == generate_video.DEFAULT_FPS * int(generate_video.DEFAULT_RECORD_SECONDS)
+    recording = render.record
+    assert isinstance(recording, RecordConfig)
+    assert (recording.width, recording.height) == (args.width, args.height)
+    assert recording.path == generate_video.VIDEO_DIR / "demo.mp4"
+    assert recording.num_frames == generate_video.DEFAULT_FPS * int(generate_video.DEFAULT_RECORD_SECONDS)
 
 
 def test_record_config_requires_force_to_overwrite(tmp_path):

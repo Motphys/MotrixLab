@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import importlib
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -12,6 +13,7 @@ import torch
 
 from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.renderer import RecordConfig, RenderConfig
 
 _NUM_ENVS = 2
 
@@ -51,9 +53,13 @@ def _make_env():
 def _wrap_env(monkeypatch, env, renderer):
     pytest.importorskip("rsl_rl")
     wrapper_module = importlib.import_module("motrix_rl_rslrl.torch.wrap")
-    monkeypatch.setattr(wrapper_module, "create_renderer", Mock(return_value=renderer))
+    create_renderer = Mock(return_value=renderer)
+    monkeypatch.setattr(wrapper_module, "create_renderer", create_renderer)
     trainer_module = importlib.import_module("motrix_rl_rslrl.torch")
-    return trainer_module.wrap_env(env, torch.device("cpu"), render=object())
+    recording = RenderConfig(headless=True, record=RecordConfig(path=Path("video.mp4"), fps=30, num_frames=60))
+    wrapped = trainer_module.wrap_env(env, torch.device("cpu"), render=recording)
+    create_renderer.assert_called_once_with(env, recording)
+    return wrapped
 
 
 def test_rl_trainer_supports_sim_backend(monkeypatch) -> None:
@@ -74,3 +80,42 @@ def test_rl_trainer_supports_sim_backend(monkeypatch) -> None:
     wrapped.close()
     renderer.render.assert_called_once_with()
     renderer.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("mode", ["train", "play"])
+def test_provider_applies_render_init_kwargs_before_wrapping(monkeypatch, mode):
+    pytest.importorskip("rsl_rl")
+    module = importlib.import_module("motrix_rl_rslrl.torch.train.ppo")
+    recording = RenderConfig(
+        headless=True,
+        record=RecordConfig(width=640, height=480, path=Path("video.mp4"), fps=30, num_frames=60),
+    )
+    instance = SimpleNamespace(
+        _env_name="cartpole",
+        _sim="test-sim",
+        _render=recording,
+        _context=SimpleNamespace(seed=7, num_envs=4, play_num_envs=2),
+        _set_seed=Mock(),
+    )
+    make = Mock()
+    wrapper = Mock(side_effect=RuntimeError("stop before runner creation"))
+    monkeypatch.setattr(module.env_registry, "make", make)
+    monkeypatch.setattr(module, "resolve_default_device", lambda: torch.device("cpu"))
+    monkeypatch.setattr(module, "wrap_env", wrapper)
+
+    with pytest.raises(RuntimeError, match="stop before runner creation"):
+        if mode == "train":
+            module.Trainer.train(instance)
+        else:
+            module.Trainer.play(instance, "policy.pt")
+
+    make.assert_called_once_with(
+        "cartpole",
+        sim="test-sim",
+        num_envs=4 if mode == "train" else 2,
+        mode=mode,
+        seed=7,
+        headless=True,
+        record=recording.record,
+    )
+    wrapper.assert_called_once_with(make.return_value, torch.device("cpu"), render=recording)
