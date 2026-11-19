@@ -51,8 +51,14 @@ def _sim_data_queries(cfg: Go1WalkDirectStairsEnvCfg):
 
 @registry.env("go1-stairs-terrain-walk")
 class Go1WalkStairsTask(DirectEnv):
-    def __init__(self, cfg: Go1WalkDirectStairsEnvCfg, num_envs=1, backend: str | None = None):
-        super().__init__(cfg, num_envs, backend=backend)
+    def __init__(
+        self,
+        cfg: Go1WalkDirectStairsEnvCfg,
+        num_envs=1,
+        backend: str | None = None,
+        **kwargs,
+    ):
+        super().__init__(cfg, num_envs, backend=backend, **kwargs)
         self.model = self.sim.compile_model({})
         self.sim_data = self.sim.compile_reads(_sim_data_queries(cfg))
         self._ctrl_writes = self.sim.write_compiler.compile({"ctrl": CtrlTargetsWrite()})

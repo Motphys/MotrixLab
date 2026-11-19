@@ -45,7 +45,7 @@ from motrix_env_core.sim import (
     SimDataQuery,
     SimQueriesCfg,
 )
-from motrix_env_core.sim.backend import RenderConfig, SimBackend, SimRenderer
+from motrix_env_core.sim.backend import RecordConfig, RenderConfig, SimBackend, SimRenderer
 
 if TYPE_CHECKING:
     from motrix_env_core.torch_manager.runtime import TorchTaskProgram
@@ -271,6 +271,9 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         num_envs: int = 1,
         backend: str | None = None,
         seed: int | None = None,
+        *,
+        headless: bool = False,
+        record: RecordConfig | None = None,
     ):
         """Construct a manager environment using the selected simulator backend.
 
@@ -286,7 +289,8 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         factory = create_sim_backend(backend or default_sim_backend_name())
         # Construction compiles the scene inside the backend: no compiled
         # artifact crosses the boundary.
-        self.sim: SimBackend = factory(cfg.scene, cfg.sim, num_envs)
+        render = RenderConfig(headless=headless, record=record)
+        self.sim: SimBackend = factory(cfg.scene, cfg.sim, num_envs, render=render)
         self.model = self.sim.compile_model(cfg.model_query_cfgs())
         # Full-width ctrl buffer in canonical actuator order, owned by the
         # compiled ctrl write program; routing happens here, the backend only
@@ -397,7 +401,6 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
             config,
             num_envs=self.num_envs,
             render_spacing=self.render_spacing,
-            system_camera=self.cfg.scene.system_camera,
         )
 
     @property

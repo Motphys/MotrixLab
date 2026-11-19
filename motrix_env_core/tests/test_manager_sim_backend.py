@@ -154,8 +154,8 @@ class _FakeBackend(SimBackend):
 
     last: "_FakeBackend | None" = None
 
-    def __init__(self, scene, sim, num_envs: int) -> None:
-        super().__init__(scene, sim, num_envs)
+    def __init__(self, scene, sim, num_envs: int, *, render=None) -> None:
+        super().__init__(scene, sim, num_envs, render=render)
         self.num_envs = num_envs
         self.dof_pos = torch.zeros((num_envs, self.num_dof_pos), dtype=torch.float32)
         self.dof_vel = torch.zeros((num_envs, self.num_dof_vel), dtype=torch.float32)

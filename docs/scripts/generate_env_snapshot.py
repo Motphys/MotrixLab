@@ -13,7 +13,7 @@ import imageio.v2 as imageio
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnv
-from motrix_env_core.sim.backend import RenderConfig
+from motrix_env_core.sim.backend import RecordConfig, RenderConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 POSTER_DIR = REPO_ROOT / "docs" / "source" / "_static" / "images" / "poster"
@@ -38,28 +38,10 @@ def _save_snapshot(
     env: ArrayEnv,
     path: Path,
     *,
-    width: int,
-    height: int,
+    render: RenderConfig,
     warmup_seconds: float,
 ) -> Path:
-    camera = env.cfg.scene.system_camera
-    # Headless RenderConfig is shaped for video recording, so the unused
-    # recording fields carry inert one-frame values; snapshots are taken as
-    # stills from the renderer's system-camera capture.
-    renderer = env.create_renderer(
-        RenderConfig(
-            headless=True,
-            path=path.with_suffix(".mp4"),
-            fps=1,
-            num_frames=1,
-            width=width,
-            height=height,
-            camera_lookat=camera.lookat,
-            camera_distance=camera.distance,
-            camera_elevation=camera.elevation,
-            camera_azimuth=camera.azimuth,
-        )
-    )
+    renderer = env.create_renderer(render)
     try:
         renderer.render()
         if warmup_seconds > 0.0:
@@ -90,7 +72,9 @@ def generate_snapshot(
     if output.is_file() and not force:
         return output
 
-    env = registry.make(env_name, num_envs=num_envs)
+    record = RecordConfig(width=width, height=height)
+    render = RenderConfig(headless=True, record=record)
+    env = registry.make(env_name, num_envs=num_envs, headless=True, record=record)
     if not isinstance(env, ArrayEnv):
         raise TypeError(f"Snapshot rendering only supports ArrayEnv environments, got {type(env).__name__}")
     env.init_state()
@@ -98,8 +82,7 @@ def generate_snapshot(
     return _save_snapshot(
         env,
         output,
-        width=width,
-        height=height,
+        render=render,
         warmup_seconds=warmup_seconds,
     )
 

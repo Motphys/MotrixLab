@@ -67,8 +67,14 @@ class Humanoid3DEnv(DirectEnv):
     _observation_space: gym.spaces.Box
     _action_space: gym.spaces.Box
 
-    def __init__(self, cfg: HumanoidWalkCfg, num_envs=1, backend: str | None = None):
-        super().__init__(cfg, num_envs, backend=backend)
+    def __init__(
+        self,
+        cfg: HumanoidWalkCfg,
+        num_envs=1,
+        backend: str | None = None,
+        **kwargs,
+    ):
+        super().__init__(cfg, num_envs, backend=backend, **kwargs)
         self.model = self.sim.compile_model(_SIM_MODEL_QUERIES)
         self.sim_data = self.sim.compile_reads(_SIM_DATA_QUERIES)
         self._ctrl_writes = self.sim.write_compiler.compile({"ctrl": CtrlTargetsWrite()})

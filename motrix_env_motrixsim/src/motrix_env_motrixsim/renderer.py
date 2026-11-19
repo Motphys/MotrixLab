@@ -39,31 +39,22 @@ class MotrixSimRenderer(SimRenderer):
         self._data_source = data_source
         self._headless = config.headless
         self._closed = False
-        if config.headless:
-            model.cameras.set_system_render_target("image", int(config.width), int(config.height))
         offsets = _render_layout(num_envs, render_spacing)
-        # ``fps`` only affects headless RenderApp: ``None`` selects the render
-        # service's on-demand runner — frames are rendered only when a sync
-        # arrives and GPU readbacks are drained in-frame, so nothing renders
-        # while idle and recording runs at full render speed (issue #37).
-        # Windowed mode omits the knob and keeps the library default.
-        render_kwargs = {"fps": None} if config.headless else {}
-        self._render = RenderApp(headless=config.headless, **render_kwargs)
+        self._render = RenderApp(headless=config.headless)
         self._render.launch(
             model,
             batch=num_envs,
             render_offset=offsets,
             render_settings=_render_settings(),
         )
-        # The view is fixed at construction: config camera settings override
-        # the scene's system-camera defaults in both modes.
+        # SceneCfg is the single source of camera settings in both modes.
         _set_system_camera_view(
             self._render,
             offsets,
-            config.camera_lookat if config.camera_lookat is not None else system_camera.lookat,
-            config.camera_distance if config.camera_distance is not None else system_camera.distance,
-            config.camera_elevation if config.camera_elevation is not None else system_camera.elevation,
-            config.camera_azimuth if config.camera_azimuth is not None else system_camera.azimuth,
+            system_camera.lookat,
+            system_camera.distance,
+            system_camera.elevation,
+            system_camera.azimuth,
         )
         self._sync_render_data = True
         self._render.system_camera.active = True

@@ -70,6 +70,8 @@ class Trainer(TrainerBase):
             num_envs=self._context.num_envs,
             mode="train",
             seed=self._context.seed,
+            headless=self._render.headless if self._render else False,
+            record=self._render.record if self._render else None,
         )
 
         logger.info(f"Using device: {device}")
@@ -138,6 +140,8 @@ class Trainer(TrainerBase):
             num_envs=self._context.play_num_envs,
             mode="play",
             seed=self._context.seed,
+            headless=self._render.headless if self._render else False,
+            record=self._render.record if self._render else None,
         )
 
         # Wrap environment for RSLRL
@@ -157,8 +161,10 @@ class Trainer(TrainerBase):
         logger.info("Starting evaluation loop...")
         logger.info("Press Ctrl+C to stop")
         obs, _ = vec_env.reset()
-        recording = self._render is not None and self._render.headless
-        fps = self._render.fps if recording else 60
+        recording = (
+            self._render is not None and self._render.record is not None and self._render.record.path is not None
+        )
+        fps = self._render.record.fps if recording else 60
 
         try:
             while True:

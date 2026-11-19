@@ -58,16 +58,16 @@ def test_save_snapshot_captures_one_overview_with_env_camera(monkeypatch, tmp_pa
     )
     path = tmp_path / "cartpole.jpg"
 
-    result = generate_env_snapshot._save_snapshot(env, path, width=960, height=540, warmup_seconds=1.0)
+    record = generate_env_snapshot.RecordConfig(width=960, height=540)
+    render = generate_env_snapshot.RenderConfig(headless=True, record=record)
+    result = generate_env_snapshot._save_snapshot(env, path, render=render, warmup_seconds=1.0)
 
     assert len(created) == 1
     config = created[0]
     assert config.headless is True
-    assert (config.width, config.height) == (960, 540)
-    assert config.camera_lookat == (1.0, 2.0, 3.0)
-    assert config.camera_distance == 4.0
-    assert config.camera_elevation == -15.0
-    assert config.camera_azimuth == 135.0
+    assert config.record is record
+    assert (config.record.width, config.record.height) == (960, 540)
+    assert config is render
     assert renderer.render_calls == 1
     assert renderer.capture_count == 2
     assert result == path
@@ -96,13 +96,32 @@ def test_generate_snapshot_initializes_registered_env(monkeypatch, tmp_path):
     env = FakeArrayEnv()
     env.init_state = lambda: setattr(env, "initialized", True)
     monkeypatch.setattr(generate_env_snapshot, "ArrayEnv", FakeArrayEnv)
-    monkeypatch.setattr(generate_env_snapshot.registry, "make", lambda *args, **kwargs: env)
-    monkeypatch.setattr(generate_env_snapshot, "_save_snapshot", lambda candidate, path, **kwargs: path)
+    make_calls = []
+    snapshot_calls = []
+
+    def make(*args, **kwargs):
+        make_calls.append((args, kwargs))
+        return env
+
+    def save_snapshot(candidate, path, **kwargs):
+        snapshot_calls.append((candidate, kwargs))
+        return path
+
+    monkeypatch.setattr(generate_env_snapshot.registry, "make", make)
+    monkeypatch.setattr(generate_env_snapshot, "_save_snapshot", save_snapshot)
 
     path = generate_env_snapshot.generate_snapshot("cartpole", output_dir=tmp_path)
 
     assert env.initialized is True
     assert path == tmp_path / "cartpole.jpg"
+    args, kwargs = make_calls[0]
+    assert args == ("cartpole",)
+    assert kwargs["headless"] is True
+    assert kwargs["num_envs"] == generate_env_snapshot.DEFAULT_NUM_ENVS
+    candidate, snapshot_options = snapshot_calls[0]
+    assert candidate is env
+    assert snapshot_options["render"].headless is True
+    assert snapshot_options["render"].record is kwargs["record"]
 
 
 def test_generate_snapshot_requires_force_to_overwrite_existing_image(monkeypatch, tmp_path):

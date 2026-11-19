@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 import torch
 
-from motrix_env_core.renderer import VideoRecorder, create_renderer
+from motrix_env_core.renderer import RecordConfig, VideoRecorder, create_renderer
 from motrix_env_core.sim.backend import RenderConfig, SimRenderer
 
 
@@ -33,23 +33,38 @@ def test_create_renderer_returns_interactive_renderer_directly():
 def test_create_renderer_wraps_headless_renderer_in_video_recorder():
     env = Mock()
     env.cfg.ctrl_dt = 0.05
-    config = RenderConfig(headless=True, path=Path("/tmp/v.mp4"), fps=10, num_frames=5)
+    record = RecordConfig(path=Path("/tmp/v.mp4"), fps=10, num_frames=5)
+    config = RenderConfig(headless=True, record=record)
 
     recorder = create_renderer(env, config)
 
     assert isinstance(recorder, VideoRecorder)
     env.create_renderer.assert_called_once_with(config)
+    assert config.record is record
+
+
+def test_headless_still_capture_needs_no_video_settings():
+    env = Mock()
+    config = RenderConfig(headless=True, record=RecordConfig(width=127, height=65))
+    assert create_renderer(env, config) is env.create_renderer.return_value
+    env.create_renderer.assert_called_once_with(config)
+
+
+def test_render_config_rejects_windowed_video_recording(tmp_path):
+    record = RecordConfig(path=tmp_path / "video.mp4", num_frames=5)
+    with pytest.raises(ValueError, match="video recording requires headless=True"):
+        RenderConfig(record=record)
 
 
 def test_render_config_rejects_invalid_settings():
+    with pytest.raises(ValueError, match="width and height must be positive"):
+        RecordConfig(width=0)
     with pytest.raises(ValueError, match="fps must be positive"):
-        RenderConfig(headless=True, path=Path("/tmp/v.mp4"), fps=0, num_frames=5)
-    with pytest.raises(ValueError, match="width must be even"):
-        RenderConfig(headless=True, path=Path("/tmp/v.mp4"), fps=10, num_frames=5, width=127)
-    with pytest.raises(ValueError, match="requires a path"):
-        RenderConfig(headless=True, fps=10, num_frames=5)
-    with pytest.raises(ValueError, match="headless recording field"):
-        RenderConfig(path=Path("/tmp/v.mp4"))
+        RecordConfig(path=Path("/tmp/v.mp4"), fps=0, num_frames=5)
+    with pytest.raises(ValueError, match="must be even"):
+        RecordConfig(width=127, path=Path("/tmp/v.mp4"), fps=10, num_frames=5)
+    with pytest.raises(ValueError, match="requires positive num_frames"):
+        RecordConfig(path=Path("/tmp/v.mp4"), fps=10)
 
 
 def test_video_recorder_paces_frames_and_closes_frame_source(tmp_path, monkeypatch):
