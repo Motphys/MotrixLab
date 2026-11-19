@@ -144,6 +144,7 @@ class _Context:
 class _FakeMujoco:
     mjtFontScale = SimpleNamespace(mjFONTSCALE_150=150)
     mjtCatBit = SimpleNamespace(mjCAT_ALL=7)
+    mjtLightType = SimpleNamespace(mjLIGHT_DIRECTIONAL=1)
     mjtMouse = SimpleNamespace(
         mjMOUSE_ROTATE_V=1,
         mjMOUSE_ROTATE_H=2,
@@ -172,7 +173,7 @@ class _FakeMujoco:
 
     def MjvScene(self, model: object, *, maxgeom: int) -> object:
         del model, maxgeom
-        return object()
+        return SimpleNamespace(lights=[], nlight=0)
 
     def MjrContext(self, model: object, font_scale: int) -> _Context:
         del model, font_scale
@@ -208,8 +209,35 @@ def _viewer(
     glfw = _FakeGlfw()
     mujoco = _FakeMujoco()
     viewer = MujocoGlfwViewer(mujoco, camera_config, glfw_module=glfw)
-    viewer.open(object(), object())
+    model = SimpleNamespace(
+        stat=SimpleNamespace(extent=2.0, center=np.zeros(3)),
+        vis=SimpleNamespace(map=SimpleNamespace(shadowclip=1.0)),
+    )
+    viewer.open(model, object())
     return viewer, glfw, mujoco
+
+
+def test_directional_shadow_camera_keeps_scene_in_depth_interval() -> None:
+    """A low oblique sun must not lose shadows after two metres of travel."""
+    viewer, _, mujoco = _viewer()
+    direction = np.full(3, -1.0 / np.sqrt(3))
+    sun = SimpleNamespace(type=1, castshadow=True, pos=np.array([0.0, 0.0, 1.5]), dir=direction)
+    headlight = SimpleNamespace(type=1, castshadow=False, pos=np.array([1.0, 2.0, 3.0]))
+    spot = SimpleNamespace(type=0, castshadow=True, pos=np.array([4.0, 5.0, 6.0]))
+    viewer._scene.lights = [sun, headlight, spot]
+    viewer._scene.nlight = 3
+    viewer._scene.camera = [SimpleNamespace(frustum_near=0.02, frustum_far=100.0)]
+    try:
+        viewer.sync()
+        for x in (-6.0, 0.0, 6.0):
+            depth = np.dot(np.array([x, 0.0, 0.4]) - sun.pos, sun.dir)
+            assert 0.02 < depth < 100.0
+        np.testing.assert_array_equal(sun.dir, direction)
+        np.testing.assert_array_equal(headlight.pos, [1.0, 2.0, 3.0])
+        np.testing.assert_array_equal(spot.pos, [4.0, 5.0, 6.0])
+        assert mujoco.render_count == 1
+    finally:
+        viewer.close()
 
 
 def test_glfw_keyboard_freezes_edges_and_clears_held_keys_on_focus_loss() -> None:

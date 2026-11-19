@@ -179,6 +179,10 @@ class MujocoGlfwViewer:
             self._option = self._mj.MjvOption()
             self._perturb = self._mj.MjvPerturb()
             self._scene = self._mj.MjvScene(model, maxgeom=10_000)
+            # Infinite deployment floors should retain directional-light shadows
+            # beyond the robot-sized compiled extent. Keep at least a 10 m
+            # half-width in light space without shrinking larger scene settings.
+            model.vis.map.shadowclip = max(model.vis.map.shadowclip, 10.0 / model.stat.extent)
             self._context = self._mj.MjrContext(model, self._mj.mjtFontScale.mjFONTSCALE_150)
             self._cursor_position = glfw.get_cursor_pos(window)
             glfw.set_key_callback(window, self.keyboard_device._on_key)
@@ -216,6 +220,14 @@ class MujocoGlfwViewer:
             self._mj.mjtCatBit.mjCAT_ALL,
             self._scene,
         )
+        # Directional illumination ignores position, but its shadow camera does
+        # not. Center its depth interval on the scene instead of the low sun
+        # position, which otherwise clips robots just a few metres away.
+        for light in self._scene.lights[: self._scene.nlight]:
+            if light.type == self._mj.mjtLightType.mjLIGHT_DIRECTIONAL and light.castshadow:
+                camera = self._scene.camera[0]
+                distance = 0.5 * (camera.frustum_near + camera.frustum_far)
+                light.pos[:] = self._model.stat.center - distance * light.dir
         width, height = self._glfw.get_framebuffer_size(window)
         if width > 0 and height > 0:
             viewport = self._mj.MjrRect(0, 0, width, height)
