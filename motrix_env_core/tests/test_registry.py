@@ -18,6 +18,7 @@ from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import MjcfFileCfg, RobotCfg, SceneCfg
 from motrix_env_core.direct.env import DirectEnv, DirectEnvCfg
 from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import ModelQuery
 from motrix_env_core.sim.backend import RecordConfig, RenderConfig, SimBackend
 from motrix_env_core.sim.model import SimModel
@@ -67,7 +68,7 @@ class _FakeRegistryBackend(SimBackend):
     def num_actuators(self) -> int:
         return 0
 
-    def step(self, substeps: int) -> None:
+    def step(self, substeps: int, result: torch.Tensor | None = None) -> None:
         pass
 
     @property
@@ -197,7 +198,7 @@ def test_runtime_output_settings_survive_play_variants(use_spec, mode, headless,
             self.cfg_at_construction = cfg
             self.output_at_construction = (headless, record)
 
-        observation_space = property(lambda self: None)
+        observation_spec = property(lambda self: None)
         action_space = property(lambda self: None)
 
         def apply_action(self, actions, state):
@@ -232,7 +233,7 @@ def test_render_config_reaches_backend_construction(workflow, headless, record, 
     from motrix_env_core.sim import registry as sim_registry
 
     class DirectRenderEnv(DirectEnv):
-        observation_space = property(lambda self: None)
+        observation_spec = property(lambda self: None)
         action_space = property(lambda self: None)
 
         def apply_action(self, actions, state):
@@ -278,8 +279,10 @@ def test_custom_environment_can_be_registered_and_created_without_builtins():
     @registry.env(env_name)
     class CustomEnv(DirectEnv[CustomEnvCfg]):
         @property
-        def observation_space(self) -> gym.spaces.Box:
-            return gym.spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32)
+        def observation_spec(self) -> ObservationSpec:
+            return ObservationSpec(
+                {"policy": ObservationGroupSpec(gym.spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32))}
+            )
 
         @property
         def action_space(self) -> gym.spaces.Box:
@@ -337,8 +340,10 @@ def test_direct_env_resolves_sim_backend_through_registry():
     @registry.env(env_name)
     class DirectSimEnv(DirectEnv[DirectSimCfg]):
         @property
-        def observation_space(self) -> gym.spaces.Box:
-            return gym.spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32)
+        def observation_spec(self) -> ObservationSpec:
+            return ObservationSpec(
+                {"policy": ObservationGroupSpec(gym.spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32))}
+            )
 
         @property
         def action_space(self) -> gym.spaces.Box:

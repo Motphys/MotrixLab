@@ -8,6 +8,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     DofPositionQuery,
     DofVelocityQuery,
@@ -56,7 +57,9 @@ class PointMassEnv(DirectEnv):
         self._target_position = self._reset_program.buffer("target_position")
         self._target_velocity = self._reset_program.buffer("target_velocity")
         self._action_space = gym.spaces.Box(-1.0, 1.0, (2,), dtype=np.float32)
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (9,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (9,), dtype=np.float32))}
+        )
         self._target_radius = cfg.target_radius
 
         # Target stay counter, used to control reset after 0.5 seconds of overlap
@@ -64,8 +67,8 @@ class PointMassEnv(DirectEnv):
         self._required_in_target_steps = int(0.5 / cfg.ctrl_dt)
 
     @property
-    def observation_space(self):
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self):

@@ -23,6 +23,7 @@ from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv, DirectEnvCfg
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import DofPositionQuery, DofVelocityQuery
 from motrix_env_core.sim.write import CtrlTargetsWrite, JointPositionWrite, JointVelocityWrite
 
@@ -61,11 +62,13 @@ class CartPoleEnv(DirectEnv):
             reset=True,
         )
         self._action_space = gym.spaces.Box(-3.0, 3.0, (1,), dtype=np.float32)
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (4,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (4,), dtype=np.float32))}
+        )
 
     @property
-    def observation_space(self):
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self):
@@ -138,7 +141,7 @@ class CartPoleEnv(DirectEnv):
 | `apply_action(actions, state)`       | 将动作写入仿真（通常是 ctrl 目标）                                                       |
 | `compute_transition(state)`          | 执行读取程序并派生 `state.reward`、`state.terminated` 等；这是每步唯一的全量数据刷新点，**不得**写 `state.obs` |
 | `compute_observation(state)`         | 纯粹用已刷新的仿真数据拼装 `state.obs`，不再执行读取                                     |
-| `observation_space` / `action_space` | 作为 property 定义，通常在 `__init__` 中预构造                                          |
+| `observation_spec` / `action_space` | 作为 property 定义，通常在 `__init__` 中预构造；观测使用 `ObservationSpec`，其中 `policy` 由 `ObservationGroupSpec` 描述 |
 
 语义约定：
 

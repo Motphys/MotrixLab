@@ -4,7 +4,7 @@
 
 本文面向任务开发者，说明如何使用 `ManagerBasedEnvCfg` 和 Manager term 创建一个 config-driven `ManagerEnv`。
 内容覆盖任务文件组织、manager groups、term 创建、`SimDataQuery` 参数、kernel-data dataclass 字段和常用 term 接口。
-运行时边界见 [Manager Runtime](./runtime.md)，kernel ABI 见 [Manager Kernel ABI](./kernel-abi.md)。
+运行时边界见 [Manager Runtime](./runtime.md)。
 
 ## 1. 任务文件组织
 
@@ -172,12 +172,25 @@ Observation、reward、termination term 不应通过共享全局 registry 查找
 
 ## 7. Reset
 
-Reset 配置声明 simulator state 和 term state 的恢复行为。Term 的 `reset(env_ids)` 只修改指定 environment rows；不要在 term 中实现全局 auto-reset、episode step 或 truncation。
+Reset 配置声明 simulator state 和 term state 的恢复行为，只修改指定 environment rows；
+不要在 term 中实现全局 auto-reset、episode step 或 truncation。
 这些职责属于 [Manager Runtime](./runtime.md) 所述的 `ArrayEnv` lifecycle 和 backend reset program。
 
 对外 API 层面，`ManagerEnv.reset(env_ids, sim_reset_ids=None)` 接收整数 `torch.Tensor`
-（例如 `torch.tensor([0, 2], dtype=torch.long)`），传入 numpy 数组抛出 `TypeError`；
-term 侧的 host 回调（command reset、action reset）仍保持 numpy 契约。
+（例如 `torch.tensor([0, 2], dtype=torch.long)`），传入 numpy 数组抛出 `TypeError`。
+Action 的 host `_reset(env_ids: torch.Tensor)` 只处理 episode-reset 行；command reset 是数值 hook，签名为
+`reset(self, ctx: ManagerContext, env_ids: torch.Tensor, episode_reset: torch.Tensor) -> None`。
+`env_ids` 是本 pass 的 K 个原始环境行号，`episode_reset` 是与 `env_ids` 对齐的 bool `(K,)`：
+True 表示回合级重置（含初始化与显式重开），False 表示仅 sim reset、当前回合继续；
+它不等于 `terminated`，也不必然表示上一回合已经结束。
+按 `env_ids` 对常驻全批状态 gather/scatter，用 `episode_reset` 限定回合级统计。
+
+sim-reset dispatch 签名为
+`(ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], *static) -> None`。
+`ManagerContext` 与 query 参数始终保持全批 N 行，不携带 reset 选择字段；
+只有 `sim_writes` 为紧凑 `(K, *write_shape)`，第 j 行对应 `env_ids[j]`。
+读取全批输入时按原始行号 gather，写入紧凑 buffer 时不要再次按 `env_ids` 索引。
+sim-only reset 不重启 episode bookkeeping 或清 action history。
 
 ## 8. 开发验收
 

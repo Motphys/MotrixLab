@@ -9,7 +9,7 @@
 - [项目整体架构设计](./architecture.md)
   系统总体分层、核心原则（Model/Data/State 分离、环境与 RL 框架解耦、注册表驱动、配置层次继承）、仿真后端抽象、RL 框架集成方式和数据流总览。
 - [Manager 设计](./manager/index.md)
-  Manager-based environment 的核心设计与开发指南，包括运行时边界、配置接口、kernel ABI、仿真数据查询和 action 所有权。
+  Manager-based environment 的核心设计与开发指南，包括运行时边界、配置接口、kernel ABI、仿真数据查询和 action 所有权；[History Observation 与单帧传输契约](./manager/observation-history.md) 定义 stacked obs、按静态描述可选提取实际尾帧，以及 core 与 provider 存储优化的职责边界。
   192 核 EPYC 上 ManagerEnv task kernel 加速比从桌面 4x 塌缩到 1.3x 的根因诊断：受控因子实验把损失分解为 NUMA 跨 node 远端内存（H1）、默认 omp 相对 tbb 的线程层劣势（H2）、每核内存带宽/主频硬件上限（H3）；H1/H2 可修（numactl 钉扎 + tbb + 线程数按 NUMA 拓扑），H3 是硬件上限，剩余差距只能靠减少 kernel 访存量。
 - [ONNX 模型导出设计](./onnx-export.md)
   基于 `RlFramework`/`AgentProvider` capability 的统一 ONNX policy exporter：从 metadata-backed run 恢复不同训练后端的 deterministic policy，烘焙 observation normalization，并执行 ONNX Runtime parity validation。
@@ -21,6 +21,8 @@
   在 RL 集成层引入 `rllib/train_backend/algo` 正交维度的架构：配置注册表、`RlFramework`/`AgentProvider`、`TrainerContext` 与通用 runner、算法配置与模型/memory 工厂、run metadata、checkpoint manifest 与 play 自动发现，以及内置 framework 矩阵（skrl / rslrl / motrix）；明确 `motrix_rl` 控制平面与 `motrix_rl.contracts` 契约、三个 provider 插件包的单向依赖和 entry-point discovery 边界。
 - [FastSAC 异构（Collector/Learner 分进程）训练器设计](./fastsac-async-heterogeneous-trainer.md)
   把仿真采样与网络训练拆到两进程、经共享内存交换数据的异构 FastSAC 训练器：统一注册为 `motrix.fastsac`，由 `algo.asynchronous` 选择执行拓扑，并包含 SPSC 有界背压 replay 环、update-to-data 比例治理、seqlock 双缓冲权重/normalizer 快照，以及进程生命周期与 checkpoint 兼容。
+- [训练随机性与 Seed 所有权](./randomness-and-seeding.md)
+  定义 `ctx.rand` 的 Torch 默认流入口、训练根 seed 与环境构造职责、共享随机消耗及编译/异步可复现性边界。
 - [训练实时指标（Live Metrics）设计](./live-metrics.md)
   设置 `MOTRIX_METRICS_URL` 后训练进程把 `motrix.metrics/v1` 记录同时写入 `run_dir/metrics.jsonl` 并批量推送给兼容的 ingest 服务：公开协议（环境变量、记录格式、状态机、幂等、重试规则）、规范 key 与 FastSAC/SKRL/RSLRL 映射、控制平面 `MetricsLogger` 与生命周期接入、失败语义与测试策略。
 - [Framework / Task 配置分离设计](./framework-task-split.md)

@@ -8,6 +8,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     BatchLinkQuaternionQuery,
     BodyJointPositionLimitsQuery,
@@ -55,7 +56,7 @@ def _quat_to_rotation_mats(quats: torch.Tensor) -> torch.Tensor:
 @registry.env("dm-runner")
 @registry.env("dm-stander")
 class Walker2DEnv(DirectEnv):
-    _observation_space: gym.spaces.Box
+    _observation_spec: ObservationSpec
     _action_space: gym.spaces.Box
 
     def __init__(
@@ -75,19 +76,21 @@ class Walker2DEnv(DirectEnv):
         )
         self._reset_position = self._reset_program.buffer("walker_position")
         self._reset_velocity = self._reset_program.buffer("walker_velocity")
-        self._init_obs_space()
+        self._init_observation_spec()
         self._init_action_space()
         self._num_links = len(_WALKER_LINKS)
         self._move_speed = cfg.move_speed
         self._joint_pos_lower, self._joint_pos_upper = self.model.others["joint_position_limits"]
         self._stand_height = cfg.stand_height
 
-    def _init_obs_space(self):
+    def _init_observation_spec(self) -> None:
         num = 0
         num += (len(_WALKER_LINKS) - 1) * 2  # planar rotation (x,z) per link except root
         num += 1  # torso height
         num += self.num_dof_vel
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (num,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (num,), dtype=np.float32))}
+        )
 
     def _init_action_space(self):
         ctrl_ranges = np.asarray([spec.ctrl_range for spec in self.model.actuators], dtype=np.float32)
@@ -99,8 +102,8 @@ class Walker2DEnv(DirectEnv):
         )
 
     @property
-    def observation_space(self) -> gym.spaces.Box:
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self) -> gym.spaces.Box:

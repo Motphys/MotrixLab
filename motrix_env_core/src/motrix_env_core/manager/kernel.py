@@ -6,13 +6,11 @@ from typing import NamedTuple
 import torch
 
 
-class KernelOutputs(NamedTuple):
-    """Preallocated tensors written by one manager task kernel."""
+class EvaluationOutputs(NamedTuple):
+    """Preallocated transition tensors written by the evaluate kernel."""
 
-    policy_obs: torch.Tensor
-    value_obs: torch.Tensor | None
     reward: torch.Tensor
     terminated: torch.Tensor
 
 
-__all__ = ["KernelOutputs"]
+__all__ = ["EvaluationOutputs"]

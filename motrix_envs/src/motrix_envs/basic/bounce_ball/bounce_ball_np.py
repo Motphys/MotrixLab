@@ -8,6 +8,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     BodyAngularVelocityWrite,
     BodyLinearVelocityWrite,
@@ -90,7 +91,9 @@ class BounceBallEnv(DirectEnv):
         self._last_actions = torch.zeros((num_envs, 6), dtype=torch.float32)
 
         # Observation space: joint states + paddle position + target height (29D)
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (29,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (29,), dtype=np.float32))}
+        )
 
         # Initial arm joint positions
         self._init_arm_qpos = torch.tensor(self._cfg.arm_init_qpos, dtype=torch.float32) * torch.pi / 180.0
@@ -133,8 +136,8 @@ class BounceBallEnv(DirectEnv):
         )
 
     @property
-    def observation_space(self):
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self):

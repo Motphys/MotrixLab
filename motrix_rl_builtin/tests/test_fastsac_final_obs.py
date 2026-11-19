@@ -32,9 +32,9 @@ from motrix_env_core.array.env import ArrayEnvState, EnvObs, FinalObs
 
 
 def test_numpy_adapter_reads_final_result_without_consuming_environment_state():
-    final = FinalObs(torch.tensor([0]), EnvObs(torch.tensor([[7.0]], dtype=torch.float32)))
+    final = FinalObs(torch.tensor([0]), EnvObs({"policy": torch.tensor([[7.0]], dtype=torch.float32)}))
     state = ArrayEnvState(
-        obs=EnvObs(torch.zeros((1, 1), dtype=torch.float32)),
+        obs=EnvObs({"policy": torch.zeros((1, 1), dtype=torch.float32)}),
         reward=torch.zeros(1, dtype=torch.float32),
         terminated=torch.zeros(1, dtype=torch.bool),
         truncated=torch.ones(1, dtype=torch.bool),

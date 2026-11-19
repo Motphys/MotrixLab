@@ -10,13 +10,16 @@ from dataclasses import dataclass
 
 import gymnasium as gym
 import numpy as np
+import pytest
 import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SceneCfg
+from motrix_env_core.config.sim_reset import ManagerResetCfg, ResetTermCfg
 from motrix_env_core.manager.actions import ActionCfg, ActionState, ActionTerm, ManagerActionsCfg
-from motrix_env_core.manager.context import ManagerContext
+from motrix_env_core.manager.context import BuildContext, ManagerContext
 from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
+from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.manager.observations import (
     ManagerObservationGroupCfg,
     ManagerObservationsCfg,
@@ -24,6 +27,7 @@ from motrix_env_core.manager.observations import (
     ObsTerm,
 )
 from motrix_env_core.manager.rewards import ManagerRewardsCfg, RewardTerm, RewardTermCfg
+from motrix_env_core.manager.sim_reset import ResetTerm
 from motrix_env_core.manager.terminations import (
     ManagerTerminationsCfg,
     TerminationTerm,
@@ -161,6 +165,7 @@ class _FakeBackend(SimBackend):
         self.dof_vel = torch.zeros((num_envs, self.num_dof_vel), dtype=torch.float32)
         self.ctrl_targets = torch.zeros((num_envs, self.num_actuators), dtype=torch.float32)
         self.step_calls: list[int] = []
+        self.status_codes = torch.zeros(num_envs, dtype=torch.int32)
         self.reset_calls: list[tuple[torch.Tensor, torch.Tensor | None]] = []
         self.ctrl_write_count = 0
         self._write_compiler = _FakeWriteCompiler(self)
@@ -178,9 +183,11 @@ class _FakeBackend(SimBackend):
     def num_actuators(self) -> int:
         return 2
 
-    def step(self, substeps: int) -> None:
+    def step(self, substeps: int, result: torch.Tensor | None = None) -> None:
         self.step_calls.append(substeps)
         self.dof_pos += 0.25 * substeps
+        if result is not None:
+            result.copy_(self.status_codes)
 
     @property
     def model_compiler(self):
@@ -215,8 +222,8 @@ class _CtrlActionTerm(ActionTerm):
         self.state.source[env_ids] = 0.0
 
 
-def _ctrl_action_space(env, actuator_indices) -> gym.spaces.Box:
-    del env, actuator_indices
+def _ctrl_action_space(ctx, actuator_indices) -> gym.spaces.Box:
+    del ctx, actuator_indices
     return gym.spaces.Box(-1.0, 1.0, (1,), dtype=np.float32)
 
 
@@ -224,13 +231,13 @@ def _ctrl_action_space(env, actuator_indices) -> gym.spaces.Box:
 class _CtrlActionCfg(ActionCfg):
     actuator_names: tuple[str, ...] | None = ("routed",)
 
-    def __call__(self, env, actuator_indices):
+    def __call__(self, ctx, actuator_indices):
         return _CtrlActionTerm(
-            _ctrl_action_space(env, actuator_indices),
+            _ctrl_action_space(ctx, actuator_indices),
             _CtrlActionState(
-                torch.from_numpy(np.zeros((env.num_envs, 2, 1), dtype=np.float32)),
+                torch.from_numpy(np.zeros((ctx.num_envs, 2, 1), dtype=np.float32)),
                 torch.from_numpy(np.zeros(1, dtype=np.int64)),
-                torch.from_numpy(np.zeros((env.num_envs, 1), dtype=np.float32)),
+                torch.from_numpy(np.zeros((ctx.num_envs, 1), dtype=np.float32)),
             ),
         )
 
@@ -309,6 +316,15 @@ def _make_env(num_envs: int = 3) -> ManagerEnv:
     return ManagerEnv(_FakeManagerCfg(), num_envs=num_envs, backend="fake-manager")
 
 
+def test_config_backend_selection_and_explicit_override() -> None:
+    cfg = _FakeManagerCfg(backend="fake-manager")
+    env = ManagerEnv(cfg, num_envs=2)
+    assert isinstance(env.sim, _FakeBackend)
+    override = _FakeManagerCfg(backend="not-registered")
+    env = ManagerEnv(override, num_envs=2, backend="fake-manager")
+    assert isinstance(env.sim, _FakeBackend)
+
+
 def test_manager_env_steps_on_fake_backend() -> None:
     env = _make_env()
     runtime = _FakeBackend.last
@@ -324,6 +340,58 @@ def test_manager_env_steps_on_fake_backend() -> None:
     np.testing.assert_allclose(state.obs.policy, runtime.dof_pos)
     # Manager rewards are scaled by the control dt.
     np.testing.assert_allclose(state.reward, np.full(3, env.cfg.ctrl_dt, dtype=np.float32))
+
+
+@pytest.mark.parametrize("failed_reward", [1.0, float("nan"), float("inf")])
+def test_engine_error_terminates_and_resets_only_failed_rows(failed_reward: float, monkeypatch) -> None:
+    env = _make_env()
+    runtime = _FakeBackend.last
+    env.init_state()
+    compute_transition = env.compute_transition
+
+    def transition_with_failed_reward(state):
+        state = compute_transition(state)
+        state.reward[1] = failed_reward
+        return state
+
+    monkeypatch.setattr(env, "compute_transition", transition_with_failed_reward)
+    status = env.engine_error_codes
+    runtime.status_codes[1] = 7
+    runtime.reset_calls.clear()
+
+    state = env.step(torch.full((3, 1), 0.5))
+
+    assert state.terminated.tolist() == [False, True, False]
+    assert not bool(state.truncated.any())
+    assert state.episode_steps.tolist() == [1, 0, 1]
+    assert env.engine_error_mask.tolist() == [False, True, False]
+    assert status is env.engine_error_codes
+    assert status.tolist() == [0, 7, 0]
+    torch.testing.assert_close(state.reward, torch.tensor([env.cfg.ctrl_dt, 0.0, env.cfg.ctrl_dt]))
+    assert len(runtime.reset_calls) == 1
+    assert runtime.reset_calls[0][0].tolist() == [1]
+    torch.testing.assert_close(state.obs.policy, runtime.dof_pos)
+    torch.testing.assert_close(state.obs.policy[1], torch.tensor([0.5, -0.5]))
+    torch.testing.assert_close(state.obs.policy[0], torch.tensor([0.5, -0.5]) + 0.25 * env.cfg.sim_substeps)
+
+    monkeypatch.setattr(env, "compute_transition", compute_transition)
+    runtime.status_codes.zero_()
+    runtime.reset_calls.clear()
+    state = env.step(torch.zeros(3, 1))
+
+    assert not bool(state.done.any())
+    assert not bool(env.engine_error_mask.any())
+    assert not bool(status.any())
+    assert state.episode_steps.tolist() == [2, 1, 2]
+    assert not runtime.reset_calls
+
+
+def test_public_reset_restarts_only_episode_lane_counters() -> None:
+    env = _make_env()
+    env.init_state()
+    env._state.episode_steps.copy_(torch.tensor([5, 6, 7]))
+    env.reset(torch.tensor([0]), sim_reset_ids=torch.tensor([1]))
+    assert env._state.episode_steps.tolist() == [0, 6, 7]
 
 
 def test_partial_reset_hands_canonical_rows_to_runtime_and_clears_ctrl() -> None:
@@ -346,6 +414,52 @@ def test_partial_reset_hands_canonical_rows_to_runtime_and_clears_ctrl() -> None
     np.testing.assert_allclose(runtime.dof_pos[1], [0.5, -0.5])
     # The frontend ctrl buffer mirrors the backend's reset-time clearing.
     np.testing.assert_allclose(env._action_writes.buffer("ctrl")[1], np.zeros(1, dtype=np.float32))
+
+
+@pytest.mark.parametrize("compiled", [False, True])
+def test_reset_dispatch_gathers_explicit_ids_and_scatters_compact_outputs(
+    compiled: bool, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    # Keep these fullgraph variants independent of other manager schedules.
+    torch._dynamo.reset()
+    request.addfinalizer(torch._dynamo.reset)
+    compile_torch = torch.compile
+    monkeypatch.setattr(
+        torch,
+        "compile",
+        lambda fn, **kwargs: (
+            compile_torch(fn, backend="eager", fullgraph=True, dynamic=kwargs.get("dynamic")) if compiled else fn
+        ),
+    )
+
+    def reset_position(
+        context: ManagerContext, selected: torch.Tensor, outputs: Map[torch.Tensor], offset: float
+    ) -> None:
+        outputs["joint_position"].copy_(context.sim["dof_pos"][selected] + offset)
+
+    @configclass
+    class PositionResetCfg(ResetTermCfg):
+        def __call__(self, ctx: BuildContext) -> ResetTerm:
+            return ResetTerm(reset_position, 10.0, writes={"joint_position": CtrlTargetsWrite()})
+
+    @configclass
+    class ResetsCfg(ManagerResetCfg):
+        position: PositionResetCfg = PositionResetCfg()
+
+    env = ManagerEnv(_FakeManagerCfg(sim_reset=ResetsCfg()), num_envs=4, backend="fake-manager")
+    env.init_state()
+    before = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]])
+    env.sim.dof_pos.copy_(before)
+    env._refresh_sim_reads()
+
+    env.reset(torch.tensor([3, 0]), sim_reset_ids=torch.tensor([2]))
+    expected = before.clone()
+    expected[[3, 0, 2]] += 10.0
+    torch.testing.assert_close(env.sim.dof_pos, expected)
+
+    env.reset(torch.tensor([1]))
+    expected[1] += 10.0
+    torch.testing.assert_close(env.sim.dof_pos, expected)
 
 
 def test_manager_frontend_does_not_import_motrixsim() -> None:

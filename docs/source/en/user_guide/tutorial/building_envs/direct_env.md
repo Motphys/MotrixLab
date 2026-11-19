@@ -27,6 +27,7 @@ from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv, DirectEnvCfg
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import DofPositionQuery, DofVelocityQuery
 from motrix_env_core.sim.write import CtrlTargetsWrite, JointPositionWrite, JointVelocityWrite
 
@@ -65,11 +66,13 @@ class CartPoleEnv(DirectEnv):
             reset=True,
         )
         self._action_space = gym.spaces.Box(-3.0, 3.0, (1,), dtype=np.float32)
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (4,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (4,), dtype=np.float32))}
+        )
 
     @property
-    def observation_space(self):
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self):
@@ -145,7 +148,7 @@ Hooks a subclass implements:
 | `apply_action(actions, state)`              | Write the action into the simulator (usually ctrl targets)                             |
 | `compute_transition(state)`                 | Execute the read program and derive `state.reward`, `state.terminated`, ...; this is the only full data refresh of a step and must **not** write `state.obs` |
 | `compute_observation(state)`                | Assemble `state.obs` purely from already refreshed simulator data, without further reads |
-| `observation_space` / `action_space`        | Defined as properties, usually pre-built in `__init__`                                 |
+| `observation_spec` / `action_space`        | Defined as properties, usually pre-built in `__init__`; observations use `ObservationSpec` with `policy` described by `ObservationGroupSpec` |
 
 Semantics:
 

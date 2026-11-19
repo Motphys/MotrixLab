@@ -7,7 +7,7 @@
 observation 使用 NumPy，状态使用 `ArrayEnvState`，仿真通过 backend-neutral 的 `SimBackend` 访问。
 
 本文集中说明 Manager 的运行时边界、构造与生命周期、term ownership，以及执行和性能约束。任务配置接口见
-[Manager Task API](./task-authoring.md)，kernel 数据 ABI 见 [Manager Kernel ABI](./kernel-abi.md)，仿真后端边界见
+[Manager Task API](./task-authoring.md)，仿真后端边界见
 [SimBackend](./sim-backend.md)。
 
 ## 1. 运行时边界
@@ -88,15 +88,17 @@ reset 只处理指定的原始 `env_ids`：
 ### Command reset（单一 `reset` kernel hook）
 
 Command term 只有三个 kernel hooks（`update`/`advance`/`reset`），没有 host 侧 reset 钩子。
-reset kernel 对 episode-reset lanes 与 mid-episode sim-reset lanes 的并集跑一次，`reset`
-通过只读的 per-lane 上下文区分两类事件：
+reset kernel 对 episode-reset lanes 与 mid-episode sim-reset lanes 的并集跑一次，显式传入：
 
-- `ctx.reset_episode`：本 pass 中 episode-reset 的 lanes（sim-reset lanes 为 False）；
-- `ctx.terminated`：最近一次 transition 的 termination 并集镜像。
+- `env_ids: torch.Tensor`：本 pass 的 K 个原始环境行号（动态长度）；
+- `episode_reset: torch.Tensor`：与 `env_ids` 对齐的 bool `(K,)`，True 表示回合级重置（含初始化与显式重开），
+  False 表示仅 sim reset、当前回合继续；它不等于 `terminated`，也不必然表示上一回合已经结束。
 
-reset 以 dynamic gather-compact 形式编译：`ctx.reset_ids` 是本 pass 的 K 个
-reset 行（动态长度），钩子按 ids gather/scatter，episode 边界统计（自适应采样、
-课程 EMA）以 compact 张量表达（`scatter_add` 直方图、`torch.where` 分支），
+`ManagerContext` 始终保持全批 N 行，不承载 reset 选择字段；`ctx.terminated` 是最近一次
+transition 的全批 termination 并集镜像，按 `env_ids` 读取本次目标行。
+reset 以 dynamic gather-compact 形式编译，钩子按 `env_ids` 在常驻全批状态上 gather/scatter，
+episode 边界统计（自适应采样、课程 EMA）以 `episode_reset` 限定，
+以 compact 张量表达（`scatter_add` 直方图、`torch.where` 分支），
 batch 级 gauge 通过 0-d scalar metric（`metric(scalar=True)`）发布——kernel
 原地写，日志消费端经 `process_metrics()` 归约。
 写法约束：hook 内不要做 `tensor[item()]`、数据依赖 Python 分支或对张量下标取标量
@@ -126,7 +128,6 @@ class ManagerContext:
     env_id: np.ndarray
     actions: Map
     commands: Map
-    rand: RandValue
     sim: Map
 
 
@@ -154,22 +155,27 @@ class TerminationTerm:
 
 
 class CommandTerm:
-    def reset(ctx: ResetContext) -> None: ...  # host: prepare shared reset data for episode resets
-    @staticmethod
-    def reset(receiver, ctx) -> None: ...  # @dispatch: batched, lane-gathered reset rows
-    @staticmethod
-    def advance(receiver, ctx) -> None: ...  # @dispatch: batched, whole batch
-    @staticmethod
-    def update(receiver, ctx) -> None: ...   # @dispatch: batched, whole batch
+    def reset(self, ctx: ManagerContext, env_ids: torch.Tensor,
+              episode_reset: torch.Tensor) -> None: ...
+    def advance(self, ctx: ManagerContext) -> None: ...
+    def update(self, ctx: ManagerContext) -> None: ...
+
+
+# Simulator reset dispatch: ctx/query inputs stay whole-batch; writes are compact K rows.
+def sim_reset(ctx: ManagerContext, env_ids: torch.Tensor,
+              sim_writes: Map[torch.Tensor], *static) -> None: ...
 ```
 
-Command term 的生命周期拆成 batched hooks 与 host 侧方法：`advance(receiver, ctx)` 在 evaluate 末尾推进整批状态，
-`reset(receiver, ctx)` 在 reset 路径开头、sim reset terms 之前重采样（lane-gathered）状态。lane 在 `advance` 中置 `ctx.sim_reset_requested`（Manager 常驻
-buffer，每次 physics step 前清零）即可请求 sim-only reset：该 lane 与当步的 episode reset
-合并进**同一次** reset 运行（`reset` 重采样 → sim reset terms 重写仿真状态 → 按行重读 kernel inputs），但不会
-触发 episode bookkeeping（`episode_steps`、truncation）与 command/action 的 host reset。WBT 在 motion clip wrap 时使用
-该机制。host `reset(ResetContext)` 只在 episode reset 时准备跨 lane 的共享数据（如采样分布）；per-step 统计折叠
-（如 WBT 的失败计数 EMA）由 term 自行内联进 `advance` 图内。
+Command term 的三个 hooks 都是常驻实例上的数值实例方法，无 host reset 钩子。
+`advance(self, ctx)` 在 evaluate 末尾推进整批状态，
+`reset(self, ctx, env_ids, episode_reset)` 在 reset 路径开头、sim reset terms 之前按原始行号重采样状态。
+lane 在 `advance` 中置 `ctx.sim_reset_requested`（Manager 常驻 buffer，每次 physics step 前清零）
+即可请求 sim-only reset：该 lane 与当步的 episode reset 合并进**同一次** reset 运行
+（command `reset` 重采样 → sim reset terms 重写仿真状态 → 按行重读 kernel inputs），但不会
+触发 episode bookkeeping（`episode_steps`、truncation）或 action reset，也不清 action history。
+WBT 在 motion clip wrap 时使用该机制。sim-reset dispatch 通过 `env_ids` 从全批 context/query 输入 gather，
+直接填紧凑 `(K, *write_shape)` 的 `sim_writes`；第 j 个写入行对应 `env_ids[j]`，不能再按原始行号索引写入缓冲。
+per-step 统计折叠（如 WBT 的失败计数 EMA）由 term 自行内联进 `advance` 图内。
 
 ActionTerm 是 host 侧描述对象：静态 action space、canonicalized state 和批量 process/reset callback。
 只有 `term.state` 进入 kernel ABI，`ctx.actions[name]` 直接取得 lane-scoped state；host 通过

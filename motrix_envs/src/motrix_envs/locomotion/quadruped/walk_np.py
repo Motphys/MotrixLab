@@ -11,9 +11,9 @@ import torch
 from motrix_robots.quadruped import QuadrupedRobotCfg
 
 from motrix_env_core.array.env import ArrayEnvState, EnvObs
-from motrix_env_core.base import ObsSpace
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.mdp.action_space import asymmetric_residual_action_space
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     ActuatorKdQuery,
@@ -211,7 +211,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._joint_position_lower = ctrl_ranges[:, 0]
         self._joint_position_upper = ctrl_ranges[:, 1]
         self._init_action_space()
-        self._init_obs_space()
+        self._init_observation_spec()
 
         self._init_base_pose = self.model.init_dof_pos[:7].clone()
         self._init_base_pose[:3] = torch.tensor(cfg.initial_base_position, dtype=torch.float32)
@@ -274,10 +274,16 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             self.cfg.control_config.action_scale,
         )
 
-    def _init_obs_space(self):
-        self._observation_space = ObsSpace(
-            policy=gym.spaces.Box(-np.inf, np.inf, (self._policy_obs_dim(),), dtype=np.float32),
-            value=gym.spaces.Box(-np.inf, np.inf, (self._value_obs_dim(),), dtype=np.float32),
+    def _init_observation_spec(self) -> None:
+        self._observation_spec = ObservationSpec(
+            {
+                "policy": ObservationGroupSpec(
+                    gym.spaces.Box(-np.inf, np.inf, (self._policy_obs_dim(),), dtype=np.float32)
+                ),
+                "value": ObservationGroupSpec(
+                    gym.spaces.Box(-np.inf, np.inf, (self._value_obs_dim(),), dtype=np.float32)
+                ),
+            }
         )
 
     @property
@@ -285,8 +291,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         return self._action_space
 
     @property
-    def observation_space(self) -> ObsSpace:
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     # ---- state accessors --------------------------------------------------
 
@@ -394,7 +400,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
                 f"expected policy[{expected_policy}]; value={tuple(value.shape)}, "
                 f"expected value[{expected_value}]"
             )
-        return state.replace(obs=EnvObs(policy=policy, value=value))
+        return state.replace(obs=EnvObs({"policy": policy, "value": value}))
 
     def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
         self.sim_data.execute()

@@ -144,8 +144,15 @@ class SimBackend(abc.ABC):
         """
 
     @abc.abstractmethod
-    def step(self, substeps: int) -> None:
+    def step(self, substeps: int, result: torch.Tensor | None = None) -> None:
         """Advance every row by ``substeps`` physics steps.
+
+        When ``result`` is provided, write one backend-specific numerical status
+        code per row into it instead of raising for row-level failures. A zero
+        code means success; nonzero codes are opaque backend-specific failures.
+        Failed rows may have partially advanced and must be reset before reuse.
+        ``result`` is caller-owned output storage with shape ``(num_envs,)``
+        and dtype ``torch.int32``; every element is overwritten by this call.
 
         Time advancement belongs exclusively to the control/training loop;
         reset never steps physics.

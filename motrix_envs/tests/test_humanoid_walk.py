@@ -3,11 +3,16 @@
 
 """Behavioral contract tests for the manager-based humanoid walk presets."""
 
+from types import SimpleNamespace
+
 import pytest
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.config.scene import ProceduralHFieldAssetCfg
 from motrix_env_core.manager import ManagerEnv
+from motrix_env_core.manager.context import BuildContext
+from motrix_env_core.manager.random import RandomSource
 from motrix_envs.locomotion.humanoid.cfg import HumanoidVelocityTrackingManagerEnvCfg
 from motrix_envs.locomotion.humanoid.dex_evt import (
     make_dex_evt_walk_flat_cfg,
@@ -25,6 +30,31 @@ from motrix_envs.locomotion.humanoid.microduck import (
     make_microduck_walk_flat_cfg,
     make_microduck_walk_rough_cfg,
 )
+from motrix_envs.locomotion.humanoid.walk_manager_mdp.command import WalkCommandCfg
+
+
+def test_walk_command_resamples_and_resets_only_selected_rows():
+    cfg = WalkCommandCfg(stand_prob=0.0, resampling_time=0.04, gait_period_randomization_width=0.1)
+    build = BuildContext(None, {}, {}, None, num_envs=3, seed=0)
+    command = cfg(build)
+    command.command.fill_(7)
+    command.steps[:, 0] = torch.tensor([1.0, 0.0, 0.0])
+    torch.manual_seed(0)
+    rand = RandomSource()
+    command.advance(SimpleNamespace(rand=rand))
+    torch.testing.assert_close(command.command[1:], torch.full((2, 3), 7.0))
+    assert bool((command.command[0] >= command.vel_limit_low).all())
+    assert bool((command.command[0] < command.vel_limit_high).all())
+    before_command = command.command.clone()
+    before_offsets = command.phase_offset.clone()
+    before_steps = command.phase_step.clone()
+    command.reset(SimpleNamespace(rand=rand, dt=cfg.ctrl_dt), torch.tensor([1]), torch.tensor([False]))
+    torch.testing.assert_close(command.command[[0, 2]], before_command[[0, 2]])
+    torch.testing.assert_close(command.phase_offset[[0, 2]], before_offsets[[0, 2]])
+    torch.testing.assert_close(command.phase_step[[0, 2]], before_steps[[0, 2]])
+    assert bool((command.command[1] >= command.vel_limit_low).all())
+    assert bool((command.command[1] < command.vel_limit_high).all())
+    assert command.steps[1, 0] == 0
 
 
 @pytest.mark.parametrize(

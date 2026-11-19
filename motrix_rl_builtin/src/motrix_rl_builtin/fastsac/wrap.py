@@ -8,6 +8,7 @@ import torch
 
 from motrix_env_core.array.env import FinalObs
 from motrix_env_core.base import ABEnv
+from motrix_env_core.observations import ObservationSpec
 from motrix_env_core.renderer import RenderConfig, create_renderer
 from motrix_rl.utils import env_infos
 
@@ -70,6 +71,10 @@ class FastSacEnvWrap:
     def reset(self) -> tuple[torch.Tensor, torch.Tensor]:
         state = self._env.init_state()
         return state.obs.policy.to(self.device), state.obs.value_or_policy.to(self.device)
+
+    @property
+    def observation_spec(self) -> ObservationSpec:
+        return self._env.observation_spec
 
     def step(self, actions: torch.Tensor) -> FastSacStepResult:
         env_actions = torch.clamp(actions.detach().cpu(), self._low_t, self._high_t)

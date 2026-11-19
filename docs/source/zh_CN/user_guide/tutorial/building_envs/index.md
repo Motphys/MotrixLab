@@ -46,7 +46,7 @@ MotrixLab 提供两种环境工作流，区别在于任务逻辑写在哪里：
 | 配置基类  | `DirectEnvCfg`                      | `ManagerBasedEnvCfg`                            |
 | 任务逻辑  | 在环境类钩子中手写                  | 在配置中逐项声明，由 manager 编译为 kernel  |
 | 奖励/终止 | `compute_transition` 中手写数组运算 | `rewards` / `terminations` 配置组               |
-| 观测      | `compute_observation` 中手写拼接    | `observations` 配置组（`policy`/`value`）       |
+| 观测      | `compute_observation` 中手写拼接    | 命名 `observations` 配置组（`policy`、可选 `value`、任务自定义组）       |
 | 重置逻辑  | 覆写 `reset(env_ids)` 手写          | `sim_reset` 配置组 + command 重置钩子           |
 | 典型场景  | 简单或高度定制的任务                | locomotion 等组合式任务                         |
 

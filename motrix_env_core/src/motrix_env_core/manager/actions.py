@@ -11,10 +11,10 @@ import gymnasium as gym
 import torch
 
 from motrix_env_core.config import configclass
+from motrix_env_core.manager.context import BuildContext
 from motrix_env_core.manager.kernel_data import validate_kernel_data
 
 if TYPE_CHECKING:
-    from motrix_env_core.manager.env import ManagerEnv
     from motrix_env_core.sim.model import ActuatorSpec
 
 
@@ -99,7 +99,7 @@ class ActionCfg(abc.ABC):
     actuator_names: tuple[str, ...] | None = None
 
     @abc.abstractmethod
-    def __call__(self, env: ManagerEnv, actuators: tuple[ActuatorSpec, ...] | None) -> ActionTerm:
+    def __call__(self, ctx: BuildContext, actuators: tuple[ActuatorSpec, ...] | None) -> ActionTerm:
         """Assemble the action space, persistent state, and host callbacks."""
 
 

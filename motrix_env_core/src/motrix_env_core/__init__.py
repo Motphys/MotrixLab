@@ -11,7 +11,7 @@ backend-neutral boundary is :mod:`motrix_env_core.sim` and its registry is
 """
 
 from motrix_env_core import registry
-from motrix_env_core.base import ABEnv, EnvCfg, ObsSpace, SimCfg
+from motrix_env_core.base import ABEnv, EnvCfg, SimCfg
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.input import (
@@ -38,7 +38,6 @@ __all__ = [
     "InputDevice",
     "KeyboardDevice",
     "KeyboardPlanarVelocityBinding",
-    "ObsSpace",
     "Perf",
     "PerfNode",
     "PlanarVelocityCommand",

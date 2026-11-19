@@ -10,7 +10,8 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-from motrix_env_core.base import ABEnv, EnvCfg, ObsSpace
+from motrix_env_core.base import ABEnv, EnvCfg
+from motrix_env_core.observations import ObservationSpec
 from motrix_env_core.perf import Perf, perf_root
 from motrix_env_core.sim.backend import RenderConfig, SimRenderer
 
@@ -19,10 +20,24 @@ EnvCfgType = TypeVar("EnvCfgType", bound=EnvCfg)
 
 @dataclass
 class EnvObs:
-    """Policy/value observations in the public torch state contract."""
+    """Named observations in the public torch state contract; policy is required."""
 
-    policy: torch.Tensor
-    value: torch.Tensor | None = None
+    groups: dict[str, torch.Tensor]
+
+    def __post_init__(self) -> None:
+        if "policy" not in self.groups:
+            raise ValueError("EnvObs requires a 'policy' observation group.")
+
+    def __getitem__(self, name: str) -> torch.Tensor:
+        return self.groups[name]
+
+    @property
+    def policy(self) -> torch.Tensor:
+        return self.groups["policy"]
+
+    @property
+    def value(self) -> torch.Tensor | None:
+        return self.groups.get("value")
 
     @property
     def value_or_policy(self) -> torch.Tensor:
@@ -86,8 +101,8 @@ class ArrayEnvState:
         are torch tensors by the frontend contract.
         """
         num_envs = self.obs.policy.shape[0]
-        if self.obs.value is not None:
-            assert self.obs.value.shape[0] == num_envs, self.obs.value.shape
+        for observation in self.obs.groups.values():
+            assert observation.shape[0] == num_envs, observation.shape
         assert self.reward.shape == (num_envs,), self.reward.shape
         assert self.terminated.shape == (num_envs,), self.terminated.shape
         assert self.truncated.shape == (num_envs,), self.truncated.shape
@@ -102,14 +117,7 @@ def _as_obs(obs: EnvObs | torch.Tensor) -> EnvObs:
     """
     if isinstance(obs, EnvObs):
         return obs
-    return EnvObs(policy=obs)
-
-
-def _as_obs_space(space: gym.spaces.Box | ObsSpace) -> ObsSpace:
-    """Normalize an observation space; a bare policy Box is adopted as such."""
-    if isinstance(space, ObsSpace):
-        return space
-    return ObsSpace(policy=space)
+    return EnvObs({"policy": obs})
 
 
 class ArrayEnv(ABEnv, Generic[EnvCfgType]):
@@ -129,6 +137,8 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         self._cfg = cfg
         self._num_envs = num_envs
         self.perf = Perf()
+        self.engine_error_codes = torch.zeros(num_envs, dtype=torch.int32)
+        self.engine_error_mask = torch.zeros(num_envs, dtype=torch.bool)
         if cfg.scene is None:
             raise ValueError("EnvCfg.scene must be configured")
         self._render_spacing = cfg.render_spacing
@@ -159,7 +169,9 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         Reward starts zeroed, truncation cleared, and termination set for
         every row so the first auto-reset seeds all lanes.
         """
-        obs = self._zeros_obs(self.observation_space)
+        self.engine_error_codes.zero_()
+        self.engine_error_mask.zero_()
+        obs = self._zeros_obs(self.observation_spec)
         num_envs = self._num_envs
         self._state = self._new_state(
             obs,
@@ -192,33 +204,17 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
             episode_steps=episode_steps,
         )
 
-    @property
-    def policy_observation_space(self) -> gym.spaces.Box:
-        return _as_obs_space(self.observation_space).policy
-
-    @property
-    def value_observation_space(self) -> gym.spaces.Box:
-        return _as_obs_space(self.observation_space).value_or_policy
-
-    @property
-    def has_value_observation(self) -> bool:
-        return _as_obs_space(self.observation_space).value is not None
-
     def _zeros_box(self, space: gym.spaces.Box) -> torch.Tensor:
         dtype = torch.from_numpy(np.empty((), dtype=space.dtype)).dtype
         return torch.zeros((self._num_envs, *space.shape), dtype=dtype)
 
-    def _zeros_obs(self, space: gym.spaces.Box | ObsSpace) -> EnvObs:
-        obs_space = _as_obs_space(space)
-        value = None if obs_space.value is None else self._zeros_box(obs_space.value)
-        return EnvObs(policy=self._zeros_box(obs_space.policy), value=value)
+    def _zeros_obs(self, spec: ObservationSpec) -> EnvObs:
+        return EnvObs({name: self._zeros_box(group.space) for name, group in spec.groups.items()})
 
     def _assign_obs(self, dst: EnvObs, mask: torch.Tensor, src: EnvObs | torch.Tensor) -> None:
         src = _as_obs(src)
-        dst.policy[mask] = src.policy
-        if dst.value is not None:
-            assert src.value is not None
-            dst.value[mask] = src.value
+        for name, destination in dst.groups.items():
+            destination[mask] = src[name]
 
     def _reset_done_envs(self) -> None:
         """Reset all environment rows marked terminated or truncated."""
@@ -229,11 +225,17 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         if not has_done:
             return
 
+        self._clear_engine_error_rewards()
         with self.perf.scope("select_done"):
             state.episode_steps[done] = 0
             env_ids = torch.nonzero(done, as_tuple=False).flatten()
         with self.perf.scope("reset_envs"):
             self.reset(env_ids)
+
+    def _clear_engine_error_rewards(self) -> None:
+        """Publish a finite failure reward, only from the done/reset slow path."""
+        if bool(self.engine_error_mask.any()):
+            self._state.reward.masked_fill_(self.engine_error_mask, 0.0)
 
     @abc.abstractmethod
     def reset(self, env_ids: torch.Tensor) -> None:
@@ -290,7 +292,12 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
 
     @abc.abstractmethod
     def physics_step(self) -> None:
-        """Advance the simulator by the configured substeps."""
+        """Advance physics and overwrite ``engine_error_codes`` for every row.
+
+        Zero means success; nonzero backend codes trigger termination and reset.
+        Codes and ``engine_error_mask`` remain available after reset until the
+        next step. Exceptions unrelated to row-level numerical errors propagate.
+        """
 
     def _prev_physics_step(self) -> None:
         """Clear per-step transition outputs before advancing physics."""
@@ -301,13 +308,10 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         self._state.truncated[:] = False
 
     def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
-        """Compute observations for all environments after reset.
+        """Publish whole-batch observations from already-refreshed inputs.
 
-        Called once after the first reset of :meth:`init_state` and once per
-        :meth:`step` after episode bookkeeping and auto-reset. Implementations
-        must purely construct the observation from the simulator data already
-        refreshed by :meth:`compute_transition` (whole batch) and reset
-        (selected rows) without executing further reads. The default preserves
+        Called after initialization and each control step. No additional
+        simulator reads belong in this method. The default preserves
         observations already present in ``state``.
         """
         return state
@@ -320,7 +324,7 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         (the only full simulator-data refresh) -> episode bookkeeping ->
         optional pre-reset ``final_obs`` capture for truncated rows ->
         ``reset(env_ids)`` for done rows (may refresh selected rows) ->
-        ``compute_observation`` (whole batch, pure construction).
+        ``compute_observation`` (whole-batch endpoint publication).
         """
         if self._state is None:
             with self.perf.scope("init_state"):
@@ -331,8 +335,12 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
             self._state = self.apply_action(actions, self._state)
         with self.perf.scope("physics"):
             self.physics_step()
+            self.engine_error_mask.copy_(self.engine_error_codes != 0)
+        # TODO: Failed physics rows still participate in the batch transition.
+        # Consider excluding them if needed, without a separate reset path.
         with self.perf.scope("transition"):
             self._state = self.compute_transition(self._state)
+        self._state.terminated.logical_or_(self.engine_error_mask)
         self._state.episode_steps += 1
         self._update_truncate()
         trunc_ids = torch.nonzero(self._state.truncated, as_tuple=False).flatten()

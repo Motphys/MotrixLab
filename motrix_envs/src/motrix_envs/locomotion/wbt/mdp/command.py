@@ -12,13 +12,11 @@ from omegaconf import MISSING
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import RobotCfg
 from motrix_env_core.manager import (
-    CommandCfg,
-    CommandTerm,
     ManagerContext,
-    ManagerEnv,
     metric,
 )
-from motrix_env_core.manager.rand import draw_uniform
+from motrix_env_core.manager.commands import CommandCfg, CommandTerm
+from motrix_env_core.manager.context import BuildContext
 from motrix_env_core.math.quaternion import align_targets
 from motrix_envs.motion import MotionLibrary, WbtMotionClip
 
@@ -177,12 +175,10 @@ class WbtMotionCommand(CommandTerm):
             # Freeze each lane on its own clip's final frame; no reset request.
             steps.copy_(torch.minimum(advanced, clip_end[:, None]))
             return
-        # Non-sequential wrap: resample each ended lane inline. Only ended
-        # lanes consume sampling draws, so lanes that did not wrap keep their
-        # RNG stream: mask the batched state advance back for the rest.
+        # Non-sequential wrap resamples ended lanes while preserving all other frames.
         sampling_cdf = self.sampling_cdf
         count = 3 if sampling_cdf.numel() != 0 else 2
-        draws, next_state = draw_uniform(ctx.rand.state, count)
+        draws = 2 * ctx.rand.uniform((steps.shape[0], count), device=steps.device) - 1
         sampled = _sample_motion_step(
             draws,
             sampling_cdf,
@@ -190,26 +186,27 @@ class WbtMotionCommand(CommandTerm):
             self.start_at_timestep_zero_prob,
         )
         steps.copy_(torch.where(ended[:, None], sampled[:, None], advanced))
-        ctx.rand.state.copy_(torch.where(ended[:, None], next_state, ctx.rand.state))
         ctx.sim_reset_requested |= ended[:, None]
 
-    def reset(self: "WbtMotionCommand", ctx: ManagerContext) -> None:
+    def reset(
+        self: "WbtMotionCommand", ctx: ManagerContext, env_ids: torch.Tensor, episode_reset: torch.Tensor
+    ) -> None:
         """Rebuild the adaptive sampler, then resample start frames for reset lanes.
 
-        Compact semantics: ``ctx.reset_ids`` are this pass's reset rows (K).
+        Compact semantics: ``env_ids`` are this pass's reset rows (K).
         Episode-boundary statistics gather just those rows — the terminated
-        lanes among them (``reset_episode``) feed a ``scatter_add`` failure
+        lanes among them (``episode_reset``) feed a ``scatter_add`` failure
         histogram, gauges publish through 0-d scalar metrics, and the sampling
         CDF is rebuilt before the reset rows draw from it and scatter their
         new frame indices back.
         """
-        idx = ctx.reset_ids
+        idx = env_ids
         cdf = self.sampling_cdf
         if cdf.numel():
             failed = self.adaptive_bin_failed_count
             num_bins = failed.numel()
             num_frames = self.clip.joint_pos.shape[0]
-            episode_failed = ctx.reset_episode & ctx.terminated[idx]
+            episode_failed = episode_reset & ctx.terminated[idx]
             failed_bins = (self.steps[idx, 0].to(torch.int64) * num_bins) // max(num_frames, 1)
             failed_bins = torch.clamp(failed_bins, 0, num_bins - 1)
             histogram = torch.zeros(num_bins, dtype=torch.float32)
@@ -255,20 +252,13 @@ class WbtMotionCommand(CommandTerm):
             # Sequential playback rematerializes onto the current frame.
             return
         count = 3 if cdf.numel() != 0 else 2
-        # Only reset lanes consume sampling draws, so lanes outside this pass
-        # keep their RNG stream: mask the batched state advance back for them
-        # (same discipline as the inline wrap resample in advance()).
-        previous_state = ctx.rand.state.clone()
-        draws = ctx.rand.next_uniform(count)[idx]
+        draws = 2 * ctx.rand.uniform((idx.numel(), count), device=idx.device) - 1
         steps = _sample_motion_step(
             draws,
             cdf,
             self.clip.joint_pos.shape[0],
             self.start_at_timestep_zero_prob,
         )
-        in_pass = torch.zeros(self.steps.shape[0], dtype=torch.bool)
-        in_pass[idx] = True
-        ctx.rand.state.copy_(torch.where(in_pass[:, None], ctx.rand.state, previous_state))
         # ``clip_ended`` is intentionally left untouched; advance recomputes it
         # on the following transition.
         self.steps[idx, 0] = steps
@@ -290,13 +280,13 @@ class WbtMotionCommandCfg(CommandCfg):
     kernel_size: int = 1
     kernel_lambda: float = 0.8
 
-    def __call__(self, env: ManagerEnv) -> CommandTerm:
-        robot = env.cfg.scene.objs.robot
+    def __call__(self, ctx: BuildContext) -> CommandTerm:
+        robot = ctx.cfg.scene.objs.robot
         if not isinstance(robot, RobotCfg):
             raise TypeError(f"WBT scene robot must be RobotCfg, got {type(robot).__name__}")
         if not self.joint_names or len(set(self.joint_names)) != len(self.joint_names):
             raise ValueError("WBT motion joint_names must be non-empty and unique.")
-        body_joint_names = env.model.bodies["robot"].joint_names
+        body_joint_names = ctx.model.bodies["robot"].joint_names
         if body_joint_names != tuple(self.joint_names):
             raise ValueError("WBT robot body joint order must match commands.motion.joint_names order.")
         if robot.resolved_base_link_name not in self.tracked_body_names:
@@ -307,7 +297,7 @@ class WbtMotionCommandCfg(CommandCfg):
             raise ValueError(
                 f"tracked_body_names must include the reference body {self.reference_body_name!r}"
             ) from None
-        env_fps = max(int(round(1.0 / env.cfg.ctrl_dt)), 1)
+        env_fps = max(int(round(1.0 / ctx.cfg.ctrl_dt)), 1)
         source = MotionLibrary(
             self.motion_files,
             joint_names=list(self.joint_names),
@@ -322,14 +312,14 @@ class WbtMotionCommandCfg(CommandCfg):
         else:
             num_bins = 0
         tracked_shape = (len(self.tracked_body_names), 3)
-        return WbtMotionCommand(
+        state = WbtMotionCommand(
             clip=source,
             reference_index=int(reference_index),
-            steps=torch.zeros((env.num_envs, 1), dtype=torch.int64),
-            clip_ended=torch.zeros((env.num_envs, 1), dtype=torch.bool),
-            command=torch.empty((env.num_envs, 2 * env.num_actuators), dtype=torch.float32),
-            target_body_position_relative=torch.empty((env.num_envs, *tracked_shape), dtype=torch.float32),
-            target_body_orientation_relative=torch.empty((env.num_envs, tracked_shape[0], 4), dtype=torch.float32),
+            steps=torch.zeros((ctx.num_envs, 1), dtype=torch.int64),
+            clip_ended=torch.zeros((ctx.num_envs, 1), dtype=torch.bool),
+            command=torch.empty((ctx.num_envs, 2 * len(ctx.model.actuators)), dtype=torch.float32),
+            target_body_position_relative=torch.empty((ctx.num_envs, *tracked_shape), dtype=torch.float32),
+            target_body_orientation_relative=torch.empty((ctx.num_envs, tracked_shape[0], 4), dtype=torch.float32),
             adaptive_bin_failed_count=torch.zeros((num_bins,), dtype=torch.float32),
             adaptive_current_bin_failed_count=torch.zeros((num_bins,), dtype=torch.float32),
             sampling_cdf=torch.ones((num_bins,), dtype=torch.float32)
@@ -343,6 +333,8 @@ class WbtMotionCommandCfg(CommandCfg):
             kernel_size=int(self.kernel_size),
             kernel_lambda=float(self.kernel_lambda),
         )
+
+        return state
 
 
 __all__ = [

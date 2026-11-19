@@ -102,8 +102,8 @@ class Trainer(TrainerBase):
 
     def _dims(self, env: FastSacEnvWrap):
         inner = env.env
-        obs_dim = inner.policy_observation_space.shape[-1]
-        critic_obs_dim = inner.value_observation_space.shape[-1]
+        obs_dim = inner.observation_spec.policy.space.shape[-1]
+        critic_obs_dim = inner.observation_spec.value_or_policy.space.shape[-1]
         act_dim = inner.action_space.shape[-1]
         low = env.action_low
         high = env.action_high

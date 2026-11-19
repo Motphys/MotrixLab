@@ -8,6 +8,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     BodyJointPositionWrite,
     DofPositionQuery,
@@ -30,7 +31,7 @@ _SIM_MODEL_QUERIES = {}
 
 @registry.env("dm-cheetah")
 class CheetahEnv(DirectEnv):
-    _observation_space: gym.spaces.Box
+    _observation_spec: ObservationSpec
     _action_space: gym.spaces.Box
 
     def __init__(
@@ -50,13 +51,15 @@ class CheetahEnv(DirectEnv):
         )
         self._reset_position = self._reset_program.buffer("cheetah_position")
         self._reset_velocity = self._reset_program.buffer("cheetah_velocity")
-        self._init_obs_space()
+        self._init_observation_spec()
         self._init_action_space()
         self._run_speed = cfg.run_speed
 
-    def _init_obs_space(self):
+    def _init_observation_spec(self) -> None:
         obs_dim = (self.num_dof_pos - 1) + self.num_dof_vel
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (obs_dim,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (obs_dim,), dtype=np.float32))}
+        )
 
     def _init_action_space(self):
         self._action_space = gym.spaces.Box(
@@ -67,8 +70,8 @@ class CheetahEnv(DirectEnv):
         )
 
     @property
-    def observation_space(self):
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self):

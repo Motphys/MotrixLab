@@ -10,13 +10,15 @@ from typing import TYPE_CHECKING
 import torch
 
 from motrix_env_core.config import configclass
+from motrix_env_core.manager.context import BuildContext
 
 if TYPE_CHECKING:
     from motrix_env_core.manager.context import ManagerContext
-    from motrix_env_core.manager.env import ManagerEnv
 
 
-@dataclass(frozen=True, slots=True)
+# Keep inherited fields out of base-class slots: Torch 2.7 Dynamo only resolves
+# slots listed on the concrete class, while Python 3.11+ omits inherited slots.
+@dataclass(frozen=True)
 class CommandTerm(abc.ABC):
     """Environment-local kernel-data command pipeline with persistent runtime state.
 
@@ -28,8 +30,8 @@ class CommandTerm(abc.ABC):
 
     All three hooks are instance methods dispatched by the executor against
     the live term (the compiled graphs guard on its identity). Inside
-    ``reset``, ``ctx.reset_ids`` carries this pass's compact reset rows,
-    ``ctx.reset_episode`` marks the episode resets among them, and
+    ``reset``, explicit ``env_ids`` selects this pass's rows and the aligned
+    ``episode_reset`` marks episode resets among them;
     ``ctx.terminated`` mirrors the latest transition's termination union —
     episode-boundary statistics (adaptive sampling, curricula) are expressed
     as gathered tensor math and published through ``metric()`` fields,
@@ -56,22 +58,28 @@ class CommandTerm(abc.ABC):
         """
 
     @abc.abstractmethod
-    def reset(self, ctx: ManagerContext) -> None:
+    def reset(self, ctx: ManagerContext, env_ids: torch.Tensor, episode_reset: torch.Tensor) -> None:
         """Reset persistent command state in the reset kernel.
 
-        Runs for episode-reset and mid-episode sim-reset rows alike (gathered
-        via ``ctx.reset_ids``); gate episode-boundary behavior on
-        ``ctx.reset_episode``.
+        Args:
+            ctx: Whole-batch (N rows) task data; gather selected state with env_ids.
+            env_ids: Original environment indices for this reset pass, shape (K,).
+            episode_reset: Bool (K,) aligned with env_ids. True means a full
+                episode reset, including initialization and explicit restarts;
+                False means simulator-only reset within the same episode.
+                This is not a termination flag or proof a previous episode ended.
+
+        Both kinds reset command state. Gate episode-specific statistics on
+        episode_reset; simulator reset terms subsequently process all env_ids.
         """
 
 
 @configclass(kw_only=True)
 class CommandCfg(abc.ABC):
-    """Configuration that creates one environment-local command term."""
-
     @abc.abstractmethod
-    def __call__(self, env: ManagerEnv) -> CommandTerm:
-        """Create the concrete KernelData command term."""
+    def __call__(self, ctx: BuildContext) -> CommandTerm:
+        """Construct one independently owned command term without an environment."""
+        raise NotImplementedError
 
 
 @configclass

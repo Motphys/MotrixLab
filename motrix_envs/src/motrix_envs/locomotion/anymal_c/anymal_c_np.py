@@ -10,6 +10,7 @@ from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.math.quaternion import rotate_inverse
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     BodyAngularVelocityWrite,
@@ -132,7 +133,9 @@ class AnymalCEnv(DirectEnv):
         self._action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(12,), dtype=np.float32)
         # Observation space: linvel(3) + gyro(3) + gravity(3) + joint_pos(12) + joint_vel(12) + last_actions(12) +
         # commands(3) + position_error(2) + heading_error(1) + distance(1) + reached_flag(1) + stop_ready_flag(1) = 54
-        self._observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(54,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(low=-np.inf, high=np.inf, shape=(54,), dtype=np.float32))}
+        )
         self._num_action = self.num_actuators
 
         self._init_base_pose = self.model.init_dof_pos[:7].clone()
@@ -224,8 +227,8 @@ class AnymalCEnv(DirectEnv):
         return self.sim_data["robot_joint_vel"]
 
     @property
-    def observation_space(self):
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self):

@@ -4,14 +4,13 @@
 """WBT command-backed reward terms."""
 
 from dataclasses import dataclass
-from typing import cast
 
 import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import ManagerContext, RewardTerm, RewardTermCfg
 from motrix_env_core.math.quaternion import rotation_distance
-from motrix_env_core.mdp.action import JointPositionActionState
+from motrix_env_core.mdp.action import JointPositionActionTerm
 
 
 def global_ref_position_reward(ctx: ManagerContext, sigma: float) -> torch.Tensor:
@@ -166,10 +165,12 @@ class DofLimitRewardCfg(RewardTermCfg):
     cap: float
 
     def __call__(self, ctx) -> RewardTerm:
-        action = cast(JointPositionActionState, ctx.action_terms["joint_position"].state)
+        action = ctx.actions["joint_position"]
+        if not isinstance(action, JointPositionActionTerm):
+            raise TypeError("WBT joint-limit reward requires a joint-position action term")
         params = DofLimitParams(
-            midpoint=(action.joint_lower + action.joint_upper) * 0.5,
-            half_range=(action.joint_upper - action.joint_lower) * 0.5,
+            midpoint=(action.state.joint_lower + action.state.joint_upper) * 0.5,
+            half_range=(action.state.joint_upper - action.state.joint_lower) * 0.5,
             soft_limit=float(self.soft_limit),
             cap=float(self.cap),
         )

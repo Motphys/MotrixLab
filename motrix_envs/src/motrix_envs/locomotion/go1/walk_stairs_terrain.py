@@ -8,6 +8,7 @@ from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.math.quaternion import rotate_inverse
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     BodyAngularVelocityWrite,
@@ -80,9 +81,9 @@ class Go1WalkStairsTask(DirectEnv):
         self._reset_joint_position = self._reset_program.buffer("joints_position")
         self._reset_joint_velocity = self._reset_program.buffer("joints_velocity")
         self._init_action_space()
-        self._init_obs_space()
+        self._init_observation_spec()
         self._num_action = self._action_space.shape[0]
-        self._num_observation = self._observation_space.shape[0]
+        self._num_observation = self._observation_spec.policy.space.shape[0]
         height_list = [-1, 0.5, 1.5]
         offset_h = [[2, 0, 2, 1, 1], [2, 2, 1, 0, 0], [1, 1, 2, 1, 2], [0, 1, 0, 2, 0], [0, 1, 1, 0, 2]]
         offset = []
@@ -95,7 +96,7 @@ class Go1WalkStairsTask(DirectEnv):
         self._init_buffer()
         self.period_counter = 0
 
-    def _init_obs_space(self):
+    def _init_observation_spec(self) -> None:
         num_dof_vel = self.num_dof_vel  # linvel + gyro + joint_vel
         num_joint_angle = self.num_dof_pos - 7
         num_gravity = 3
@@ -106,7 +107,9 @@ class Go1WalkStairsTask(DirectEnv):
         num_obs = num_dof_vel + num_joint_angle + num_gravity + num_actions + num_command + num_contact_force
         assert num_obs == 60
 
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (num_obs,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (num_obs,), dtype=np.float32))}
+        )
 
     def _init_action_space(self):
         lows = np.asarray([spec.ctrl_range[0] for spec in self.model.actuators], dtype=np.float32)
@@ -123,8 +126,8 @@ class Go1WalkStairsTask(DirectEnv):
         return self._action_space
 
     @property
-    def observation_space(self) -> gym.spaces.Box:
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     def get_dof_pos(self):
         return self.sim_data["robot_joint_pos"]

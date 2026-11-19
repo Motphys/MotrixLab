@@ -19,7 +19,7 @@ def ball_relative_position_obs(ctx: ManagerContext, out: torch.Tensor, noise_amp
     relative = ctx.sim["ball_pos"] - ctx.sim["robot_base_pos"]
     out.copy_(rotate_inverse_batch(ctx.sim["robot_base_quat"], relative))
     if noise_amplitude != 0.0:
-        out += ctx.rand.next_uniform(out.shape[1]) * noise_amplitude
+        out += (2 * ctx.rand.uniform_like(out) - 1) * noise_amplitude
 
 
 @configclass(kw_only=True)
@@ -35,7 +35,7 @@ class BallRelativePositionObsCfg(ObservationTermCfg):
 def ball_relative_velocity_obs(ctx: ManagerContext, out: torch.Tensor, noise_amplitude: float) -> None:
     out.copy_(rotate_inverse_batch(ctx.sim["robot_base_quat"], ctx.sim["ball_lin_vel"]))
     if noise_amplitude != 0.0:
-        out += ctx.rand.next_uniform(out.shape[1]) * noise_amplitude
+        out += (2 * ctx.rand.uniform_like(out) - 1) * noise_amplitude
 
 
 @configclass(kw_only=True)

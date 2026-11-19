@@ -20,6 +20,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import NamedTuple
 
+import gymnasium as gym
 import numpy as np
 import pytest
 import torch
@@ -28,6 +29,7 @@ from fastsac_async_mocks import ThreadSpawnContext
 from motrix_rl_builtin.fastsac.async_impl.stats import AsyncTrainingStatsAggregator, AsyncTrainingStatsSource
 from motrix_rl_builtin.fastsac.wrap import FastSacStepResult
 
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_rl import checkpoints
 from motrix_rl.config import CheckpointConfig, LoggingConfig
 from motrix_rl.contracts import TrainerContext
@@ -375,8 +377,12 @@ class _FastTime:
 
 class _ProbeEnv:
     env = SimpleNamespace(
-        policy_observation_space=SimpleNamespace(shape=(2,)),
-        value_observation_space=SimpleNamespace(shape=(3,)),
+        observation_spec=ObservationSpec(
+            {
+                "policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (2,))),
+                "value": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (3,))),
+            }
+        ),
         action_space=SimpleNamespace(shape=(1,)),
     )
     action_low = torch.tensor([-1.0])
