@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from motrix_env_core.renderer import RecordConfig, RenderConfig
 from motrix_rl import runs
 from motrix_rl.commands import play
 from motrix_rl.config import PlayConfig
@@ -54,3 +55,30 @@ def test_default_play_target_uses_cartpole(monkeypatch, tmp_path):
 
     assert play._resolve_play_target(PlayConfig()) == expected
     assert requested == [("cartpole", None)]
+
+
+def test_play_recording_config_preserves_render_dimensions_and_duration(tmp_path):
+    policy_path = _metadata_run(tmp_path)
+    target = play._policy_play_target(policy_path, None)
+    cfg = PlayConfig(record_video=True, record_seconds=2.5, record_width=640, record_height=480)
+
+    render = play._play_render_config(target, cfg)
+
+    assert isinstance(render, RenderConfig)
+    assert render.headless
+    recording = render.record
+    assert isinstance(recording, RecordConfig)
+    assert (recording.width, recording.height) == (640, 480)
+    assert recording.path == target.run.run_dir / "play_video.mp4"
+    assert recording.fps == play.PLAY_RECORDING_FPS
+    assert recording.num_frames == round(cfg.record_seconds * recording.fps)
+
+
+def test_play_without_recording_uses_interactive_render_config(tmp_path):
+    policy_path = _metadata_run(tmp_path)
+    target = play._policy_play_target(policy_path, None)
+
+    render = play._play_render_config(target, PlayConfig())
+
+    assert isinstance(render, RenderConfig)
+    assert not render.headless

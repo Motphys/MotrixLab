@@ -52,7 +52,13 @@ class Trainer(TrainerBase):
         render: RenderConfig | None,
         mode: str = "train",
     ) -> FastSacEnvWrap:
-        env = self._env_spec.make(num_envs=num_envs, mode=mode, seed=self._context.seed)
+        env = self._env_spec.make(
+            num_envs=num_envs,
+            mode=mode,
+            seed=self._context.seed,
+            headless=render.headless if render else False,
+            record=render.record if render else None,
+        )
         return FastSacEnvWrap(env, self._device(), render=render)
 
     def _make_agent(self, env: FastSacEnvWrap) -> FastSacAgent:

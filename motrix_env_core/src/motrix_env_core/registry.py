@@ -10,6 +10,7 @@ from typing import Any, get_type_hints
 
 from motrix_env_core.base import ABEnv, EnvCfg
 from motrix_env_core.config.scene import RobotCfg
+from motrix_env_core.sim.backend import RecordConfig
 
 EnvCfgFactory = Callable[[], EnvCfg]
 RobotCfgFactory = Callable[[], RobotCfg]
@@ -31,16 +32,32 @@ class EnvBuildSpec:
     env_cfg: EnvCfg
     sim: str | None = None
 
-    def make(self, *, num_envs: int = 1, mode: str = "train", seed: int | None = None) -> ABEnv:
+    def make(
+        self,
+        *,
+        num_envs: int = 1,
+        mode: str = "train",
+        seed: int | None = None,
+        headless: bool = False,
+        record: RecordConfig | None = None,
+    ) -> ABEnv:
+        """Construct a fresh rollout config with mode-independent output settings."""
         env_cfg = copy.deepcopy(self.env_cfg)
         if mode == "play":
             env_cfg = env_cfg.for_play()
         env_cfg.validate()
-        return _construct_env(self.env_cls, env_cfg, num_envs, self.sim, seed)
+        return _construct_env(self.env_cls, env_cfg, num_envs, self.sim, seed, headless=headless, record=record)
 
 
 def _construct_env(
-    env_cls: type[ABEnv], env_cfg: EnvCfg, num_envs: int, sim: str | None, seed: int | None = None
+    env_cls: type[ABEnv],
+    env_cfg: EnvCfg,
+    num_envs: int,
+    sim: str | None,
+    seed: int | None = None,
+    *,
+    headless: bool = False,
+    record: RecordConfig | None = None,
 ) -> ABEnv:
     """Instantiate ``env_cls``, passing ``sim`` through to the env constructor.
 
@@ -50,10 +67,11 @@ def _construct_env(
     from motrix_env_core.direct.env import DirectEnv
     from motrix_env_core.manager.env import ManagerEnv
 
+    output_kwargs = {"headless": headless, "record": record} if headless or record is not None else {}
     if issubclass(env_cls, ManagerEnv):
-        return env_cls(env_cfg, num_envs=num_envs, backend=sim, seed=seed)
+        return env_cls(env_cfg, num_envs=num_envs, backend=sim, seed=seed, **output_kwargs)
     if issubclass(env_cls, DirectEnv):
-        return env_cls(env_cfg, num_envs=num_envs, backend=sim)
+        return env_cls(env_cfg, num_envs=num_envs, backend=sim, **output_kwargs)
     raise TypeError(f"Unsupported environment class '{env_cls.__name__}': must inherit DirectEnv or ManagerEnv.")
 
 
@@ -391,6 +409,9 @@ def make(
     mode: str = "train",
     sim: str | None = None,
     seed: int | None = None,
+    *,
+    headless: bool = False,
+    record: RecordConfig | None = None,
 ) -> ABEnv:
     """
     Create an environment instance by name.
@@ -405,6 +426,8 @@ def make(
             (:func:`motrix_env_core.sim.registry.create_sim_backend`) and
             injected into manager-based environments.
         seed: Runtime seed applied to manager-based environment configs.
+        headless: Disable window output independently of the rollout config.
+        record: Optional image dimensions and recording settings.
     Returns:
         Environment instance
     """
@@ -415,7 +438,7 @@ def make(
         mode=mode,
     )
     env_cls = _env_cls_or_raise(name, meta)
-    return _construct_env(env_cls, env_cfg, num_envs, sim, seed)
+    return _construct_env(env_cls, env_cfg, num_envs, sim, seed, headless=headless, record=record)
 
 
 def list_registered_envs() -> dict[str, dict[str, Any]]:

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import platform
+from pathlib import Path
 from queue import Empty
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -28,6 +29,7 @@ from motrix_env_core.base import EnvCfg
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.registry import EnvBuildSpec
+from motrix_env_core.renderer import RecordConfig, RenderConfig
 
 _NUM_ENVS = 2
 
@@ -65,8 +67,12 @@ def _make_env():
 def _wrap_env(monkeypatch, env, renderer):
     import motrix_rl_builtin.fastsac.wrap as wrap_module
 
-    monkeypatch.setattr(wrap_module, "create_renderer", Mock(return_value=renderer))
-    return wrap_module.FastSacEnvWrap(env, torch.device("cpu"), render=object())
+    create_renderer = Mock(return_value=renderer)
+    monkeypatch.setattr(wrap_module, "create_renderer", create_renderer)
+    recording = RenderConfig(headless=True, record=RecordConfig(path=Path("video.mp4"), fps=30, num_frames=60))
+    wrapped = wrap_module.FastSacEnvWrap(env, torch.device("cpu"), render=recording)
+    create_renderer.assert_called_once_with(env, recording)
+    return wrapped
 
 
 def test_rl_trainer_supports_sim_backend(monkeypatch) -> None:
@@ -278,3 +284,61 @@ def test_fastsac_async_supports_sim_backends(tmp_path) -> None:
     torch.testing.assert_close(rewards, torch.full_like(rewards, 1.0))
     assert not dones.any()
     assert not truncations.any()
+
+
+@pytest.mark.parametrize("recording", [False, True])
+def test_async_env_builder_separates_env_render_settings_and_recording(monkeypatch, recording):
+    import motrix_rl_builtin.fastsac.async_impl.worker as worker
+
+    options = RenderConfig(
+        headless=True,
+        record=(
+            RecordConfig(width=640, height=480, path=Path("video.mp4"), fps=30, num_frames=60) if recording else None
+        ),
+    )
+    env = _make_env()
+    spec = Mock()
+    spec.make.return_value = env
+    wrapper = Mock()
+    monkeypatch.setattr(worker, "FastSacEnvWrap", wrapper)
+    device = torch.device("cpu")
+
+    result = worker.build_env(spec, 2, device, render=options, mode="play", seed=7)
+
+    spec.make.assert_called_once_with(
+        num_envs=2,
+        mode="play",
+        seed=7,
+        headless=True,
+        record=options.record,
+    )
+    wrapper.assert_called_once_with(env, device, render=options)
+    assert result is wrapper.return_value
+
+
+def test_sync_env_builder_separates_env_render_settings_and_recording(monkeypatch):
+    import motrix_rl_builtin.fastsac.sync.train as train
+
+    recording = RenderConfig(
+        headless=True,
+        record=RecordConfig(width=640, height=480, path=Path("video.mp4"), fps=30, num_frames=60),
+    )
+    env = _make_env()
+    spec = Mock()
+    spec.make.return_value = env
+    device = torch.device("cpu")
+    instance = SimpleNamespace(_env_spec=spec, _context=SimpleNamespace(seed=7), _device=lambda: device)
+    wrapper = Mock()
+    monkeypatch.setattr(train, "FastSacEnvWrap", wrapper)
+
+    result = train.Trainer._make_env(instance, 2, render=recording, mode="play")
+
+    spec.make.assert_called_once_with(
+        num_envs=2,
+        mode="play",
+        seed=7,
+        headless=True,
+        record=recording.record,
+    )
+    wrapper.assert_called_once_with(env, device, render=recording)
+    assert result is wrapper.return_value

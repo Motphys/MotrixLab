@@ -150,8 +150,14 @@ def _quat_to_rotvec(quat: torch.Tensor) -> torch.Tensor:
 class StewartEnv(DirectEnv):
     _cfg: StewartBaseEnvCfg
 
-    def __init__(self, cfg: StewartBaseEnvCfg, num_envs=1, backend: str | None = None):
-        super().__init__(cfg, num_envs, backend=backend)
+    def __init__(
+        self,
+        cfg: StewartBaseEnvCfg,
+        num_envs=1,
+        backend: str | None = None,
+        **kwargs,
+    ):
+        super().__init__(cfg, num_envs, backend=backend, **kwargs)
         self.model = self.sim.compile_model({})
         self.sim_data = self.sim.compile_reads(_SIM_DATA_QUERIES)
         # Body-state writes are per-body programs: the disturbance stage is

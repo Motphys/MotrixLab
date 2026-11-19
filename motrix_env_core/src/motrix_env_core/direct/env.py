@@ -18,6 +18,7 @@ from motrix_env_core.array.env import ArrayEnvState as ArrayEnvState
 from motrix_env_core.base import EnvCfg
 from motrix_env_core.config import configclass
 from motrix_env_core.sim.backend import (
+    RecordConfig,
     RenderConfig,
     SimBackend,
     SimRenderer,
@@ -39,14 +40,23 @@ class DirectEnv(ArrayEnv[DirectEnvCfgType]):
     those programs in their own constructors.
     """
 
-    def __init__(self, cfg: DirectEnvCfgType, num_envs: int = 1, backend: str | None = None):
+    def __init__(
+        self,
+        cfg: DirectEnvCfgType,
+        num_envs: int = 1,
+        backend: str | None = None,
+        *,
+        headless: bool = False,
+        record: RecordConfig | None = None,
+    ):
         super().__init__(cfg, num_envs)
         from motrix_env_core.sim.registry import create_sim_backend, default_sim_backend_name
 
         factory = create_sim_backend(backend or default_sim_backend_name())
         # Construction compiles the scene inside the backend: no compiled
         # artifact crosses the boundary.
-        self.sim: SimBackend = factory(cfg.scene, cfg.sim, num_envs)
+        render = RenderConfig(headless=headless, record=record)
+        self.sim: SimBackend = factory(cfg.scene, cfg.sim, num_envs, render=render)
 
     @property
     def num_dof_pos(self) -> int:
@@ -65,7 +75,6 @@ class DirectEnv(ArrayEnv[DirectEnvCfgType]):
             config,
             num_envs=self.num_envs,
             render_spacing=self.render_spacing,
-            system_camera=self.cfg.scene.system_camera,
         )
 
     def physics_step(self) -> None:

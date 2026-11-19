@@ -41,6 +41,7 @@ from motrix_env_core.config.scene.site import SiteCfg
 from motrix_env_core.config.scene.urdf import UrdfFileCfg
 from motrix_env_core.config.scene.validation import validate_scene_cfg
 from motrix_env_core.config.sim import SimCfg
+from motrix_env_core.sim.backend import RenderConfig
 from motrix_env_motrixsim.actuators import apply_actuator_cfgs
 from motrix_env_motrixsim.urdf import _iter_links, apply_link_sites, apply_urdf_cfgs
 
@@ -79,6 +80,9 @@ class MotrixSimSceneCompiler(SceneCompiler[mtx.SceneModel]):
         for name, asset in scene.iter_assets():
             self._add_asset(world, name, asset)
         self._apply_visual(world, scene.visual)
+        camera = scene.system_camera
+        world.system_camera.elevation = camera.elevation
+        world.system_camera.azimuth = camera.azimuth
         sites = [(name, obj) for name, obj in scene.iter_objs() if isinstance(obj, SiteCfg)]
         claimed: dict[str, str] = {}
         for name, obj in scene.iter_objs():
@@ -102,10 +106,16 @@ class MotrixSimSceneCompiler(SceneCompiler[mtx.SceneModel]):
         if sim.gravity is not None:
             world.simulate_option.gravity = list(sim.gravity)
 
-    def compile(self, scene: SceneCfg, sim: SimCfg) -> mtx.SceneModel:
+    def compile(self, scene: SceneCfg, sim: SimCfg, *, render: RenderConfig | None = None) -> mtx.SceneModel:
         sim.validate()
         world = self.build_world(scene)
         self.configure_world(world, sim)
+        if render is not None:
+            world.system_camera.render_target = (
+                mtx.msd.RenderTarget.Image if render.headless else mtx.msd.RenderTarget.Window
+            )
+            if render.record is not None:
+                world.system_camera.resolution = [render.record.width, render.record.height]
         return world.build()
 
     def _load_model_world(self, model: ModelFileCfg) -> mtx.msd.World:

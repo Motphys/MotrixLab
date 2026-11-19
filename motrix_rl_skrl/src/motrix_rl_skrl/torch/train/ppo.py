@@ -129,6 +129,8 @@ class Trainer(SkrlPpoTrainerBase):
             mode=mode,
             sim=self._sim,
             seed=self._context.seed,
+            headless=self._render.headless if self._render else False,
+            record=self._render.record if self._render else None,
         )
 
     def _wrap_env(self, env, render: RenderConfig | None) -> Wrapper:

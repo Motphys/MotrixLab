@@ -52,8 +52,14 @@ def _quat_similarity(q_current: torch.Tensor, q_target: torch.Tensor) -> torch.T
 class RM65OpenCabinetEnv(DirectEnv):
     _cfg: RM65OpenCabinetEnvCfg
 
-    def __init__(self, cfg: RM65OpenCabinetEnvCfg, num_envs=1, backend: str | None = None):
-        super().__init__(cfg, num_envs=num_envs, backend=backend)
+    def __init__(
+        self,
+        cfg: RM65OpenCabinetEnvCfg,
+        num_envs=1,
+        backend: str | None = None,
+        **kwargs,
+    ):
+        super().__init__(cfg, num_envs=num_envs, backend=backend, **kwargs)
         self.model = self.sim.compile_model(_SIM_MODEL_QUERIES)
         self.sim_data = self.sim.compile_reads(_SIM_DATA_QUERIES)
         self._ctrl_writes = self.sim.write_compiler.compile({"ctrl": CtrlTargetsWrite()})

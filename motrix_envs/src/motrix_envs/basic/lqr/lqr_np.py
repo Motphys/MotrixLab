@@ -41,8 +41,14 @@ def _normalize_actions(actions: torch.Tensor, num_envs: int, num_actuators: int)
 class LqrEnv(DirectEnv):
     _cfg: LqrBaseCfg
 
-    def __init__(self, cfg: LqrBaseCfg, num_envs=1, backend: str | None = None):
-        super().__init__(cfg, num_envs, backend=backend)
+    def __init__(
+        self,
+        cfg: LqrBaseCfg,
+        num_envs=1,
+        backend: str | None = None,
+        **kwargs,
+    ):
+        super().__init__(cfg, num_envs, backend=backend, **kwargs)
         self.model = self.sim.compile_model(_SIM_MODEL_QUERIES)
         self.sim_data = self.sim.compile_reads(_SIM_DATA_QUERIES)
         self._ctrl_writes = self.sim.write_compiler.compile({"ctrl": CtrlTargetsWrite()})

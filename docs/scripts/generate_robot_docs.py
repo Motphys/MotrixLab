@@ -9,12 +9,15 @@ import argparse
 import time
 from pathlib import Path
 
+import imageio.v2 as imageio
 import motrixsim as mtx
-from motrixsim.render import RenderApp, RenderSettings
 
 from motrix_env_core import registry
 from motrix_env_core.config.scene import MjcfFileCfg, SystemCameraCfg, UrdfFileCfg
-from motrix_env_motrixsim.compiler import build_scene_model
+from motrix_env_core.config.sim import SimCfg
+from motrix_env_core.sim.backend import RecordConfig, RenderConfig
+from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler, build_scene_model
+from motrix_env_motrixsim.renderer import MotrixSimRenderer
 from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -165,34 +168,27 @@ def generate_screenshots(robot_names: list[str] | None = None) -> None:
             system_camera=camera,
             objs=StandardSceneObjsCfg(robot=registry.make_robot_config(name)),
         )
-        model = build_scene_model(scene)
+        record = RecordConfig(width=SCREENSHOT_WIDTH, height=SCREENSHOT_HEIGHT)
+        render = RenderConfig(headless=True, record=record)
+        model = MotrixSimSceneCompiler().compile(scene, SimCfg(), render=render)
         data = mtx.SceneData(model, batch=[1])
         data.reset(model)
         model.forward_kinematic(data)
-        model.cameras.set_system_render_target("image", SCREENSHOT_WIDTH, SCREENSHOT_HEIGHT)
-
-        renderer = RenderApp(headless=True)
+        renderer = MotrixSimRenderer(
+            model,
+            lambda: data,
+            render,
+            num_envs=1,
+            render_spacing=1.0,
+            system_camera=camera,
+        )
         try:
-            settings = RenderSettings.performance()
-            settings.enable_shadow = True
-            renderer.launch(
-                model,
-                batch=1,
-                render_offset=[[0.0, 0.0, 0.0]],
-                render_settings=settings,
-            )
-            renderer.system_camera.set_view(camera.lookat, camera.distance, camera.elevation, camera.azimuth)
-            renderer.system_camera.active = True
-            renderer.sync(data=data, wait=True)
+            renderer.render()
             time.sleep(metadata.get("screenshot_warmup_seconds", DEFAULT_SCREENSHOT_WARMUP_SECONDS))
-            capture = renderer.system_camera.capture()
-            renderer.sync(data=data, wait=True)
-            image = capture.take_image()
-            if image is None:
-                raise RuntimeError(f"Screenshot capture for robot {name!r} did not return an image")
-            image.save_to_disk(str(SCREENSHOT_DIR / f"{name}.png"))
+            renderer.capture()  # Discard the first capture while assets finish loading.
+            imageio.imwrite(SCREENSHOT_DIR / f"{name}.png", renderer.capture().numpy())
         finally:
-            renderer.__exit__(None, None, None)
+            renderer.close()
 
 
 def _missing_screenshots() -> list[Path]:

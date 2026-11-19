@@ -10,7 +10,7 @@ This module handles registration, Hydra schema installation, and policy-export d
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from hydra.core.config_store import ConfigStore
 
@@ -25,6 +25,9 @@ from motrix_rl.contracts import (
     TrainerHandle,
 )
 from motrix_rl.metrics import MetricsLogger
+
+if TYPE_CHECKING:
+    from motrix_env_core.renderer import RenderConfig
 
 __all__ = [
     "AgentProvider",
@@ -170,7 +173,7 @@ def create_trainer_context(
     rl_cfg: Any,
     logging: LoggingConfig,
     checkpoint: CheckpointConfig,
-    render: Any = None,
+    render: RenderConfig | None = None,
     resume_from: str | None = None,
     metrics: MetricsLogger | None = None,
 ) -> TrainerContext[Any]:

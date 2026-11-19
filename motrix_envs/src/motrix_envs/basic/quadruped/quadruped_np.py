@@ -137,8 +137,14 @@ class QuadrupedEnv(DirectEnv):
     _observation_space: gym.spaces.Box
     _action_space: gym.spaces.Box
 
-    def __init__(self, cfg: QuadrupedBaseCfg, num_envs=1, backend: str | None = None):
-        super().__init__(cfg, num_envs, backend=backend)
+    def __init__(
+        self,
+        cfg: QuadrupedBaseCfg,
+        num_envs=1,
+        backend: str | None = None,
+        **kwargs,
+    ):
+        super().__init__(cfg, num_envs, backend=backend, **kwargs)
         if cfg.include_ball:
             data_queries, model_queries = _FETCH_DATA_QUERIES, _FETCH_MODEL_QUERIES
         elif cfg.include_origin:

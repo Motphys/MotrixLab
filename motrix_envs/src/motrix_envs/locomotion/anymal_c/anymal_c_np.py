@@ -84,8 +84,14 @@ def _sim_model_queries(cfg: AnymalCEnvCfg):
 class AnymalCEnv(DirectEnv):
     _cfg: AnymalCEnvCfg
 
-    def __init__(self, cfg: AnymalCEnvCfg, num_envs=1, backend: str | None = None):
-        super().__init__(cfg, num_envs, backend=backend)
+    def __init__(
+        self,
+        cfg: AnymalCEnvCfg,
+        num_envs=1,
+        backend: str | None = None,
+        **kwargs,
+    ):
+        super().__init__(cfg, num_envs, backend=backend, **kwargs)
         self.model = self.sim.compile_model(_sim_model_queries(cfg))
         self.sim_data = self.sim.compile_reads(_sim_data_queries(cfg))
         self._heading_writes = self.sim.write_compiler.compile(

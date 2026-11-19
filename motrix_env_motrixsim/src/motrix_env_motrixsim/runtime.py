@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 from motrix_env_core.config import SimCfg
-from motrix_env_core.config.scene import SceneCfg, SystemCameraCfg
+from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.config.scene.base import BodyCfg, RobotCfg
 from motrix_env_core.mdp.terrain import HeightFieldGrid
 from motrix_env_core.sim.backend import RenderConfig, SimBackend, SimRenderer
@@ -345,9 +345,9 @@ class MotrixSimBackend(SimBackend):
 
     name = "motrixsim"
 
-    def __init__(self, scene: SceneCfg, sim: SimCfg, num_envs: int) -> None:
-        super().__init__(scene, sim, num_envs)
-        self._model: mtx.SceneModel = MotrixSimSceneCompiler().compile(scene, sim)
+    def __init__(self, scene: SceneCfg, sim: SimCfg, num_envs: int, *, render: RenderConfig | None = None) -> None:
+        super().__init__(scene, sim, num_envs, render=render)
+        self._model: mtx.SceneModel = MotrixSimSceneCompiler().compile(scene, sim, render=render)
         self._data: mtx.SceneData = mtx.SceneData(self._model, batch=[num_envs])
         self._num_envs = num_envs
         self._model_compiler = MotrixSimModelCompiler(self._model)
@@ -378,7 +378,6 @@ class MotrixSimBackend(SimBackend):
         *,
         num_envs: int,
         render_spacing: float,
-        system_camera: SystemCameraCfg,
     ) -> SimRenderer:
         return MotrixSimRenderer(
             self._model,
@@ -386,7 +385,7 @@ class MotrixSimBackend(SimBackend):
             config,
             num_envs=num_envs,
             render_spacing=render_spacing,
-            system_camera=system_camera,
+            system_camera=self._scene.system_camera,
         )
 
     def step(self, substeps: int) -> None:

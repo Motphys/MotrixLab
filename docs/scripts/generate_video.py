@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from motrix_env_core import registry
-from motrix_env_core.renderer import RenderConfig
+from motrix_env_core.renderer import RecordConfig, RenderConfig
 from motrix_envs.locomotion.wbt.cfg import WbtEnvCfg
 from motrix_envs.motion.library import expand_motion_paths
 from motrix_envs.motion.loader import MotrixMotion
@@ -138,11 +138,13 @@ def _render_config(args: argparse.Namespace) -> RenderConfig:
         raise FileExistsError(f"Video already exists: {path}. Pass --force to overwrite it.")
     return RenderConfig(
         headless=True,
-        path=path,
-        fps=args.fps,
-        num_frames=max(1, round(seconds * args.fps)),
-        width=args.width,
-        height=args.height,
+        record=RecordConfig(
+            width=args.width,
+            height=args.height,
+            path=path,
+            fps=args.fps,
+            num_frames=max(1, round(seconds * args.fps)),
+        ),
     )
 
 
@@ -183,7 +185,8 @@ def run(args: argparse.Namespace) -> Path:
     target = _resolve_target(args.env, args.policy, args.sim)
     render = _render_config(args)
     logging.info("Using policy: %s", target.policy_path)
-    logging.info("Recording %d frames to %s", render.num_frames, render.path)
+    recording = render.record
+    logging.info("Recording %d frames to %s", recording.num_frames, recording.path)
     trainer = runner.create_run_handle(
         target.run,
         play_num_envs=args.num_envs,
@@ -193,9 +196,9 @@ def run(args: argparse.Namespace) -> Path:
     )
     trainer.play(str(target.policy_path))
 
-    if not render.path.is_file():
-        raise RuntimeError(f"Playback finished without creating video {render.path}.")
-    return render.path
+    if not recording.path.is_file():
+        raise RuntimeError(f"Playback finished without creating video {recording.path}.")
+    return recording.path
 
 
 def main(argv: list[str] | None = None) -> int:

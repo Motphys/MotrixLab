@@ -9,9 +9,12 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, is_dataclass
 from pathlib import Path
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from motrix_rl.metrics import MetricsLogger
+
+if TYPE_CHECKING:
+    from motrix_env_core.renderer import RenderConfig
 
 CfgT = TypeVar("CfgT")
 
@@ -46,7 +49,7 @@ class TrainerContext(Generic[CfgT]):
     rl_cfg: CfgT
     logging: Any
     checkpoint: Any
-    render: Any = None
+    render: RenderConfig | None = None
     resume_from: str | None = None
     # Live metrics for this run; disabled unless the control plane enabled it for training.
     metrics: MetricsLogger = field(default_factory=MetricsLogger.disabled)
