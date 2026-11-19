@@ -109,8 +109,9 @@ class SlotPayloadStore(Protocol):
 class HostTransitionRing:
     """SPSC ring of transition batches with bounded backpressure (host fields).
 
-    Each slot holds one env-step batch: the per-field tensors declared by the
-    schema, each with the leading dimension ``num_envs``. What a slot carries
+    Each slot holds one env-step batch: per-env schema fields include the
+    leading ``num_envs`` dimension; global fields retain their native shapes.
+    What a slot carries
     is entirely the schema's decision — e.g. one backend stores observation
     pairs, another stores privileged state vectors plus scalar episode
     metadata; the transport treats both identically.
@@ -127,15 +128,24 @@ class HostTransitionRing:
         num_envs: int,
         cursors: RingCursors | None = None,
         payload_store: SlotPayloadStore | None = None,
-    ):
+        *,
+        data: dict[str, torch.Tensor] | None = None,
+    ) -> None:
         if capacity < 1:
             raise ValueError(f"ring_capacity must be >= 1, got {capacity}")
         self.schema = schema
         self.capacity = capacity
         self.num_envs = num_envs
-        self.data = {
-            field.name: _shared((capacity, *schema.slot_shape(field, num_envs)), field.dtype) for field in schema.fields
-        }
+        # An attaching endpoint borrows the owner's shared storage; allocation
+        # happens only when creating the original ring.
+        self.data = (
+            {
+                field.name: _shared((capacity, *schema.slot_shape(field, num_envs)), field.dtype)
+                for field in schema.fields
+            }
+            if data is None
+            else data
+        )
         self.cursors = cursors if cursors is not None else RingCursors()
         self.payload_store = payload_store
 
@@ -171,8 +181,9 @@ class HostTransitionRing:
     def push(self, batch: Mapping[str, torch.Tensor], payload=None) -> bool:
         """Copy one env-step batch into the next slot. Returns False if full.
 
-        ``batch`` maps every schema field name to a CPU tensor of shape
-        ``(num_envs,) + per_env_shape``; the key set must match the schema
+        ``batch`` maps each schema field to its CPU slot tensor: per-env
+        fields have shape ``(num_envs,) + per_env_shape``; global fields use
+        only their native ``per_env_shape``. The key set matches the schema
         exactly. ``payload`` (optional) is handed to the payload store
         unchanged.
         """
@@ -205,9 +216,9 @@ class HostTransitionRing:
     def read_span(self) -> tuple[int, dict[str, torch.Tensor]]:
         """Longest contiguous unread run, as ``(count, field_views)``.
 
-        ``field_views`` maps every schema field name to a tensor of shape
-        ``(count, num_envs) + per_env_shape`` — contiguous in the slot
-        (leading) dimension, so the consumer can move the whole run with one
+        ``field_views`` maps per-env fields to ``(count, num_envs) +
+        per_env_shape`` and global fields to ``(count,) + per_env_shape``.
+        Views are contiguous in the slot dimension, so consumers can move the whole run with one
         copy per field. Consumers that need a positional order use
         ``schema.fields`` order as the single authority. Returns ``(0, {})``
         when empty. Does NOT advance the read cursor; free the run with

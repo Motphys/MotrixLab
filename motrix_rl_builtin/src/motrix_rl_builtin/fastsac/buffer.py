@@ -39,6 +39,9 @@ class SimpleReplayBuffer(nn.Module):
         gamma: float = 0.99,
         device=None,
         final_obs_bootstrap: bool = False,
+        policy_history: int = 1,
+        value_history: int = 1,
+        shared_observations: bool = False,
     ):
         super().__init__()
         self.n_env = n_env
@@ -49,6 +52,11 @@ class SimpleReplayBuffer(nn.Module):
         self.gamma = gamma
         self.n_steps = n_steps
         self.device = device
+        self.policy_history = policy_history
+        self.value_history = value_history
+        self._history = max(policy_history, value_history)
+        self._shared_observations = shared_observations
+        self._episode_start = torch.zeros(n_env, device=device, dtype=torch.long)
 
         # All fields share the same capacity so one absolute-time indexing
         # scheme (t % cap) covers them; the extra slot over buffer_size keeps
@@ -63,7 +71,8 @@ class SimpleReplayBuffer(nn.Module):
         self.rewards = torch.zeros((n_env, cap), device=device, dtype=torch.float)
         self.dones = torch.zeros((n_env, cap), device=device, dtype=torch.long)
         self.truncations = torch.zeros((n_env, cap), device=device, dtype=torch.long)
-        self.critic_observations = z(n_critic_obs)
+        self.critic_observations = self.observations if shared_observations else z(n_critic_obs)
+        self.episode_starts = torch.zeros((n_env, cap), device=device, dtype=torch.long)
         self.ptr = 0
 
         # Final rows are allocated only for live truncated transitions. Capacity
@@ -91,7 +100,7 @@ class SimpleReplayBuffer(nn.Module):
         if self.observations.device.type == "cuda":
             torch.cuda.synchronize(self.device)
         policy = torch.empty((capacity, self.n_obs), device=self.device)
-        critic = torch.empty((capacity, self.n_critic_obs), device=self.device)
+        critic = policy if self._shared_observations else torch.empty((capacity, self.n_critic_obs), device=self.device)
         if old:
             policy[:old].copy_(self._final_obs_table)
             critic[:old].copy_(self._final_critic_table)
@@ -123,11 +132,14 @@ class SimpleReplayBuffer(nn.Module):
         slot = self.ptr % self._cap
         self._invalidate_final_slot(slot, 1)
         self.observations[:, slot] = obs
-        self.critic_observations[:, slot] = critic_obs
+        if not self._shared_observations:
+            self.critic_observations[:, slot] = critic_obs
         self.actions[:, slot] = actions
         self.rewards[:, slot] = rewards
         self.dones[:, slot] = dones
         self.truncations[:, slot] = truncations
+        self.episode_starts[:, slot] = self._episode_start
+        self._episode_start = torch.where((dones | truncations).bool(), self.ptr + 1, self._episode_start)
         self.ptr += 1
 
     def extend_batch(self, obs, critic_obs, actions, rewards, dones, truncations, *, final_payloads=None) -> None:
@@ -146,6 +158,12 @@ class SimpleReplayBuffer(nn.Module):
             # Preserve only the newest replay-capacity transitions, but keep
             # absolute time progression identical to successive extends.
             skip = k - self._cap
+            for offset in range(skip):
+                self._episode_start = torch.where(
+                    (dones[offset].bool() | truncations[offset].bool()).to(self.device),
+                    self.ptr + offset + 1,
+                    self._episode_start,
+                )
             self.ptr += skip
             self.extend_batch(
                 *(v[skip:] for v in (obs, critic_obs, actions, rewards, dones, truncations)),
@@ -158,6 +176,18 @@ class SimpleReplayBuffer(nn.Module):
         self._write_span(start, (t[:n] for t in (obs, critic_obs, actions, rewards, dones, truncations)))
         if k > n:
             self._write_span(0, (t[n:] for t in (obs, critic_obs, actions, rewards, dones, truncations)))
+        # Track real episode starts, including a prefix whose first frame has
+        # since been overwritten. An overwrite must never become repeat-fill.
+        for offset in range(k):
+            self.episode_starts[:, (self.ptr + offset) % self._cap] = self._episode_start
+            self._episode_start = torch.where(
+                (
+                    self.dones[:, (self.ptr + offset) % self._cap]
+                    | self.truncations[:, (self.ptr + offset) % self._cap]
+                ).bool(),
+                self.ptr + offset + 1,
+                self._episode_start,
+            )
         self.ptr += k
         if final_payloads is not None:
             for offset, payload in enumerate(final_payloads):
@@ -212,140 +242,90 @@ class SimpleReplayBuffer(nn.Module):
         n = obs.shape[0]
         end = slot + n
         self.observations[:, slot:end].copy_(obs.permute(1, 0, 2), non_blocking=True)
-        self.critic_observations[:, slot:end].copy_(critic_obs.permute(1, 0, 2), non_blocking=True)
+        if not self._shared_observations:
+            self.critic_observations[:, slot:end].copy_(critic_obs.permute(1, 0, 2), non_blocking=True)
         self.actions[:, slot:end].copy_(actions.permute(1, 0, 2), non_blocking=True)
         self.rewards[:, slot:end].copy_(rewards.permute(1, 0), non_blocking=True)
         self.dones[:, slot:end].copy_(dones.permute(1, 0), non_blocking=True)
         self.truncations[:, slot:end].copy_(truncations.permute(1, 0), non_blocking=True)
 
+    def _window(self, frames: torch.Tensor, times: torch.Tensor, length: int) -> torch.Tensor:
+        starts = self.episode_starts.gather(1, times % self._cap)
+        offsets = torch.arange(1 - length, 1, device=self.device)
+        indices = torch.maximum(times.unsqueeze(-1) + offsets, starts.unsqueeze(-1)) % self._cap
+        lanes = torch.arange(self.n_env, device=self.device)[:, None, None]
+        return frames[lanes, indices].flatten(2)
+
     @torch.no_grad()
     def sample(self, batch_size: int) -> dict:
         if self.num_stored == 0:
             raise RuntimeError("cannot sample from a replay buffer with no complete transitions")
-        n_env, no, na, nco = self.n_env, self.n_obs, self.n_act, self.n_critic_obs
-        flat = n_env * batch_size
-
-        if self.n_steps == 1:
-            idx = torch.randint(0, self.num_stored, (n_env, batch_size), device=self.device)
-            # Sampled ring positions are expressed as absolute time steps over
-            # the contiguous valid window, then folded into the ring. The next
-            # observation of step ``t`` is the observation stored at ``t + 1``.
-            t = self.ptr - 1 - self.num_stored + idx
-            ring = t % self._cap
-            next_ring = (t + 1) % self._cap
-            oi = ring.unsqueeze(-1).expand(-1, -1, no)
-            ni = next_ring.unsqueeze(-1).expand(-1, -1, no)
-            ai = ring.unsqueeze(-1).expand(-1, -1, na)
-            ci = ring.unsqueeze(-1).expand(-1, -1, nco)
-            nci = next_ring.unsqueeze(-1).expand(-1, -1, nco)
-            out = {
-                "obs": torch.gather(self.observations, 1, oi).reshape(flat, no),
-                "next_obs": torch.gather(self.observations, 1, ni).reshape(flat, no),
-                "critic_obs": torch.gather(self.critic_observations, 1, ci).reshape(flat, nco),
-                "next_critic_obs": torch.gather(self.critic_observations, 1, nci).reshape(flat, nco),
-                "actions": torch.gather(self.actions, 1, ai).reshape(flat, na),
-                "rewards": torch.gather(self.rewards, 1, ring).reshape(flat),
-                "dones": torch.gather(self.dones, 1, ring).reshape(flat),
-                "truncations": torch.gather(self.truncations, 1, ring).reshape(flat),
-            }
-            if self._final_slot is not None:
-                # Time-limit-truncated transitions bootstrap from the stored
-                # TERMINAL observation, not the successor slot's auto-reset
-                # observation: the reset state's value has nothing to do with
-                # the episode that just timed out.
-                k_idx = self._final_slot.gather(1, ring.long())
-                has_final = (k_idx >= 0) & (out["truncations"] > 0).view(n_env, batch_size)
-                k_safe = k_idx.clamp(min=0).long()
-                fin_obs = self._final_obs_table[k_safe]
-                fin_cobs = self._final_critic_table[k_safe]
-                out["next_obs"] = torch.where(
-                    has_final.unsqueeze(-1), fin_obs, out["next_obs"].view(n_env, batch_size, no)
-                ).reshape(flat, no)
-                out["next_critic_obs"] = torch.where(
-                    has_final.unsqueeze(-1), fin_cobs, out["next_critic_obs"].view(n_env, batch_size, nco)
-                ).reshape(flat, nco)
-            out["effective_n_steps"] = torch.ones_like(out["dones"])
-            return out
-
-        # n-step (>1)
-        if self.ptr - 1 < self.buffer_size:
-            max_start = max(1, self.ptr - self.n_steps)
-            idx = torch.randint(0, max_start, (n_env, batch_size), device=self.device)
-            t = idx
+        oldest = max(0, self.ptr - self._cap)
+        first = torch.full((self.n_env,), oldest, device=self.device, dtype=torch.long)
+        # Only the overwritten prefix can be invalid. Inspect at most H-1
+        # positions, not the potentially million-step replay capacity.
+        for offset in range(min(self._history - 1, self.num_stored)):
+            current = oldest + offset
+            starts = self.episode_starts[:, current % self._cap]
+            missing = torch.maximum(torch.full_like(starts, current - self._history + 1), starts) < oldest
+            first = torch.where(missing, current + 1, first)
+        available = self.ptr - 1 - first
+        if (available <= 0).any():
+            raise RuntimeError("cannot sample replay: no complete observation history on an environment lane")
+        if self._history == 1:
+            count = self.num_stored
+            if self.n_steps > 1 and self.ptr - 1 < self.buffer_size:
+                count = max(1, self.ptr - self.n_steps)
+            t = oldest + torch.randint(0, count, (self.n_env, batch_size), device=self.device)
         else:
-            idx = torch.randint(0, self.buffer_size, (n_env, batch_size), device=self.device)
-            t = self.ptr - 1 - self.buffer_size + idx
+            t = first[:, None] + (torch.rand((self.n_env, batch_size), device=self.device) * available[:, None]).long()
         ring = t % self._cap
-
-        oi = ring.unsqueeze(-1).expand(-1, -1, no)
-        ai = ring.unsqueeze(-1).expand(-1, -1, na)
-        ci = ring.unsqueeze(-1).expand(-1, -1, nco)
-        obs = torch.gather(self.observations, 1, oi).reshape(flat, no)
-        actions = torch.gather(self.actions, 1, ai).reshape(flat, na)
-        critic_obs = torch.gather(self.critic_observations, 1, ci).reshape(flat, nco)
-
-        offsets = torch.arange(self.n_steps, device=self.device).view(1, 1, -1)
-        all_idx = (t.unsqueeze(-1) + offsets) % self._cap
-        all_rew = torch.gather(self.rewards.unsqueeze(-1).expand(-1, -1, self.n_steps), 1, all_idx)
-        all_done = torch.gather(self.dones.unsqueeze(-1).expand(-1, -1, self.n_steps), 1, all_idx)
-        all_trunc = torch.gather(self.truncations.unsqueeze(-1).expand(-1, -1, self.n_steps), 1, all_idx)
-
-        # A window must not read past the newest stored observation; folded
-        # ring positions beyond it hold stale data from a full cycle earlier.
-        max_off = (self.ptr - 2 - t).clamp(min=0)
-        in_win = offsets <= max_off.unsqueeze(-1)
-        all_rew = all_rew * in_win
-        all_done = all_done * in_win
-        all_trunc = all_trunc * in_win
-
-        done_shift = torch.cat([torch.zeros_like(all_done[:, :, :1]), all_done[:, :, :-1]], dim=2)
-        done_mask = torch.cumprod(1.0 - done_shift, dim=2) * in_win
-        # Keep the same integer dtype as the 1-step branch's ones_like(dones).
-        eff_n = done_mask.sum(2).long()
-        discounts = torch.pow(self.gamma, torch.arange(self.n_steps, device=self.device))
-        n_step_rew = (all_rew * done_mask * discounts.view(1, 1, -1)).sum(dim=2)
-
-        first_done = torch.argmax((all_done > 0).float(), dim=2)
-        first_trunc = torch.argmax((all_trunc > 0).float(), dim=2)
-        first_done = torch.where(all_done.sum(2) == 0, self.n_steps - 1, first_done)
-        first_trunc = torch.where(all_trunc.sum(2) == 0, self.n_steps - 1, first_trunc)
-        final = torch.minimum(torch.minimum(first_done, first_trunc), max_off)
-        # The next observation of the final transition lives one slot ahead.
-        final_next = (t + final + 1) % self._cap
-        final_ring = (t + final) % self._cap
-
-        next_obs = self.observations.gather(1, final_next.unsqueeze(-1).expand(-1, -1, no)).reshape(flat, no)
-        next_critic_obs = self.critic_observations.gather(1, final_next.unsqueeze(-1).expand(-1, -1, nco)).reshape(
-            flat, nco
-        )
-        dones = self.dones.gather(1, final_ring).reshape(flat)
-        truncations = self.truncations.gather(1, final_ring).reshape(flat)
+        lanes = torch.arange(self.n_env, device=self.device)[:, None]
+        rewards = torch.zeros_like(t, dtype=torch.float)
+        active = torch.ones_like(t, dtype=torch.bool)
+        effective = torch.zeros_like(t)
+        endpoint = t.clone()
+        # Horizon is independent of history length. Both termination and time
+        # limit stop rewards; the learner decides whether truncation bootstraps.
+        for offset in range(self.n_steps):
+            current = t + offset
+            take = active & (current < self.ptr - 1)
+            slot = current % self._cap
+            rewards += self.gamma**offset * self.rewards[lanes, slot] * take
+            effective += take.long()
+            endpoint = torch.where(take, current, endpoint)
+            active = take & ~(self.dones[lanes, slot].bool() | self.truncations[lanes, slot].bool())
+        end_ring = endpoint % self._cap
+        next_time = endpoint + 1
+        obs = self._window(self.observations, t, self.policy_history)
+        critic = self._window(self.critic_observations, t, self.value_history)
+        next_obs = self._window(self.observations, next_time, self.policy_history)
+        next_critic = self._window(self.critic_observations, next_time, self.value_history)
+        truncations = self.truncations[lanes, end_ring]
         if self._final_slot is not None:
-            # Same terminal-observation correction as the 1-step branch,
-            # applied at the window's final transition (the one that
-            # bootstraps when the window ends on a truncation).
-            k_idx = self._final_slot.gather(1, final_ring.long())
-            has_final = (k_idx >= 0) & (truncations > 0).view(n_env, batch_size)
-            k_safe = k_idx.clamp(min=0).long()
-            fin_obs = self._final_obs_table[k_safe]
-            fin_cobs = self._final_critic_table[k_safe]
-            next_obs = torch.where(has_final.unsqueeze(-1), fin_obs, next_obs.view(n_env, batch_size, no)).reshape(
-                flat, no
-            )
-            next_critic_obs = torch.where(
-                has_final.unsqueeze(-1), fin_cobs, next_critic_obs.view(n_env, batch_size, nco)
-            ).reshape(flat, nco)
-
+            final_ids = self._final_slot[lanes, end_ring].long()
+            has_final = truncations.bool() & (final_ids >= 0)
+            final_policy = self._final_obs_table[final_ids.clamp_min(0)]
+            final_value = self._final_critic_table[final_ids.clamp_min(0)]
+            # Preview append uses the endpoint's pre-reset history, never the
+            # reset observation at endpoint+1. Only single final frames persist.
+            endpoint_policy = self._window(self.observations, endpoint, self.policy_history)
+            endpoint_value = self._window(self.critic_observations, endpoint, self.value_history)
+            policy_preview = torch.cat((endpoint_policy[..., self.n_obs :], final_policy), dim=-1)
+            value_preview = torch.cat((endpoint_value[..., self.n_critic_obs :], final_value), dim=-1)
+            next_obs = torch.where(has_final[..., None], policy_preview, next_obs)
+            next_critic = torch.where(has_final[..., None], value_preview, next_critic)
+        flat = self.n_env * batch_size
         return {
-            "obs": obs,
-            "next_obs": next_obs,
-            "critic_obs": critic_obs,
-            "next_critic_obs": next_critic_obs,
-            "actions": actions,
-            "rewards": n_step_rew.reshape(flat),
-            "dones": dones,
-            "truncations": truncations,
-            "effective_n_steps": eff_n.reshape(flat),
+            "obs": obs.reshape(flat, -1),
+            "next_obs": next_obs.reshape(flat, -1),
+            "critic_obs": critic.reshape(flat, -1),
+            "next_critic_obs": next_critic.reshape(flat, -1),
+            "actions": self.actions[lanes, ring].reshape(flat, self.n_act),
+            "rewards": rewards.reshape(flat),
+            "dones": self.dones[lanes, end_ring].reshape(flat),
+            "truncations": truncations.reshape(flat),
+            "effective_n_steps": effective.reshape(flat),
         }
 
 

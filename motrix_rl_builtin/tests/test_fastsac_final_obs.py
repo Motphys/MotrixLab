@@ -29,6 +29,7 @@ from motrix_rl_builtin.fastsac.buffer import SimpleReplayBuffer
 from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap
 
 from motrix_env_core.array.env import ArrayEnvState, EnvObs, FinalObs
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 
 
 def test_numpy_adapter_reads_final_result_without_consuming_environment_state():
@@ -44,6 +45,7 @@ def test_numpy_adapter_reads_final_result_without_consuming_environment_state():
     initial = state.replace(final_obs=None)
     env = SimpleNamespace(
         num_envs=1,
+        observation_spec=ObservationSpec({"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (1,)))}),
         action_space=gym.spaces.Box(-1.0, 1.0, (1,), dtype=np.float32),
         init_state=lambda: initial,
         step=lambda actions: state,

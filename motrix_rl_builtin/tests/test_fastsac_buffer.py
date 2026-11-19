@@ -55,7 +55,7 @@ def _expected_n_step(t0, last, n_steps, dones_by_t, truncs_by_t):
     for k in range(n_steps):
         if k > max_off:
             break
-        if k > 0 and dones_by_t[t0 + k - 1]:
+        if k > 0 and (dones_by_t[t0 + k - 1] or truncs_by_t[t0 + k - 1]):
             break
         ret += (GAMMA**k) * float(t0 + k)
         eff += 1

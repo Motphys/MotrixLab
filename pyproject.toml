@@ -74,6 +74,7 @@ members = [
     "motrix_rl_builtin",
     "motrix_rl_skrl",
     "motrix_rl_rslrl",
+    "motrix_rl_supermimic",
 ]
 
 [tool.uv]
@@ -105,6 +106,7 @@ motrix-env-mujoco = { workspace = true }
 motrix-envs = { workspace = true }
 motrix-rl = { workspace = true }
 motrix-rl-builtin = { workspace = true }
+motrix-rl-supermimic = { workspace = true }
 motrix-rl-skrl = { workspace = true }
 motrix-rl-rslrl = { workspace = true }
 

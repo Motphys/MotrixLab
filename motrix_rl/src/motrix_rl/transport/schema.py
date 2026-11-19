@@ -14,26 +14,34 @@ compile-time decision of the transport.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import torch
 
 
 @dataclass(frozen=True)
 class TransitionField:
-    """One named tensor of a transition batch, per environment.
+    """One named tensor repeated per environment or shared by the whole slot.
 
     Args:
         name: Field name; ``push`` addresses batches by these names.
-        per_env_shape: Shape of the field for ONE environment. A scalar
-            field is ``()``; a vector observation is ``(dim,)``. Multi-dim
-            shapes are carried exactly by the host ring (the fused CUDA-IPC
-            ring returns them flattened; see ``gpu_ipc_ring``).
+        per_env_shape: Native field shape, excluding the environment axis for
+            ``per-env`` fields. For ``global`` fields this is the entire slot
+            shape. Scalars use ``()``. Host fields retain native dimensions;
+            CUDA-IPC flattens per-env fields but preserves global shapes.
         dtype: Storage dtype of the shared slot tensor.
+        scope: ``per-env`` adds a leading environment axis; ``global`` stores
+            one tensor for the whole environment-step batch.
     """
 
     name: str
     per_env_shape: tuple[int, ...]
     dtype: torch.dtype
+    scope: Literal["per-env", "global"] = "per-env"
+
+    def __post_init__(self) -> None:
+        if self.scope not in ("per-env", "global"):
+            raise ValueError(f"TransitionField scope must be 'per-env' or 'global', got {self.scope!r}")
 
     @property
     def per_env_numel(self) -> int:
@@ -67,10 +75,17 @@ class TransitionSchema:
         return tuple(field.name for field in self.fields)
 
     def slot_shape(self, field: TransitionField, num_envs: int) -> tuple[int, ...]:
-        """Per-slot shape of one field: ``(num_envs,) + per_env_shape``."""
+        """Native slot shape, including an environment axis only when scoped."""
+        if field.scope == "global":
+            return tuple(field.per_env_shape)
         return (num_envs,) + tuple(field.per_env_shape)
 
     @property
     def feature_width(self) -> int:
-        """Summed per-env element count across fields (fused-slot width)."""
-        return sum(field.per_env_numel for field in self.fields)
+        """Summed per-env element count, excluding global slot tensors."""
+        return sum(field.per_env_numel for field in self.fields if field.scope == "per-env")
+
+    @property
+    def global_feature_width(self) -> int:
+        """Summed global element count, independent of the environment batch."""
+        return sum(field.per_env_numel for field in self.fields if field.scope == "global")

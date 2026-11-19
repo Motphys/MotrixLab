@@ -18,6 +18,13 @@ extras. The workspace root requires `motrix-rl-builtin` and `motrix-rl-skrl`, en
 for the built-in demos. The root `skrl-jax` extra adds the JAX backend; `rslrl` adds the optional RSLRL plugin.
 Runtime installation does not force other optional workspace packages.
 
+## Asynchronous transition transport
+
+`motrix_rl.transport` provides bounded host and CUDA-IPC rings for provider collectors. Transition schemas distinguish
+per-environment fields (the default) from `scope="global"` fields, which carry one native-shaped value per slot.
+CUDA IPC stores the two scopes in separate shared GPU allocations and publishes them together; task-global state does
+not need to be repeated across environments. Consumers must finish reads before acknowledging slots for reuse.
+
 ## GPU installation profiles
 
 `motrix-rl[cuda]` and `motrix-rl[rocm]` define the tested NVIDIA and AMD Torch dependency profiles. Without either extra,

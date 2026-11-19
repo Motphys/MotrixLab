@@ -35,7 +35,7 @@ def prepare_env(
     np, registry, manager_env_type = load_runtime()
     kwargs = {"mode": args.env_mode, "num_envs": num_envs}
     if args.sim_backend is not None:
-        kwargs["sim_backend"] = args.sim_backend
+        kwargs["sim"] = args.sim_backend
     env = registry.make(name, **kwargs)
     try:
         space = env.action_space

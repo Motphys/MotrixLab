@@ -19,7 +19,7 @@ from __future__ import annotations
 import torch
 
 from motrix_env_core.math.quaternion import to_matrix
-from motrix_env_core.math.rotation import axis_angle_to_mat
+from motrix_env_core.math.rotation import axis_angle_to_mat, mm3, mv3
 
 __all__ = ["KinematicTree"]
 
@@ -143,10 +143,18 @@ class KinematicTree:
                 continue
             j = self.joint_idx[i]
             Rp = Rs[par]
-            pi = P[par] + (Rp @ self.off_p[i].unsqueeze(-1)).squeeze(-1)
-            R_off = Rp @ self.off_R[i]
-            Ri = R_off @ axis_angle_to_mat(self.axes[i], q[..., j])
-            axis_w = (R_off @ self.axes[i].unsqueeze(-1)).squeeze(-1)
+            if torch.compiler.is_compiling():
+                # Fuse tiny products into the compiled FK instead of dispatching
+                # batches of 3x3 GEMMs. Eager execution keeps native matmul.
+                pi = P[par] + mv3(Rp, self.off_p[i])
+                R_off = mm3(Rp, self.off_R[i])
+                Ri = mm3(R_off, axis_angle_to_mat(self.axes[i], q[..., j]))
+                axis_w = mv3(R_off, self.axes[i])
+            else:
+                pi = P[par] + (Rp @ self.off_p[i].unsqueeze(-1)).squeeze(-1)
+                R_off = Rp @ self.off_R[i]
+                Ri = R_off @ axis_angle_to_mat(self.axes[i], q[..., j])
+                axis_w = (R_off @ self.axes[i].unsqueeze(-1)).squeeze(-1)
             wi = W[par] + axis_w * qd[..., j : j + 1]
             vi = V[par] + torch.cross(W[par], pi - P[par], dim=-1)
             P[i], Rs[i], V[i], W[i] = pi, Ri, vi, wi

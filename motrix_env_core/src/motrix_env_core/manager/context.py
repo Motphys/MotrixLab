@@ -83,6 +83,8 @@ class BuildContext:
     batch size of a later rollout. ``seed`` initializes that owner's
     construction/reset generators; numerical terms access the process-default
     Torch RNG through the explicit ``ManagerContext.rand`` capability.
+    Tensor factories follow Torch's default device unless a dependency requires
+    an explicit device; device selection belongs to the assembly caller.
     """
 
     cfg: EnvCfg

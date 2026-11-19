@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import gymnasium as gym
 import torch
 
-from motrix_env_core.array.env import FinalObs
+from motrix_env_core.array.env import EnvObs, FinalObs
 from motrix_env_core.base import ABEnv
 from motrix_env_core.observations import ObservationSpec
 from motrix_env_core.renderer import RenderConfig, create_renderer
@@ -75,6 +75,24 @@ class FastSacEnvWrap:
     @property
     def observation_spec(self) -> ObservationSpec:
         return self._env.observation_spec
+
+    def stage_frames(self, obs: torch.Tensor, critic_obs: torch.Tensor) -> EnvObs:
+        spec = self.observation_spec
+        # The specified fixed time-major layout exposes the actual current
+        # frame at the tail. Own it before step invalidates borrowed storage.
+        policy = obs[..., -spec.policy.frame_space.shape[-1] :].clone()
+        groups = {"policy": policy}
+        if spec.value is not None:
+            groups["value"] = critic_obs[..., -spec.value.frame_space.shape[-1] :].clone()
+        return EnvObs(groups)
+
+    def final_frames(self, result: FastSacStepResult) -> FinalObs | None:
+        final = result.final_obs
+        if result.truncated.any() and final is None:
+            raise RuntimeError("FastSAC truncation bootstrap requires pre-reset final observations")
+        if final is None:
+            return None
+        return FinalObs(final.env_ids, self.stage_frames(final.obs.policy, final.obs.value_or_policy))
 
     def step(self, actions: torch.Tensor) -> FastSacStepResult:
         env_actions = torch.clamp(actions.detach().cpu(), self._low_t, self._high_t)

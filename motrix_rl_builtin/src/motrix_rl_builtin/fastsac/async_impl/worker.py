@@ -34,6 +34,7 @@ import torch
 if TYPE_CHECKING:
     from torch.utils.tensorboard import SummaryWriter
 
+from motrix_env_core.observations import ObservationSpec
 from motrix_env_core.registry import EnvBuildSpec
 from motrix_env_core.renderer import RenderConfig
 from motrix_rl import checkpoints
@@ -125,6 +126,7 @@ def build_agent(
     writer: SummaryWriter | None = None,
     world_size: int = 1,
     final_obs_bootstrap: bool = False,
+    observation_spec: ObservationSpec | None = None,
 ) -> FastSacAgent:
     """Build the learner's ``FastSacAgent``.
 
@@ -148,6 +150,7 @@ def build_agent(
         writer=writer,
         world_size=world_size,
         final_obs_bootstrap=final_obs_bootstrap,
+        observation_spec=observation_spec,
     )
 
 
@@ -373,8 +376,8 @@ def run_collector_process(
                 ring,
                 ring_slots,
                 fastsac_transition_schema(
-                    env.observation_spec.policy.space.shape[-1],
-                    env.observation_spec.value_or_policy.space.shape[-1],
+                    env.observation_spec.policy.frame_space.shape[-1],
+                    env.observation_spec.value_or_policy.frame_space.shape[-1],
                     act_dim,
                 ),
                 opts.ring_capacity,
@@ -479,6 +482,7 @@ def run_learner_process(
     learner_device: str | None = None,
     final_stores: list[FinalObsStorage] | None = None,
     notify_checkpoints: bool = False,
+    observation_spec: ObservationSpec | None = None,
 ) -> None:
     """One learner process; ``rank 0`` additionally owns stats aggregation,
     logging and checkpointing.
@@ -548,6 +552,7 @@ def run_learner_process(
             action_bias,
             world_size=num_learners,
             final_obs_bootstrap=final_stores is not None,
+            observation_spec=observation_spec,
         )
         if resume_from:
             ckpt = torch.load(resume_from, map_location=device, weights_only=False)
@@ -592,7 +597,7 @@ def run_learner_process(
                 if device.type != "cuda":
                     raise RuntimeError("the IPC transition ring was selected but the learner device is not CUDA")
                 obs_dim, critic_obs_dim, act_dim = dims
-                schema = fastsac_transition_schema(obs_dim, critic_obs_dim, act_dim)
+                schema = fastsac_transition_schema(agent.rb.n_obs, agent.rb.n_critic_obs, act_dim)
                 ring_slots = torch.zeros(
                     opts.ring_capacity,
                     per_collector_envs,

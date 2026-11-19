@@ -36,9 +36,14 @@ def test_comparison_reuses_actions_and_closes_incompatible_environment(monkeypat
         close=Mock(),
     )
     environments = iter([reference, compared, incompatible])
-    registry = SimpleNamespace(make=lambda *args, **kwargs: next(environments))
+
+    def make(name, *, mode, num_envs, sim=None):
+        assert (mode, num_envs, sim) == ("train", 3, "test-backend")
+        return next(environments)
+
+    registry = SimpleNamespace(make=make)
     monkeypatch.setattr(workload, "load_runtime", lambda: (np, registry, dict))
-    args = SimpleNamespace(env_mode="train", sim_backend=None, zero_actions=False, seed=123)
+    args = SimpleNamespace(env_mode="train", sim_backend="test-backend", zero_actions=False, seed=123)
     env, actions, spec = workload.prepare_env("reference", args, 3)
     assert env is reference
     assert actions.shape == (3, 2)

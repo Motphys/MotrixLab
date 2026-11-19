@@ -1,0 +1,68 @@
+# @package _global_
+# Task g1-supermimic-tracking: motrix.supermimic recipe.
+#
+# Manager recipe for the full 40-motion corpus with 3000 learner updates.
+# Training uses the asynchronous collector topology with Muon optimizers. The enabled CUDA
+# graphs require CUDA; disable them explicitly for CPU execution.
+# Observation history and goal_frames are declared by the external task environment.
+defaults:
+  - /algo_base@algo: motrix.supermimic
+  - _self_
+task:
+  env: g1-supermimic-tracking
+  rllib: motrix
+  algo: supermimic
+  train_backend: null
+num_envs: 2048
+play_num_envs: 40
+seed: 0
+algo:
+  device: cuda:0
+  agent:
+    pi_ema: 0.995
+    wm_structured: true
+    wm_hidden: 1024
+    pi_ref_skip: true
+    wm_mirror: 0.5
+  trainer:
+    iterations: 3000
+    buffer_steps: 1000
+    utd: 0.4
+    horizon: 32
+    wm_window: 8
+    wm_batches: 5
+    wm_batch: 2048
+    pi_batch: 2048
+    warmup_steps: 64
+    wm_only_iters: 0
+    lr: 4.0e-4
+    lr_decay_iters: 250000
+    pi_opt: muon
+    wm_opt: muon
+    pi_lr_mult: 4.0
+    lr_decay_ret: 0.75
+    lr_decay_by: 1400
+    lr_decay_len: 300
+    pi_anneal_len: 1000
+    pi_anneal_min: 0.1
+    amp: bf16
+    compile_actor_kernel: true
+    compile_wm_kernel: true
+    cuda_graph_wm_loss: true
+    cuda_graph_actor_loss: true
+    cache_critic_features: true
+    overlap_wm: true
+    critic_epochs: 5
+    critic_minibatches: 4
+    log_every: 50
+    ckpt_every: 500
+  collector:
+    block_steps: 2
+    queue_blocks: 2
+    snapshot_every: 10
+    worker_timeout: 180.0
+    policy_device: cuda:0
+logging:
+  interval: 50
+checkpoint:
+  interval: 500

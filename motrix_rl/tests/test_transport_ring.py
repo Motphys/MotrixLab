@@ -68,6 +68,25 @@ def test_ring_allocates_per_field_shapes_and_dtypes_from_schema():
     assert SCHEMA.feature_width == 71 + 71 + 29 + 3
 
 
+def test_attached_host_endpoint_reuses_shared_storage_without_allocating(monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = _ring()
+
+    def forbidden_allocation(*args, **kwargs):
+        pytest.fail("Attaching shared storage must not allocate another ring")
+
+    monkeypatch.setattr("motrix_rl.transport.ring._shared", forbidden_allocation)
+    producer = HostTransitionRing(SCHEMA, CAPACITY, N_ENV, cursors=owner.cursors, data=owner.data)
+    assert producer.data is owner.data
+    assert producer.cursors is owner.cursors
+    assert producer.push(_batch(7))
+    count, views = owner.read_span()
+    assert count == 1
+    for name, expected in _batch(7).items():
+        torch.testing.assert_close(views[name][0], expected)
+    owner.commit_reads(1)
+    assert producer.size() == 0
+
+
 def test_roundtrip_preserves_values_and_dtypes_by_name_across_wraps():
     ring = _ring()
     pushed = [_batch(t) for t in range(CAPACITY * 5)]

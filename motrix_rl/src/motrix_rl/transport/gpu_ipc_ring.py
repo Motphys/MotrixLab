@@ -3,15 +3,14 @@
 
 """CUDA-IPC transition ring: SPSC ring with device-resident slots.
 
-Used when collector inference and the learner share one GPU. All schema
-fields are **fused** into a single ``(capacity, num_envs, feat)`` float32
-device tensor (``feat = schema.feature_width``): integer and boolean fields
-ride as floats (0/1 exactly representable; larger integers are converted
-back losslessly by the consumer's ``copy_`` only while they stay
-float32-exact — a schema carrying wide counters should use the host ring).
-Fusion lets the collector publish one env-step batch with a **single** H2D
-copy from one pinned staging buffer, and lets the learner ingest with pure
-D2D strided copies — no host transfer stays on the learner's critical path.
+Used when collector inference and the learner share one GPU. Per-environment
+fields are fused into ``(capacity, num_envs, schema.feature_width)`` float32
+slots. Global fields use a separate compact ``(capacity,
+schema.global_feature_width)`` float32 allocation, never repeated per env.
+Integer and boolean fields ride as floats (0/1 exactly representable; larger
+integers remain lossless only while float32-exact — wide counters should use
+the host ring). Each scope has pinned staging; both H2D uploads share one
+publication event. The learner ingests through D2D views without host copies.
 
 Ownership and handoff
 ~~~~~~~~~~~~~~~~~~~~~
@@ -70,9 +69,11 @@ class GpuIpcTransitionRing:
     producer: :meth:`is_full`, :meth:`push`
     consumer: :meth:`has_next`, :meth:`read_span`, :meth:`commit_reads`
 
-    Field layout along the fused last dimension follows ``schema.fields``
-    order; vector fields keep their shape, multi-dim fields come back
-    flattened (``(count, num_envs, prod)``).
+    Per-environment fields share ``slots`` in schema order; multi-dimensional
+    per-environment fields come back flattened (``(count, num_envs, prod)``).
+    Global fields share a separate compact ``global_slots`` CUDA-IPC tensor
+    and retain their native shape without an environment axis. Both uploads
+    complete before the same publication event exposes the slot.
     """
 
     def __init__(
@@ -83,6 +84,8 @@ class GpuIpcTransitionRing:
         capacity: int,
         num_envs: int,
         payload_store: SlotPayloadStore | None = None,
+        *,
+        global_slots: torch.Tensor | None = None,
     ):
         if not slots.is_cuda:
             raise ValueError(f"IPC transition ring requires CUDA slots, got device {slots.device}")
@@ -91,6 +94,15 @@ class GpuIpcTransitionRing:
             raise ValueError(f"IPC slot tensor shape {tuple(slots.shape)} does not match {expected}")
         if slots.dtype != torch.float32:
             raise ValueError(f"IPC slots must be float32, got {slots.dtype}")
+        if schema.global_feature_width:
+            expected_global = (capacity, schema.global_feature_width)
+            if global_slots is None or tuple(global_slots.shape) != expected_global:
+                raise ValueError(f"IPC global slots must have shape {expected_global}")
+            if global_slots.dtype != torch.float32 or global_slots.device != slots.device:
+                raise ValueError("IPC global slots must be float32 on the transition slots device")
+        elif global_slots is not None:
+            raise ValueError("IPC global slots require global schema fields")
+        self.global_slots = global_slots
         self.cursors = cursors
         self.slots = slots
         self.schema = schema
@@ -99,11 +111,16 @@ class GpuIpcTransitionRing:
         self.payload_store = payload_store
         # Field layout along the fused last dimension, in schema order.
         self._offsets: dict[str, tuple[int, int]] = {}
-        offset = 0
+        self._global_offsets: dict[str, tuple[int, int]] = {}
+        offset = global_offset = 0
         for field in schema.fields:
             width = field.per_env_numel
-            self._offsets[field.name] = (offset, offset + width)
-            offset += width
+            if field.scope == "global":
+                self._global_offsets[field.name] = (global_offset, global_offset + width)
+                global_offset += width
+            else:
+                self._offsets[field.name] = (offset, offset + width)
+                offset += width
         # Endpoint-local issued counts. The shared cursors hold only the
         # event-proven (published) values, which LAG the issued counts while
         # copies are in flight — so slot indexing and publish targets must come
@@ -119,6 +136,11 @@ class GpuIpcTransitionRing:
         self._read_events: deque[_PendingEvent] = deque()
         # Single pinned staging reused by every push; guarded by _staging_event.
         self._staging = torch.empty((num_envs, schema.feature_width), dtype=torch.float32, pin_memory=True)
+        self._global_staging = (
+            torch.empty(schema.global_feature_width, dtype=torch.float32, pin_memory=True)
+            if global_slots is not None
+            else None
+        )
         self._staging_event = torch.cuda.Event()
         self._staging_used = False
 
@@ -174,8 +196,10 @@ class GpuIpcTransitionRing:
         stored as floats). One fused H2D lands the whole slot; the cursor
         publishes lazily once it completes.
         """
-        if set(batch) != set(self._offsets):
-            raise ValueError(f"transition batch fields {sorted(batch)} do not match the schema {list(self._offsets)}")
+        if set(batch) != set(self.schema.field_names):
+            raise ValueError(
+                f"transition batch fields {sorted(batch)} do not match the schema {list(self.schema.field_names)}"
+            )
         if self.is_full():
             return False
         store = self.payload_store
@@ -188,15 +212,20 @@ class GpuIpcTransitionRing:
             # well under one env step, so this is normally a no-op wait.
             self._staging_event.synchronize()
         s = self._staging
-        for name, value in batch.items():
-            begin, end = self._offsets[name]
-            s[:, begin:end].copy_(value.reshape(self.num_envs, -1))
+        for name, (begin, end) in self._offsets.items():
+            s[:, begin:end].copy_(batch[name].reshape(self.num_envs, -1))
+        if self._global_staging is not None:
+            for name, (begin, end) in self._global_offsets.items():
+                self._global_staging[begin:end].copy_(batch[name].reshape(-1))
         issued = self._write_issued_count
         slot = issued % self.capacity
         if store is not None:
             store.write(issued, payload)
         stream = torch.cuda.current_stream(self.slots.device)
         self.slots[slot].copy_(s, non_blocking=True)
+        if self.global_slots is not None:
+            self.global_slots[slot].copy_(self._global_staging, non_blocking=True)
+        # One event publishes both uploads; consumers cannot see half a slot.
         event = torch.cuda.Event()
         event.record(stream)
         self._write_events.append(_PendingEvent(issued + 1, event))
@@ -237,11 +266,15 @@ class GpuIpcTransitionRing:
         run = self.slots[slot : slot + count]
         views = {}
         for field in self.schema.fields:
-            begin, end = self._offsets[field.name]
-            if field.per_env_shape == ():
-                views[field.name] = run[:, :, begin]
+            if field.scope == "global":
+                begin, end = self._global_offsets[field.name]
+                views[field.name] = self.global_slots[slot : slot + count, begin:end].view(count, *field.per_env_shape)
             else:
-                views[field.name] = run[:, :, begin:end]
+                begin, end = self._offsets[field.name]
+                if field.per_env_shape == ():
+                    views[field.name] = run[:, :, begin]
+                else:
+                    views[field.name] = run[:, :, begin:end]
         return count, views
 
     def read_payload_span(self, count: int) -> list:
