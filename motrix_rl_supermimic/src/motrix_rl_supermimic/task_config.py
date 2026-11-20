@@ -15,10 +15,9 @@ from motrix_rl_supermimic.world_state import WorldStateTermCfg
 
 @configclass
 class WorldModelStateCfg:
-    """Composable predicted-state terms and independent dynamics conditioning."""
+    """Composable predicted-state terms with task-owned representations."""
 
     terms: dict[str, WorldStateTermCfg]
-    context_dim: int = 0
 
 
 class TaskMirror(Protocol):

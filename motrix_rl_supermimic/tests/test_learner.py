@@ -8,7 +8,7 @@ import time
 
 import pytest
 import torch
-from _helpers import ingest_toy_steps, make_toy, make_toy_task
+from _helpers import ReferenceContextCfg, ingest_toy_steps, make_toy, make_toy_task
 from motrix_rl_supermimic.config import AgentCfg, SuperMimicCfg, TrainerCfg
 from motrix_rl_supermimic.learner import Learner
 from motrix_rl_supermimic.mbrl_env import assemble_task
@@ -161,12 +161,7 @@ class _SagittalMirror:
 
 
 def test_mirror_augmentation_reflects_only_selected_windows(tmp_path) -> None:
-    from dataclasses import replace
-
-    task = make_toy_task()
-    task.spec = replace(task.spec, context_dim=1)
-    task.model_context_center = torch.zeros(1)
-    task.model_context_scale = torch.ones(1)
+    task = make_toy_task(cfg=ToyEnvCfg(world_model_context={"reference": ReferenceContextCfg()}))
     task.imagination.mirror = _SagittalMirror()
     learner = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8, wm_mirror=0.5)), task, 1, 0.02, "cpu", tmp_path)
     state = torch.randn(4, 2, task.spec.state_dim)

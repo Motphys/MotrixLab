@@ -25,7 +25,7 @@ from motrix_rl_supermimic.recorder import TransitionRecorder
 from motrix_rl_supermimic.reference_command import ReferenceCommand
 from motrix_rl_supermimic.task_config import WorldModelStateCfg
 from motrix_rl_supermimic.task_mdp import StateSpec
-from motrix_rl_supermimic.transition_terms import TransitionTermsCfg
+from motrix_rl_supermimic.world_context import WorldContext, WorldContextTermCfg
 from motrix_rl_supermimic.world_state import WorldState
 
 
@@ -40,12 +40,10 @@ class MbrlEnvCfg(ManagerBasedEnvCfg):
 
     # Name of the command whose reference timeline is captured for replay.
     reference_command: str = "reference"
-    transition: TransitionTermsCfg | None = None
+    world_model_context: dict[str, WorldContextTermCfg] = {}
     world_model_state: WorldModelStateCfg | None = None
     imagination: ImaginationCfg | None = None
     soft_termination: TerminationTermCfg | None = None
-    model_context_center: tuple[float, ...] = ()
-    model_context_scale: tuple[float, ...] = ()
     frame_step: int = 1
     # Fixed before construction so the ordinary goal group has a static width.
     goal_frames: int = 10
@@ -95,8 +93,8 @@ class MbrlEnv(ManagerEnv):
         cfg = cfg.prepare_runtime()
         cfg.validate_goal_frames()
         super().__init__(cfg, num_envs, backend, seed)
-        if cfg.transition is None or cfg.world_model_state is None:
-            raise TypeError("MbrlEnv requires transition terms and a world-model state specification")
+        if cfg.world_model_state is None:
+            raise TypeError("MbrlEnv requires world-model state terms")
         goal = self.observation_spec["goal"]
         if goal.history_length != 1:
             raise ValueError("MBRL goal observation must have history_length=1")
@@ -108,13 +106,17 @@ class MbrlEnv(ManagerEnv):
         self._reference_command = reference
         build = self.build_context()
         self._world_state = WorldState({name: term(build) for name, term in cfg.world_model_state.terms.items()})
-        self._state_spec = StateSpec(self._world_state.size, cfg.world_model_state.context_dim)
-        self._transition_terms = cfg.transition(build)
+        self._world_context = WorldContext({name: term(build) for name, term in cfg.world_model_context.items()})
+        self._state_spec = StateSpec(self._world_state.size, self._world_context.size)
         self._recorder = TransitionRecorder.create(num_envs, self.state_spec, action_dim=self.action_space.shape[0])
 
     @property
     def world_state(self) -> WorldState:
         return self._world_state
+
+    @property
+    def world_context(self) -> WorldContext:
+        return self._world_context
 
     @property
     def state_spec(self) -> StateSpec:
@@ -123,7 +125,7 @@ class MbrlEnv(ManagerEnv):
     def _build_task_program(self) -> TorchTaskProgram:
         program = super()._build_task_program()
         ctx = self._compiled_manager_program.context
-        terms = self._transition_terms
+        world_context = self.world_context
         world_state = self.world_state
         recorder = self._recorder
         reference = self._reference_command
@@ -131,7 +133,7 @@ class MbrlEnv(ManagerEnv):
 
         def begin() -> None:
             world_state.capture(ctx, recorder.s)
-            terms.context(ctx, recorder.context)
+            world_context.capture(ctx, recorder.context)
             recorder.frame.copy_(reference.frame)
 
         def actions() -> None:
@@ -182,15 +184,6 @@ def _assemble_task(task: MbrlEnvCfg) -> ManagerTaskMDP:
         raise ValueError("MBRL configuration requires world_model_state, imagination and soft_termination")
     if task.frame_step != 1:
         raise ValueError("MBRL imagination currently supports frame_step=1 only")
-    context_dim = task.world_model_state.context_dim
-    if len(task.model_context_center) != context_dim or len(task.model_context_scale) != context_dim:
-        raise ValueError("MBRL model_context_center and model_context_scale must each have length context_dim")
-    model_context_center = torch.tensor(task.model_context_center, dtype=torch.float32)
-    model_context_scale = torch.tensor(task.model_context_scale, dtype=torch.float32)
-    if not torch.isfinite(model_context_center).all():
-        raise ValueError("MBRL model_context_center must contain only finite values")
-    if not torch.isfinite(model_context_scale).all() or not (model_context_scale > 0).all():
-        raise ValueError("MBRL model_context_scale must contain only finite positive values")
     commands: dict[str, CommandTerm] = {}
     build = BuildContext(cfg=task, actions={}, commands=commands, model=None, num_envs=1, seed=0)
     for name, command_cfg in task.command_cfgs().items():
@@ -207,7 +200,8 @@ def _assemble_task(task: MbrlEnvCfg) -> ManagerTaskMDP:
 
     context = BuildContext(cfg=task, actions=actions, commands=commands, model=None, num_envs=1, seed=0)
     world_state = WorldState({name: term(context) for name, term in task.world_model_state.terms.items()})
-    spec = StateSpec(world_state.size, context_dim)
+    world_context = WorldContext({name: term(context) for name, term in task.world_model_context.items()})
+    spec = StateSpec(world_state.size, world_context.size)
     imagination = task.imagination(context)
     groups = create_observation_groups(task, context)
     for name in ("policy", "value", "goal"):
@@ -268,8 +262,7 @@ def _assemble_task(task: MbrlEnvCfg) -> ManagerTaskMDP:
         task.soft_termination(context),
         goal=observation("goal"),
         goal_frames=task.goal_frames,
-        model_context_center=model_context_center,
-        model_context_scale=model_context_scale,
+        world_context=world_context,
         observation_spec=observation_spec,
         action_space=action_space,
         world_state=world_state,

@@ -26,7 +26,8 @@ mxlab train task=g1-supermimic-tracking/motrix.supermimic
   设备无关、可 `torch.compile`。
 - **Manager 任务接入**（[mbrl_env.py](src/motrix_rl_supermimic/mbrl_env.py)）：
   `MbrlEnvCfg` 直接扩展 `ManagerBasedEnvCfg`，复用已有 observation/reward 配置，额外声明
-  模型状态、预测输入绑定和 soft termination。世界模型 context 的固定仿射缩放由任务配置参数描述。
+  模型状态、预测输入绑定和 soft termination。具名 `WorldContextTermCfg` 组装动力学条件，
+  每个 term 同时声明采集宽度和仿射归一化参数，总 context 宽度由组装结果派生。
   框架自动组装数值程序，无需另写任务程序工厂。
   真实环境与 imagination 复用 `BuildContext`、term resolver 和 Torch 数值执行原语，
   但分别拥有自己的 terms；rollout 调度层显式绑定预测输入，同一批输入的数值 heads 共享 `ManagerContext`，
@@ -37,13 +38,13 @@ mxlab train task=g1-supermimic-tracking/motrix.supermimic
   任务以具名 `WorldStateTermCfg` 组装物理状态，维度与切片从实际 terms 派生；各 term 的状态表示负责
   特征、预测目标、状态更新和误差。普通向量可使用 `EuclideanState`，机器人姿态/关节动力学显式选择
   `CanonicalRobotState`，不再是框架对所有任务的默认布局。
-  `TransitionTermsCfg` 仅提取动力学 context；框架直接读取 action history 与配置选中的
+  世界状态和 context 分别独立采集；context 不参与状态预测积分。框架直接读取 action history 与配置选中的
   `ReferenceCommand.frame`，通过 `snapshot_transition()` 导出 transition。
   checkpoint 保存 learner 模型、优化器与随机数状态；恢复后 replay、仿真与任务采样状态重新初始化，
   不保证轨迹级精确续训。
   环境拥有 [TransitionRecorder](src/motrix_rl_supermimic/recorder.py)，在物理推进前保存起点，
   在 simulator read 后、command 更新和 reset 前保存终点；导出快照时合入框架最终 reward/done。
-  Transition terms 读取的 simulator queries 由任务显式声明。
+  State/context terms 读取的 simulator queries 由任务显式声明。
   普通 Manager 任务仍需满足可想象状态与共享解析计算的前提。
   任务通过 `ImaginationCfg` 构造具名的 `ImaginationTerm`，实现输入绑定与有效起点判断；镜像增强、回报尺度和 checkpoint 元数据作为数据提供。
 

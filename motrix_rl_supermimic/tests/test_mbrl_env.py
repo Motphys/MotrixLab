@@ -8,20 +8,19 @@ from dataclasses import dataclass, replace
 
 import pytest
 import torch
-from _helpers import make_toy, make_toy_task
+from _helpers import ReferenceContextCfg, make_toy, make_toy_task
 from gymnasium.spaces import Box
 from motrix_rl_supermimic.mbrl_env import MbrlEnv, assemble_task
 from motrix_rl_supermimic.task_mdp import compile_task_heads
 from motrix_rl_supermimic.toy import (
     TARGETS,
     ToyEnvCfg,
-    ToyTransitionCfg,
-    ToyTransitionTerms,
     _flat_state,
     _ToyCommand,
     _ToyCommandCfg,
     _VelocityActionCfg,
 )
+from motrix_rl_supermimic.world_context import WorldContextTerm, WorldContextTermCfg
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager.actions import ActionCfg, ActionState, ActionTerm
@@ -50,20 +49,41 @@ class _MutatingCommandCfg(_ToyCommandCfg):
         )
 
 
-class _DispatchedTransitionTerms(ToyTransitionTerms):
-    def state(self, ctx: ManagerContext, out: torch.Tensor) -> None:
-        super().state(ctx, out)
-        # Expose action-state timing as well as simulator endpoint timing.
-        out[:, :1].copy_(ctx.actions["velocity"].current())
-
-    def context(self, ctx: ManagerContext, out: torch.Tensor) -> None:
-        out.copy_(ctx.commands["reference"].context + ctx.actions["velocity"].current())
+def _capture_position_and_previous_action(ctx: ManagerContext, out: torch.Tensor) -> None:
+    out.copy_(torch.cat((ctx.sim["position"], ctx.actions["velocity"].current()), -1))
 
 
 @configclass
-class _DispatchedTransitionCfg(ToyTransitionCfg):
-    def __call__(self, ctx: BuildContext) -> _DispatchedTransitionTerms:
-        return _DispatchedTransitionTerms()
+class _PhysicalContextCfg(WorldContextTermCfg):
+    def __call__(self, ctx: BuildContext) -> WorldContextTerm:
+        return WorldContextTerm(2, _capture_position_and_previous_action, (1.0, -2.0), (2.0, 4.0))
+
+
+def test_named_context_terms_derive_width_and_capture_live_partial_reset_data(dynamo_eager: None) -> None:
+    cfg = ToyEnvCfg(world_model_context={"reference": ReferenceContextCfg(), "physical": _PhysicalContextCfg()})
+    cfg.commands["reference"] = _MutatingCommandCfg()
+    env = make_toy(cfg=cfg, num_envs=2)
+    env.init_state()
+    task = assemble_task(cfg.for_imagined(), "cpu")
+    assert env.state_spec.context_dim == task.spec.context_dim == env.world_context.size == 3
+    assert env.world_context.slices == task.world_context.slices == {"reference": slice(0, 1), "physical": slice(1, 3)}
+    env.command_terms["reference"].context.copy_(torch.tensor([[2.0], [4.0]]))
+    env.sim.position.copy_(torch.tensor([[0.2], [-0.3]]))
+    env.sim_data.execute()
+    first = env.snapshot_transition(env.step(torch.tensor([[0.1], [-0.2]])))
+    torch.testing.assert_close(first["xi"], torch.tensor([[2.0, 0.2, 0.0], [4.0, -0.3, 0.0]]))
+    expected_normalized = (first["xi"] - torch.tensor([0.0, 1.0, -2.0])) / torch.tensor([1.0, 2.0, 4.0])
+    torch.testing.assert_close(task.normalize_context(first["xi"]), expected_normalized)
+    env.reset(torch.tensor([1]))
+    reference_before = env.command_terms["reference"].context.clone()
+    position_before = env.sim_data.view("position").clone()
+    previous_before = env.action_terms["velocity"].state.current().clone()
+    expected = torch.cat((reference_before, position_before, previous_before), -1)
+    second = env.snapshot_transition(env.step(torch.zeros(2, 1)))
+    torch.testing.assert_close(second["xi"], expected)
+    assert second["xi"][1, 0].item() == second["xi"][1, 2].item() == 0.0
+    # The earlier replay row owns its inputs even as reset and command updates mutate live data.
+    torch.testing.assert_close(first["xi"], torch.tensor([[2.0, 0.2, 0.0], [4.0, -0.3, 0.0]]))
 
 
 def test_term_factories_follow_default_device() -> None:
@@ -81,7 +101,7 @@ def test_task_assembly_scopes_device_without_changing_callers_default() -> None:
     with torch.device("meta"):
         task = assemble_task(cfg.for_imagined(), "cpu")
         assert torch.empty(0).device.type == "meta"
-    assert task.model_context_center.device.type == "cpu"
+    assert task.world_context.center.device.type == "cpu"
     assert task.goal(task.imagination.bind_context(torch.tensor([0]))).device.type == "cpu"
 
 
@@ -135,18 +155,14 @@ def test_registered_toy_uses_configured_backend_and_records_transition(dynamo_ea
 
 def test_transition_dispatch_captures_before_command_mutation(dynamo_eager: None) -> None:
     cfg = ToyEnvCfg()
-    cfg.world_model_state = replace(cfg.world_model_state, context_dim=1)
-    cfg.model_context_center = (0.0,)
-    cfg.model_context_scale = (1.0,)
+    cfg.world_model_context = {"reference": ReferenceContextCfg()}
     cfg.commands["reference"] = _MutatingCommandCfg()
-    cfg.transition = _DispatchedTransitionCfg()
     env = make_toy(cfg=cfg, num_envs=2)
     env.init_state()
     env.command_terms["reference"].context.fill_(2.0)
     action = torch.full((2, 1), 0.1)
     transition = env.snapshot_transition(env.step(action))
     torch.testing.assert_close(transition["s"][:, :1], torch.zeros_like(action))
-    torch.testing.assert_close(transition["s1"][:, :1], action)
     torch.testing.assert_close(transition["s"][:, :], torch.zeros(2, 2))
     torch.testing.assert_close(transition["s1"][:, 0], action[:, 0] * cfg.sim_substeps)
     torch.testing.assert_close(transition["s1"][:, 1], action[:, 0])

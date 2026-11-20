@@ -11,6 +11,7 @@ from gymnasium.spaces import Box
 from motrix_rl_supermimic.imagination import ImaginationTerm
 from motrix_rl_supermimic.manager_task import ManagerTaskMDP, resolve_manager_task
 from motrix_rl_supermimic.task_mdp import StateSpec
+from motrix_rl_supermimic.world_context import WorldContext, WorldContextTerm
 from motrix_rl_supermimic.world_state import EuclideanState, WorldState, WorldStateTerm
 
 from motrix_env_core.manager.actions import ActionState
@@ -77,6 +78,10 @@ def bind(
     )
 
 
+def capture_context(ctx: ManagerContext, out: torch.Tensor) -> None:
+    out.copy_(ctx.commands["reference"].context)
+
+
 def capture_state(ctx: ManagerContext, out: torch.Tensor) -> None:
     out.copy_(ctx.sim["state"])
 
@@ -132,8 +137,7 @@ def make_task() -> ManagerTaskMDP:
         action_space=Box(-1.0, 1.0, (1,)),
         goal=ObsTerm(3, goal),
         goal_frames=3,
-        model_context_center=torch.zeros(SPEC.context_dim),
-        model_context_scale=torch.ones(SPEC.context_dim),
+        world_context=WorldContext({"reference": WorldContextTerm(1, capture_context, (0.0,), (1.0,))}),
         observation_spec=ObservationSpec(
             groups={
                 "policy": ObservationGroupSpec(Box(-float("inf"), float("inf"), (2,))),

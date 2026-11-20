@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import pytest
 import torch
-from _helpers import make_toy
+from _helpers import ReferenceContextCfg, make_toy
 from motrix_rl_supermimic.mbrl_env import MbrlEnv, MbrlEnvCfg, assemble_task
 from motrix_rl_supermimic.toy import TARGETS, ToyEnvCfg
 
@@ -38,8 +38,9 @@ def test_goal_window_requires_positive_integer_before_build(goal_frames, imagine
 
 @pytest.mark.parametrize("shape", [(2,), (3, 2), (2, 3, 2)])
 def test_affine_context_parameters_broadcast_with_gradients(shape: tuple[int, ...]) -> None:
-    cfg = ToyEnvCfg(model_context_center=(1.0, -3.0), model_context_scale=(2.0, 4.0))
-    cfg.world_model_state = replace(cfg.world_model_state, context_dim=2)
+    cfg = ToyEnvCfg(
+        world_model_context={"reference": ReferenceContextCfg(size=2, center=(1.0, -3.0), scale=(2.0, 4.0))}
+    )
     task = assemble_task(cfg.for_imagined(), "cpu")
     context = torch.randn(shape, requires_grad=True)
     normalized = task.normalize_context(context)
@@ -48,27 +49,26 @@ def test_affine_context_parameters_broadcast_with_gradients(shape: tuple[int, ..
     torch.testing.assert_close(
         torch.autograd.grad(normalized.sum(), context)[0], context.new_tensor([0.5, 0.25]).expand_as(context)
     )
-    assert task.model_context_center.dtype == task.model_context_scale.dtype == torch.float32
-    assert task.model_context_center.device == task.model_context_scale.device == torch.device("cpu")
+    assert task.world_context.center.dtype == task.world_context.scale.dtype == torch.float32
+    assert task.world_context.center.device == task.world_context.scale.device == torch.device("cpu")
 
 
 @pytest.mark.parametrize(
     ("offset", "scale", "message"),
     [
-        ((), (), "length context_dim"),
-        ((0.0,), (1.0, 1.0), "length context_dim"),
-        ((0.0, 0.0), (1.0,), "length context_dim"),
-        ((float("nan"), 0.0), (1.0, 1.0), "model_context_center.*finite"),
-        ((float("inf"), 0.0), (1.0, 1.0), "model_context_center.*finite"),
-        ((0.0, 0.0), (0.0, 1.0), "model_context_scale.*finite positive"),
-        ((0.0, 0.0), (-1.0, 1.0), "model_context_scale.*finite positive"),
-        ((0.0, 0.0), (float("nan"), 1.0), "model_context_scale.*finite positive"),
-        ((0.0, 0.0), (float("inf"), 1.0), "model_context_scale.*finite positive"),
+        ((), (), "lengths must equal its size"),
+        ((0.0,), (1.0, 1.0), "lengths must equal its size"),
+        ((0.0, 0.0), (1.0,), "lengths must equal its size"),
+        ((float("nan"), 0.0), (1.0, 1.0), "finite center"),
+        ((float("inf"), 0.0), (1.0, 1.0), "finite center"),
+        ((0.0, 0.0), (0.0, 1.0), "finite positive scale"),
+        ((0.0, 0.0), (-1.0, 1.0), "finite positive scale"),
+        ((0.0, 0.0), (float("nan"), 1.0), "finite positive scale"),
+        ((0.0, 0.0), (float("inf"), 1.0), "finite positive scale"),
     ],
 )
 def test_context_parameters_are_validated_at_assembly(offset, scale, message: str) -> None:
-    cfg = ToyEnvCfg(model_context_center=offset, model_context_scale=scale)
-    cfg.world_model_state = replace(cfg.world_model_state, context_dim=2)
+    cfg = ToyEnvCfg(world_model_context={"reference": ReferenceContextCfg(size=2, center=offset, scale=scale)})
     with pytest.raises(ValueError, match=message):
         assemble_task(cfg.for_imagined(), "cpu")
 
@@ -78,7 +78,9 @@ def test_empty_context_uses_empty_affine_parameters() -> None:
     context = torch.empty(2, 3, 0, requires_grad=True)
     result = task.normalize_context(context)
     assert result.shape == context.shape
-    assert task.model_context_center.shape == task.model_context_scale.shape == (0,)
+    assert task.spec.context_dim == task.world_context.size == 0
+    assert task.world_context.slices == {}
+    assert task.world_context.center.shape == task.world_context.scale.shape == (0,)
     assert torch.autograd.grad(result.sum(), context)[0].shape == context.shape
 
 
@@ -320,10 +322,6 @@ def test_real_goal_observation_does_not_build_imagined_task(monkeypatch) -> None
     torch.testing.assert_close(env.state.obs["goal"], target.expand(2, 4))
 
 
-def test_base_env_requires_transition_terms() -> None:
+def test_base_env_requires_task_configuration() -> None:
     with pytest.raises(TypeError, match="inheriting MbrlEnvCfg"):
         MbrlEnv()
-    cfg = ToyEnvCfg()
-    cfg.transition = None
-    with pytest.raises(TypeError, match="requires transition terms"):
-        MbrlEnv(cfg)

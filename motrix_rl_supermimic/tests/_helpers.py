@@ -7,6 +7,24 @@ import torch
 from motrix_rl_supermimic.mbrl_env import MbrlEnv, assemble_task
 from motrix_rl_supermimic.toy import ToyEnvCfg, register
 from motrix_rl_supermimic.trainer import SuperMimicTrainer
+from motrix_rl_supermimic.world_context import WorldContextTerm, WorldContextTermCfg
+
+from motrix_env_core.config import configclass
+from motrix_env_core.manager.context import BuildContext, ManagerContext
+
+
+def capture_reference_context(ctx: ManagerContext, out: torch.Tensor) -> None:
+    out.copy_(ctx.commands["reference"].context)
+
+
+@configclass(kw_only=True)
+class ReferenceContextCfg(WorldContextTermCfg):
+    size: int = 1
+    center: tuple[float, ...] = (0.0,)
+    scale: tuple[float, ...] = (1.0,)
+
+    def __call__(self, ctx: BuildContext) -> WorldContextTerm:
+        return WorldContextTerm(self.size, capture_reference_context, self.center, self.scale)
 
 
 def make_toy_task(device: str = "cpu", *, cfg: ToyEnvCfg | None = None):

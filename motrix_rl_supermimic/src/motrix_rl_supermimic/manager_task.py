@@ -18,6 +18,7 @@ from motrix_env_core.manager.terminations import TerminationTerm
 from motrix_env_core.observations import ObservationSpec
 from motrix_rl_supermimic.imagination import ImaginationTerm
 from motrix_rl_supermimic.task_mdp import StateSpec
+from motrix_rl_supermimic.world_context import WorldContext
 from motrix_rl_supermimic.world_state import WorldState
 
 
@@ -33,8 +34,7 @@ def resolve_manager_task(  # noqa: PLR0913
     *,
     goal: ObsTerm,
     goal_frames: int,
-    model_context_center: torch.Tensor,
-    model_context_scale: torch.Tensor,
+    world_context: WorldContext,
     observation_spec: ObservationSpec,
     action_space: Box,
     world_state: WorldState,
@@ -61,8 +61,7 @@ def resolve_manager_task(  # noqa: PLR0913
         observation_spec=observation_spec,
         action_space=action_space,
         goal_frames=goal_frames,
-        model_context_center=model_context_center,
-        model_context_scale=model_context_scale,
+        world_context=world_context,
     )
 
 
@@ -89,8 +88,7 @@ class ManagerTaskMDP:
     observation_spec: ObservationSpec
     action_space: Box
     goal_frames: int
-    model_context_center: torch.Tensor
-    model_context_scale: torch.Tensor
+    world_context: WorldContext
 
     @property
     def action_dim(self) -> int:
@@ -137,4 +135,4 @@ class ManagerTaskMDP:
         return out
 
     def normalize_context(self, context: torch.Tensor) -> torch.Tensor:
-        return (context - self.model_context_center) / self.model_context_scale
+        return self.world_context.normalize(context)

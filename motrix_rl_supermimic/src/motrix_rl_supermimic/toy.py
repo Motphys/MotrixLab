@@ -37,7 +37,6 @@ from motrix_rl_supermimic.imagination import ImaginationCfg, ImaginationTerm
 from motrix_rl_supermimic.mbrl_env import MbrlEnv, MbrlEnvCfg
 from motrix_rl_supermimic.reference_command import ReferenceCommand
 from motrix_rl_supermimic.task_config import WorldModelStateCfg
-from motrix_rl_supermimic.transition_terms import TransitionTerms, TransitionTermsCfg
 from motrix_rl_supermimic.world_state import EuclideanState, WorldStateTerm, WorldStateTermCfg
 
 TARGETS = (0.0, 0.5, -0.5, 1.0)
@@ -408,20 +407,8 @@ class _ToyPolicyGroupCfg(ManagerObservationGroupCfg):
     task: ObservationTermCfg = _ToyObservationCfg()
 
 
-class ToyTransitionTerms(TransitionTerms):
-    def context(self, ctx: ManagerContext, out: torch.Tensor) -> None:
-        out.copy_(ctx.commands["reference"].context)
-
-
-@configclass
-class ToyTransitionCfg(TransitionTermsCfg):
-    def __call__(self, ctx: BuildContext) -> ToyTransitionTerms:
-        return ToyTransitionTerms()
-
-
 @configclass
 class ToyEnvCfg(MbrlEnvCfg):
-    transition: TransitionTermsCfg = ToyTransitionCfg()
     backend: str | None = _ToyBackend.name
     scene: SceneCfg = SceneCfg()
     sim_reset: ManagerResetCfg = _ToyResetsCfg()
