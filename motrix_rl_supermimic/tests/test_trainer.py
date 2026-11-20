@@ -155,7 +155,10 @@ def _run_trainer(tmp_path, monkeypatch, pi_ema, *, cuda_overlap=False, cuda_ipc=
         learner_type = trainer_module.Learner
         wm_update = learner_type.wm_update
         save = learner_type.save
-        ingest = trainer_module.SuperMimicTrainer._ingest
+        observe = learner_type.observe
+        import motrix_rl_supermimic.learner as learner_module
+
+        monkeypatch.setattr(learner_module, "torch", TorchProxy())
 
         def queued_update(learner):
             assert torch.cuda.current_stream(learner.dev) == learner.wm_side
@@ -163,10 +166,11 @@ def _run_trainer(tmp_path, monkeypatch, pi_ema, *, cuda_overlap=False, cuda_ipc=
             epochs["queued"] += 1
             return loss
 
-        def guarded_ingest(learner, count, views):
-            assert epochs["waited"] == epochs["queued"], "ingest can overwrite pending WM inputs"
+        def guarded_observe(learner, transitions):
+            result = observe(learner, transitions)
+            assert epochs["waited"] == epochs["queued"], "observe must wait for pending WM updates"
             epochs["ingest"] += 1
-            return ingest(learner, count, views)
+            return result
 
         def guarded_save(learner, wall_time):
             assert epochs["waited"] == epochs["queued"], "checkpoint can read pending WM state"
@@ -175,7 +179,7 @@ def _run_trainer(tmp_path, monkeypatch, pi_ema, *, cuda_overlap=False, cuda_ipc=
 
         monkeypatch.setattr(learner_type, "wm_update", queued_update)
         monkeypatch.setattr(learner_type, "save", guarded_save)
-        monkeypatch.setattr(trainer_module.SuperMimicTrainer, "_ingest", staticmethod(guarded_ingest))
+        monkeypatch.setattr(learner_type, "observe", guarded_observe)
     trainer = SuperMimicProvider().create_trainer(context)
     trainer.train()
     assert len(senders) == 1

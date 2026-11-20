@@ -30,8 +30,8 @@ def test_critic_history_is_rejected_at_assembly_boundary(tmp_path):
         Learner(SuperMimicCfg(), task, task_binding, 1, 0.02, "cpu", tmp_path)
 
 
-def test_ingest_consumes_only_the_requested_leading_steps(tmp_path):
-    """Batched ingest lands exactly the first ``count`` steps and advances stats."""
+def test_observe_consumes_selected_steps_and_advances_normalizers(tmp_path):
+    """Only the supplied span enters replay and normalizer statistics."""
     torch.manual_seed(0)
     env = make_toy(num_envs=2, cfg=ToyEnvCfg(goal_frames=2))
     env.init_state()
@@ -53,12 +53,17 @@ def test_ingest_consumes_only_the_requested_leading_steps(tmp_path):
         "obs": torch.randn(steps, n, 4),
         "goal": torch.randn(steps, n, 2),
     }
-    from motrix_rl_supermimic.trainer import SuperMimicTrainer
-
-    span_reward = SuperMimicTrainer._ingest(learner, 3, views)
+    span_reward = learner.observe({name: values[:3] for name, values in views.items()})
 
     assert learner.sim_steps == 3 * n
-    assert int(learner.pi.obs_norm.count) == 3 * n
+    for norm in (
+        learner.pi.obs_norm,
+        learner.pi.goal_norm,
+        learner.wm.in_norm,
+        learner.wm.out_norm,
+        learner.wm.inc_norm,
+    ):
+        assert int(norm.count) == 3 * n
     assert learner.buffer.ptr == 3
     torch.testing.assert_close(learner.buffer.data["s"][2], views["s"][2])
     torch.testing.assert_close(learner.buffer.data["r"][2], views["r"][2])

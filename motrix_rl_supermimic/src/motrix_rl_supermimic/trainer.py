@@ -195,11 +195,10 @@ class SuperMimicTrainer(TrainerBase):
                 last_received = time.monotonic()
                 count, views = ring.read_span()
                 take = min(count, col.block_steps)
-                if learner.wm_side is not None:
-                    # Previous WM updates still read replay and live norm buffers.
-                    # Order their completion before the next ingest mutates either.
-                    torch.cuda.current_stream(learner.dev).wait_stream(learner.wm_side)
-                span_reward = self._ingest(learner, take, views)
+                # CUDA-IPC slots fuse integer fields into float32. Restore the
+                # schema dtypes at the transport boundary, before consumption.
+                transitions = {field.name: views[field.name][:take].to(dtype=field.dtype) for field in schema.fields}
+                span_reward = learner.observe(transitions)
                 return_blocks.append(span_reward)
                 ring.commit_reads(take)
                 credit.receive(take)
@@ -313,38 +312,6 @@ class SuperMimicTrainer(TrainerBase):
                 goal = result.obs["goal"].to(device)
                 result = env.step(pi(obs, goal).cpu())
                 time.sleep(0.02)
-
-    @staticmethod
-    def _ingest(learner: Learner, count: int, views: dict[str, torch.Tensor]) -> torch.Tensor:
-        device = learner.dev
-        # One batched host→device transfer per field; per-step consumption then
-        # slices already-resident rows. Normalizer update order stays per step.
-        # Policy inputs are not transported: observation and goal are derived
-        # from each row's state and frame through the learner's analytic task
-        # (goal exactly; observation with a fresh noise draw), matching the
-        # imagination path.
-        fields = set(learner.buffer.data)
-        on_device = {name: views[name][:count].to(device) for name in fields}
-        reward_sum = torch.zeros((), device=device)
-        for step in range(count):
-            row = {name: on_device[name][step] for name in learner.buffer.data}
-            reward_sum += row["r"].mean()
-            learner.buffer.add(row)
-            # CUDA-IPC slots fuse integer fields into float32; the frame index
-            # must be integral for the analytic command lookup.
-            frame = row["f"].long()
-            obs_ctx = learner.binding.bind(
-                frame, state=row["s"], action=row["a_prev"], previous=row["a_prev"], context=row["xi"]
-            )
-            learner.pi.obs_norm.update(learner.mdp.observation(obs_ctx))
-            learner.pi.goal_norm.update(learner.mdp.goal(learner.binding.bind_reference(frame)))
-            # Update world-model normalizers from the collected transitions.
-            s, s1 = row["s"], row["s1"]
-            learner.wm.in_norm.update(learner.wm.inputs(s, row["a"], learner.mdp.normalize_context(row["xi"])))
-            learner.wm.out_norm.update(learner.wm.targets(s, s1))
-            learner.wm.inc_norm.update(learner.wm.increments(s, s1))
-            learner.sim_steps += row["s"].shape[0]
-        return reward_sum / count / learner.return_normalizer
 
     @staticmethod
     def _check_worker(worker: mp.Process, error_rx: Connection) -> None:

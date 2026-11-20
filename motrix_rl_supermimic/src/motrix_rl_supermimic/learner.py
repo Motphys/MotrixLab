@@ -191,6 +191,39 @@ class Learner:
             # of compiling only reward here.
             compile_task_heads(self.mdp)
 
+    @torch.no_grad()
+    def observe(self, transitions: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Consume a time-major batch of real transitions and return scaled mean reward.
+
+        Inputs have leading (steps, environments) dimensions and canonical transition
+        dtypes. Transport ownership and decoding belong to the caller; replay owns
+        its copies after this method returns. Normalizers advance in sampling order.
+        """
+        if self.wm_side is not None:
+            # Queued WM updates still read replay and live normalizer buffers.
+            torch.cuda.current_stream(self.dev).wait_stream(self.wm_side)
+        on_device = {name: transitions[name].to(self.dev) for name in self.buffer.data}
+        steps = on_device["r"].shape[0]
+        reward_sum = torch.zeros((), device=self.dev)
+        for step in range(steps):
+            row = {name: values[step] for name, values in on_device.items()}
+            reward_sum += row["r"].mean()
+            self.buffer.add(row)
+            # Reconstruct policy inputs rather than transporting them. Observation
+            # noise is freshly sampled, matching the imagination path.
+            frame = row["f"]
+            obs_ctx = self.binding.bind(
+                frame, state=row["s"], action=row["a_prev"], previous=row["a_prev"], context=row["xi"]
+            )
+            self.pi.obs_norm.update(self.mdp.observation(obs_ctx))
+            self.pi.goal_norm.update(self.mdp.goal(self.binding.bind_reference(frame)))
+            s, s1 = row["s"], row["s1"]
+            self.wm.in_norm.update(self.wm.inputs(s, row["a"], self.mdp.normalize_context(row["xi"])))
+            self.wm.out_norm.update(self.wm.targets(s, s1))
+            self.wm.inc_norm.update(self.wm.increments(s, s1))
+            self.sim_steps += s.shape[0]
+        return reward_sum / steps / self.return_normalizer
+
     def sync_imag_wm(self) -> None:
         """Wait for the side-stream WM updates, then copy live WM -> wm_imag.
 
