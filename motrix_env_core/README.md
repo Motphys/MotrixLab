@@ -6,7 +6,7 @@ environments:
 - environment base classes and configuration protocols;
 - environment registry and registration decorators;
 - backend-independent scene configuration and the simulator boundary (`motrix_env_core.sim`);
-- NumPy environment runtime and rendering;
+- Torch-tensor environment frontends and lifecycle management, with backend-neutral rendering interfaces;
 - framework-level math and reward utilities.
 
 It intentionally contains no built-in tasks, robot models, meshes, textures, or motion data, and no

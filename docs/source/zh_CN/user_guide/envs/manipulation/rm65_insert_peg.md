@@ -169,7 +169,7 @@ RM65 机器人在该环境中包含以下主要部分：
 
     ```python
     insert_reward = insert_depth * reward_cfg.insert_weight * 6.0
-    depth_insert_bonus = reward_cfg.depth_insert_bonus * np.tanh(insert_depth / 0.01)
+    depth_insert_bonus = reward_cfg.depth_insert_bonus * torch.tanh(insert_depth / 0.01)
     ```
 
     奖励朝插孔入口下探、增加插入深度，并在插座附近维持良好的对齐姿态。只有已经建立抓取、XY 误差小于 `0.008 m` 且插销竖直度大于 `0.97` 时，插入深度才会计入任务跟踪。

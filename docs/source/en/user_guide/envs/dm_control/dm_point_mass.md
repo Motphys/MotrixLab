@@ -61,7 +61,7 @@ The Point Mass environment's reward function consists of the following component
 
 ```python
 # Exponential distance reward - stronger as agent gets closer
-distance_reward = np.exp(-10 * dist_to_target)
+distance_reward = torch.exp(-10 * dist_to_target)
 ```
 
 ### Target Arrival and Stay Reward
@@ -78,7 +78,7 @@ continuous_reward = 30.0 * in_target
 
 ```python
 # Penalty for distance from target center when inside target
-center_penalty = np.where(in_target, 10.0 * dist_to_target, 0.0)
+center_penalty = torch.where(in_target, 10.0 * dist_to_target, torch.zeros_like(dist_to_target))
 
 # Control penalty to encourage smooth movement
 control_penalty = 0.1 * vel_magnitude
