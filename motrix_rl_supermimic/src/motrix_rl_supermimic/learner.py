@@ -212,11 +212,11 @@ class Learner:
             # Reconstruct policy inputs rather than transporting them. Observation
             # noise is freshly sampled, matching the imagination path.
             frame = row["f"]
-            obs_ctx = self.binding.bind(
+            ctx = self.binding.bind(
                 frame, state=row["s"], action=row["a_prev"], previous=row["a_prev"], context=row["xi"]
             )
-            self.pi.obs_norm.update(self.mdp.observation(obs_ctx))
-            self.pi.goal_norm.update(self.mdp.goal(self.binding.bind_reference(frame)))
+            self.pi.obs_norm.update(self.mdp.observation(ctx))
+            self.pi.goal_norm.update(self.mdp.goal(ctx))
             s, s1 = row["s"], row["s1"]
             self.wm.in_norm.update(self.wm.inputs(s, row["a"], self.mdp.normalize_context(row["xi"])))
             self.wm.out_norm.update(self.wm.targets(s, s1))
@@ -326,24 +326,24 @@ class Learner:
         context = self.mdp.normalize_context(xi)
         with torch.no_grad():
             obs = self.observation_history(history)
-        goal = initial_goal = self.mdp.goal(self.binding.bind_reference(frame))
+        # Goals depend only on reference frames; query the complete sequence once
+        # and share it with both eager and graphed actor execution.
+        step_offsets = torch.arange(cfg.horizon + 1, device=frame.device)
+        reference_frames = frame[None, :] + step_offsets[:, None]
+        goal_sequence = self.mdp.goal(self.binding.bind_reference(reference_frames)).reshape(
+            *reference_frames.shape, self.goal_dim
+        )
+        goal = initial_goal = goal_sequence[0]
         states, frames, goals, actions, previous_actions = [], [], [], [], []
         _requires_grad(self.wm, False)
         _requires_grad(self.critic, False)
         try:
             if self._actor_loss_graph is not None:
-                result = self._actor_loss_graph(start["s"], xi, frame, previous, obs, initial_goal)
+                result = self._actor_loss_graph(start["s"], xi, frame, previous, obs, goal_sequence)
                 loss, states = result.loss, result.states
                 frames, goals = result.frames, result.goals
                 r, d, before = result.rewards, result.terminations, result.survival_before
             else:
-                # Goals depend only on reference frames, so encode the whole
-                # sequence before predicting any states.
-                step_offsets = torch.arange(cfg.horizon + 1, device=frame.device)
-                reference_frames = frame[None, :] + step_offsets[:, None]
-                goal_sequence = self.mdp.goal(self.binding.bind_reference(reference_frames)).reshape(
-                    *reference_frames.shape, self.goal_dim
-                )
                 encoded_goals = self.pi.encode_goal(goal_sequence)
                 goal = goal_sequence[0]
                 wm_actor = self.wm_imag if self.wm_imag is not self.wm else self.wm

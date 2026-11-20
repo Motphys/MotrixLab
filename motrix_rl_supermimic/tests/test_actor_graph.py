@@ -37,8 +37,9 @@ def actor_inputs(
         .expand(-1, 2, -1)
         .contiguous()
     )
-    goal = mdp.goal(mdp_binding.bind_reference(frame))
-    return pi, ActorModels(wm, critic), mdp, mdp_binding, cfg, (state, xi, frame, previous, obs, goal)
+    reference_frames = frame[None, :] + torch.arange(cfg.horizon + 1, device=device)[:, None]
+    goals = mdp.goal(mdp_binding.bind_reference(reference_frames)).reshape(cfg.horizon + 1, cfg.pi_batch, mdp.goal_dim)
+    return pi, ActorModels(wm, critic), mdp, mdp_binding, cfg, (state, xi, frame, previous, obs, goals)
 
 
 def test_actor_views_share_weights_but_refresh_replaced_normalizer_buffers():
@@ -94,6 +95,17 @@ def test_batched_goal_encoding_matches_per_step_loss_and_gradients(monkeypatch: 
     actual[0].backward()
     for parameter, reference in zip(batched_pi.parameters(), pi.parameters(), strict=True):
         torch.testing.assert_close(parameter.grad, reference.grad)
+
+
+def test_actor_loss_uses_supplied_goal_sequence() -> None:
+    pi, models, mdp, mdp_binding, cfg, args = actor_inputs("cpu")
+    module = ActorLoss(pi, models, mdp, mdp_binding, cfg)
+    goals = args[-1] + 0.25
+
+    outputs = module(*args[:-1], goals)
+
+    torch.testing.assert_close(outputs[3], goals[1:])
+    assert torch.isfinite(outputs[0])
 
 
 def test_actor_loss_uses_configured_reward_term_and_preserves_action_gradients() -> None:

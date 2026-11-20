@@ -152,18 +152,11 @@ class ActorLoss(nn.Module):
         frame: torch.Tensor,
         previous: torch.Tensor,
         obs: torch.Tensor,
-        goal: torch.Tensor,
+        goal_sequence: torch.Tensor,
     ) -> GraphOutputs:
         cfg = self.cfg
         state = initial_flat
         context = self.mdp.normalize_context(xi)
-        # Goals depend only on reference frames, so encode the whole
-        # sequence before predicting any states.
-        step_offsets = torch.arange(cfg.horizon + 1, device=frame.device)
-        reference_frames = frame[None, :] + step_offsets[:, None]
-        goal_sequence = self.mdp.goal(self.binding.bind_reference(reference_frames)).reshape(
-            *reference_frames.shape, goal.shape[-1]
-        )
         encoded_goals = self.pi.encode_goal(goal_sequence)
         goal = goal_sequence[0]
         states, frames, goals, actions, previous_actions = [], [], [], [], []
@@ -236,9 +229,9 @@ class ActorLossGraph:
         frame: torch.Tensor,
         previous: torch.Tensor,
         obs: torch.Tensor,
-        goal: torch.Tensor,
+        goal_sequence: torch.Tensor,
     ) -> ActorUpdate:
-        args = tuple(x.contiguous() for x in (initial_flat, xi, frame, previous, obs, goal))
+        args = tuple(x.contiguous() for x in (initial_flat, xi, frame, previous, obs, goal_sequence))
         key = tuple((tuple(x.shape), x.dtype, x.device, x.requires_grad) for x in args)
         if self.capture is None:
             self.capture = self._capture(args, key)
