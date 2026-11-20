@@ -54,7 +54,7 @@ lives:
 | Config base | `DirectEnvCfg`                         | `ManagerBasedEnvCfg`                                 |
 | Task logic  | Hand-written inside environment hooks  | Declared per term in config; compiled into a kernel  |
 | Rewards     | Hand-written array math in `compute_transition` | `rewards` / `terminations` config groups    |
-| Observations| Hand-written assembly in `compute_observation`  | `observations` config groups (`policy`/`value`) |
+| Observations| Hand-written assembly in `compute_observation`  | Named `observations` config groups (`policy`, optional `value`, task-specific groups) |
 | Reset logic | Hand-written `reset(env_ids)` override | `sim_reset` config group + command reset hooks       |
 | Typical use | Simple or highly customized tasks     | Compositional tasks such as locomotion               |
 

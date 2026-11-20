@@ -15,6 +15,7 @@ import torch
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import ArrayEnvState, DirectEnv, DirectEnvCfg
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     DofPositionQuery,
@@ -149,7 +150,7 @@ class _FakeBackend(SimBackend):
     def num_actuators(self) -> int:
         return 2
 
-    def step(self, substeps: int) -> None:
+    def step(self, substeps: int, result: torch.Tensor | None = None) -> None:
         self.step_calls.append(substeps)
         self.dof_pos += self.dof_vel * np.float32(substeps)
 
@@ -196,11 +197,13 @@ class _FakeDirectEnv(DirectEnv[_FakeDirectCfg]):
             reset=True,
         )
         self._action_space = gym.spaces.Box(-1.0, 1.0, (2,), dtype=np.float32)
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (6,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (6,), dtype=np.float32))}
+        )
 
     @property
-    def observation_space(self):
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self):
@@ -235,6 +238,17 @@ class _FakeDirectEnv(DirectEnv[_FakeDirectCfg]):
 
 def _make_env(num_envs: int = 3) -> _FakeDirectEnv:
     return _FakeDirectEnv(_FakeDirectCfg(), num_envs, backend="fake-direct")
+
+
+def test_direct_env_spec_describes_one_policy_frame() -> None:
+    env = _make_env()
+    spec = env.observation_spec
+    state = env.init_state()
+    assert spec.policy.history_length == 1
+    assert state.obs.policy.shape[1:] == spec.policy.space.shape
+    assert spec.policy.frame_space is spec.policy.space
+    assert spec.value is None
+    assert spec.value_or_policy is spec.policy
 
 
 def test_direct_env_step_writes_ctrl_and_reads_inputs() -> None:

@@ -407,7 +407,7 @@ class _BackpressureEnv:
             reward=torch.tensor([1.0, 2.0]),
             terminated=torch.zeros(2, dtype=torch.bool),
             truncated=torch.tensor([False, True]),
-            final_obs=FinalObs(np.array([1]), EnvObs(policy=np.full((1, 3), 7.0, dtype=np.float32))),
+            final_obs=FinalObs(torch.tensor([1]), EnvObs({"policy": torch.full((1, 3), 7.0)})),
             info={"Reward": {"alive": np.ones(2)}, "metrics": {"error": np.ones(2)}},
         )
         return self.outputs
@@ -464,7 +464,7 @@ def test_payload_backpressure_gates_before_actions_and_resumes_without_dropped_s
         result = original_step(actions)
         result.obs.fill_(env.steps)
         result.critic_obs.fill_(100 + env.steps)
-        result.final_obs.obs.policy.fill(1000 + env.steps)
+        result.final_obs.obs.policy.fill_(1000 + env.steps)
         return result
 
     monkeypatch.setattr(env, "step", tagged_step)
@@ -530,8 +530,8 @@ def test_published_step_owns_transition_and_final_payload_buffers():
     result = env.outputs
     for tensor in (result.obs, result.critic_obs, result.reward, result.terminated, result.truncated):
         tensor.fill_(True if tensor.dtype == torch.bool else 99)
-    result.final_obs.env_ids.fill(0)
-    result.final_obs.obs.policy.fill(99)
+    result.final_obs.env_ids.fill_(0)
+    result.final_obs.obs.policy.fill_(99)
     count, fields = ring.read_span()
     assert count == 1
     expected = (

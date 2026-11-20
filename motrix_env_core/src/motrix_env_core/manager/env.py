@@ -14,17 +14,19 @@ import numpy as np
 import torch
 
 from motrix_env_core.array.env import ArrayEnv, ArrayEnvState, EnvCfgType, EnvObs, FinalObs
-from motrix_env_core.base import EnvCfg, ObsSpace
+from motrix_env_core.base import EnvCfg
 from motrix_env_core.config import configclass
 from motrix_env_core.config.sim_reset import ManagerResetCfg
 from motrix_env_core.manager.actions import ActionCfg, ActionTerm, ManagerActionsCfg
 from motrix_env_core.manager.commands import CommandCfg, CommandTerm, ManagerCommandsCfg
-from motrix_env_core.manager.kernel import KernelOutputs
+from motrix_env_core.manager.context import BuildContext
 from motrix_env_core.manager.kernel_data import validate_kernel_data
 
 if TYPE_CHECKING:
     from motrix_env_core.manager.resolver import ManagerLayout, ResolvedManagerProgram
+from motrix_env_core.manager.kernel import EvaluationOutputs
 from motrix_env_core.manager.metrics import collect_metrics, materialize_metrics
+from motrix_env_core.manager.observation_manager import ObservationManager
 from motrix_env_core.manager.observations import (
     ManagerObservationGroupCfg,
     ManagerObservationsCfg,
@@ -39,6 +41,7 @@ from motrix_env_core.manager.terminations import (
     TerminationManager,
     TerminationTermCfg,
 )
+from motrix_env_core.observations import ObservationSpec
 from motrix_env_core.sim import (
     ModelQuery,
     PhysicsReadProgram,
@@ -130,11 +133,14 @@ def _manager_group_to_dict(
 class ManagerBasedEnvCfg(EnvCfg):
     """Complete environment config with manager groups at the top level."""
 
+    backend: str | None = None
     sim_reset: ManagerResetCfg = ManagerResetCfg()
     commands: dict[str, CommandCfg] = field(default_factory=dict)
     actions: dict[str, ActionCfg] = field(default_factory=dict)
     queries: SimQueriesCfg = SimQueriesCfg()
-    observations: dict[str, dict[str, ObservationTermCfg]] = field(default_factory=dict)
+    observations: ManagerObservationsCfg | dict[str, ManagerObservationGroupCfg | dict[str, ObservationTermCfg]] = (
+        field(default_factory=dict)
+    )
     rewards: dict[str, RewardTermCfg] = field(default_factory=dict)
     terminations: dict[str, TerminationTermCfg] = field(default_factory=dict)
 
@@ -149,7 +155,7 @@ class ManagerBasedEnvCfg(EnvCfg):
         self.queries.validate()
         return dict(self.queries.model)
 
-    def observation_cfgs(self) -> dict[str, dict[str, ObservationTermCfg]]:
+    def observation_group_cfgs(self) -> dict[str, ManagerObservationGroupCfg | dict[str, ObservationTermCfg]]:
         if isinstance(self.observations, dict):
             groups = self.observations
         elif isinstance(self.observations, ManagerObservationsCfg):
@@ -160,17 +166,17 @@ class ManagerBasedEnvCfg(EnvCfg):
                 f"ManagerObservationsCfg, got {type(self.observations).__name__}."
             )
 
-        resolved = {}
-        for group_name, group in groups.items():
-            if group_name not in {"policy", "value"}:
-                raise ValueError(f"Unsupported observation group {group_name!r}; expected 'policy' or 'value'.")
-            resolved[group_name] = _manager_group_to_dict(
-                group,
-                ManagerObservationGroupCfg,
-                ObservationTermCfg,
-                label=f"observation group {group_name}",
+        return groups
+
+    def observation_cfgs(self) -> dict[str, dict[str, ObservationTermCfg]]:
+        return {
+            name: group.to_dict()
+            if isinstance(group, ManagerObservationGroupCfg)
+            else _manager_group_to_dict(
+                group, ManagerObservationGroupCfg, ObservationTermCfg, label=f"observation group {name}"
             )
-        return resolved
+            for name, group in self.observation_group_cfgs().items()
+        }
 
     def reward_cfgs(self) -> dict[str, RewardTermCfg]:
         return _manager_group_to_dict(self.rewards, ManagerRewardsCfg, RewardTermCfg, label="reward")
@@ -204,64 +210,6 @@ class ReadPlan:
             self.sim_data.execute(env_ids)
 
 
-@dataclass(frozen=True)
-class _ObsBufferSlot:
-    observation: EnvObs
-    kernel_outputs: KernelOutputs
-
-    @classmethod
-    def bind(cls, observation: EnvObs, reward: torch.Tensor, terminated: torch.Tensor) -> _ObsBufferSlot:
-        value = observation.value
-        if value is None:
-            value = torch.empty((observation.policy.shape[0], 0), dtype=observation.policy.dtype)
-        return cls(
-            observation=observation,
-            kernel_outputs=KernelOutputs(
-                policy_obs=observation.policy,
-                value_obs=value,
-                reward=reward,
-                terminated=terminated,
-            ),
-        )
-
-
-@dataclass
-class SwapObsBuffer:
-    """Alternate two preallocated observation slots without copying.
-
-    Each slot binds an exposed ``EnvObs`` to ``KernelOutputs`` that write
-    into the same policy/value tensors. Swapping both together before the next
-    kernel call keeps ``obs_t`` unchanged while a transition consumer retains
-    it and the kernel produces ``obs_t+1`` in the other slot.
-
-    Reward and termination tensors are shared because only observations need
-    the extra step of lifetime. This preserves that lifetime without per-step
-    observation allocations or copies.
-    """
-
-    _slots: tuple[_ObsBufferSlot, _ObsBufferSlot]
-    _index: int = 0
-
-    @classmethod
-    def create(
-        cls,
-        first: EnvObs,
-        second: EnvObs,
-        reward: torch.Tensor,
-        terminated: torch.Tensor,
-    ) -> SwapObsBuffer:
-        return cls((_ObsBufferSlot.bind(first, reward, terminated), _ObsBufferSlot.bind(second, reward, terminated)))
-
-    @property
-    def current(self) -> _ObsBufferSlot:
-        return self._slots[self._index]
-
-    def swap(self) -> tuple[EnvObs, KernelOutputs]:
-        self._index = 1 - self._index
-        slot = self.current
-        return slot.observation, slot.kernel_outputs
-
-
 class ManagerEnv(ArrayEnv[EnvCfgType]):
     """Torch-frontend environment whose task program is generated from manager config."""
 
@@ -274,7 +222,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         *,
         headless: bool = False,
         record: RecordConfig | None = None,
-    ):
+    ) -> None:
         """Construct a manager environment using the selected simulator backend.
 
         The numerical task program runs on the generic Torch executor
@@ -283,10 +231,14 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         if not isinstance(cfg, ManagerBasedEnvCfg):
             raise TypeError(f"{type(cfg).__name__} must inherit ManagerBasedEnvCfg.")
         super().__init__(cfg, num_envs)
-        self._rand_seed = 1 if seed is None else seed
+        self._build_seed = 1 if seed is None else seed
+        from motrix_env_core.manager.random import RandomSource
+
+        # Root Torch seeding belongs to the training entry point, not env construction.
+        self._random = RandomSource()
         from motrix_env_core.sim.registry import create_sim_backend, default_sim_backend_name
 
-        factory = create_sim_backend(backend or default_sim_backend_name())
+        factory = create_sim_backend(backend or cfg.backend or default_sim_backend_name())
         # Construction compiles the scene inside the backend: no compiled
         # artifact crosses the boundary.
         render = RenderConfig(headless=headless, record=record)
@@ -295,15 +247,26 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         # Full-width ctrl buffer in canonical actuator order, owned by the
         # compiled ctrl write program; routing happens here, the backend only
         # receives the merged targets.
-        self._sim_reset_runtime = SimResetRuntime.create(self, cfg.sim_reset, self.sim)
-        from motrix_env_core.mdp.state import _create_rand_value
+        # BuildContext availability follows this fixed order (see its docstring):
+        # commands -> sim resets -> actions -> rewards -> terminations -> observations.
+        # Commands see preceding commands; resets/actions see all commands but no
+        # actions. Only the last three groups see both complete collections.
+        self._action_terms = {}
+        self._command_cfgs = cfg.command_cfgs()
+        self._command_terms: dict[str, CommandTerm] = {}
+        for name, command_cfg in self._command_cfgs.items():
+            self._command_terms[name] = command_cfg(self.build_context())
+        for name in list(self._command_terms):
+            term = self._command_terms[name]
+            self._command_terms[name] = validate_kernel_data(
+                materialize_metrics(term, self.num_envs, context=f"Manager command {name!r}"),
+                context=f"Manager command {name!r}",
+            )
+        self._sim_reset_runtime = SimResetRuntime.create(self.build_context(), cfg.sim_reset, self.sim)
 
         self._task_program: TorchTaskProgram | None = None
         self._kernel_buffers: tuple[Any, ...] | None = None
         self.metrics: dict[str, torch.Tensor] = {}
-        self._kernel_outputs: KernelOutputs | None = None
-        self._observation_buffer: SwapObsBuffer | None = None
-        self._final_obs_slot: _ObsBufferSlot | None = None
         # Persistent kernel-bound sim-reset-request buffer
         # (``ctx.sim_reset_requested``), cleared before each physics step and
         # consumed by _reset_done_envs.
@@ -321,7 +284,11 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
             }
         )
         self._action_terms: dict[str, ActionTerm] = {
-            name: action_cfg(self, self._action_actuators[name]) for name, action_cfg in self._action_cfgs.items()
+            name: action_cfg(
+                self.build_context(),
+                self._action_actuators[name],
+            )
+            for name, action_cfg in self._action_cfgs.items()
         }
         for name, term in self._action_terms.items():
             if not isinstance(term, ActionTerm):
@@ -331,23 +298,12 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
                 raise ValueError(f"Manager action {name!r} state.action_queue must have shape (N, W, A), W >= 2.")
             if queue.shape[2] != term.action_space.shape[0]:
                 raise ValueError(f"Manager action {name!r} action dimension must match action space.")
-        self._command_cfgs = cfg.command_cfgs()
-        self._command_terms: dict[str, CommandTerm] = {
-            name: validate_kernel_data(
-                materialize_metrics(
-                    command_cfg(self),
-                    self.num_envs,
-                    context=f"Manager command {name!r} __call__()",
-                ),
-                context=f"Manager command {name!r} __call__()",
-            )
-            for name, command_cfg in self._command_cfgs.items()
-        }
-        self._rand = validate_kernel_data(_create_rand_value(self), context="Manager random state")
         self._action_space, self._action_slices = self._build_action_space()
-        self._reward_terms = create_reward_terms(cfg.reward_cfgs(), self)
+        self._reward_terms = create_reward_terms(cfg.reward_cfgs(), self.build_context())
         self.termination_manager = TerminationManager(cfg.termination_cfgs(), self)
-        self._observation_groups = create_observation_groups(cfg, self)
+        self.observation_manager = ObservationManager(
+            create_observation_groups(cfg, self.build_context()), self.num_envs
+        )
         # Terms are built before the read program: any SimDataQuery passed as
         # a term argument is collected here, merged with task-declared
         # queries, and compiled in one batch.
@@ -357,7 +313,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         for terms in (
             (term for term in self._reward_terms.values()),
             (term for term in self.termination_manager.terms.values()),
-            (entry.term for group in self._observation_groups.values() for entry in group.terms),
+            (entry.term for group in self.observation_manager.groups.values() for entry in group.terms),
         ):
             for term in terms:
                 for arg in term.args:
@@ -383,18 +339,15 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
                     raise ValueError(f"Duplicate per-environment metric name: {metric_name!r}")
                 self.metrics[metric_name] = value
 
-        policy_space = gym.spaces.Box(
-            -np.inf,
-            np.inf,
-            (self._observation_groups["policy"].size,),
-            dtype=np.float32,
+    def build_context(self) -> BuildContext:
+        return BuildContext(
+            cfg=self.cfg,
+            actions=self._action_terms,
+            commands=self._command_terms,
+            model=self.model,
+            num_envs=self.num_envs,
+            seed=self._build_seed,
         )
-        value_space = (
-            gym.spaces.Box(-np.inf, np.inf, (self._observation_groups["value"].size,), dtype=np.float32)
-            if "value" in self._observation_groups
-            else None
-        )
-        self._observation_space = ObsSpace(policy=policy_space, value=value_space)
 
     def create_renderer(self, config: RenderConfig) -> SimRenderer:
         return self.sim.create_renderer(
@@ -416,7 +369,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         return self.sim.num_actuators
 
     def physics_step(self) -> None:
-        self.sim.step(self._cfg.sim_substeps)
+        self.sim.step(self._cfg.sim_substeps, result=self.engine_error_codes)
 
     def _new_state(
         self,
@@ -435,7 +388,9 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         """
         context = self._compiled_manager_program.context
         context.terminated.fill_(True)  # keep the seed-all-lanes init contract
-        return super()._new_state(obs, reward, context.terminated, truncated, episode_steps)
+        return super()._new_state(
+            self.observation_manager.observation, reward, context.terminated, truncated, episode_steps
+        )
 
     def init_state(self) -> ArrayEnvState:
         startup_started = perf_counter()
@@ -449,72 +404,26 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         state = super().init_state()
         self._kernel_buffers = self._make_kernel_buffers(state)
         state.metrics = self._make_metrics_view()
-        # Alternate two preallocated outputs so consumers can retain observation t
-        # until they have stored the transition produced by step t + 1.
-        alternate_obs = self._zeros_obs(self.observation_space)
-        self._observation_buffer = SwapObsBuffer.create(
-            state.obs,
-            alternate_obs,
-            state.reward,
-            state.terminated,
-        )
-        self._kernel_outputs = self._observation_buffer.current.kernel_outputs
-        final_obs = self._zeros_obs(self.observation_space)
-        self._final_obs_slot = _ObsBufferSlot.bind(final_obs, state.reward, state.terminated)
-        self._refresh_sim_reads()
-        warmup_started = perf_counter()
-        self._execute_observe_kernel()
-        logger.info(
-            "Manager startup %s: warmup execution finished in %.3fs",
-            env_name,
-            perf_counter() - warmup_started,
-        )
         logger.info("Manager env %r startup complete in %.3fs", env_name, perf_counter() - startup_started)
         return state
 
     def _prev_physics_step(self) -> None:
         self._sim_reset_requested.fill_(False)
         super()._prev_physics_step()
-        assert self._observation_buffer is not None
-        obs, self._kernel_outputs = self._observation_buffer.swap()
-        self._state = self._state.replace(obs=obs)
+        self._state = self._state.replace(obs=self.observation_manager.begin_step())
 
     def _execute_evaluate_kernel(self) -> None:
         """Evaluate rewards and terminations against the current command."""
         assert self._task_program is not None
         assert self._kernel_buffers is not None
-        assert self._kernel_outputs is not None
         self._task_program.evaluate_kernel(
             self._task_program.reward_weights,
             self._kernel_buffers,
-            self._kernel_outputs,
+            EvaluationOutputs(reward=self._state.reward, terminated=self._state.terminated),
         )
-
-    def _execute_observe_kernel(self) -> None:
-        """Evaluate observations against the command for the next action."""
-        assert self._task_program is not None
-        assert self._kernel_outputs is not None
-        self._task_program.observe_kernel(self._kernel_outputs)
 
     def _capture_final_obs(self, env_ids: torch.Tensor) -> FinalObs:
-        """Observe pre-reset inputs after the transition kernel.
-
-        The compiled observe pass is batch-wide. Dedicated outputs preserve the
-        normal swap buffer; advanced indexing creates owned compact snapshots.
-        """
-        assert self._task_program is not None
-        assert self._final_obs_slot is not None
-        slot = self._final_obs_slot
-        self._task_program.observe_kernel(slot.kernel_outputs)
-        obs = slot.observation
-        env_ids = torch.as_tensor(env_ids, dtype=torch.long)
-        return FinalObs(
-            env_ids=env_ids.clone(),
-            obs=EnvObs(
-                policy=obs.policy[env_ids],
-                value=None if obs.value is None else obs.value[env_ids],
-            ),
-        )
+        return self.observation_manager.preview(env_ids, self._task_program.observe_kernel)
 
     def _resolve_action_actuators(self) -> dict[str, tuple[ActuatorSpec, ...] | None]:
         routes = {}
@@ -595,8 +504,8 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         return self._action_actuators
 
     @property
-    def observation_space(self) -> ObsSpace:
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self.observation_manager.spec
 
     @property
     def action_space(self) -> gym.spaces.Box:
@@ -619,7 +528,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         self._action_writes.execute()
         return state
 
-    def _reset_sim_rows(self, env_ids: torch.Tensor) -> None:
+    def _reset_sim_rows(self, env_ids: torch.Tensor, episode_reset: torch.Tensor) -> None:
         """Run the simulator-only stages of the reset pipeline for selected rows.
 
         Clears frontend ctrl targets to mirror the backend's reset-row ctrl
@@ -634,7 +543,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
                     self._action_writes.buffer(name)[env_ids] = 0.0
         with self.perf.scope("apply_sim_reset"):
             assert self._task_program is not None
-            self._sim_reset_runtime.apply(self._task_program, env_ids)
+            self._sim_reset_runtime.apply(self._task_program, env_ids, episode_reset)
         assert self._compiled_manager_program is not None
         with self.perf.scope("reset_read_inputs"):
             self._compiled_manager_program.read_plan.read(self, env_ids)
@@ -657,6 +566,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         if not env_ids.numel() and not sim_reset_ids.numel():
             return
         if env_ids.numel():
+            self._clear_engine_error_rewards()
             with self.perf.scope("select_done"):
                 state.episode_steps[env_ids] = 0
         with self.perf.scope("reset_envs"):
@@ -675,35 +585,44 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         resets); sim-reset lanes (``ctx.sim_reset_requested`` set
         mid-transition) skip them — with no lane terminating, they would not
         change any state. Both sets join one reset-kernel run: command
-        ``reset`` hooks (with ``ctx.reset_episode`` marking episode lanes)
+        ``reset`` hooks (with ``episode_reset`` marking episode lanes)
         resample lane state, the configured sim reset terms rewrite simulator
-        rows, and kernel inputs are reread once for the union.
+        rows, and kernel inputs are reread once for the union. Simulator-only
+        resets do not publish a new observation at the same control time;
+        ordinary compute calls retain the published window until the next step
+        appends its endpoint. Episode-reset lanes instead publish a first frame
+        on the next compute call.
         """
-        self._reset_rows(
-            _validate_reset_ids(env_ids, "env_ids"),
-            None if sim_reset_ids is None else _validate_reset_ids(sim_reset_ids, "sim_reset_ids"),
-        )
+        env_ids = _validate_reset_ids(env_ids, "env_ids")
+        if sim_reset_ids is not None:
+            sim_reset_ids = _validate_reset_ids(sim_reset_ids, "sim_reset_ids")
+        if self._state.final_obs is not None:
+            self._state = self._state.replace(final_obs=None)
+        self._reset_rows(env_ids, sim_reset_ids)
+        self._state.episode_steps[env_ids] = 0
 
     def _reset_rows(self, env_ids: torch.Tensor, sim_reset_ids: torch.Tensor | None = None) -> None:
         """Torch-control-plane reset shared by the public wrapper and the
         internal auto-reset flow."""
         assert self._state is not None
         if env_ids.numel():
+            self.observation_manager.reset(env_ids)
             with self.perf.scope("action_reset"):
                 for action_term in self._action_terms.values():
                     action_term.reset(env_ids)
-        # Reset-context scratch for the reset kernel's command hooks: the
-        # episode lane mask (False on sim-reset lanes), owned by the live
-        # context. ``ctx.terminated`` already shares storage with the state.
-        with self.perf.scope("reset_context"):
-            episode = self._compiled_manager_program.context.reset_episode
-            episode.fill_(False)
-            if env_ids.numel():
-                episode[env_ids] = True
+        # Bool (K,) flags align with the merged env_ids: True for full episode
+        # resets (also initialization/explicit restarts), False for sim-only
+        # resets that continue the episode. They do not encode termination.
+        # Context remains whole-batch and never carries reset-pass scratch.
+        episode_reset = torch.ones_like(env_ids, dtype=torch.bool)
         if sim_reset_ids is not None and sim_reset_ids.numel():
+            if env_ids.numel():
+                # Episode reset wins when the public caller supplies overlapping sets.
+                sim_reset_ids = sim_reset_ids[~torch.isin(sim_reset_ids, env_ids)]
+            episode_reset = torch.cat([episode_reset, torch.zeros_like(sim_reset_ids, dtype=torch.bool)])
             env_ids = torch.cat([env_ids, sim_reset_ids])
         if env_ids.numel():
-            self._reset_sim_rows(env_ids)
+            self._reset_sim_rows(env_ids, episode_reset)
 
     def _make_metrics_view(self) -> dict[str, Any]:
         """Assemble the persistent live metrics view for the current state.
@@ -738,13 +657,15 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         return state
 
     def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
-        # During initialisation, ArrayEnv computes the first observation
-        # before the manager's kernel outputs exist. The manager-specific
-        # init_state() performs that first kernel pass itself.
-        if self._kernel_outputs is None:
-            return state
+        """Publish a new whole-batch frame and append observation history."""
         with self.perf.scope("observe"):
-            self._execute_observe_kernel()
+            self.observation_manager.commit(self._task_program.observe_kernel)
+        return state
+
+    def reset_observation(self, state: ArrayEnvState, env_ids: torch.Tensor) -> ArrayEnvState:
+        """Repeat-fill explicit episode-reset rows without advancing other lanes."""
+        with self.perf.scope("observe"):
+            self.observation_manager.publish_reset(env_ids, self._task_program.observe_kernel)
         return state
 
     @property
@@ -772,7 +693,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
     @property
     def observation_groups(self) -> dict[str, ObservationGroupEntry]:
         """Return the environment-local runtime observation groups."""
-        return self._observation_groups
+        return self.observation_manager.groups
 
     def _make_kernel_buffers(self, state: ArrayEnvState) -> tuple[torch.Tensor, ...]:
         assert self._compiled_manager_program is not None

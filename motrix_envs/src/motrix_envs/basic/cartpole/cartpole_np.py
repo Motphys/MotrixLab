@@ -8,6 +8,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     DofPositionQuery,
     DofVelocityQuery,
@@ -49,11 +50,13 @@ class CartPoleEnv(DirectEnv):
         self._reset_position = self._reset_program.buffer("cartpole_position")
         self._reset_velocity = self._reset_program.buffer("cartpole_velocity")
         self._action_space = gym.spaces.Box(-3.0, 3.0, (1,), dtype=np.float32)
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (4,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (4,), dtype=np.float32))}
+        )
 
     @property
-    def observation_space(self):
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self):

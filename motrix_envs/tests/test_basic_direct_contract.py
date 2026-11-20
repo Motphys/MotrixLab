@@ -83,7 +83,7 @@ def test_basic_env_step_and_auto_reset(env_name: str) -> None:
     # Enough steps that mid-episode auto-resets (partial rows) are exercised.
     for _ in range(5):
         state = env.step(_random_actions(env, rng))
-        _assert_finite_state(state, num_envs, env.observation_space.shape)
+        _assert_finite_state(state, num_envs, env.observation_spec.policy.space.shape)
 
     assert state is not None
     # All rows may legitimately terminate together; the contract is the finite
@@ -136,7 +136,7 @@ def test_compute_observation_reads_cache_without_executing(env_name: str) -> Non
     # Observation must be served purely from cache.
     assert calls == []
     obs = observed.obs.policy if isinstance(observed.obs, EnvObs) else observed.obs
-    assert obs.shape == (num_envs, *env.observation_space.shape)
+    assert obs.shape == (num_envs, *env.observation_spec.policy.space.shape)
     assert not np.isnan(obs).any()
     # Reward / termination / reward_terms must not be modified by observation.
     np.testing.assert_array_equal(observed.reward, reward_before)

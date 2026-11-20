@@ -7,6 +7,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     BodyAngularVelocityWrite,
@@ -64,7 +65,7 @@ def _quat_to_rotation_mats(quats: torch.Tensor) -> torch.Tensor:
 @registry.env("dm-humanoid-walk")
 @registry.env("dm-humanoid-run")
 class Humanoid3DEnv(DirectEnv):
-    _observation_space: gym.spaces.Box
+    _observation_spec: ObservationSpec
     _action_space: gym.spaces.Box
 
     def __init__(
@@ -95,7 +96,7 @@ class Humanoid3DEnv(DirectEnv):
         self._torso_reset_angular_velocity = self._reset_program.buffer("torso_angular_velocity")[:, 0]
         self._joint_reset_position = self._reset_program.buffer("joints_position")
         self._joint_reset_velocity = self._reset_program.buffer("joints_velocity")
-        self._init_obs_space()
+        self._init_observation_spec()
         self._init_action_space()
 
         self._move_speed = float(cfg.move_speed)
@@ -127,7 +128,7 @@ class Humanoid3DEnv(DirectEnv):
         self._term_torso_upright_threshold = float(t_cfg.torso_upright_threshold)
         self._term_extreme_vel_threshold = float(t_cfg.extreme_vel_threshold)
 
-    def _init_obs_space(self):
+    def _init_observation_spec(self) -> None:
         num_joint_angles = self.num_dof_pos - 7
         num_head_height = 1
         num_extremities = 12
@@ -144,7 +145,9 @@ class Humanoid3DEnv(DirectEnv):
             + num_qvel
             + num_target_local
         )
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (num_obs,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (num_obs,), dtype=np.float32))}
+        )
 
     def _init_action_space(self):
         ctrl_ranges = np.asarray([spec.ctrl_range for spec in self.model.actuators], dtype=np.float32)
@@ -156,8 +159,8 @@ class Humanoid3DEnv(DirectEnv):
         )
 
     @property
-    def observation_space(self) -> gym.spaces.Box:
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self) -> gym.spaces.Box:

@@ -2,23 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import abc
-from dataclasses import dataclass
 
 import gymnasium as gym
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SceneCfg, validate_scene_cfg
 from motrix_env_core.config.sim import SimCfg
-
-
-@dataclass(frozen=True)
-class ObsSpace:
-    policy: gym.spaces.Box
-    value: gym.spaces.Box | None = None
-
-    @property
-    def value_or_policy(self) -> gym.spaces.Box:
-        return self.policy if self.value is None else self.value
+from motrix_env_core.observations import ObservationSpec
 
 
 @configclass
@@ -90,8 +80,8 @@ class ABEnv(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def observation_space(self) -> gym.Space | ObsSpace:
-        """Observation space"""
+    def observation_spec(self) -> ObservationSpec:
+        """Policy/value frame spaces and their history definitions."""
 
     @property
     @abc.abstractmethod

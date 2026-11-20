@@ -7,6 +7,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     DofPositionQuery,
     DofVelocityQuery,
@@ -28,7 +29,7 @@ _SIM_MODEL_QUERIES = {}
 
 @registry.env("dm-reacher")
 class Reacher2DEnv(DirectEnv):
-    _observation_space: gym.spaces.Box
+    _observation_spec: ObservationSpec
     _action_space: gym.spaces.Box
 
     def __init__(
@@ -58,12 +59,14 @@ class Reacher2DEnv(DirectEnv):
 
         self._target_size = cfg.target_size
         self._target_xyz = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._init_obs_space()
+        self._init_observation_spec()
         self._init_action_space()
 
-    def _init_obs_space(self):
+    def _init_observation_spec(self) -> None:
         num_obs = self.num_dof_pos + 2 + self.num_dof_vel
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (num_obs,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (num_obs,), dtype=np.float32))}
+        )
 
     def _init_action_space(self):
         ctrl_ranges = np.asarray([spec.ctrl_range for spec in self.model.actuators], dtype=np.float32)
@@ -72,8 +75,8 @@ class Reacher2DEnv(DirectEnv):
         )
 
     @property
-    def observation_space(self) -> gym.spaces.Box:
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self) -> gym.spaces.Box:

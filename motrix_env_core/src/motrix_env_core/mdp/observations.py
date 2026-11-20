@@ -45,7 +45,7 @@ def _body(ctx: BuildContext, name: str) -> BodyModel:
 def add_uniform_noise(ctx: ManagerContext, out: torch.Tensor, amplitude: float) -> None:
     """Consume one random value per output component and add scaled uniform noise in place."""
     if amplitude != 0.0:
-        out += ctx.rand.next_uniform(out.shape[1]) * amplitude
+        out += (ctx.rand.uniform_like(out) * 2.0 - 1.0) * amplitude
 
 
 def body_joint_vel_obs(
@@ -67,8 +67,7 @@ class ActionsObsCfg(ObservationTermCfg):
     action_name: str = "joint_position"
 
     def __call__(self, ctx: BuildContext) -> ObsTerm:
-        action = ctx.action_terms[self.action_name].state
-        return ObsTerm(action.action_queue.shape[2], actions_obs, self.action_name)
+        return ObsTerm(ctx.actions[self.action_name].action_space.shape[0], actions_obs, self.action_name)
 
 
 def command_obs(ctx: ManagerContext, out: torch.Tensor, command_name: str) -> None:
@@ -82,8 +81,7 @@ class CommandObsCfg(ObservationTermCfg):
     command_name: str
 
     def __call__(self, ctx: BuildContext) -> ObsTerm:
-        command = ctx.command_terms[self.command_name].command
-        return ObsTerm(command.shape[1], command_obs, self.command_name)
+        return ObsTerm(ctx.commands[self.command_name].command.shape[-1], command_obs, self.command_name)
 
 
 @configclass(kw_only=True)

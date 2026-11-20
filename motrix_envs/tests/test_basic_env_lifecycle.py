@@ -23,7 +23,7 @@ def test_basic_environment_step_preserves_observation_contract(env_name: str, nu
 
     assert state is not None
     assert isinstance(state.obs, EnvObs)
-    assert state.obs.policy.shape == (num_envs, *env.observation_space.shape)
+    assert state.obs.policy.shape == (num_envs, *env.observation_spec.policy.space.shape)
     if env_name == "franka-open-cabinet":
         # Episode-scoped gripper state lives on the env instance, not in info.
         assert env._current_gripper_action.shape == (num_envs,)

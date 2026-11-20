@@ -28,15 +28,16 @@ from motrix_env_core.sim import (
 
 def _reset_body_pos(
     ctx: ManagerContext,
+    env_ids: torch.Tensor,
     sim_writes: Map[torch.Tensor],
     noise_amplitude: torch.Tensor,
 ) -> None:
     motion = ctx.commands["motion"]
     position = sim_writes["position"]
-    position[:, 0, :] = motion.clip.root_body_pos_w[motion.steps[ctx.reset_ids, 0]]
-    # next_uniform() returns [-1, 1), so this is centered uniform noise in
+    position[:, 0, :] = motion.clip.root_body_pos_w[motion.steps[env_ids, 0]]
+    # Map unit-interval draws to centered uniform noise in
     # [-scale, +scale) per axis.
-    position[:, 0, :] += ctx.rand.next_uniform(3)[ctx.reset_ids] * noise_amplitude
+    position[:, 0, :] += (2 * ctx.rand.uniform((env_ids.numel(), 3), device=env_ids.device) - 1) * noise_amplitude
 
 
 @configclass(kw_only=True)
@@ -58,13 +59,14 @@ class BodyPosResetCfg(ResetTermCfg):
 
 def _reset_body_rot(
     ctx: ManagerContext,
+    env_ids: torch.Tensor,
     sim_writes: Map[torch.Tensor],
     noise_amplitude: torch.Tensor,
 ) -> None:
     motion = ctx.commands["motion"]
     rotation = sim_writes["rotation"]
-    base_quat = motion.clip.root_body_quat_w[motion.steps[ctx.reset_ids, 0]]
-    samples = ctx.rand.next_uniform(3)[ctx.reset_ids] * noise_amplitude
+    base_quat = motion.clip.root_body_quat_w[motion.steps[env_ids, 0]]
+    samples = (2 * ctx.rand.uniform((env_ids.numel(), 3), device=env_ids.device) - 1) * noise_amplitude
     # Euler roll/pitch/yaw noise left-multiplied onto the frame quaternion,
     # renormalized. Trig runs in float64 and rounds to float32 on store; the
     # squared-norm reduction accumulates sequentially in float32 and the
@@ -111,13 +113,16 @@ class BodyRotResetCfg(ResetTermCfg):
 
 def _reset_body_lin_vel(
     ctx: ManagerContext,
+    env_ids: torch.Tensor,
     sim_writes: Map[torch.Tensor],
     noise_amplitude: torch.Tensor,
 ) -> None:
     motion = ctx.commands["motion"]
     linear_velocity = sim_writes["linear_velocity"]
-    linear_velocity[:, 0, :] = motion.clip.root_body_lin_vel_w[motion.steps[ctx.reset_ids, 0]]
-    linear_velocity[:, 0, :] += ctx.rand.next_uniform(3)[ctx.reset_ids] * noise_amplitude
+    linear_velocity[:, 0, :] = motion.clip.root_body_lin_vel_w[motion.steps[env_ids, 0]]
+    linear_velocity[:, 0, :] += (
+        2 * ctx.rand.uniform((env_ids.numel(), 3), device=env_ids.device) - 1
+    ) * noise_amplitude
 
 
 @configclass(kw_only=True)
@@ -139,13 +144,16 @@ class BodyLinVelResetCfg(ResetTermCfg):
 
 def _reset_body_rot_vel(
     ctx: ManagerContext,
+    env_ids: torch.Tensor,
     sim_writes: Map[torch.Tensor],
     noise_amplitude: torch.Tensor,
 ) -> None:
     motion = ctx.commands["motion"]
     angular_velocity = sim_writes["angular_velocity"]
-    angular_velocity[:, 0, :] = motion.clip.root_body_ang_vel_w[motion.steps[ctx.reset_ids, 0]]
-    angular_velocity[:, 0, :] += ctx.rand.next_uniform(3)[ctx.reset_ids] * noise_amplitude
+    angular_velocity[:, 0, :] = motion.clip.root_body_ang_vel_w[motion.steps[env_ids, 0]]
+    angular_velocity[:, 0, :] += (
+        2 * ctx.rand.uniform((env_ids.numel(), 3), device=env_ids.device) - 1
+    ) * noise_amplitude
 
 
 @configclass(kw_only=True)
@@ -165,15 +173,17 @@ class BodyRotVelResetCfg(ResetTermCfg):
         )
 
 
-def _reset_body_dof_pos(ctx: ManagerContext, sim_writes: Map[torch.Tensor], noise_scale: float) -> None:
+def _reset_body_dof_pos(
+    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], noise_scale: float
+) -> None:
     motion = ctx.commands["motion"]
-    steps = motion.steps[ctx.reset_ids, 0]
+    steps = motion.steps[env_ids, 0]
     position = sim_writes["position"]
     velocity = sim_writes["velocity"]
     position[:] = motion.clip.joint_pos[steps]
     velocity[:] = motion.clip.joint_vel[steps]
     action = ctx.actions["joint_position"]
-    position += ctx.rand.next_uniform(position.shape[1])[ctx.reset_ids] * noise_scale
+    position += (2 * ctx.rand.uniform((env_ids.numel(), position.shape[1]), device=env_ids.device) - 1) * noise_scale
     # clamp has no out= form Dynamo accepts on the arena-backed
     # (non-contiguous) write view; copy_ back instead.
     position.copy_(torch.clamp(position, min=action.joint_lower, max=action.joint_upper))

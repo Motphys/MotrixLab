@@ -8,6 +8,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     DofPositionQuery,
@@ -52,13 +53,15 @@ class PendulumEnv(DirectEnv):
         self._action_low = float(ctrl_limits[0, 0])
         self._action_high = float(ctrl_limits[1, 0])
         self._action_space = gym.spaces.Box(-1.0, 1.0, (1,), dtype=np.float32)
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (3,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (3,), dtype=np.float32))}
+        )
         # Episode-scoped control history for the control-delta penalty.
         self._prev_ctrl = torch.zeros(self._num_envs, dtype=torch.float32)
 
     @property
-    def observation_space(self):
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self):

@@ -40,7 +40,7 @@ def test_go2_walk_environments_compile_shared_deployment_profiles(
     assert isinstance(profile.task, Go2WalkTaskSpec)
     assert profile.task.name == "go2_walk/v1"
     env = registry.make(env_name, num_envs=1, mode="train")
-    assert profile.observation_size == env.policy_observation_space.shape[0]
+    assert profile.observation_size == env.observation_spec.policy.space.shape[0]
     assert profile.action_size == env.action_space.shape[0]
     assert profile.control.period_s == pytest.approx(env_cfg.ctrl_dt)
     assert profile.task.command_lower == env_cfg.commands.velocity.lower.tolist()

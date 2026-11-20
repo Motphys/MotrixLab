@@ -92,14 +92,16 @@ class WalkResetParams:
     com_noise: torch.Tensor
 
 
-def _sample_spawn_xy(ctx: ManagerContext, params: WalkResetParams) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def _sample_spawn_xy(
+    ctx: ManagerContext, env_ids: torch.Tensor, params: WalkResetParams
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Sample world xy and lifted z, mirroring the per-lane spawn draws."""
     pose = params.init_pose
     low = -float(params.spawn_range)
     high = float(params.spawn_range)
-    x = _uniform_range(ctx.rand.next_uniform(1)[ctx.reset_ids, 0], low, high)
-    y = _uniform_range(ctx.rand.next_uniform(1)[ctx.reset_ids, 0], low, high)
-    offsets = torch.tensor([(i - 1) * 0.15 for i in range(3)], dtype=torch.float64)
+    x = _uniform_range(ctx.rand.uniform((env_ids.numel(),), dtype=pose.dtype, device=pose.device), low, high)
+    y = _uniform_range(ctx.rand.uniform((env_ids.numel(),), dtype=pose.dtype, device=pose.device), low, high)
+    offsets = torch.tensor([(i - 1) * 0.15 for i in range(3)], dtype=torch.float64, device=pose.device)
     xs = x.to(torch.float64)[:, None] + offsets[None, :]
     ys = y.to(torch.float64)[:, None] + offsets[None, :]
     xs9 = xs[:, :, None].expand(-1, -1, 3).reshape(-1)
@@ -109,28 +111,43 @@ def _sample_spawn_xy(ctx: ManagerContext, params: WalkResetParams) -> tuple[torc
     return x, y, z
 
 
-def _sample_randomized_dynamics(ctx: ManagerContext, sim_writes: Map[torch.Tensor], params: WalkResetParams) -> None:
+def _sample_randomized_dynamics(
+    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], params: WalkResetParams
+) -> None:
     """Sample randomized dynamics into the reset write buffers on compact rows."""
-    rand = ctx.rand
-    ids = ctx.reset_ids
+    count = env_ids.numel()
     if float(params.kp_range[1]) > float(params.kp_range[0]):
-        u = rand.next_uniform(int(params.kp_default.numel()))[ids]
+        u = ctx.rand.uniform(
+            (count, params.kp_default.numel()), dtype=params.kp_default.dtype, device=params.kp_default.device
+        )
         scale = _uniform_range(u, params.kp_range[0], params.kp_range[1])
         sim_writes["kp"][:] = params.kp_default * scale
     if float(params.damping_range[1]) > float(params.damping_range[0]):
-        u = rand.next_uniform(int(params.damping_default.numel()))[ids]
+        u = ctx.rand.uniform(
+            (count, params.damping_default.numel()),
+            dtype=params.damping_default.dtype,
+            device=params.damping_default.device,
+        )
         scale = _uniform_range(u, params.damping_range[0], params.damping_range[1])
         sim_writes["damping"][:] = params.damping_default * scale
     if float(params.friction_range[1]) > float(params.friction_range[0]):
-        ratio = _uniform_range(rand.next_uniform(1)[ids], params.friction_range[0], params.friction_range[1])
+        ratio = _uniform_range(
+            ctx.rand.uniform((count, 1), dtype=params.friction_default.dtype, device=params.friction_default.device),
+            params.friction_range[0],
+            params.friction_range[1],
+        )
         sim_writes["friction"][:, 0, :] = params.friction_default * ratio
     mass_randomized = float(params.mass_scale_range[1]) > float(params.mass_scale_range[0])
     base_mass_randomized = float(params.base_mass_off_range[1]) > float(params.base_mass_off_range[0])
     if mass_randomized or base_mass_randomized:
-        u = rand.next_uniform(int(params.link_mass_default.numel()))[ids]
+        u = ctx.rand.uniform(
+            (count, params.link_mass_default.numel()),
+            dtype=params.link_mass_default.dtype,
+            device=params.link_mass_default.device,
+        )
         offset = _uniform_range(u, params.base_mass_off_range[0], params.base_mass_off_range[1])
         scale = _uniform_range(u, params.mass_scale_range[0], params.mass_scale_range[1])
-        is_base = torch.arange(int(params.link_mass_default.numel())) == int(params.base_link_index)
+        is_base = torch.arange(params.link_mass_default.numel(), device=u.device) == int(params.base_link_index)
         values = torch.where(
             is_base[None, :],
             params.base_mass_default + offset,
@@ -139,7 +156,7 @@ def _sample_randomized_dynamics(ctx: ManagerContext, sim_writes: Map[torch.Tenso
         sim_writes["mass"][:] = values
     noise = params.com_noise
     if float(noise[0]) > 0.0 or float(noise[1]) > 0.0 or float(noise[2]) > 0.0:
-        u = rand.next_uniform(3)[ids]
+        u = ctx.rand.uniform((count, 3), dtype=noise.dtype, device=noise.device)
         offsets = _uniform_range(u, -noise, noise)
         sim_writes["com"][:, 0, :] = params.base_com_default + offsets
 
@@ -158,22 +175,26 @@ def _write_spawn_state(
     sim_writes["joints_velocity"][:] = 0.0
 
 
-def reset_walk_state(ctx: ManagerContext, sim_writes: Map[torch.Tensor], params: WalkResetParams) -> None:
+def reset_walk_state(
+    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], params: WalkResetParams
+) -> None:
     """Spawn-state-only reset for configs without dynamics randomization."""
     pose = params.init_pose
     x, y, z = pose[0], pose[1], pose[2]
     if float(params.spawn_range) > 0.0:
-        x, y, z = _sample_spawn_xy(ctx, params)
+        x, y, z = _sample_spawn_xy(ctx, env_ids, params)
     _write_spawn_state(sim_writes, params, x, y, z)
 
 
-def reset_walk_state_randomized(ctx: ManagerContext, sim_writes: Map[torch.Tensor], params: WalkResetParams) -> None:
+def reset_walk_state_randomized(
+    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], params: WalkResetParams
+) -> None:
     """Reset plus in-kernel dynamics randomization (kp/damping/friction/mass/com)."""
     pose = params.init_pose
     x, y, z = pose[0], pose[1], pose[2]
     if float(params.spawn_range) > 0.0:
-        x, y, z = _sample_spawn_xy(ctx, params)
-    _sample_randomized_dynamics(ctx, sim_writes, params)
+        x, y, z = _sample_spawn_xy(ctx, env_ids, params)
+    _sample_randomized_dynamics(ctx, env_ids, sim_writes, params)
     _write_spawn_state(sim_writes, params, x, y, z)
 
 

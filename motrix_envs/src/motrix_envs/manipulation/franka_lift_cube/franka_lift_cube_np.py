@@ -8,6 +8,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     BodyAngularVelocityWrite,
     BodyJointPositionQuery,
@@ -75,7 +76,9 @@ class FrankaLiftCubeEnv(DirectEnv):
         self._action_dim = 8
         self._obs_dim = 36  # 9 + 9 + 3 + 7 + 8
         self._action_space = gym.spaces.Box(-np.inf, np.inf, (self._action_dim,), dtype=np.float32)
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (self._obs_dim,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (self._obs_dim,), dtype=np.float32))}
+        )
 
         self._num_dof_pos = 9  # self._model.num_dof_pos # 9
         self._num_dof_vel = 9  # self._model.num_dof_vel # 9
@@ -97,8 +100,8 @@ class FrankaLiftCubeEnv(DirectEnv):
         self._last_actions = torch.zeros(num_envs, self._action_dim, dtype=torch.float32)
 
     @property
-    def observation_space(self):
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self):
@@ -161,7 +164,7 @@ class FrankaLiftCubeEnv(DirectEnv):
         # name is applied via setattr so static audits can tell this
         # sanctioned observation-stage write apart from the forbidden
         # transition-time writes.
-        setattr(state, "obs", EnvObs(policy=obs))
+        setattr(state, "obs", EnvObs({"policy": obs}))
         return state
 
     def compute_transition(self, state: ArrayEnvState):

@@ -16,7 +16,7 @@ from motrix_env_core.manager.context import BuildContext
 from motrix_env_core.manager.terms import BaseTerm, canonicalize_term_args
 
 if TYPE_CHECKING:
-    from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
+    from motrix_env_core.manager.env import ManagerBasedEnvCfg
 
 
 @configclass(kw_only=True)
@@ -33,8 +33,8 @@ class ObsTerm(BaseTerm):
     """Pure observation dispatch with a fixed output width.
 
     Read context and write only the supplied output, except observation noise
-    may consume ctx.rand. Do not advance history or commands: truncated steps
-    may observe again before reset, with the RNG restored after that snapshot.
+    may consume the default Torch stream through ctx.rand. Do not advance
+    history or commands: truncated steps may observe again before reset.
     """
 
     size: int
@@ -55,17 +55,15 @@ class ObsTerm(BaseTerm):
 class ManagerObservationGroupCfg:
     """Typed declaration group for one named observation group's terms."""
 
+    history_length: int = 1
+
     def to_dict(self) -> dict[str, ObservationTermCfg]:
         """Return observation term configs keyed by their declaration names."""
         term_cfgs: dict[str, ObservationTermCfg] = {}
         for term_field in fields(self):
             term_cfg = getattr(self, term_field.name)
-            if not isinstance(term_cfg, ObservationTermCfg):
-                raise TypeError(
-                    f"Observation term {term_field.name!r} must be an ObservationTermCfg, "
-                    f"got {type(term_cfg).__name__}."
-                )
-            term_cfgs[term_field.name] = term_cfg
+            if isinstance(term_cfg, ObservationTermCfg):
+                term_cfgs[term_field.name] = term_cfg
         return term_cfgs
 
 
@@ -79,8 +77,6 @@ class ManagerObservationsCfg:
         for group_field in fields(self):
             group_name = group_field.name
             group_cfg = getattr(self, group_name)
-            if group_name not in {"policy", "value"}:
-                raise ValueError(f"Unsupported observation group {group_name!r}; expected 'policy' or 'value'.")
             if not isinstance(group_cfg, ManagerObservationGroupCfg):
                 raise TypeError(
                     f"Observation group {group_name!r} must be a ManagerObservationGroupCfg, "
@@ -102,11 +98,12 @@ class ObservationGroupEntry:
     name: str
     terms: tuple[ObservationTermEntry, ...]
     size: int
+    history_length: int = 1
 
 
 def create_observation_groups(
     cfg: ManagerBasedEnvCfg,
-    env: ManagerEnv,
+    ctx: BuildContext,
 ) -> dict[str, ObservationGroupEntry]:
     """Create and validate runtime observation terms grouped by output buffer."""
     groups: dict[str, ObservationGroupEntry] = {}
@@ -114,7 +111,7 @@ def create_observation_groups(
         entries = []
         group_size = 0
         for term_name, term_cfg in term_cfgs.items():
-            created = term_cfg(BuildContext(env, f"observations.{group_name}.{term_name}"))
+            created = term_cfg(ctx)
             if not isinstance(created, ObsTerm):
                 raise TypeError(
                     f"Observation term {group_name}.{term_name} __call__() must return ObsTerm, "
@@ -129,7 +126,13 @@ def create_observation_groups(
             entries.append(ObservationTermEntry(term_name, term, resolved_size))
             group_size += resolved_size
         if entries:
-            groups[group_name] = ObservationGroupEntry(group_name, tuple(entries), group_size)
+            group_cfg = cfg.observation_group_cfgs()[group_name]
+            history_length = group_cfg.history_length if isinstance(group_cfg, ManagerObservationGroupCfg) else 1
+            if not isinstance(history_length, numbers.Integral) or isinstance(history_length, (bool, np.bool_)):
+                raise TypeError("Observation history_length must be an integer.")
+            if history_length < 1:
+                raise ValueError("Observation history_length must be at least 1.")
+            groups[group_name] = ObservationGroupEntry(group_name, tuple(entries), group_size, history_length)
     if "policy" not in groups:
         raise ValueError("Manager environment config requires a 'policy' observation group.")
     return groups

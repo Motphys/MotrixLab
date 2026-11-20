@@ -42,7 +42,9 @@ from motrix_env_core.manager import (  # noqa: E402
     TerminationTermCfg,
     metric,
 )
+from motrix_env_core.manager.context import BuildContext
 from motrix_env_core.manager.observations import create_observation_groups
+from motrix_env_core.mdp.observations import add_uniform_noise
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,14 +193,14 @@ class _InjectedTerminationCfg(TerminationTermCfg):
 class _TestActionCfg(ActionCfg):
     actuator_names: tuple[str, ...] = ()
 
-    def __call__(self, env: ManagerEnv, actuator_indices: np.ndarray | None) -> ActionTerm:
+    def __call__(self, ctx: BuildContext, actuator_indices: np.ndarray | None) -> ActionTerm:
         return _TestActionTerm(
-            _test_action_space(env, actuator_indices),
+            _test_action_space(ctx, actuator_indices),
             _TestActionState(
-                torch.from_numpy(np.zeros((env.num_envs, 2, 1), dtype=np.float32)),
+                torch.from_numpy(np.zeros((ctx.num_envs, 2, 1), dtype=np.float32)),
                 torch.from_numpy(np.zeros(1, dtype=np.int64)),
-                torch.from_numpy(np.zeros((env.num_envs, 1), dtype=bool)),
-                torch.from_numpy(np.zeros((env.num_envs, 1), dtype=np.float32)),
+                torch.from_numpy(np.zeros((ctx.num_envs, 1), dtype=bool)),
+                torch.from_numpy(np.zeros((ctx.num_envs, 1), dtype=np.float32)),
             ),
         )
 
@@ -207,22 +209,22 @@ class _TestActionCfg(ActionCfg):
 class _SecondActionCfg(ActionCfg):
     actuator_names: tuple[str, ...] = ()
 
-    def __call__(self, env: ManagerEnv, actuator_indices: np.ndarray | None) -> ActionTerm:
+    def __call__(self, ctx: BuildContext, actuator_indices: np.ndarray | None) -> ActionTerm:
         return _SecondActionTerm(
-            _second_action_space(env, actuator_indices),
+            _second_action_space(ctx, actuator_indices),
             _SecondActionState(
-                torch.from_numpy(np.zeros((env.num_envs, 2, 2), dtype=np.float32)),
+                torch.from_numpy(np.zeros((ctx.num_envs, 2, 2), dtype=np.float32)),
                 torch.from_numpy(np.zeros(1, dtype=np.int64)),
-                torch.from_numpy(np.zeros((env.num_envs, 1), dtype=bool)),
-                torch.from_numpy(np.zeros((env.num_envs, 2), dtype=np.float32)),
+                torch.from_numpy(np.zeros((ctx.num_envs, 1), dtype=bool)),
+                torch.from_numpy(np.zeros((ctx.num_envs, 2), dtype=np.float32)),
             ),
         )
 
 
 @configclass(kw_only=True)
 class _CounterCommandCfg(CommandCfg):
-    def __call__(self, env: ManagerEnv) -> "_CounterCommand":
-        shape = (env.num_envs, 1)
+    def __call__(self, ctx: BuildContext) -> CommandTerm:
+        shape = (ctx.num_envs, 1)
         return _CounterCommand(
             double=torch.zeros(shape, dtype=torch.float32),
             command=torch.zeros(shape, dtype=torch.float32),
@@ -239,8 +241,8 @@ class _CounterCommand(CommandTerm):
     def advance(self: "_CounterCommand", ctx: ManagerContext) -> None:
         self.command[:, 0] += ctx.dt
 
-    def reset(self: "_CounterCommand", ctx: ManagerContext) -> None:
-        self.command[ctx.reset_ids, 0] = -1.0
+    def reset(self: "_CounterCommand", ctx: ManagerContext, env_ids: torch.Tensor, episode_reset: torch.Tensor) -> None:
+        self.command[env_ids, 0] = -1.0
 
 
 @configclass
@@ -315,6 +317,145 @@ def _counter_command(env: _ManagerEnv) -> _CounterCommand:
     return command
 
 
+@pytest.mark.parametrize("policy_h,value_h", [(1, 1), (3, 1), (2, 3)])
+def test_history_frames_time_major_and_partial_episode_reset(policy_h: int, value_h: int) -> None:
+    cfg = _ManagerEnvCfg(
+        observations={
+            "policy": _ManagerPolicyObsCfg(history_length=policy_h),
+            "value": _LanePolicyObsCfg(history_length=value_h),
+        }
+    )
+    env = ManagerEnv(cfg, num_envs=2)
+    env.physics_step = lambda: None
+    state = env.init_state()
+    assert env.observation_spec.policy.space.shape == (4 * policy_h,)
+    assert env.observation_spec.value.space.shape == (value_h,)
+    assert env.observation_spec.policy.frame_space.shape == (4,)
+    frames = [env.state.obs.policy[:, -4:].clone()]
+    torch.testing.assert_close(state.obs.policy.reshape(2, policy_h, 4), frames[0][:, None].expand(-1, policy_h, -1))
+    for action in (0.1, 0.2, 0.3):
+        state = env.step(torch.full((2, 1), action))
+        frames.append(env.state.obs.policy[:, -4:].clone())
+        expected = ([frames[0]] * policy_h + frames[1:])[-policy_h:]
+        torch.testing.assert_close(state.obs.policy.reshape(2, policy_h, 4), torch.stack(expected, dim=1))
+    untouched = state.obs.policy[1].clone()
+    frame_untouched = env.state.obs.policy[:, -4:][1].clone()
+    env.reset(torch.tensor([0]))
+    env.reset_observation(env.state, env_ids=torch.tensor([0]))
+    current = env.state.obs.policy[:, -4:]
+    torch.testing.assert_close(env.state.obs.policy[0].reshape(policy_h, 4), current[0].expand(policy_h, -1))
+    torch.testing.assert_close(env.state.obs.policy[1], untouched)
+    torch.testing.assert_close(current[1], frame_untouched)
+
+
+@pytest.mark.parametrize("history_length", [1, 3])
+def test_explicit_sim_only_reset_waits_for_next_control_step(history_length: int) -> None:
+    cfg = _ManagerEnvCfg(observations={"policy": _ManagerPolicyObsCfg(history_length=history_length)})
+    env = ManagerEnv(cfg, num_envs=2)
+    env.physics_step = lambda: None
+    env.init_state()
+    state = env.step(torch.full((2, 1), 0.1))
+    published = state.obs.policy.clone()
+    steps = state.episode_steps.clone()
+    env.reset(torch.empty(0, dtype=torch.long), sim_reset_ids=torch.tensor([1]))
+    assert env.command_terms["counter"].command[1, 0] == -1.0
+    torch.testing.assert_close(env.state.obs.policy, published)
+    torch.testing.assert_close(env.state.episode_steps, steps)
+    state = env.step(torch.full((2, 1), 0.2))
+    window = state.obs.policy.reshape(2, history_length, 4)
+    torch.testing.assert_close(window[:, :-1], published.reshape(2, history_length, 4)[:, 1:])
+    torch.testing.assert_close(state.episode_steps, steps + 1)
+    assert window[1, -1, 1] == pytest.approx(-1.0 + env.cfg.ctrl_dt)
+    assert window[1, -1, 0] == pytest.approx(1.6)
+    # Explicit whole-batch publication is an additional frame, not a cache read.
+    snapshot = window.clone()
+    env.compute_observation(state)
+    updated = state.obs.policy.reshape(2, history_length, 4)
+    torch.testing.assert_close(updated[:, :-1], snapshot[:, 1:])
+    torch.testing.assert_close(updated[:, -1], snapshot[:, -1])
+
+
+def test_history_final_preview_owned_frames_and_sim_only_reset() -> None:
+    cfg = _ManagerEnvCfg(
+        max_episode_seconds=0.03,
+        observations={"policy": _ManagerPolicyObsCfg(history_length=3)},
+    )
+    env = ManagerEnv(cfg, num_envs=2)
+    env.physics_step = lambda: None
+    state = env.init_state()
+    state = env.step(torch.full((2, 1), 0.1))
+    prefix = state.obs.policy.reshape(2, 3, 4).clone()
+    # Request a simulator-only reset during the real control step. It changes
+    # the endpoint command but must retain this episode's historical prefix.
+    evaluate = env._task_program.evaluate_kernel
+
+    def request_sim_reset(weights, buffers, outputs):
+        evaluate(weights, buffers, outputs)
+        env._sim_reset_requested[1] = True
+
+    env._task_program = replace(env._task_program, evaluate_kernel=request_sim_reset)
+    state.episode_steps[0] = 2
+    state = env.step(torch.full((2, 1), 0.2))
+    final = state.final_obs
+    assert final is not None
+    final_frame = final.obs.policy[:, -4:]
+    torch.testing.assert_close(final.env_ids, torch.tensor([0]))
+    expected = torch.cat((prefix[[0], 1:], final_frame[:, None]), dim=1)
+    torch.testing.assert_close(final.obs.policy.reshape(1, 3, 4), expected)
+    frame = env.state.obs.policy[:, -4:]
+    assert state.episode_steps[1] == 2
+    assert frame[1, 1] == -1.0
+    torch.testing.assert_close(state.obs.policy[0].reshape(3, 4), frame[0].expand(3, -1))
+    torch.testing.assert_close(state.obs.policy[1].reshape(3, 4)[:-1], prefix[1, 1:])
+    saved = final_frame.clone()
+    state.episode_steps.zero_()
+    env.step(torch.full((2, 1), 0.1))
+    assert env.state.final_obs is None
+    torch.testing.assert_close(final_frame, saved)
+    env.reset(torch.tensor([1]))
+    assert env.state.final_obs is None
+
+
+@pytest.mark.parametrize("history_length", [1, 3])
+def test_named_goal_group_history_reset_and_final_observations(history_length: int) -> None:
+    @configclass
+    class _NamedObservationsCfg(ManagerObservationsCfg):
+        policy: _LanePolicyObsCfg = _LanePolicyObsCfg()
+        goal: _ManagerPolicyObsCfg = _ManagerPolicyObsCfg(history_length=history_length)
+
+    cfg = _ManagerEnvCfg(max_episode_seconds=0.03, observations=_NamedObservationsCfg())
+    env = ManagerEnv(cfg, num_envs=2)
+    env.physics_step = lambda: None
+    initial = env.init_state()
+    assert set(initial.obs.groups) == {"policy", "goal"}
+    assert env.observation_spec["goal"].space.shape == (4 * history_length,)
+    assert initial.obs.value is None
+    torch.testing.assert_close(
+        initial.obs["goal"].reshape(2, history_length, 4),
+        initial.obs["goal"][:, -4:][:, None].expand(-1, history_length, -1),
+    )
+    state = env.step(torch.full((2, 1), 0.1))
+    prefix = state.obs["goal"].reshape(2, history_length, 4).clone()
+    state.episode_steps[0] = 2
+    state = env.step(torch.full((2, 1), 0.2))
+    final = state.final_obs
+    assert final is not None
+    torch.testing.assert_close(final.env_ids, torch.tensor([0]))
+    expected_endpoint = torch.tensor([[1.6, -1.0 + 2 * cfg.ctrl_dt, 0.4, 0.0]])
+    expected_final = torch.cat((prefix[[0], 1:], expected_endpoint[:, None]), dim=1)
+    torch.testing.assert_close(final.obs["goal"].reshape(1, history_length, 4), expected_final)
+    goal = state.obs["goal"].reshape(2, history_length, 4)
+    torch.testing.assert_close(goal[0], goal[0, -1:].expand(history_length, -1))
+    torch.testing.assert_close(goal[1, :-1], prefix[1, 1:])
+    saved_final = final.obs["goal"].clone()
+    untouched = state.obs["goal"][1].clone()
+    env.reset(torch.tensor([0]))
+    env.reset_observation(env.state, torch.tensor([0]))
+    torch.testing.assert_close(env.state.obs["goal"][1], untouched)
+    env.step(torch.full((2, 1), 0.1))
+    torch.testing.assert_close(final.obs["goal"], saved_final)
+
+
 def test_action_and_command_terms_are_environment_owned() -> None:
     env = _ManagerEnv(num_envs=3)
 
@@ -322,6 +463,10 @@ def test_action_and_command_terms_are_environment_owned() -> None:
     assert env.action_terms is env._action_terms
     assert env.action_terms["test"].state.reset_flags.shape == (3, 1)
     assert _counter_command(env) is env.command_terms["counter"]
+    build = env.build_context()
+    assert build.num_envs == 3 and build.seed == 1
+    assert build.commands["counter"] is env.command_terms["counter"]
+    assert build.actions["test"] is env.action_terms["test"]
 
 
 def test_same_cfg_class_instances_keep_independent_runtime_state() -> None:
@@ -472,7 +617,7 @@ def test_multiple_action_terms_concatenate_spaces_and_receive_ordered_slices() -
     np.testing.assert_array_equal(env.action_terms["test"].state.source, actions[:, :1])
     np.testing.assert_array_equal(env.action_terms["second"].state.source, actions[:, 1:])
     env._refresh_sim_reads()
-    env._execute_observe_kernel()
+    env._task_program.observe_kernel(env.observation_manager.frame_output)
     np.testing.assert_array_equal(state.obs.policy, actions)
     assert [(term.name, term.input_slice) for term in env.manager_layout.actions] == [
         ("test", slice(0, 1)),
@@ -493,16 +638,25 @@ def test_multiple_action_terms_validate_total_action_shape() -> None:
         env.apply_action(torch.zeros((2, 2), dtype=torch.float32), state)
 
 
-def test_rand_value_owns_seeded_per_environment_states() -> None:
-    first = _ManagerEnv(num_envs=3, rand_seed=7)._rand.state
-    reproduced = _ManagerEnv(num_envs=3, rand_seed=7)._rand.state
-    different = _ManagerEnv(num_envs=3, rand_seed=8)._rand.state
+@pytest.mark.parametrize("seed", [None, 7])
+def test_manager_construction_does_not_reseed_or_consume_default_rng(seed: int | None) -> None:
+    torch.manual_seed(193)
+    torch.rand(5)
+    before = torch.get_rng_state().clone()
+    created = ManagerEnv(_ManagerEnvCfg(), seed=seed)
+    assert torch.equal(before, torch.get_rng_state())
+    sample = created._random.uniform((16,))
+    torch.set_rng_state(before)
+    torch.testing.assert_close(sample, torch.rand(16), rtol=0, atol=0)
 
-    # The state is a signed-int64 tensor view over the per-lane uint64 bits.
-    assert tuple(first.shape) == (3, 1)
-    assert first.dtype == torch.int64
-    np.testing.assert_array_equal(first.numpy().view(np.uint64), reproduced.numpy().view(np.uint64))
-    assert not np.array_equal(first.numpy(), different.numpy())
+
+def test_managers_share_training_seeded_default_stream() -> None:
+    torch.manual_seed(7)
+    first, second = _ManagerEnv(rand_seed=7), _ManagerEnv(rand_seed=8)
+    draws = [first._random.uniform((3, 2)), torch.rand(13), second._random.uniform((3, 2))]
+    torch.manual_seed(7)
+    for actual, shape in zip(draws, ((3, 2), (13,), (3, 2)), strict=True):
+        torch.testing.assert_close(actual, torch.rand(shape), rtol=0, atol=0)
 
 
 def test_step_perf_records_standard_and_manager_phases() -> None:
@@ -576,7 +730,8 @@ def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> 
 
     action.state.source[:, 0] = torch.tensor([0.25, 0.75])
     env.compute_transition(state)
-    env.compute_observation(state)
+    # Exercise dispatch independently of the cached normal-publication lifecycle.
+    env._task_program.observe_kernel(env.observation_manager.frame_output)
 
     assert env.action_terms["test"] is action
     assert env.command_terms["counter"] is command
@@ -634,13 +789,13 @@ def test_command_evaluation_updates_state_only_in_evaluate_kernel() -> None:
     derived.fill_(-1.0)
 
     env._refresh_sim_reads()
-    env._execute_observe_kernel()
+    env._task_program.observe_kernel(env.observation_manager.frame_output)
     np.testing.assert_array_equal(derived[:, 0], [-1.0, -1.0])
     np.testing.assert_array_equal(state.obs.policy[:, 2], [-1.0, -1.0])
 
     env._execute_evaluate_kernel()
     np.testing.assert_allclose(derived[:, 0], [2.0, 4.0])
-    env._execute_observe_kernel()
+    env._task_program.observe_kernel(env.observation_manager.frame_output)
     np.testing.assert_allclose(state.obs.policy[:, 2], [2.0, 4.0])
 
 
@@ -658,6 +813,52 @@ def test_command_term_updates_lifecycle_and_selected_reset_ids() -> None:
     np.testing.assert_array_equal(command[:, 0], [1.0, -1.0, 3.0])
     np.testing.assert_array_equal(np.flatnonzero(action.state.reset_flags[:, 0]), [1])
     assert tuple(term_field.name for term_field in fields(env.cfg.commands)) == ("counter",)
+
+
+@pytest.mark.parametrize("compiled", [False, True])
+def test_reset_passes_compact_episode_reset_in_selected_lane_order(
+    compiled: bool, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    # Keep these fullgraph variants independent of other manager schedules.
+    torch._dynamo.reset()
+    request.addfinalizer(torch._dynamo.reset)
+    compile_torch = torch.compile
+    monkeypatch.setattr(
+        torch,
+        "compile",
+        lambda fn, **kwargs: (
+            compile_torch(fn, backend="eager", fullgraph=True, dynamic=kwargs.get("dynamic")) if compiled else fn
+        ),
+    )
+
+    @dataclass(frozen=True)
+    class EpisodeCommand(_CounterCommand):
+        def reset(self, ctx: ManagerContext, env_ids: torch.Tensor, episode_reset: torch.Tensor) -> None:
+            self.command[env_ids, 0] = torch.where(episode_reset, -1.0, -2.0)
+
+    @configclass
+    class EpisodeCommandCfg(CommandCfg):
+        def __call__(self, ctx: BuildContext) -> CommandTerm:
+            return EpisodeCommand(command=torch.zeros(ctx.num_envs, 1), double=torch.zeros(ctx.num_envs, 1))
+
+    cfg = _ManagerEnvCfg(commands={"counter": EpisodeCommandCfg()})
+    env = ManagerEnv(cfg, num_envs=4)
+    env.init_state()
+    command = env.command_terms["counter"].command
+    command[:, 0] = torch.tensor([10.0, 20.0, 30.0, 40.0])
+    env.state.episode_steps[:] = torch.tensor([3, 4, 5, 6])
+
+    env.reset(torch.tensor([3, 0]), sim_reset_ids=torch.tensor([2]))
+    torch.testing.assert_close(command[:, 0], torch.tensor([-1.0, 20.0, -2.0, -1.0]))
+    torch.testing.assert_close(env.state.episode_steps, torch.tensor([0, 4, 5, 0]))
+
+    # A second pass reuses the schedule, but must not retain its previous mask.
+    env.reset(torch.tensor([2]), sim_reset_ids=torch.tensor([0, 1]))
+    torch.testing.assert_close(command[:, 0], torch.tensor([-2.0, -2.0, -1.0, -1.0]))
+
+    # Overlapping public inputs reset the shared lane once as an episode.
+    env.reset(torch.tensor([1]), sim_reset_ids=torch.tensor([1, 3]))
+    torch.testing.assert_close(command[:, 0], torch.tensor([-2.0, -1.0, -1.0, -2.0]))
 
 
 def test_done_envs_reset_before_observation_and_preserve_transition_outputs() -> None:
@@ -718,30 +919,52 @@ def test_final_observations_capture_command_before_reset_and_survive_steps(with_
     np.testing.assert_array_equal(final.obs.policy, saved)
 
 
-def test_final_observation_noise_uses_shared_observation_rng() -> None:
-    env = _ManagerEnv()
-    env.init_state()
-    rng_before = env._rand.state.clone()
-    observe = env._task_program.observe_kernel
-
-    def noisy_observe(outputs):
-        observe(outputs)
-        env._rand.state[:] += 1
-        outputs.policy_obs[:, 0] = env._rand.state[:, 0].to(torch.float32)
-
-    env._task_program = replace(env._task_program, observe_kernel=noisy_observe)
-    final = env._capture_final_obs(torch.tensor([0], dtype=torch.long))
-    np.testing.assert_array_equal(
-        env._rand.state.numpy().view(np.uint64), rng_before.numpy().view(np.uint64) + np.uint64(1)
+def test_final_observation_preview_consumes_shared_default_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Keep this lifecycle test cheap while exercising the real compiled
+    # observation schedule, not a replacement sampler.
+    compile_torch = torch.compile
+    monkeypatch.setattr(
+        torch,
+        "compile",
+        lambda fn, **kwargs: compile_torch(fn, backend="eager", fullgraph=True, dynamic=kwargs.get("dynamic")),
     )
+
+    def noisy(ctx: ManagerContext, out: torch.Tensor) -> None:
+        out.zero_()
+        add_uniform_noise(ctx, out, 0.25)
+
+    @configclass
+    class NoisyCfg(ObservationTermCfg):
+        def __call__(self, ctx: BuildContext) -> ObsTerm:
+            return ObsTerm(1, noisy)
+
+    cfg = _ManagerEnvCfg(observations={"policy": {"noise": NoisyCfg()}})
+    torch.manual_seed(31)
+    expected_frames = [torch.rand(2, 1) * 0.5 - 0.25 for _ in range(5)]
+    expected_task = torch.rand(8)
+    expected_after = torch.get_rng_state().clone()
+    torch.manual_seed(31)
+    first, second = ManagerEnv(cfg, num_envs=2, seed=31), ManagerEnv(cfg, num_envs=2, seed=31)
+    for env in (first, second):
+        env.physics_step = lambda: None
+        env.init_state()
+    torch.testing.assert_close(first.state.obs.policy, expected_frames[0])
+    torch.testing.assert_close(second.state.obs.policy, expected_frames[1])
+    published = first.state.obs.policy.clone()
+    before_preview = torch.get_rng_state().clone()
+    final = first._capture_final_obs(torch.tensor([0], dtype=torch.long))
+    assert not torch.equal(before_preview, torch.get_rng_state())
+    torch.testing.assert_close(final.obs.policy, expected_frames[2][[0]])
     saved_final = final.obs.policy.clone()
-    np.testing.assert_array_equal(
-        final.obs.policy[:, 0],
-        (rng_before[[0], 0] + 1).to(torch.float32).numpy(),
-    )
-    env._execute_observe_kernel()
-    np.testing.assert_array_equal(env._rand.state, rng_before + np.uint64(2))
-    np.testing.assert_array_equal(final.obs.policy, saved_final)
+    torch.testing.assert_close(first.state.obs.policy, published)
+    first.compute_observation(first.state)
+    torch.testing.assert_close(first.state.obs.policy, expected_frames[3])
+    # Preview changes the next draw even for another environment instance.
+    second.compute_observation(second.state)
+    torch.testing.assert_close(second.state.obs.policy, expected_frames[4])
+    torch.testing.assert_close(final.obs.policy, saved_final)
+    torch.testing.assert_close(first._random.uniform((8,)), expected_task)
+    assert torch.equal(expected_after, torch.get_rng_state())
 
 
 def test_post_reset_observation_does_not_run_command_evaluation() -> None:
@@ -754,12 +977,12 @@ def test_post_reset_observation_does_not_run_command_evaluation() -> None:
     state.terminated[:] = torch.tensor([False, True, False])
     env._refresh_sim_reads()
     env._reset_done_envs()
-    env.compute_observation(state)
+    env.reset_observation(state, env_ids=torch.tensor([1]))
 
     np.testing.assert_array_equal(state.obs.policy[:, 2], 0.0)
     env._refresh_sim_reads()
     env._execute_evaluate_kernel()
-    env._execute_observe_kernel()
+    env._task_program.observe_kernel(env.observation_manager.frame_output)
 
     np.testing.assert_allclose(state.obs.policy[:, 2], [0.5, 1.0, 1.5])
 
@@ -810,7 +1033,7 @@ def test_observation_term_must_be_a_term_with_instance_compute() -> None:
     env = _ManagerEnv(num_envs=1)
     cfg = ManagerBasedEnvCfg(observations=_InvalidObservationsCfg())
     with pytest.raises(TypeError, match="must return ObsTerm"):
-        create_observation_groups(cfg, env)
+        create_observation_groups(cfg, env.build_context)
 
     def _static_observation(ctx: ManagerContext, out: torch.Tensor) -> None:
         out[:, 0] = ctx.env_id
@@ -834,7 +1057,7 @@ def test_observation_term_must_be_a_term_with_instance_compute() -> None:
         policy: _StaticPolicyCfg = _StaticPolicyCfg()
 
     cfg = ManagerBasedEnvCfg(observations=_StaticObservationsCfg())
-    static_groups = create_observation_groups(cfg, env)
+    static_groups = create_observation_groups(cfg, env.build_context)
     assert static_groups["policy"].terms[0].term.dispatch is _static_observation
 
 

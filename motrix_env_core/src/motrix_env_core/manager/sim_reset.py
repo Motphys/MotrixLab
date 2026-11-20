@@ -18,7 +18,6 @@ from motrix_env_core.perf import active_perf_scope
 from motrix_env_core.sim.write import SimWrite, WriteProgram
 
 if TYPE_CHECKING:
-    from motrix_env_core.manager.env import ManagerEnv
     from motrix_env_core.sim.backend import SimBackend
     from motrix_env_core.torch_manager.runtime import TorchTaskProgram
 
@@ -51,14 +50,14 @@ class SimResetRuntime:
     @classmethod
     def create(
         cls,
-        env: ManagerEnv,
+        ctx: BuildContext,
         cfg: ManagerResetCfg,
         sim: SimBackend,
     ) -> SimResetRuntime:
         """Create terms, compile their declared writes, and bind output buffers."""
         terms = {}
         for name, term_cfg in cfg.to_dict().items():
-            created = term_cfg(BuildContext(env, f"sim_reset.{name}"))
+            created = term_cfg(ctx)
             if not isinstance(created, ResetTerm):
                 raise TypeError(
                     f"Manager simulator reset term {name!r} __call__() must return ResetTerm, "
@@ -97,10 +96,11 @@ class SimResetRuntime:
         self,
         task_program: TorchTaskProgram,
         env_ids: torch.Tensor,
+        episode_reset: torch.Tensor,
     ) -> None:
         """Materialize compact term outputs, scatter them, and execute reset."""
         with active_perf_scope("reset_kernel"):
-            task_program.reset_kernel(env_ids, self.buffers)
+            task_program.reset_kernel(env_ids, episode_reset, self.buffers)
         for buffer in self.buffers:
             compact = buffer[: env_ids.numel()].clone()
             buffer[env_ids] = compact

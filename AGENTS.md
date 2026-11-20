@@ -79,11 +79,16 @@ README 或教程；插件与任务 package 的 README 不重复这些内容，�
 ### Manager term 入口方法
 
 Manager 数值 term 是普通 Python 函数，契约由签名注解表达并由 resolver 校验（首参数注解
-`ManagerContext`，observation 的 `out` 注解 `torch.Tensor`，reset 的 `sim_writes` 注解
-`Map[torch.Tensor]`）；数值执行由 Torch 执行器按整批张量调度。kernel_data 类上的钩子方法
-（`ActionState.current/previous`、CommandTerm 的 `update`/`advance`/`reset`——
-实例方法，签名为 `(self, ctx)`）由 resolver 按方法名与签名注解解析。运行时
-契约见 `wiki/design/manager/runtime.md`。
+`ManagerContext`，observation 的 `out` 注解 `torch.Tensor`）；sim-reset dispatch 签名为
+`(ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], *static)`。
+数值执行由 Torch 执行器按整批张量调度；reset 时 ctx 仍为全批 N，`env_ids` 是 K 个原始环境行号，
+`sim_writes` 为紧凑 K 行。kernel_data 类上的钩子方法由 resolver 按方法名与签名注解解析：
+`ActionState.current/previous` 为实例方法；CommandTerm 的 `update`/`advance` 签名为
+`(self, ctx: ManagerContext)`，`reset` 签名为
+`(self, ctx: ManagerContext, env_ids: torch.Tensor, episode_reset: torch.Tensor)`，
+其中 `episode_reset` 为与 `env_ids` 对齐的 bool `(K,)`：True 表示回合级重置（含初始化与显式重开），
+False 表示仅 sim reset、当前回合继续；它不等于 `terminated`，也不必然表示上一回合已经结束。
+运行时契约见 `wiki/design/manager/runtime.md`。
 
 ### 环境配置与注册规范
 
@@ -102,7 +107,7 @@ Manager 数值 term 是普通 Python 函数，契约由签名注解表达并由 
 
 ### 通用环境要求
 
-- `observation_space` 和 `action_space` 作为 property 定义。
+- 环境以 `observation_spec` 作为唯一观测描述，与 `action_space` 一起作为 property 定义；不重复提供环境侧 `observation_space`，第三方 RL adapter 所需的同名属性从 spec 派生。
 - 常量（初始位置、空间定义、query 名称等）在 `__init__` 或配置构造阶段预计算，不在 step 循环中重复创建。
 - NumPy/Array 环境中使用向量化操作，禁止 Python for 循环遍历 environment 维度；遍历固定数量的关节、脚或 term 配置可以使用普通循环。
 - reset、step、auto-reset、truncation 和 termination 的语义必须遵循 `ArrayEnv`/`DirectEnv` 的生命周期，不要在子类中重复实现前端生命周期管理。

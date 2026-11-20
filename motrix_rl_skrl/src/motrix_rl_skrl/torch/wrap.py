@@ -76,11 +76,11 @@ class SkrlTorchEnvWrap(SkrlWrapper):
 
     @property
     def observation_space(self) -> gymnasium.Space:
-        return self._env.policy_observation_space
+        return self._env.observation_spec.policy.space
 
     @property
     def state_space(self) -> gymnasium.Space:
-        return self._env.value_observation_space
+        return self._env.observation_spec.value_or_policy.space
 
     @property
     def action_space(self) -> gymnasium.Space:

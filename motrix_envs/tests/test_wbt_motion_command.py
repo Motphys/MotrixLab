@@ -7,14 +7,14 @@ These protect the behavioral contracts of ``WbtMotionCommand`` after the
 Torch executor migration: start-frame sampling (uniform and adaptive-CDF
 search-left binning, clamping, start-at-zero draws), the ``advance``
 wrap/hold/sequential-clip branches, and the reset pass's adaptive-CDF
-rebuild plus reset-lane-only RNG consumption.
+rebuild plus selected-row state updates with seeded Torch sampling.
 """
 
 import torch
 
 from motrix_env_core.manager.context import ManagerContext
 from motrix_env_core.manager.kernel_data import Map
-from motrix_env_core.manager.rand import RandValue, draw_uniform, initialize_rand_states
+from motrix_env_core.manager.random import RandomSource
 from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommand, _sample_motion_step
 from motrix_envs.motion import WbtMotionClip
 
@@ -48,9 +48,8 @@ def _command(
     sequential_clips: bool = False,
     start_zero_prob: float = 0.0,
     steps: torch.Tensor | None = None,
-    seed: int = 7,
 ) -> tuple[WbtMotionCommand, torch.Tensor]:
-    state = initialize_rand_states(num_envs, seed)
+    state = torch.zeros(num_envs, dtype=torch.long)
     command = WbtMotionCommand(
         clip=_clip(num_frames),
         reference_index=0,
@@ -82,23 +81,18 @@ def _command(
 def _ctx(
     state: torch.Tensor,
     *,
-    reset_ids: torch.Tensor | None = None,
-    reset_episode: torch.Tensor | None = None,
     terminated: torch.Tensor | None = None,
 ) -> ManagerContext:
     num_envs = state.shape[0]
     return ManagerContext(
+        rand=RandomSource(),
         env_id=torch.arange(num_envs, dtype=torch.int64),
         actions=Map({}),
         commands=Map({}),
         metrics=Map({}),
-        rand=RandValue(state),
         sim=Map({}),
         dt=0.02,
         sim_reset_requested=torch.zeros((num_envs, 1), dtype=torch.bool),
-        reset_ids=torch.zeros(0, dtype=torch.int64) if reset_ids is None else reset_ids,
-        # Compact reset-pass flags: one entry per lane in ``reset_ids``.
-        reset_episode=torch.ones(0, dtype=torch.bool) if reset_episode is None else reset_episode,
         terminated=torch.zeros(num_envs, dtype=torch.bool) if terminated is None else terminated,
     )
 
@@ -145,27 +139,40 @@ def test_sample_motion_step_start_at_zero():
 def test_advance_wraps_ended_lanes_with_sampled_frames():
     command, state = _command(2, 5, steps=torch.tensor([[0], [4]]))
     ctx = _ctx(state)
-    draws, _ = draw_uniform(state.clone(), 2)
-    expected_wrap = _sample_motion_step(
-        draws, command.sampling_cdf, 5, torch.tensor(command.start_at_timestep_zero_prob)
-    )
     command.advance(ctx)
     assert command.steps[0, 0].item() == 1
-    assert command.steps[1, 0].item() == expected_wrap[1].item()
+    assert 0 <= command.steps[1, 0].item() <= 3
     assert not command.clip_ended[0, 0].item()
     assert command.clip_ended[1, 0].item()
     assert not ctx.sim_reset_requested[0, 0].item()
     assert ctx.sim_reset_requested[1, 0].item()
 
 
-def test_advance_wrap_consumes_only_ended_lane_rng():
-    command, state = _command(2, 5, steps=torch.tensor([[0], [4]]))
-    ctx = _ctx(state)
-    before = state.clone()
-    _, next_state = draw_uniform(state.clone(), 2)
-    command.advance(ctx)
-    torch.testing.assert_close(ctx.rand.state[0], before[0])
-    torch.testing.assert_close(ctx.rand.state[1], next_state[1])
+def test_advance_sampling_repeats_with_training_seed_and_consumes_shared_stream():
+    steps = torch.full((8, 1), 99)
+
+    def rollout():
+        torch.manual_seed(7)
+        command, state = _command(8, 100, steps=steps.clone())
+        ctx = _ctx(state)
+        results = []
+        for _ in range(3):
+            command.steps.copy_(steps)
+            command.advance(ctx)
+            results.append(command.steps.clone())
+        return results, torch.get_rng_state().clone()
+
+    first, after = rollout()
+    second, repeated_after = rollout()
+    for actual, repeated in zip(first, second, strict=True):
+        torch.testing.assert_close(actual, repeated)
+    assert not torch.equal(first[0], first[1])
+    assert torch.equal(after, repeated_after)
+    torch.manual_seed(7)
+    torch.rand(13)  # Other default-stream consumers affect subsequent commands.
+    command, state = _command(8, 100, steps=steps.clone())
+    command.advance(_ctx(state))
+    assert not torch.equal(command.steps, first[0])
 
 
 def test_advance_hold_at_clip_end_freezes_lane():
@@ -202,12 +209,8 @@ def test_advance_sequential_hold_at_corpus_end():
 def test_reset_sequential_keeps_current_frames():
     steps = torch.tensor([[2], [3]])
     command, state = _command(2, 5, num_bins=2, sequential_clips=True, steps=steps)
-    ctx = _ctx(
-        state,
-        reset_ids=torch.tensor([0, 1]),
-        reset_episode=torch.tensor([True, True]),
-    )
-    command.reset(ctx)
+    ctx = _ctx(state)
+    command.reset(ctx, torch.tensor([0, 1]), torch.tensor([True, True]))
     torch.testing.assert_close(command.steps, steps)
 
 
@@ -217,11 +220,9 @@ def test_reset_rebuilds_adaptive_cdf_from_failures():
     command, state = _command(2, 8, num_bins=2, steps=torch.tensor([[4], [0]]))
     ctx = _ctx(
         state,
-        reset_ids=torch.tensor([0, 1]),
-        reset_episode=torch.tensor([True, True]),
         terminated=torch.tensor([True, False]),
     )
-    command.reset(ctx)
+    command.reset(ctx, torch.tensor([0, 1]), torch.tensor([True, True]))
     assert command.adaptive_current_bin_failed_count.tolist() == [0.0, 1.0]
     cdf = command.sampling_cdf
     assert cdf[-1].item() == 1.0
@@ -231,30 +232,22 @@ def test_reset_rebuilds_adaptive_cdf_from_failures():
     torch.testing.assert_close(cdf, torch.tensor([0.5, 1.0]))
 
 
-def test_reset_consumes_only_reset_lane_rng():
-    command, state = _command(4, 5, steps=torch.tensor([[0], [1], [2], [3]]))
-    before = state.clone()
-    ctx = _ctx(
-        state,
-        reset_ids=torch.tensor([1, 3]),
-        reset_episode=torch.tensor([True, True]),
-    )
-    _, next_state = draw_uniform(state.clone(), 2)
-    command.reset(ctx)
-    torch.testing.assert_close(ctx.rand.state[0], before[0])
-    torch.testing.assert_close(ctx.rand.state[2], before[2])
-    torch.testing.assert_close(ctx.rand.state[1], next_state[1])
-    torch.testing.assert_close(ctx.rand.state[3], next_state[3])
+def test_reset_changes_only_selected_rows_and_is_repeatable():
+    steps = torch.tensor([[0], [1], [2], [3]])
+    torch.manual_seed(7)
+    first, state = _command(4, 5, steps=steps.clone())
+    first.reset(_ctx(state), torch.tensor([1, 3]), torch.ones(2, dtype=torch.bool))
+    torch.manual_seed(7)
+    second, state = _command(4, 5, steps=steps.clone())
+    second.reset(_ctx(state), torch.tensor([1, 3]), torch.ones(2, dtype=torch.bool))
+    torch.testing.assert_close(first.steps, second.steps)
+    torch.testing.assert_close(first.steps[[0, 2]], steps[[0, 2]])
 
 
 def test_reset_resamples_steps_in_valid_range():
     command, state = _command(3, 6, start_zero_prob=0.5, steps=torch.tensor([[5], [5], [5]]))
-    ctx = _ctx(
-        state,
-        reset_ids=torch.tensor([0, 2]),
-        reset_episode=torch.tensor([True, True]),
-    )
-    command.reset(ctx)
+    ctx = _ctx(state)
+    command.reset(ctx, torch.tensor([0, 2]), torch.tensor([True, True]))
     steps = command.steps[:, 0]
     assert steps[1].item() == 5
     for lane in (0, 2):

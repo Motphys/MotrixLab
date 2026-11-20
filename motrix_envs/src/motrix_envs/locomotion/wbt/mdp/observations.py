@@ -21,7 +21,6 @@ from motrix_env_core.mdp.observations import (
     UniformNoiseCfg,
     add_uniform_noise,
 )
-from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommand
 
 
 def motion_joint_obs(ctx: ManagerContext, out: torch.Tensor) -> None:
@@ -35,10 +34,7 @@ def motion_joint_obs(ctx: ManagerContext, out: torch.Tensor) -> None:
 @configclass(kw_only=True)
 class MotionJointObsCfg(ObservationTermCfg):
     def __call__(self, ctx) -> ObsTerm:
-        motion = ctx.command_terms["motion"]
-        if not isinstance(motion, WbtMotionCommand):
-            raise TypeError(f"WBT motion command must be WbtMotionCommand, got {type(motion).__name__}.")
-        return ObsTerm(2 * motion.clip.joint_pos.shape[1], motion_joint_obs)
+        return ObsTerm(2 * len(ctx.cfg.commands.motion.joint_names), motion_joint_obs)
 
 
 def motion_reference_position_obs(ctx: ManagerContext, out: torch.Tensor) -> None:

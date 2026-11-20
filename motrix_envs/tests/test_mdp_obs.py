@@ -1,16 +1,19 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+from dataclasses import replace
 from types import SimpleNamespace
 
+import gymnasium as gym
 import numpy as np
 import pytest
 import torch
 
 from motrix_env_core.config.scene import KeyPoseCfg, ModelFileCfg, RobotCfg
+from motrix_env_core.manager.actions import ActionState, ActionTerm
 from motrix_env_core.manager.context import BuildContext
-from motrix_env_core.manager.rand import RandValue, initialize_rand_states
-from motrix_env_core.mdp.action import JointPositionActionState
+from motrix_env_core.manager.kernel_data import Map
+from motrix_env_core.manager.random import RandomSource
 from motrix_env_core.mdp.observations import (
     ActionsObsCfg,
     BodyAngularVelocityObsCfg,
@@ -18,17 +21,22 @@ from motrix_env_core.mdp.observations import (
     BodyLinearVelocityObsCfg,
     UniformNoiseCfg,
 )
-from motrix_env_core.sim import (
-    BodyJointPositionQuery,
-    BodyJointVelocityQuery,
-    JointPositionQuery,
-    LinkAngularVelocityQuery,
-    LinkLinearVelocityQuery,
-    LinkQuaternionQuery,
-)
+from motrix_env_core.sim.model import BodyModel, SimModel
 from motrix_envs.locomotion.wbt.mdp.observations import (
     DofPosRelObsCfg,
 )
+
+
+class _Action(ActionTerm):
+    def _process(self, actions: torch.Tensor) -> torch.Tensor:
+        return actions
+
+    def _reset(self, ids: torch.Tensor) -> None:
+        pass
+
+
+def _action() -> ActionTerm:
+    return _Action(gym.spaces.Box(-1.0, 1.0, (3,)), ActionState(torch.zeros(1, 2, 3), torch.zeros(1, dtype=torch.long)))
 
 
 class _FakeObjs:
@@ -64,57 +72,38 @@ def _env() -> SimpleNamespace:
         base_link_name="resolved_robot",
         key_pose=KeyPoseCfg(joint_names=["a", "b", "c"], poses={"default": [0.5, 1.0, 1.5]}),
     )
-    address = "observations.policy.term"
-    layouts = {
-        # Task-owned plain key: read by the WBT relative-dof-position term.
-        "robot_dof_pos": SimpleNamespace(query=JointPositionQuery(joints=("a", "b", "c")), trailing_shape=(3,)),
-        # Term-owned reserved-namespace keys: read by the framework terms.
-        "obs.robot_joint_pos": SimpleNamespace(
-            query=BodyJointPositionQuery(body="resolved_robot"), trailing_shape=(3,)
-        ),
-        f"{address}/joint_vel": SimpleNamespace(
-            query=BodyJointVelocityQuery(body="resolved_robot"), trailing_shape=(2,)
-        ),
-        f"{address}/base_quat": SimpleNamespace(query=LinkQuaternionQuery(link="resolved_robot"), trailing_shape=(4,)),
-        f"{address}/linear_velocity": SimpleNamespace(
-            query=LinkLinearVelocityQuery(link="resolved_robot"), trailing_shape=(3,)
-        ),
-        f"{address}/angular_velocity": SimpleNamespace(
-            query=LinkAngularVelocityQuery(link="resolved_robot"), trailing_shape=(3,)
-        ),
-    }
-    queries = {key: value.query for key, value in layouts.items()}
-    views = {key: np.zeros((1, *value.trailing_shape), dtype=np.float32) for key, value in layouts.items()}
-    sim_data = _FakeSimData(queries, views)
     joint_names = tuple(robot.resolve_name(name) for name in robot.key_pose.joint_names)
-    body_model = SimpleNamespace(
+    body_model = BodyModel(
+        name="robot",
         base_link_name="resolved_robot",
+        link_names=("resolved_robot",),
         joint_names=joint_names,
-        init_joint_pos=np.zeros(len(joint_names), dtype=np.float32),
+        joint_pos_limits=None,
+        actuators=(),
+        init_base_position=torch.zeros(3),
+        init_base_quat=torch.tensor([0.0, 0.0, 0.0, 1.0]),
+        init_joint_pos=torch.zeros(len(joint_names)),
+        init_link_positions=torch.zeros(1, 3),
+        init_link_quats=torch.tensor([[0.0, 0.0, 0.0, 1.0]]),
     )
-    env = SimpleNamespace(
-        action_space=SimpleNamespace(shape=(3,)),
+    return BuildContext(
         cfg=SimpleNamespace(scene=SimpleNamespace(objs=_FakeObjs(robot))),
-        model=SimpleNamespace(bodies={"robot": body_model}),
-        sim_data=sim_data,
+        num_envs=1,
+        seed=17,
+        actions=Map({"joint_position": _action()}),
+        commands=Map({}),
+        model=SimModel(actuators=(), init_dof_pos=torch.zeros(3), bodies={"robot": body_model}),
     )
-    return BuildContext(env, address)
 
 
 def test_actions_observation_reads_current_actions() -> None:
-    action = JointPositionActionState(
-        action_queue=np.zeros((1, 2, 3), dtype=np.float32),
-        default_angles=np.zeros(3, dtype=np.float32),
-        joint_lower=np.zeros(3, dtype=np.float32),
-        joint_upper=np.zeros(3, dtype=np.float32),
-        action_scales=np.ones(3, dtype=np.float32),
-        delay_steps=np.zeros(1, dtype=np.int64),
-        action_ptr=np.zeros(1, dtype=np.int64),
-        delay_lo=0,
-        delay_hi=0,
+    env = BuildContext(
+        cfg=SimpleNamespace(),
+        num_envs=1,
+        seed=17,
+        actions=Map({"joint_position": _action()}),
+        commands=Map({}),
     )
-    # Host configuration sees an ActionTerm; kernel context sees its state.
-    env = SimpleNamespace(action_terms={"joint_position": SimpleNamespace(state=action)})
     cfg = ActionsObsCfg()
     term = cfg.__call__(env)
     current = np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32)
@@ -160,7 +149,7 @@ def test_robot_dof_pos_rel_obs_cfg_requires_key_pose() -> None:
 
 def test_robot_dof_pos_rel_obs_cfg_requires_scene_robot() -> None:
     ctx = _env()
-    ctx._env.cfg = SimpleNamespace(scene=SimpleNamespace(objs=_FakeObjs(robot=None)))
+    ctx = replace(ctx, cfg=SimpleNamespace(scene=SimpleNamespace(objs=_FakeObjs(robot=None))))
 
     with pytest.raises(TypeError, match="RobotCfg"):
         DofPosRelObsCfg().__call__(ctx)
@@ -185,22 +174,25 @@ def test_robot_base_velocities_are_expressed_in_the_base_local_frame() -> None:
     np.testing.assert_allclose(angular_out.numpy()[0], [2.0, 0.0, 0.0], atol=1e-6)
 
 
-def test_robot_observation_noise_uses_one_stateful_sequence_per_environment() -> None:
+def test_robot_observation_noise_follows_training_seed_and_default_rng() -> None:
     dof_vel = torch.from_numpy(np.tile(np.asarray([1.0, 2.0], dtype=np.float32), (2, 1)))
     term = BodyJointVelObsCfg(noise=UniformNoiseCfg(amplitude=0.25)).__call__(_env())
 
-    def evaluate(rng_states: torch.Tensor) -> np.ndarray:
+    def evaluate(ctx: SimpleNamespace) -> np.ndarray:
         out = torch.empty((2, dof_vel.shape[1]), dtype=torch.float32)
-        # The batch context shares (and advances) the per-env RNG state in place.
-        rand = RandValue(rng_states)
-        term.dispatch(SimpleNamespace(rand=rand), out, dof_vel, *term.args[1:])
+        term.dispatch(ctx, out, dof_vel, *term.args[1:])
         return out.numpy()
 
-    rng_states = initialize_rand_states(2, rand_seed=7)
-    first = evaluate(rng_states)
-    continued = evaluate(rng_states)
-    reproduced = evaluate(initialize_rand_states(2, rand_seed=7))
-    different_seed = evaluate(initialize_rand_states(2, rand_seed=8))
+    torch.manual_seed(7)
+    default_state = torch.get_rng_state().clone()
+    ctx = SimpleNamespace(rand=RandomSource())
+    first = evaluate(ctx)
+    continued = evaluate(ctx)
+    assert not torch.equal(default_state, torch.get_rng_state())
+    torch.manual_seed(7)
+    reproduced = evaluate(SimpleNamespace(rand=RandomSource()))
+    torch.manual_seed(8)
+    different_seed = evaluate(SimpleNamespace(rand=RandomSource()))
 
     np.testing.assert_array_equal(reproduced, first)
     assert np.any(continued != first)

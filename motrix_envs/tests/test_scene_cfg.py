@@ -55,6 +55,7 @@ from motrix_env_core.config.scene import (
     validate_scene_cfg,
 )
 from motrix_env_core.direct.env import DirectEnv, DirectEnvCfg
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_motrixsim.compiler import build_scene_model, build_scene_world
 from motrix_envs.config.scene import StandardSceneAssetsCfg, StandardSceneCfg, StandardSceneObjsCfg
 from motrix_envs.locomotion.humanoid.dex_evt import make_dex_evt_walk_flat_cfg, make_dex_evt_walk_rough_cfg
@@ -1162,10 +1163,13 @@ class SceneBackedCartPoleEnv(DirectEnv[SceneBackedCartPoleCfg]):
     def __init__(self, cfg: SceneBackedCartPoleCfg):
         super().__init__(cfg)
         self.model = self.sim.compile_model({})
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32))}
+        )
 
     @property
-    def observation_space(self) -> gym.spaces.Box:
-        return gym.spaces.Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32)
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self) -> gym.spaces.Box:
