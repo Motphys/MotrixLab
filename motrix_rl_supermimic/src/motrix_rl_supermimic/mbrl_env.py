@@ -19,7 +19,7 @@ from motrix_env_core.manager.rewards import RewardTerm, create_reward_terms
 from motrix_env_core.manager.terminations import TerminationTermCfg
 from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.torch_manager.runtime import TorchTaskProgram
-from motrix_rl_supermimic.imagination import ImaginationCfg
+from motrix_rl_supermimic.imagination import ImaginationCfg, ImaginationRuntime
 from motrix_rl_supermimic.manager_task import ManagerTaskMDP
 from motrix_rl_supermimic.recorder import TransitionRecorder
 from motrix_rl_supermimic.reference_command import ReferenceCommand
@@ -164,8 +164,8 @@ class MbrlEnv(ManagerEnv):
         return self._recorder.snapshot(result)
 
 
-def assemble_task(cfg: MbrlEnvCfg, device: str) -> ManagerTaskMDP:
-    """Assemble the analytic task from an explicit configuration variant.
+def assemble_task(cfg: MbrlEnvCfg, device: str) -> tuple[ManagerTaskMDP, ImaginationRuntime]:
+    """Assemble the analytic MDP and its separately owned input-binding runtime.
 
     The caller chooses the variant (``cfg.for_imagined()`` for the learner's
     imagination program); assembly itself never applies one.
@@ -245,7 +245,7 @@ def assemble_task(cfg: MbrlEnvCfg, device: str) -> ManagerTaskMDP:
                 total = total + call.invoke(ctx).to(torch.float32) * weight
             return total
 
-        return ManagerTaskMDP(
+        mdp = ManagerTaskMDP(
             cfg.ctrl_dt,
             1.0,
             imagination,
@@ -258,7 +258,8 @@ def assemble_task(cfg: MbrlEnvCfg, device: str) -> ManagerTaskMDP:
             world_context=world_context,
             observation_spec=observation_spec,
             action_space=action_space,
-            action_slices=action_slices,
             world_state=world_state,
             reference_action=cfg.reference_action,
         )
+        binding = ImaginationRuntime(imagination, world_state, world_context, action_slices, cfg.ctrl_dt)
+        return mdp, binding

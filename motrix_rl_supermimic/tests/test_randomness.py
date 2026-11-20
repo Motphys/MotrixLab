@@ -71,11 +71,13 @@ def test_model_initialization_restores_stream_when_factory_raises() -> None:
 
 
 def test_learner_model_roles_do_not_consume_default_rng_or_couple_widths(tmp_path: Path) -> None:
-    task = make_toy_task()
+    task, task_binding = make_toy_task()
     before = torch.get_rng_state()
-    first = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8)), task, 1, 0.02, "cpu", tmp_path, seed=17)
+    first = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8)), task, task_binding, 1, 0.02, "cpu", tmp_path, seed=17)
     torch.testing.assert_close(torch.get_rng_state(), before)
-    second = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8, wm_hidden=16)), task, 1, 0.02, "cpu", tmp_path, seed=17)
+    second = Learner(
+        SuperMimicCfg(agent=AgentCfg(hidden=8, wm_hidden=16)), task, task_binding, 1, 0.02, "cpu", tmp_path, seed=17
+    )
     torch.testing.assert_close(torch.get_rng_state(), before)
     for name in ("pi", "critic"):
         for actual, expected in zip(getattr(first, name).parameters(), getattr(second, name).parameters(), strict=True):
@@ -87,22 +89,22 @@ def test_unseeded_learner_model_construction_preserves_default_rng(
 ) -> None:
     import motrix_rl_supermimic.randomness as randomness
 
-    task = make_toy_task()
+    task, task_binding = make_toy_task()
     before = torch.get_rng_state()
     monkeypatch.setattr(randomness.secrets, "randbits", lambda bits: 51)
-    learner = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8)), task, 1, 0.02, "cpu", tmp_path)
+    learner = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8)), task, task_binding, 1, 0.02, "cpu", tmp_path)
     assert learner.root_seed == 51
     torch.testing.assert_close(torch.get_rng_state(), before)
 
 
 def test_checkpoint_restores_root_and_learner_default_rng(tmp_path: Path) -> None:
-    task = make_toy_task()
+    task, task_binding = make_toy_task()
     cfg = SuperMimicCfg(agent=AgentCfg(hidden=8))
-    first = Learner(cfg, task, 1, 0.02, "cpu", tmp_path, seed=17)
+    first = Learner(cfg, task, task_binding, 1, 0.02, "cpu", tmp_path, seed=17)
     first.save(0)
     expected_state = torch.get_rng_state()
     torch.rand(50)
-    restored = Learner(cfg, task, 1, 0.02, "cpu", tmp_path, seed=99)
+    restored = Learner(cfg, task, task_binding, 1, 0.02, "cpu", tmp_path, seed=99)
     restored.load(str(tmp_path / "last.pt"))
     assert restored.root_seed == 17
     torch.testing.assert_close(torch.get_rng_state(), expected_state)

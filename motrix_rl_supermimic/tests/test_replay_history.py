@@ -147,9 +147,9 @@ def test_learner_samples_starts_with_bound_imagination_horizon(tmp_path) -> None
         def __call__(self, ctx: BuildContext) -> ClipImagination:
             return ClipImagination()
 
-    task = make_toy_task(cfg=ToyEnvCfg(imagination=ClipImaginationCfg()))
+    task, task_binding = make_toy_task(cfg=ToyEnvCfg(imagination=ClipImaginationCfg()))
     cfg = SuperMimicCfg(agent=AgentCfg(hidden=8), trainer=TrainerCfg(pi_batch=16, horizon=3))
-    learner = Learner(cfg, task, 1, 0.02, "cpu", tmp_path)
+    learner = Learner(cfg, task, task_binding, 1, 0.02, "cpu", tmp_path)
     for step in range(5):
         learner.buffer.add(_row(step))
     start, history = learner.starts()
@@ -165,7 +165,7 @@ def test_episode_padding_reuses_same_noise_realization_and_preserves_gradients(t
 
     from motrix_env_core.observations import append_observation
 
-    learner = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8)), make_toy_task(), 1, 0.02, "cpu", tmp_path)
+    learner = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8)), *make_toy_task(), 1, 0.02, "cpu", tmp_path)
     replay = ReplayBuffer(4, 1, state_dim=2, context_dim=0, action_dim=1)
     replay.add(_row(0))
     _, history = replay.sample_starts(2, hist=4)

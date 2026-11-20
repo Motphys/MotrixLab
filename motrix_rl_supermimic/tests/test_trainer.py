@@ -218,8 +218,8 @@ def test_play_loads_policy_and_preserves_step_failure(tmp_path, monkeypatch, che
     cfg.trainer.iterations = 1
     from motrix_rl_supermimic.learner import Learner
 
-    task = assemble_task(play_env.cfg.for_imagined(), "cpu")
-    learner = Learner(cfg, task, play_env.num_envs, play_env.cfg.ctrl_dt, "cpu", tmp_path, seed=17)
+    task, task_binding = assemble_task(play_env.cfg.for_imagined(), "cpu")
+    learner = Learner(cfg, task, task_binding, play_env.num_envs, play_env.cfg.ctrl_dt, "cpu", tmp_path, seed=17)
     with torch.no_grad():
         for parameter in learner.pi.parameters():
             parameter.zero_()
@@ -278,8 +278,8 @@ def test_resume_uses_checkpoint_root_before_nonpersistent_reference_factory(tmp_
     register_toy()
     cfg = SuperMimicCfg(device="cpu", agent=AgentCfg(hidden=8, pi_ref_skip=True))
     monkeypatch.setattr(ToyEnvCfg, "reference_action", lambda self: _RandomReference())
-    task = assemble_task(ToyEnvCfg().for_imagined(), "cpu")
-    original = Learner(cfg, task, 1, 0.02, "cpu", tmp_path, seed=17)
+    task, task_binding = assemble_task(ToyEnvCfg().for_imagined(), "cpu")
+    original = Learner(cfg, task, task_binding, 1, 0.02, "cpu", tmp_path, seed=17)
     original.save(0)
     checkpoint_path = str(tmp_path / "last.pt")
     context = TrainerContext(
@@ -298,7 +298,7 @@ def test_resume_uses_checkpoint_root_before_nonpersistent_reference_factory(tmp_
         metrics=MetricsLogger.disabled(),
         resume_from=checkpoint_path,
     )
-    monkeypatch.setattr(trainer_module, "assemble_task", lambda cfg, device: task)
+    monkeypatch.setattr(trainer_module, "assemble_task", lambda cfg, device: (task, task_binding))
     loads = []
     load = torch.load
 

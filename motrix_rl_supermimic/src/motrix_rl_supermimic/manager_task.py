@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 
 import torch
 from gymnasium.spaces import Box
@@ -17,7 +17,7 @@ from motrix_env_core.manager.resolver import ManagerTermResolver, ObservationTer
 from motrix_env_core.manager.rewards import RewardTerm
 from motrix_env_core.manager.terminations import TerminationTerm
 from motrix_env_core.observations import ObservationSpec
-from motrix_rl_supermimic.imagination import ImaginationRuntime, ImaginationTerm
+from motrix_rl_supermimic.imagination import ImaginationTerm
 from motrix_rl_supermimic.world_context import WorldContext
 from motrix_rl_supermimic.world_state import WorldState
 
@@ -25,10 +25,10 @@ from motrix_rl_supermimic.world_state import WorldState
 class ManagerTaskMDP:
     """Simulator-free MDP over fused Manager numerical calls.
 
-    Callers bind reference-only or predicted inputs once through ``binding`` and
-    share the resulting Context across numerical heads. Heads return flat N-row
-    tensors; callers restore their original leading batch dimensions. Affine
-    parameters normalize world-model context independently of that binding.
+    Callers provide a ManagerContext assembled by their separately owned
+    imagination runtime and share it across numerical heads. Heads return flat
+    N-row tensors; callers restore their original leading batch dimensions.
+    World-model context normalization remains independent of input binding.
     """
 
     def __init__(  # noqa: PLR0913
@@ -46,7 +46,6 @@ class ManagerTaskMDP:
         world_context: WorldContext,
         observation_spec: ObservationSpec,
         action_space: Box,
-        action_slices: Mapping[str, slice],
         world_state: WorldState,
         reference_action: Callable[[], nn.Module | None],
     ) -> None:
@@ -56,7 +55,6 @@ class ManagerTaskMDP:
         self.dt = dt
         self.reward_weight = reward_weight
         self.imagination = imagination
-        self.binding = ImaginationRuntime(imagination, world_state, world_context, action_slices, dt)
         self.policy_call = resolver.resolve_observation("policy", "task", policy)
         self.value_call = resolver.resolve_observation("value", "task", value)
         self.goal_call = resolver.resolve_observation("goal", "task", goal)

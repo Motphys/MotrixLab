@@ -64,7 +64,7 @@ def test_named_context_terms_derive_width_and_capture_live_partial_reset_data(dy
     cfg.commands["reference"] = _MutatingCommandCfg()
     env = make_toy(cfg=cfg, num_envs=2)
     env.init_state()
-    task = assemble_task(cfg.for_imagined(), "cpu")
+    task, task_binding = assemble_task(cfg.for_imagined(), "cpu")
     assert task.world_context.size == env.world_context.size == 3
     assert env.world_context.slices == task.world_context.slices == {"reference": slice(0, 1), "physical": slice(1, 3)}
     env.command_terms["reference"].context.copy_(torch.tensor([[2.0], [4.0]]))
@@ -99,10 +99,10 @@ def test_term_factories_follow_default_device() -> None:
 def test_task_assembly_scopes_device_without_changing_callers_default() -> None:
     cfg = ToyEnvCfg()
     with torch.device("meta"):
-        task = assemble_task(cfg.for_imagined(), "cpu")
+        task, task_binding = assemble_task(cfg.for_imagined(), "cpu")
         assert torch.empty(0).device.type == "meta"
     assert task.world_context.center.device.type == "cpu"
-    assert task.goal(task.binding.bind_reference(torch.tensor([0]))).device.type == "cpu"
+    assert task.goal(task_binding.bind_reference(torch.tensor([0]))).device.type == "cpu"
 
 
 @pytest.fixture()
@@ -136,11 +136,11 @@ def test_registered_toy_uses_configured_backend_and_records_transition(dynamo_ea
     assert transition["ep_step"].tolist() == [0, 0]
     assert transition["f"].tolist() == [0, 0]
     torch.testing.assert_close(transition["s1"][:, 0], torch.full((2,), 0.1 * manager.cfg.sim_substeps))
-    imagined = assemble_task(manager.cfg.for_imagined(), "cpu")
+    imagined, imagined_binding = assemble_task(manager.cfg.for_imagined(), "cpu")
     torch.testing.assert_close(
         transition["r"],
         imagined.reward(
-            imagined.binding.bind(
+            imagined_binding.bind(
                 manager.command_terms["reference"].frame,
                 state=transition["s1"],
                 action=transition["a"],
@@ -213,7 +213,7 @@ def test_term_widths_drive_real_and_learner_assembly(dynamo_eager: None, tmp_pat
             return ObsTerm(self.width, observe)
 
     cfg = ToyEnvCfg()
-    original = assemble_task(cfg.for_imagined(), "cpu")
+    original, original_binding = assemble_task(cfg.for_imagined(), "cpu")
     cfg.goal_frames = 1
     cfg.actions = {"auxiliary": _AuxiliaryActionCfg(), **cfg.actions}
     cfg.observations["policy"] = {"features": Observation(width=6)}
@@ -221,14 +221,14 @@ def test_term_widths_drive_real_and_learner_assembly(dynamo_eager: None, tmp_pat
     cfg.observations["goal"] = {"features": Observation(width=7)}
     env = make_toy(cfg=cfg, num_envs=2)
     result = env.init_state()
-    task = assemble_task(cfg.for_imagined(), "cpu")
+    task, task_binding = assemble_task(cfg.for_imagined(), "cpu")
     assert task.world_state.size == original.world_state.size
     assert task.world_context.size == original.world_context.size
     assert task.action_dim == original.action_dim + 2 == env.action_space.shape[0]
     assert task.observation_dim == result.obs.policy.shape[-1] == 6
     assert task.critic_observation_dim == result.obs.value.shape[-1] == 5
     assert task.goal_dim == result.obs["goal"].shape[-1] == 7
-    learner = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8)), task, 2, cfg.ctrl_dt, "cpu", tmp_path)
+    learner = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8)), task, task_binding, 2, cfg.ctrl_dt, "cpu", tmp_path)
     action = learner.pi(result.obs.policy[:, None], result.obs["goal"])
     assert action.shape == (env.num_envs, task.action_dim)
     assert learner.pi.obs_norm.mean.shape[-1] == task.observation_dim
@@ -290,7 +290,7 @@ def test_reference_command_rejects_non_integer_frame() -> None:
 
 
 def test_initial_observation_and_learner_task(env: MbrlEnv) -> None:
-    imagined = assemble_task(env.cfg.for_imagined(), "cpu")
+    imagined, imagined_binding = assemble_task(env.cfg.for_imagined(), "cpu")
     assert imagined.world_state.size == env.world_state.size
     assert imagined.world_context.size == env.world_context.size
     assert env.command_terms["reference"].frame.tolist() == [0, 0, 0]
@@ -302,14 +302,14 @@ def test_initial_observation_and_learner_task(env: MbrlEnv) -> None:
     assert env.observation_spec["goal"].space.shape == (imagined.goal_dim,)
     assert imagined.observation_spec["goal"].space.shape == env.observation_spec["goal"].space.shape
     torch.testing.assert_close(
-        env.state.obs["goal"], imagined.goal(imagined.binding.bind_reference(env.command_terms["reference"].frame))
+        env.state.obs["goal"], imagined.goal(imagined_binding.bind_reference(env.command_terms["reference"].frame))
     )
     torch.testing.assert_close(env.command_terms["reference"].context, torch.zeros(3, 0))
     torch.testing.assert_close(env.action_terms["velocity"].state.current(), torch.zeros(3, 1))
     torch.testing.assert_close(
         env.state.obs.value,
         imagined.critic_observation(
-            imagined.binding.bind(
+            imagined_binding.bind(
                 env.command_terms["reference"].frame,
                 state=_flat_state(env.sim_data.view("position"), env.sim_data.view("velocity")),
                 action=(_flat_state(env.sim_data.view("position"), env.sim_data.view("velocity"))).new_zeros(
@@ -325,7 +325,7 @@ def test_initial_observation_and_learner_task(env: MbrlEnv) -> None:
     torch.testing.assert_close(
         env.state.obs.policy[:, -imagined.observation_dim :],
         imagined.observation(
-            imagined.binding.bind(
+            imagined_binding.bind(
                 env.command_terms["reference"].frame,
                 state=_flat_state(env.sim_data.view("position"), env.sim_data.view("velocity")),
                 action=env.action_terms["velocity"].state.current(),
@@ -366,11 +366,11 @@ def test_shared_heads_frame_reward_units_and_action_history(
         assert transition["f"].tolist() == [step % len(TARGETS)] * 3
         assert transition["ep_step"].tolist() == [step] * 3
         torch.testing.assert_close(transition["a_prev"], previous)
-        imagined = assemble_task(env.cfg.for_imagined(), "cpu")
+        imagined, imagined_binding = assemble_task(env.cfg.for_imagined(), "cpu")
         torch.testing.assert_close(
             transition["r"],
             imagined.reward(
-                imagined.binding.bind(
+                imagined_binding.bind(
                     env.command_terms["reference"].frame,
                     state=transition["s1"],
                     action=action,
@@ -381,11 +381,11 @@ def test_shared_heads_frame_reward_units_and_action_history(
                 )
             ),
         )
-        imagined = assemble_task(env.cfg.for_imagined(), "cpu")
+        imagined, imagined_binding = assemble_task(env.cfg.for_imagined(), "cpu")
         torch.testing.assert_close(
             env.state.obs.policy[:, -imagined.observation_dim :],
             imagined.observation(
-                imagined.binding.bind(
+                imagined_binding.bind(
                     env.command_terms["reference"].frame,
                     state=_flat_state(env.sim_data.view("position"), env.sim_data.view("velocity")),
                     action=action,
@@ -476,11 +476,11 @@ def test_truncation_keeps_endpoint_and_resets_episode(dynamo_eager: None) -> Non
     assert result.final_obs is not None
     torch.testing.assert_close(result.obs["goal"], torch.full((2, cfg.goal_frames), TARGETS[0]))
     torch.testing.assert_close(result.final_obs.obs["goal"], torch.full((2, cfg.goal_frames), TARGETS[1]))
-    imagined = assemble_task(env.cfg.for_imagined(), "cpu")
+    imagined, imagined_binding = assemble_task(env.cfg.for_imagined(), "cpu")
     torch.testing.assert_close(
         result.final_obs.obs.value,
         imagined.critic_observation(
-            imagined.binding.bind(
+            imagined_binding.bind(
                 torch.ones(2, dtype=torch.long),
                 state=env.snapshot_transition(env.state)["s1"],
                 action=(env.snapshot_transition(env.state)["s1"]).new_zeros(
@@ -498,9 +498,9 @@ def test_truncation_keeps_endpoint_and_resets_episode(dynamo_eager: None) -> Non
 def test_soft_termination_is_not_the_hard_environment_boundary(env: MbrlEnv) -> None:
     env.sim.position.fill_(1.6)
     env.sim_data.execute()
-    task = assemble_task(env.cfg.for_imagined(), "cpu")
+    task, task_binding = assemble_task(env.cfg.for_imagined(), "cpu")
     action = torch.zeros(3, task.action_dim)
-    ctx = task.binding.bind(
+    ctx = task_binding.bind(
         env.command_terms["reference"].frame,
         state=_flat_state(env.sim_data.view("position"), env.sim_data.view("velocity")),
         action=action,
@@ -522,24 +522,24 @@ def test_status_buffer_and_control_duration(env: MbrlEnv) -> None:
 
 
 def test_compiled_task_heads_preserve_values_and_gradients(dynamo_eager: None) -> None:
-    eager, compiled = make_toy_task(), make_toy_task()
+    (eager, eager_binding), (compiled, compiled_binding) = make_toy_task(), make_toy_task()
     compile_task_heads(compiled)
     state = torch.randn(3, eager.world_state.size, requires_grad=True)
     action = torch.randn(3, 1, requires_grad=True)
     previous, frame, context = torch.zeros_like(action), torch.arange(3), torch.zeros(3, 0)
     outputs = []
-    for task in (eager, compiled):
+    for task, task_binding in ((eager, eager_binding), (compiled, compiled_binding)):
         torch.manual_seed(0)
-        observed = task.binding.bind(frame, state=state, action=previous, previous=previous, context=context)
-        physical = task.binding.bind(frame, state=state, action=action, previous=previous, context=context)
-        critic_ctx = task.binding.bind(frame, state=state, action=previous, previous=previous, context=context)
+        observed = task_binding.bind(frame, state=state, action=previous, previous=previous, context=context)
+        physical = task_binding.bind(frame, state=state, action=action, previous=previous, context=context)
+        critic_ctx = task_binding.bind(frame, state=state, action=previous, previous=previous, context=context)
         outputs.append(
             (
                 task.observation(observed),
                 task.reward(physical),
                 task.soft_termination(physical),
                 task.critic_observation(critic_ctx),
-                task.goal(task.binding.bind_reference(frame)),
+                task.goal(task_binding.bind_reference(frame)),
                 task.normalize_context(context),
             )
         )
@@ -548,7 +548,7 @@ def test_compiled_task_heads_preserve_values_and_gradients(dynamo_eager: None) -
     gradients = [
         torch.autograd.grad(
             task.reward(
-                task.binding.bind(
+                task_binding.bind(
                     frame,
                     state=state,
                     action=action,
@@ -558,7 +558,7 @@ def test_compiled_task_heads_preserve_values_and_gradients(dynamo_eager: None) -
             ).sum(),
             (state, action),
         )
-        for task in (eager, compiled)
+        for task, task_binding in ((eager, eager_binding), (compiled, compiled_binding))
     ]
     for result, reference in zip(*gradients, strict=True):
         torch.testing.assert_close(result, reference)
@@ -572,11 +572,11 @@ def test_inductor_manager_schedule_matches_shared_heads() -> None:
     for action in (torch.full((2, 1), 0.1), torch.full((2, 1), -0.2)):
         result = env.step(action)
         transition = env.snapshot_transition(env.state)
-        imagined = assemble_task(env.cfg.for_imagined(), "cpu")
+        imagined, imagined_binding = assemble_task(env.cfg.for_imagined(), "cpu")
         torch.testing.assert_close(
             result.reward,
             imagined.reward(
-                imagined.binding.bind(
+                imagined_binding.bind(
                     (transition["f"] + 1) % len(TARGETS),
                     state=transition["s1"],
                     action=transition["a"],

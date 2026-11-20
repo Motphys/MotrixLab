@@ -33,13 +33,13 @@ def test_amp_modes_resolve_and_unknown_precision_is_rejected() -> None:
 def test_learner_rejects_unavailable_execution_modes(tmp_path, options: dict, message: str) -> None:
     cfg = SuperMimicCfg(agent=AgentCfg(hidden=8), trainer=TrainerCfg(**options))
     with pytest.raises(ValueError, match=message):
-        Learner(cfg, make_toy_task(), 2, 0.02, "cpu", tmp_path)
+        Learner(cfg, *make_toy_task(), 2, 0.02, "cpu", tmp_path)
 
 
 def test_learner_uses_task_goal_window_and_rejects_mismatched_checkpoint(tmp_path) -> None:
     cfg = SuperMimicCfg(agent=AgentCfg(hidden=8))
-    task = make_toy_task(cfg=ToyEnvCfg(goal_frames=3))
-    learner = Learner(cfg, task, 2, 0.02, "cpu", tmp_path)
+    task, task_binding = make_toy_task(cfg=ToyEnvCfg(goal_frames=3))
+    learner = Learner(cfg, task, task_binding, 2, 0.02, "cpu", tmp_path)
     assert learner.mdp is task
     assert learner.goal_dim == task.observation_spec["goal"].space.shape[0]
     assert learner.pi.enc[0].in_features == learner.goal_dim
@@ -55,8 +55,8 @@ def test_learner_uses_task_goal_window_and_rejects_mismatched_checkpoint(tmp_pat
 
 
 def test_learner_world_model_uses_task_control_duration(tmp_path) -> None:
-    task = make_toy_task(cfg=ToyEnvCfg(ctrl_dt=0.06))
-    learner = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8)), task, 1, task.dt, "cpu", tmp_path)
+    task, task_binding = make_toy_task(cfg=ToyEnvCfg(ctrl_dt=0.06))
+    learner = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8)), task, task_binding, 1, task.dt, "cpu", tmp_path)
     assert learner.wm.dt == task.dt == 0.06
 
 

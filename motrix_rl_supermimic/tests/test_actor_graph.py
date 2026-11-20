@@ -10,6 +10,7 @@ import torch
 from _helpers import make_toy_task
 from motrix_rl_supermimic.actor_graph import ActorLoss, ActorLossGraph, ActorModels
 from motrix_rl_supermimic.config import TrainerCfg
+from motrix_rl_supermimic.imagination import ImaginationRuntime
 from motrix_rl_supermimic.manager_task import ManagerTaskMDP
 from motrix_rl_supermimic.networks import Critic, Policy, WorldModel
 from motrix_rl_supermimic.toy import ToyEnvCfg
@@ -17,8 +18,8 @@ from motrix_rl_supermimic.toy import ToyEnvCfg
 
 def actor_inputs(
     device: str,
-) -> tuple[Policy, ActorModels, ManagerTaskMDP, TrainerCfg, tuple[torch.Tensor, ...]]:
-    mdp = make_toy_task(device, cfg=ToyEnvCfg(goal_frames=2))
+) -> tuple[Policy, ActorModels, ManagerTaskMDP, ImaginationRuntime, TrainerCfg, tuple[torch.Tensor, ...]]:
+    mdp, mdp_binding = make_toy_task(device, cfg=ToyEnvCfg(goal_frames=2))
     cfg = TrainerCfg(horizon=2, pi_batch=3)
     pi = Policy(
         mdp.observation_dim, mdp.goal_dim, mdp.action_dim, hist=mdp.observation_spec.policy.history_length, hidden=(8,)
@@ -32,17 +33,17 @@ def actor_inputs(
     frame = torch.zeros(3, dtype=torch.long, device=device)
     previous = torch.zeros(3, 1, device=device)
     obs = (
-        mdp.observation(mdp.binding.bind(frame, state=state, action=previous, previous=previous, context=xi))[:, None]
+        mdp.observation(mdp_binding.bind(frame, state=state, action=previous, previous=previous, context=xi))[:, None]
         .expand(-1, 2, -1)
         .contiguous()
     )
-    goal = mdp.goal(mdp.binding.bind_reference(frame))
-    return pi, ActorModels(wm, critic), mdp, cfg, (state, xi, frame, previous, obs, goal)
+    goal = mdp.goal(mdp_binding.bind_reference(frame))
+    return pi, ActorModels(wm, critic), mdp, mdp_binding, cfg, (state, xi, frame, previous, obs, goal)
 
 
 def test_actor_views_share_weights_but_refresh_replaced_normalizer_buffers():
-    pi, models, mdp, cfg, args = actor_inputs("cpu")
-    module = ActorLoss(pi, models, mdp, cfg)
+    pi, models, mdp, mdp_binding, cfg, args = actor_inputs("cpu")
+    module = ActorLoss(pi, models, mdp, mdp_binding, cfg)
     assert list(module.parameters()) == list(pi.parameters())
     for actual, borrowed in ((models.wm, module.models.wm), (models.critic, module.models.critic)):
         assert all(a is b for a, b in zip(actual.parameters(), borrowed.parameters()))
@@ -72,8 +73,8 @@ def test_actor_views_share_weights_but_refresh_replaced_normalizer_buffers():
 
 
 def test_batched_goal_encoding_matches_per_step_loss_and_gradients(monkeypatch: pytest.MonkeyPatch) -> None:
-    pi, models, mdp, cfg, args = actor_inputs("cpu")
-    direct = ActorLoss(pi, models, mdp, cfg)
+    pi, models, mdp, mdp_binding, cfg, args = actor_inputs("cpu")
+    direct = ActorLoss(pi, models, mdp, mdp_binding, cfg)
     encode_goal = direct.pi.encode_goal
 
     def encode_per_step(goals: torch.Tensor) -> torch.Tensor:
@@ -81,7 +82,7 @@ def test_batched_goal_encoding_matches_per_step_loss_and_gradients(monkeypatch: 
 
     monkeypatch.setattr(direct.pi, "encode_goal", encode_per_step)
     batched_pi = copy.deepcopy(pi)
-    batched = ActorLoss(batched_pi, models, mdp, cfg)
+    batched = ActorLoss(batched_pi, models, mdp, mdp_binding, cfg)
     rng = torch.get_rng_state()
     expected = direct(*args)
     assert len(expected) == 7
@@ -100,13 +101,13 @@ def test_actor_loss_uses_configured_reward_term_and_preserves_action_gradients()
     from motrix_env_core.manager.resolver import ManagerTermResolver
     from motrix_env_core.manager.rewards import RewardTerm
 
-    pi, models, mdp, cfg, _ = actor_inputs("cpu")
+    pi, models, mdp, mdp_binding, cfg, _ = actor_inputs("cpu")
 
     def reward(ctx: ManagerContext) -> torch.Tensor:
         return ctx.actions["velocity"].current().sum(-1) + 3
 
     mdp.reward_call = ManagerTermResolver().resolve_reward("configured", 0, RewardTerm(reward))
-    module = ActorLoss(pi, models, mdp, cfg)
+    module = ActorLoss(pi, models, mdp, mdp_binding, cfg)
     state = torch.zeros(3, mdp.world_state.size)
     frame = torch.zeros(3, dtype=torch.long)
     action = torch.ones(3, mdp.action_dim, requires_grad=True)
@@ -121,10 +122,10 @@ def test_actor_graph_matches_direct_loss_and_gradients():
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     torch.manual_seed(37)
-    pi, models, mdp, cfg, args = actor_inputs("cuda")
+    pi, models, mdp, mdp_binding, cfg, args = actor_inputs("cuda")
     direct_pi = copy.deepcopy(pi)
-    direct = ActorLoss(direct_pi, models, mdp, cfg)
-    graph = ActorLossGraph(pi, models, mdp, cfg)
+    direct = ActorLoss(direct_pi, models, mdp, mdp_binding, cfg)
+    graph = ActorLossGraph(pi, models, mdp, mdp_binding, cfg)
     # Repeated calls include capture, replay, live-weight and norm updates.
     for _ in range(2):
         observations = torch.randn(8, 4, device="cuda")

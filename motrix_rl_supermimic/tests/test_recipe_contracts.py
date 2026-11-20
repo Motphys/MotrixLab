@@ -98,8 +98,8 @@ def test_reference_action_policy_contract(tmp_path, enabled: bool) -> None:
 
     cfg = SuperMimicCfg(agent=AgentCfg(hidden=16, pi_ref_skip=enabled))
     env_cfg = _ReferenceEnvCfg(goal_frames=1)
-    mdp = assemble_task(env_cfg.for_imagined(), "cpu")
-    learner = Learner(cfg, mdp, 1, mdp.dt, "cpu", tmp_path)
+    mdp, mdp_binding = assemble_task(env_cfg.for_imagined(), "cpu")
+    learner = Learner(cfg, mdp, mdp_binding, 1, mdp.dt, "cpu", tmp_path)
     collector = build_policy(
         cfg.agent,
         obs_dim=mdp.observation_dim,
@@ -182,7 +182,7 @@ def test_ema_starts_from_initial_weights():
 
     learner = Learner(
         cfg,
-        assemble_task(env.cfg.for_imagined(), "cpu"),
+        *assemble_task(env.cfg.for_imagined(), "cpu"),
         env.num_envs,
         env.cfg.ctrl_dt,
         "cpu",
@@ -292,7 +292,7 @@ def test_transition_fields_roundtrip(transport):
 
     from motrix_rl.transport.ring import HostTransitionRing, RingCursors
 
-    task = make_toy_task()
+    task, task_binding = make_toy_task()
     schema = transition_schema(
         state_dim=task.world_state.size, context_dim=task.world_context.size, action_dim=task.action_dim
     )

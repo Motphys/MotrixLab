@@ -24,6 +24,7 @@ from torch import nn
 from motrix_env_core.observations import append_observation
 from motrix_rl_supermimic.actor_graph import ActorLossGraph, ActorModels
 from motrix_rl_supermimic.config import SuperMimicCfg
+from motrix_rl_supermimic.imagination import ImaginationRuntime
 from motrix_rl_supermimic.manager_task import ManagerTaskMDP
 from motrix_rl_supermimic.networks import Critic, WorldModel, build_policy, resolve_amp_dtype, run_mlp
 from motrix_rl_supermimic.optim import MuonAdam, policy_multiplier
@@ -62,6 +63,7 @@ class Learner:
         self,
         cfg: SuperMimicCfg,
         task: ManagerTaskMDP,
+        binding: ImaginationRuntime,
         num_envs: int,
         action_dt: float,
         device: str,
@@ -70,6 +72,7 @@ class Learner:
         seed: int | None = None,
     ) -> None:
         self.cfg, self.mdp, self.dev = cfg, task, device
+        self.binding = binding
         self.root_seed = resolve_seed(seed)
         self.observation_spec = task.observation_spec
         if self.observation_spec.value_or_policy.history_length != 1:
@@ -171,7 +174,9 @@ class Learner:
             )
         self._actor_loss_graph = None
         if t.cuda_graph_actor_loss:
-            self._actor_loss_graph = ActorLossGraph(self.pi, ActorModels(self.wm_imag, self.critic), self.mdp, t)
+            self._actor_loss_graph = ActorLossGraph(
+                self.pi, ActorModels(self.wm_imag, self.critic), self.mdp, self.binding, t
+            )
         self.iteration = self.sim_steps = 0
         self.decay_at: int | None = None
         self._nonfinite_actor = torch.zeros((), device=device)
@@ -246,7 +251,7 @@ class Learner:
 
     def observation_history(self, history: dict[str, torch.Tensor]) -> torch.Tensor:
         """Reconstruct noisy frames, then repeat the actual episode first frame."""
-        ctx = self.mdp.binding.bind(
+        ctx = self.binding.bind(
             history["f"],
             state=history["s"],
             action=history["a_prev"],
@@ -262,7 +267,7 @@ class Learner:
     ) -> torch.Tensor:
         # Preserve the critic's action-independent inputs and normalized context.
         zero_action = context.new_zeros((*frame.shape, self.mdp.action_dim))
-        ctx = self.mdp.binding.bind(frame, state=state, action=zero_action, previous=zero_action, context=context)
+        ctx = self.binding.bind(frame, state=state, action=zero_action, previous=zero_action, context=context)
         observation = self.mdp.critic_observation(ctx).reshape(*frame.shape, self.mdp.critic_observation_dim)
         return torch.cat((observation, goal), -1)
 
@@ -288,7 +293,7 @@ class Learner:
         context = self.mdp.normalize_context(xi)
         with torch.no_grad():
             obs = self.observation_history(history)
-        goal = initial_goal = self.mdp.goal(self.mdp.binding.bind_reference(frame))
+        goal = initial_goal = self.mdp.goal(self.binding.bind_reference(frame))
         states, frames, goals, actions, previous_actions = [], [], [], [], []
         _requires_grad(self.wm, False)
         _requires_grad(self.critic, False)
@@ -303,7 +308,7 @@ class Learner:
                 # sequence before predicting any states.
                 step_offsets = torch.arange(cfg.horizon + 1, device=frame.device)
                 reference_frames = frame[None, :] + step_offsets[:, None]
-                goal_sequence = self.mdp.goal(self.mdp.binding.bind_reference(reference_frames)).reshape(
+                goal_sequence = self.mdp.goal(self.binding.bind_reference(reference_frames)).reshape(
                     *reference_frames.shape, self.goal_dim
                 )
                 encoded_goals = self.pi.encode_goal(goal_sequence)
@@ -314,7 +319,7 @@ class Learner:
                     action = self.pi(obs, goal, encoded_goals[t])
                     state = wm_actor.step(state, action, context)
                     frame = frame + 1
-                    obs_ctx = self.mdp.binding.bind(frame, state=state, action=action, previous=action, context=xi)
+                    obs_ctx = self.binding.bind(frame, state=state, action=action, previous=action, context=xi)
                     next_obs = self.mdp.observation(obs_ctx)
                     obs = append_observation(obs, next_obs)
                     goal = goal_sequence[t + 1]
@@ -328,7 +333,7 @@ class Learner:
                     return torch.stack(xs).flatten(0, 1)
 
                 all_states = flat(states)
-                reward_ctx = self.mdp.binding.bind(
+                reward_ctx = self.binding.bind(
                     flat(frames),
                     state=all_states,
                     action=flat(actions),

@@ -41,7 +41,7 @@ def test_affine_context_parameters_broadcast_with_gradients(shape: tuple[int, ..
     cfg = ToyEnvCfg(
         world_model_context={"reference": ReferenceContextCfg(size=2, center=(1.0, -3.0), scale=(2.0, 4.0))}
     )
-    task = assemble_task(cfg.for_imagined(), "cpu")
+    task, task_binding = assemble_task(cfg.for_imagined(), "cpu")
     context = torch.randn(shape, requires_grad=True)
     normalized = task.normalize_context(context)
     torch.testing.assert_close(normalized[..., 0], (context[..., 0] - 1) / 2)
@@ -74,7 +74,7 @@ def test_context_parameters_are_validated_at_assembly(offset, scale, message: st
 
 
 def test_empty_context_uses_empty_affine_parameters() -> None:
-    task = assemble_task(ToyEnvCfg().for_imagined(), "cpu")
+    task, task_binding = assemble_task(ToyEnvCfg().for_imagined(), "cpu")
     context = torch.empty(2, 3, 0, requires_grad=True)
     result = task.normalize_context(context)
     assert result.shape == context.shape
@@ -102,19 +102,19 @@ def test_imagined_command_override_is_used_without_sharing_runtime_state() -> No
             return cfg
 
     cfg = ImaginedCommandEnvCfg()
-    first = assemble_task(cfg.for_imagined(), "cpu")
-    second = assemble_task(cfg.for_imagined(), "cpu")
+    first, first_binding = assemble_task(cfg.for_imagined(), "cpu")
+    second, second_binding = assemble_task(cfg.for_imagined(), "cpu")
     frame = torch.arange(4)
-    imagined = assemble_task(original.for_imagined(), "cpu")
+    imagined, imagined_binding = assemble_task(original.for_imagined(), "cpu")
     torch.testing.assert_close(
-        first.goal(first.binding.bind_reference(frame)), imagined.goal(imagined.binding.bind_reference(frame)) * 2
+        first.goal(first_binding.bind_reference(frame)), imagined.goal(imagined_binding.bind_reference(frame)) * 2
     )
     state = torch.zeros(4, 2)
     action, context = torch.zeros(4, first.action_dim), torch.zeros(4, 0)
-    first_command = first.binding.bind(
+    first_command = first_binding.bind(
         frame.clone(), state=state, action=action, previous=action, context=context
     ).commands["reference"]
-    second_command = second.binding.bind(
+    second_command = second_binding.bind(
         frame.clone(), state=state, action=action, previous=action, context=context
     ).commands["reference"]
     first_command.frame.fill_(7)
@@ -135,11 +135,11 @@ def test_configured_goal_term_is_shared_by_real_and_imagined_observations() -> N
     cfg.observations["goal"] = {"offset": OffsetGoalCfg()}
     env = make_toy(num_envs=2, cfg=cfg)
     state = env.init_state()
-    mdp = assemble_task(cfg.for_imagined(), "cpu")
+    mdp, mdp_binding = assemble_task(cfg.for_imagined(), "cpu")
     frame = env.command_terms["reference"].frame.clone()
-    torch.testing.assert_close(state.obs["goal"], mdp.goal(mdp.binding.bind_reference(frame)))
+    torch.testing.assert_close(state.obs["goal"], mdp.goal(mdp_binding.bind_reference(frame)))
     torch.testing.assert_close(
-        mdp.goal(mdp.binding.bind_reference(torch.tensor([[1, 2], [3, 4]]))).reshape(2, 2, -1)[..., 0],
+        mdp.goal(mdp_binding.bind_reference(torch.tensor([[1, 2], [3, 4]]))).reshape(2, 2, -1)[..., 0],
         torch.tensor([[8.0, 9.0], [10.0, 11.0]]),
     )
     torch.testing.assert_close(env.command_terms["reference"].frame, frame)
@@ -152,12 +152,12 @@ def test_task_program_builds_without_physics_and_exposes_extensions_explicitly(
         raise AssertionError("learner constructed a simulator")
 
     monkeypatch.setattr(ManagerEnv, "__init__", forbidden)
-    task = assemble_task(make_cfg().for_imagined(), "cpu")
+    task, task_binding = assemble_task(make_cfg().for_imagined(), "cpu")
     assert task.world_state.size == task.world_state.size
     assert task.reference_action() is None
     state = torch.zeros(5, 2, requires_grad=True)
     result = task.reward(
-        task.binding.bind(
+        task_binding.bind(
             torch.arange(5),
             state=state,
             action=torch.ones(5, 1),
@@ -233,18 +233,18 @@ def test_imagined_program_assembles_existing_multiple_observation_and_reward_ter
     }
     cfg.rewards = {"first": Reward(weight=0.5, scale=2.0), "second": Reward(weight=-2.0, scale=3.0)}
     monkeypatch.setattr(ManagerEnv, "__init__", forbidden)
-    task = assemble_task(cfg.for_imagined(), "cpu")
+    task, task_binding = assemble_task(cfg.for_imagined(), "cpu")
     state = torch.zeros(3, 2, requires_grad=True)
     with torch.no_grad():
         state[:, 0] = torch.tensor([0.1, 0.2, 0.3])
     frame, previous, context = torch.arange(3), torch.zeros(3, 1), torch.zeros(3, 0)
     actual_obs = task.observation(
-        task.binding.bind(frame, state=state, action=previous, previous=previous, context=context)
+        task_binding.bind(frame, state=state, action=previous, previous=previous, context=context)
     )
     torch.testing.assert_close(actual_obs, torch.cat((state[:, :1] * 2, state[:, :1] * -3), -1))
     torch.testing.assert_close(
         task.critic_observation(
-            task.binding.bind(
+            task_binding.bind(
                 frame,
                 state=state,
                 action=state.new_zeros((*frame.shape, task.action_dim)),
@@ -255,7 +255,7 @@ def test_imagined_program_assembles_existing_multiple_observation_and_reward_ter
         state[:, :1] * 4,
     )
     actual_reward = task.reward(
-        task.binding.bind(
+        task_binding.bind(
             frame,
             state=state,
             action=previous,

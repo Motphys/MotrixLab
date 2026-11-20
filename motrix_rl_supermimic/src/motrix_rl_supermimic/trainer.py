@@ -72,9 +72,9 @@ class SuperMimicTrainer(TrainerBase):
         env_cfg = self._env_spec.env_cfg
         if not isinstance(env_cfg, MbrlEnvCfg):
             raise TypeError("SuperMimic requires a Manager task configuration inheriting MbrlEnvCfg")
-        task = assemble_task(env_cfg.for_imagined(), device)
+        task, binding = assemble_task(env_cfg.for_imagined(), device)
         learner = Learner(
-            cfg, task, context.num_envs, float(env_cfg.ctrl_dt), device, context.checkpoint_dir, seed=root_seed
+            cfg, task, binding, context.num_envs, float(env_cfg.ctrl_dt), device, context.checkpoint_dir, seed=root_seed
         )
         if checkpoint is not None:
             learner.load_checkpoint(checkpoint)
@@ -333,11 +333,11 @@ class SuperMimicTrainer(TrainerBase):
             # CUDA-IPC slots fuse integer fields into float32; the frame index
             # must be integral for the analytic command lookup.
             frame = row["f"].long()
-            obs_ctx = learner.mdp.binding.bind(
+            obs_ctx = learner.binding.bind(
                 frame, state=row["s"], action=row["a_prev"], previous=row["a_prev"], context=row["xi"]
             )
             learner.pi.obs_norm.update(learner.mdp.observation(obs_ctx))
-            learner.pi.goal_norm.update(learner.mdp.goal(learner.mdp.binding.bind_reference(frame)))
+            learner.pi.goal_norm.update(learner.mdp.goal(learner.binding.bind_reference(frame)))
             # Update world-model normalizers from the collected transitions.
             s, s1 = row["s"], row["s1"]
             learner.wm.in_norm.update(learner.wm.inputs(s, row["a"], learner.mdp.normalize_context(row["xi"])))

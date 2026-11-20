@@ -21,6 +21,7 @@ from torch import nn
 
 from motrix_env_core.observations import append_observation
 from motrix_rl_supermimic.config import TrainerCfg
+from motrix_rl_supermimic.imagination import ImaginationRuntime
 from motrix_rl_supermimic.manager_task import ManagerTaskMDP
 from motrix_rl_supermimic.networks import Critic, Policy, RunningNorm, WorldModel
 from motrix_rl_supermimic.survival import SurvivalCumprod
@@ -82,7 +83,9 @@ class NormalizerSnapshots:
 class ActorLoss(nn.Module):
     """Tensor-only actor math; registers policy but borrows the frozen models."""
 
-    def __init__(self, pi: Policy, models: ActorModels, mdp: ManagerTaskMDP, cfg: TrainerCfg) -> None:
+    def __init__(
+        self, pi: Policy, models: ActorModels, mdp: ManagerTaskMDP, binding: ImaginationRuntime, cfg: TrainerCfg
+    ) -> None:
         super().__init__()
         self.norms = NormalizerSnapshots()
         self.pi = self.norms.model_view(pi, (pi.obs_norm, pi.goal_norm))
@@ -91,6 +94,7 @@ class ActorLoss(nn.Module):
             critic=self.norms.model_view(models.critic, (models.critic.norm,)),
         )
         self.mdp = mdp
+        self.binding = binding
         self.cfg = cfg
         if cfg.compile_actor_kernel:
             self.imagination_step = torch.compile(self.imagination_step, dynamic=False)
@@ -112,7 +116,7 @@ class ActorLoss(nn.Module):
         action = self.pi(obs, goal, z)
         state = self.models.wm.step(state, action, context)
         frame = frame + 1
-        ctx = self.mdp.binding.bind(frame, state=state, action=action, previous=action, context=xi)
+        ctx = self.binding.bind(frame, state=state, action=action, previous=action, context=xi)
         next_obs = self.mdp.observation(ctx)
         obs = append_observation(obs, next_obs)
         return state, action, obs, frame
@@ -125,7 +129,7 @@ class ActorLoss(nn.Module):
         previous: torch.Tensor,
         context: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        ctx = self.mdp.binding.bind(frames, state=states, action=actions, previous=previous, context=context)
+        ctx = self.binding.bind(frames, state=states, action=actions, previous=previous, context=context)
         return self.mdp.reward(ctx), self.mdp.soft_termination(ctx)
 
     def critic_input(
@@ -137,7 +141,7 @@ class ActorLoss(nn.Module):
     ) -> torch.Tensor:
         # Match the eager critic path: zero actions and already-normalized context.
         zero_action = context.new_zeros((*frame.shape, self.mdp.action_dim))
-        ctx = self.mdp.binding.bind(frame, state=state, action=zero_action, previous=zero_action, context=context)
+        ctx = self.binding.bind(frame, state=state, action=zero_action, previous=zero_action, context=context)
         observation = self.mdp.critic_observation(ctx).reshape(*frame.shape, self.mdp.critic_observation_dim)
         return torch.cat((observation, goal), -1)
 
@@ -157,7 +161,7 @@ class ActorLoss(nn.Module):
         # sequence before predicting any states.
         step_offsets = torch.arange(cfg.horizon + 1, device=frame.device)
         reference_frames = frame[None, :] + step_offsets[:, None]
-        goal_sequence = self.mdp.goal(self.mdp.binding.bind_reference(reference_frames)).reshape(
+        goal_sequence = self.mdp.goal(self.binding.bind_reference(reference_frames)).reshape(
             *reference_frames.shape, goal.shape[-1]
         )
         encoded_goals = self.pi.encode_goal(goal_sequence)
@@ -215,10 +219,13 @@ class ActorLossGraph:
     This manager is an ordinary learner attribute, not checkpoint payload.
     """
 
-    def __init__(self, pi: Policy, models: ActorModels, mdp: ManagerTaskMDP, cfg: TrainerCfg) -> None:
+    def __init__(
+        self, pi: Policy, models: ActorModels, mdp: ManagerTaskMDP, binding: ImaginationRuntime, cfg: TrainerCfg
+    ) -> None:
         self.pi = pi
         self.models = models
         self.mdp = mdp
+        self.binding = binding
         self.cfg = cfg
         self.capture: CapturedActorLoss | None = None
 
@@ -244,7 +251,7 @@ class ActorLossGraph:
         return ActorUpdate(loss, list(shaped.unbind(0)), list(frames.unbind(0)), list(goals.unbind(0)), r, d, before)
 
     def _capture(self, args: GraphInputs, signature: InputSignature) -> CapturedActorLoss:
-        module = ActorLoss(self.pi, self.models, self.mdp, self.cfg)
+        module = ActorLoss(self.pi, self.models, self.mdp, self.binding, self.cfg)
         module.sync_norms()
         rng_cpu = torch.get_rng_state().clone()
         rng_cuda = torch.cuda.get_rng_state_all()

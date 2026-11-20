@@ -31,7 +31,8 @@ mxlab train task=g1-supermimic-tracking/motrix.supermimic
   框架自动组装数值程序，无需另写任务程序工厂。
   真实环境与 imagination 复用 `BuildContext`、term resolver 和 Torch 数值执行原语，
   但分别拥有自己的 terms；rollout 调度层显式绑定预测输入，同一批输入的数值 heads 共享 `ManagerContext`，
-  `ManagerTaskMDP` 只执行已解析的计算，不自行构造上下文。
+  `assemble_task()` 分别返回数值 `ManagerTaskMDP` 和独立的 `ImaginationRuntime`；learner/rollout
+  显式持有两者，MDP 不持有 binding，也不自行构造上下文。
   collector 与 play 从环境返回的 `obs["goal"]` 获取目标，不访问任务 command 或构造 TaskMDP；
   goal 是普通 observation group，窗口长度由任务的 `MbrlEnvCfg.goal_frames` 唯一定义，训练与评估直接消费；
   reset 与 final observation 由 core 管理，checkpoint 恢复与 play 检查目标窗口一致性。

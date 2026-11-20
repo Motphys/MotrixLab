@@ -21,13 +21,13 @@ def test_critic_history_is_rejected_at_assembly_boundary(tmp_path):
     import pytest
     from _helpers import make_toy_task
 
-    task = make_toy_task()
+    task, task_binding = make_toy_task()
     task.observation_spec = replace(
         task.observation_spec,
         groups={**task.observation_spec.groups, "value": replace(task.observation_spec.value, history_length=2)},
     )
     with pytest.raises(ValueError, match="value history_length=1"):
-        Learner(SuperMimicCfg(), task, 1, 0.02, "cpu", tmp_path)
+        Learner(SuperMimicCfg(), task, task_binding, 1, 0.02, "cpu", tmp_path)
 
 
 def test_ingest_consumes_only_the_requested_leading_steps(tmp_path):
@@ -36,7 +36,9 @@ def test_ingest_consumes_only_the_requested_leading_steps(tmp_path):
     env = make_toy(num_envs=2, cfg=ToyEnvCfg(goal_frames=2))
     env.init_state()
     cfg = SuperMimicCfg(agent=AgentCfg(hidden=8), trainer=TrainerCfg())
-    learner = Learner(cfg, assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path)
+    learner = Learner(
+        cfg, *assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path
+    )
     steps, n = 5, env.num_envs
     views = {
         "s": torch.randn(steps, n, learner.mdp.world_state.size),
@@ -89,7 +91,9 @@ def test_toy_training_smoke(tmp_path):
         ),
     )
     env.init_state()
-    learner = Learner(cfg, assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path)
+    learner = Learner(
+        cfg, *assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path
+    )
     # Async ingestion is the only test feeder; WM loss must decrease.
     ingest_toy_steps(learner, env, 64)
     wm_losses = [learner.wm_update() for _ in range(60)]
@@ -105,7 +109,7 @@ def test_toy_training_smoke(tmp_path):
 
     # Resume path round-trips module weights.
     fresh = Learner(
-        cfg, assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path / "fresh"
+        cfg, *assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path / "fresh"
     )
     fresh.load(str(tmp_path / "last.pt"))
     assert fresh.iteration == learner.iteration
@@ -131,7 +135,9 @@ def test_cached_critic_matches_uncached_updates(tmp_path):
             critic_minibatches=2,
         ),
     )
-    learner = Learner(cfg, assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path)
+    learner = Learner(
+        cfg, *assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path
+    )
     ingest_toy_steps(learner, env, 8)
     learner.wm_update()
     cached = copy.deepcopy(learner)
@@ -161,9 +167,11 @@ class _SagittalMirror:
 
 
 def test_mirror_augmentation_reflects_only_selected_windows(tmp_path) -> None:
-    task = make_toy_task(cfg=ToyEnvCfg(world_model_context={"reference": ReferenceContextCfg()}))
+    task, task_binding = make_toy_task(cfg=ToyEnvCfg(world_model_context={"reference": ReferenceContextCfg()}))
     task.imagination.mirror = _SagittalMirror()
-    learner = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8, wm_mirror=0.5)), task, 1, 0.02, "cpu", tmp_path)
+    learner = Learner(
+        SuperMimicCfg(agent=AgentCfg(hidden=8, wm_mirror=0.5)), task, task_binding, 1, 0.02, "cpu", tmp_path
+    )
     state = torch.randn(4, 2, task.world_state.size)
     batch = {
         "s": state,
@@ -188,18 +196,19 @@ def test_mirror_augmentation_reflects_only_selected_windows(tmp_path) -> None:
 
 def test_world_model_mirror_requires_task_capability(tmp_path) -> None:
     with pytest.raises(ValueError, match="wm_mirror requires.*mirror"):
-        Learner(SuperMimicCfg(agent=AgentCfg(hidden=8, wm_mirror=0.5)), make_toy_task(), 1, 0.02, "cpu", tmp_path)
+        Learner(SuperMimicCfg(agent=AgentCfg(hidden=8, wm_mirror=0.5)), *make_toy_task(), 1, 0.02, "cpu", tmp_path)
 
 
 @pytest.mark.parametrize("normalizer", [None, 0.5])
 @pytest.mark.parametrize("metadata", [{}, {"task": "tracking", "clip": 7, "physics_dt": 0.01}])
 def test_extension_data_controls_return_scale_and_checkpoint_metadata(tmp_path, normalizer, metadata) -> None:
-    task = make_toy_task()
+    task, task_binding = make_toy_task()
     task.imagination.return_normalizer = normalizer
     task.imagination.evaluation_metadata.update(metadata)
     # Every independently assembled task owns its mutable metadata.
-    assert make_toy_task().imagination.evaluation_metadata == {}
-    learner = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8)), task, 1, 0.02, "cpu", tmp_path)
+    other_task, _ = make_toy_task()
+    assert other_task.imagination.evaluation_metadata == {}
+    learner = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8)), task, task_binding, 1, 0.02, "cpu", tmp_path)
     assert learner.return_normalizer == (0.02 if normalizer is None else normalizer)
     learner.save(0.0)
     for name in ("last.pt", "policy_0000000.pt"):

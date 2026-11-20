@@ -4,6 +4,8 @@
 """Test task composition and transition feeder for the async learner."""
 
 import torch
+from motrix_rl_supermimic.imagination import ImaginationRuntime
+from motrix_rl_supermimic.manager_task import ManagerTaskMDP
 from motrix_rl_supermimic.mbrl_env import MbrlEnv, assemble_task
 from motrix_rl_supermimic.toy import ToyEnvCfg, register
 from motrix_rl_supermimic.trainer import SuperMimicTrainer
@@ -27,7 +29,7 @@ class ReferenceContextCfg(WorldContextTermCfg):
         return WorldContextTerm(self.size, capture_reference_context, self.center, self.scale)
 
 
-def make_toy_task(device: str = "cpu", *, cfg: ToyEnvCfg | None = None):
+def make_toy_task(device: str = "cpu", *, cfg: ToyEnvCfg | None = None) -> tuple[ManagerTaskMDP, ImaginationRuntime]:
     cfg = cfg or ToyEnvCfg()
     return assemble_task(cfg.for_imagined(), device)
 

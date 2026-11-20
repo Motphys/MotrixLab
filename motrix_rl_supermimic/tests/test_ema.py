@@ -37,7 +37,9 @@ def test_ema_averages_and_checkpoints(tmp_path):
             ckpt_every=6,
         ),
     )
-    learner = Learner(cfg, assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path)
+    learner = Learner(
+        cfg, *assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path
+    )
     assert learner.pi_avg is not None
 
     before = torch.cat([p.flatten() for p in learner.pi.parameters()])
@@ -68,7 +70,7 @@ def test_ema_averages_and_checkpoints(tmp_path):
 
     # Resume restores both the live policy and the EMA continuation state.
     fresh = Learner(
-        cfg, assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path / "fresh"
+        cfg, *assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path / "fresh"
     )
     fresh.load(str(tmp_path / "last.pt"))
     assert fresh.pi_avg is not None
@@ -100,7 +102,9 @@ def test_ema_off_by_default(tmp_path):
             ckpt_every=2,
         ),
     )
-    learner = Learner(cfg, assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path)
+    learner = Learner(
+        cfg, *assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path
+    )
     assert learner.pi_avg is None
     learner.save(0.0)
     ck = torch.load(tmp_path / "last.pt", map_location="cpu", weights_only=False)
