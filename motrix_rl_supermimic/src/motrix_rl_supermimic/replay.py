@@ -17,33 +17,22 @@ import torch
 
 from motrix_rl.transport.schema import TransitionField, TransitionSchema
 
-__all__ = ["ReplayBuffer", "transition_fields", "transition_schema"]
-
-
-def transition_fields(
-    *, state_dim: int, context_dim: int, action_dim: int
-) -> dict[str, tuple[tuple[int, ...], torch.dtype]]:
-    return {
-        "s": ((state_dim,), torch.float32),
-        "s1": ((state_dim,), torch.float32),
-        "a": ((action_dim,), torch.float32),
-        "a_prev": ((action_dim,), torch.float32),
-        "xi": ((context_dim,), torch.float32),
-        "r": ((), torch.float32),
-        "f": ((), torch.long),
-        "ep_step": ((), torch.int32),
-        "done": ((), torch.bool),
-    }
+__all__ = ["ReplayBuffer", "transition_schema"]
 
 
 def transition_schema(*, state_dim: int, context_dim: int, action_dim: int) -> TransitionSchema:
-    """Transport widths derived from assembled world state, context and actions."""
+    """Replay and transport fields derived from the assembled task dimensions."""
     return TransitionSchema(
-        tuple(
-            TransitionField(name, shape, dtype)
-            for name, (shape, dtype) in transition_fields(
-                state_dim=state_dim, context_dim=context_dim, action_dim=action_dim
-            ).items()
+        (
+            TransitionField("s", (state_dim,), torch.float32),
+            TransitionField("s1", (state_dim,), torch.float32),
+            TransitionField("a", (action_dim,), torch.float32),
+            TransitionField("a_prev", (action_dim,), torch.float32),
+            TransitionField("xi", (context_dim,), torch.float32),
+            TransitionField("r", (), torch.float32),
+            TransitionField("f", (), torch.long),
+            TransitionField("ep_step", (), torch.int32),
+            TransitionField("done", (), torch.bool),
         )
     )
 
@@ -63,10 +52,9 @@ class ReplayBuffer:
             raise ValueError("Replay capacity and environment count must be positive")
         self.T, self.N, self.device = T, N, device
         self.data: dict[str, torch.Tensor] = {}
-        for k, (shape, dt) in transition_fields(
-            state_dim=state_dim, context_dim=context_dim, action_dim=action_dim
-        ).items():
-            self.data[k] = torch.zeros((T, N) + shape, dtype=dt, device=device)
+        schema = transition_schema(state_dim=state_dim, context_dim=context_dim, action_dim=action_dim)
+        for field in schema.fields:
+            self.data[field.name] = torch.zeros((T,) + schema.slot_shape(field, N), dtype=field.dtype, device=device)
         self.ptr, self.size = 0, 0
 
     @torch.no_grad()

@@ -53,11 +53,11 @@ def test_first_post_reset_transition_repeats_new_episode_history(monkeypatch):
 
 
 def _row(step: int) -> dict[str, torch.Tensor]:
-    from motrix_rl_supermimic.replay import transition_fields
+    from motrix_rl_supermimic.replay import transition_schema
 
     row = {
-        name: torch.zeros((1,) + shape, dtype=dtype)
-        for name, (shape, dtype) in transition_fields(state_dim=2, context_dim=0, action_dim=1).items()
+        field.name: torch.zeros((1,) + field.per_env_shape, dtype=field.dtype)
+        for field in transition_schema(state_dim=2, context_dim=0, action_dim=1).fields
     }
     row["ep_step"].fill_(step)
     row["f"].fill_(step)
