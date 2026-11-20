@@ -204,7 +204,7 @@ def test_ema_starts_from_initial_weights():
 @pytest.mark.parametrize("zero_rows", [(), (0,), (3,), (1, 5)])
 def test_survival_cumprod_matches_aten_values_and_vjp(zero_rows):
     """Graph-safe survival product must be bit-equal to cumprod in value and VJP."""
-    from motrix_rl_supermimic.survival import survival_cumprod
+    from motrix_rl_supermimic.survival import SurvivalCumprod
 
     generator = torch.Generator().manual_seed(31)
     x = torch.rand(8, 5, generator=generator)
@@ -214,7 +214,7 @@ def test_survival_cumprod_matches_aten_values_and_vjp(zero_rows):
     b = x.clone().requires_grad_(True)
     weight = torch.randn(x.shape, generator=generator)
     expected = torch.cumprod(a, 0)
-    actual = survival_cumprod(b)
+    actual = SurvivalCumprod.apply(b)
     assert torch.equal(actual, expected)
     (da,) = torch.autograd.grad(expected, a, weight)
     (db,) = torch.autograd.grad(actual, b, weight)
@@ -222,26 +222,32 @@ def test_survival_cumprod_matches_aten_values_and_vjp(zero_rows):
 
 
 @pytest.mark.integration
-def test_cumprod_backward_blocks_graph_capture_but_survival_does_not():
-    """Regression: ATen cumprod backward aborts CUDA capture; the survival
-    formulation must stay capturable (policy imagination graphs depend on it)."""
+@pytest.mark.parametrize("zero_rows", [(), (0,), (1, 3)])
+def test_survival_backward_is_cuda_graph_capturable(zero_rows):
+    """Policy imagination requires capture-safe gradients, including exact zeros."""
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
-    from motrix_rl_supermimic.survival import survival_cumprod
+    from motrix_rl_supermimic.survival import SurvivalCumprod
 
-    x = torch.rand(4, 8, device="cuda").requires_grad_(True)
+    x = torch.rand(4, 8, device="cuda")
+    for row in zero_rows:
+        x[row] = 1.0  # survival input is 1 - x
+    x.requires_grad_(True)
     weight = torch.randn(4, 8, device="cuda")
+    expected = torch.autograd.grad(torch.cumprod(1 - x, dim=0), x, weight)[0]
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())
     with torch.cuda.stream(stream):
-        y = survival_cumprod(1 - x)
+        y = SurvivalCumprod.apply(1 - x)
         torch.autograd.grad(y, [x], weight, allow_unused=True)
     torch.cuda.current_stream().wait_stream(stream)
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph):
-        y = survival_cumprod(1 - x)
-        torch.autograd.grad(y, [x], weight, allow_unused=True)
+        y = SurvivalCumprod.apply(1 - x)
+        actual = torch.autograd.grad(y, x, weight)[0]
+    graph.replay()
     torch.cuda.synchronize()
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
 def test_norm_stats_view_publishes_real_statistics():

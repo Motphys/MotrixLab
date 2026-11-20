@@ -23,7 +23,7 @@ from motrix_env_core.observations import append_observation
 from motrix_rl_supermimic.config import TrainerCfg
 from motrix_rl_supermimic.manager_task import ManagerTaskMDP
 from motrix_rl_supermimic.networks import Critic, Policy, RunningNorm, WorldModel
-from motrix_rl_supermimic.survival import survival_cumprod
+from motrix_rl_supermimic.survival import SurvivalCumprod
 
 __all__ = ["ActorLoss", "ActorLossGraph"]
 
@@ -188,7 +188,7 @@ class ActorLoss(nn.Module):
         # Graph-safe survival product: ATen's cumprod backward is not
         # CUDA-graph capturable; this formulation is bit-equal on values and
         # VJP (see tests/test_recipe_contracts.py).
-        survival = survival_cumprod(1 - d)
+        survival = SurvivalCumprod.apply(1 - d)
         before = torch.cat((torch.ones_like(survival[:1]), survival[:-1]), 0)
         discounts = (cfg.gamma ** torch.arange(cfg.horizon, device=frame.device))[:, None]
         objective = (discounts * before * r).sum(0)

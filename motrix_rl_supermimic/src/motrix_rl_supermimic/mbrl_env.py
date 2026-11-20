@@ -20,7 +20,7 @@ from motrix_env_core.manager.terminations import TerminationTermCfg
 from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.torch_manager.runtime import TorchTaskProgram
 from motrix_rl_supermimic.imagination import ImaginationCfg
-from motrix_rl_supermimic.manager_task import ManagerTaskMDP, resolve_manager_task
+from motrix_rl_supermimic.manager_task import ManagerTaskMDP
 from motrix_rl_supermimic.recorder import TransitionRecorder
 from motrix_rl_supermimic.reference_command import ReferenceCommand
 from motrix_rl_supermimic.world_context import WorldContext, WorldContextTermCfg
@@ -171,98 +171,94 @@ def assemble_task(cfg: MbrlEnvCfg, device: str) -> ManagerTaskMDP:
     imagination program); assembly itself never applies one.
     """
     with torch.device(device):
-        return _assemble_task(cfg)
+        cfg.validate_goal_frames()
+        if not cfg.world_model_state or cfg.imagination is None or cfg.soft_termination is None:
+            raise ValueError("MBRL configuration requires world_model_state, imagination and soft_termination")
+        commands: dict[str, CommandTerm] = {}
+        build = BuildContext(cfg=cfg, actions={}, commands=commands, model=None, num_envs=1, seed=0)
+        for name, command_cfg in cfg.command_cfgs().items():
+            commands[name] = command_cfg(build)
+        actions = {}
+        action_slices: dict[str, slice] = {}
+        action_offset = 0
+        for name, action in cfg.action_cfgs().items():
+            build = BuildContext(cfg=cfg, actions=actions, commands=commands, model=None, num_envs=1, seed=0)
+            # The imagined build has no compiled scene model: model-independent
+            # factories receive no actuators, named actuator routes are not
+            # supported.
+            actuators = () if action.actuator_names == () else None
+            term = action(build, actuators)
+            actions[name] = term
+            action_width = term.action_space.shape[0]
+            action_slices[name] = slice(action_offset, action_offset + action_width)
+            action_offset += action_width
 
+        context = BuildContext(cfg=cfg, actions=actions, commands=commands, model=None, num_envs=1, seed=0)
+        world_state = WorldState({name: term(context) for name, term in cfg.world_model_state.items()})
+        world_context = WorldContext({name: term(context) for name, term in cfg.world_model_context.items()})
+        imagination = cfg.imagination(context)
+        groups = create_observation_groups(cfg, context)
+        for name in ("policy", "value", "goal"):
+            if name not in groups:
+                raise ValueError(f"MBRL requires observation group {name!r}")
+        if groups["goal"].history_length != 1:
+            raise ValueError("MBRL goal observation must have history_length=1")
+        action_space = Box(
+            np.concatenate([term.action_space.low for term in actions.values()]),
+            np.concatenate([term.action_space.high for term in actions.values()]),
+            dtype=np.float32,
+        )
+        observation_spec = ObservationSpec(
+            groups={
+                name: ObservationGroupSpec(Box(-float("inf"), float("inf"), (group.size,)), group.history_length)
+                for name, group in groups.items()
+            }
+        )
+        from motrix_env_core.manager.resolver import ManagerTermResolver
 
-def _assemble_task(task: MbrlEnvCfg) -> ManagerTaskMDP:
-    task.validate_goal_frames()
-    if not task.world_model_state or task.imagination is None or task.soft_termination is None:
-        raise ValueError("MBRL configuration requires world_model_state, imagination and soft_termination")
-    commands: dict[str, CommandTerm] = {}
-    build = BuildContext(cfg=task, actions={}, commands=commands, model=None, num_envs=1, seed=0)
-    for name, command_cfg in task.command_cfgs().items():
-        commands[name] = command_cfg(build)
-    actions = {}
-    action_slices: dict[str, slice] = {}
-    action_offset = 0
-    for name, action in task.action_cfgs().items():
-        build = BuildContext(cfg=task, actions=actions, commands=commands, model=None, num_envs=1, seed=0)
-        # The imagined build has no compiled scene model: model-independent
-        # factories receive no actuators, named actuator routes are not
-        # supported.
-        actuators = () if action.actuator_names == () else None
-        term = action(build, actuators)
-        actions[name] = term
-        action_width = term.action_space.shape[0]
-        action_slices[name] = slice(action_offset, action_offset + action_width)
-        action_offset += action_width
+        resolver = ManagerTermResolver()
 
-    context = BuildContext(cfg=task, actions=actions, commands=commands, model=None, num_envs=1, seed=0)
-    world_state = WorldState({name: term(context) for name, term in task.world_model_state.items()})
-    world_context = WorldContext({name: term(context) for name, term in task.world_model_context.items()})
-    imagination = task.imagination(context)
-    groups = create_observation_groups(task, context)
-    for name in ("policy", "value", "goal"):
-        if name not in groups:
-            raise ValueError(f"MBRL requires observation group {name!r}")
-    if groups["goal"].history_length != 1:
-        raise ValueError("MBRL goal observation must have history_length=1")
-    action_space = Box(
-        np.concatenate([term.action_space.low for term in actions.values()]),
-        np.concatenate([term.action_space.high for term in actions.values()]),
-        dtype=np.float32,
-    )
-    observation_spec = ObservationSpec(
-        groups={
-            name: ObservationGroupSpec(Box(-float("inf"), float("inf"), (group.size,)), group.history_length)
-            for name, group in groups.items()
-        }
-    )
-    from motrix_env_core.manager.resolver import ManagerTermResolver
+        def observation(group_name: str) -> ObsTerm:
+            group = groups[group_name]
+            calls = tuple(
+                (resolver.resolve_observation(group_name, entry.name, entry.term), entry.size) for entry in group.terms
+            )
 
-    resolver = ManagerTermResolver()
+            def dispatch(ctx: ManagerContext, out: torch.Tensor) -> None:
+                offset = 0
+                for call, size in calls:
+                    call.invoke(ctx, out[:, offset : offset + size])
+                    offset += size
 
-    def observation(group_name: str) -> ObsTerm:
-        group = groups[group_name]
+            return ObsTerm(group.size, dispatch)
+
+        rewards = create_reward_terms(cfg.reward_cfgs(), context)
+        reward_cfgs = cfg.reward_cfgs()
         calls = tuple(
-            (resolver.resolve_observation(group_name, entry.name, entry.term), entry.size) for entry in group.terms
+            (resolver.resolve_reward(name, index, term), reward_cfgs[name].weight)
+            for index, (name, term) in enumerate(rewards.items())
         )
 
-        def dispatch(ctx: ManagerContext, out: torch.Tensor) -> None:
-            offset = 0
-            for call, size in calls:
-                call.invoke(ctx, out[:, offset : offset + size])
-                offset += size
+        def reward(ctx: ManagerContext) -> torch.Tensor:
+            total = ctx.env_id.new_zeros(ctx.env_id.shape, dtype=torch.float32)
+            for call, weight in calls:
+                total = total + call.invoke(ctx).to(torch.float32) * weight
+            return total
 
-        return ObsTerm(group.size, dispatch)
-
-    rewards = create_reward_terms(task.reward_cfgs(), context)
-    reward_cfgs = task.reward_cfgs()
-    calls = tuple(
-        (resolver.resolve_reward(name, index, term), reward_cfgs[name].weight)
-        for index, (name, term) in enumerate(rewards.items())
-    )
-
-    def reward(ctx: ManagerContext) -> torch.Tensor:
-        total = ctx.env_id.new_zeros(ctx.env_id.shape, dtype=torch.float32)
-        for call, weight in calls:
-            total = total + call.invoke(ctx).to(torch.float32) * weight
-        return total
-
-    return resolve_manager_task(
-        task.ctrl_dt,
-        1.0,
-        imagination,
-        observation("policy"),
-        observation("value"),
-        RewardTerm(reward),
-        task.soft_termination(context),
-        goal=observation("goal"),
-        goal_frames=task.goal_frames,
-        world_context=world_context,
-        observation_spec=observation_spec,
-        action_space=action_space,
-        action_slices=action_slices,
-        world_state=world_state,
-        reference_action=task.reference_action,
-    )
+        return ManagerTaskMDP(
+            cfg.ctrl_dt,
+            1.0,
+            imagination,
+            observation("policy"),
+            observation("value"),
+            RewardTerm(reward),
+            cfg.soft_termination(context),
+            goal=observation("goal"),
+            goal_frames=cfg.goal_frames,
+            world_context=world_context,
+            observation_spec=observation_spec,
+            action_space=action_space,
+            action_slices=action_slices,
+            world_state=world_state,
+            reference_action=cfg.reference_action,
+        )

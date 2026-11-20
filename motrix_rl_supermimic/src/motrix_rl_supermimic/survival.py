@@ -17,7 +17,7 @@ import torch
 from torch.autograd.function import once_differentiable
 
 
-class _SurvivalCumprod(torch.autograd.Function):
+class SurvivalCumprod(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x):
         if x.ndim == 0:
@@ -52,9 +52,4 @@ class _SurvivalCumprod(torch.autograd.Function):
         return torch.where(first_zero_mask, at_zero, result)
 
 
-def survival_cumprod(x: torch.Tensor) -> torch.Tensor:
-    """Native-order, zero-aware survival product with first-order autograd only."""
-    return _SurvivalCumprod.apply(x)
-
-
-__all__ = ["survival_cumprod"]
+__all__ = ["SurvivalCumprod"]

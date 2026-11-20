@@ -9,7 +9,7 @@ import pytest
 import torch
 from gymnasium.spaces import Box
 from motrix_rl_supermimic.imagination import ImaginationBindings, ImaginationInputs, ImaginationRuntime, ImaginationTerm
-from motrix_rl_supermimic.manager_task import ManagerTaskMDP, resolve_manager_task
+from motrix_rl_supermimic.manager_task import ManagerTaskMDP
 from motrix_rl_supermimic.world_context import WorldContext, WorldContextTerm
 from motrix_rl_supermimic.world_state import EuclideanState, WorldState, WorldStateTerm
 
@@ -80,7 +80,7 @@ class FixtureImagination(ImaginationTerm):
 
 
 def make_task(imagination: ImaginationTerm | None = None) -> ManagerTaskMDP:
-    return resolve_manager_task(
+    return ManagerTaskMDP(
         0.02,
         3.0,
         FixtureImagination() if imagination is None else imagination,
@@ -183,7 +183,7 @@ def test_configured_observation_noise_is_shared_once_by_real_and_imagined_dispat
     out = torch.empty_like(clean)
     call.invoke(ctx, out)
     torch.testing.assert_close(out, clean + 2)
-    mdp = replace(mdp, policy_call=call)
+    mdp.policy_call = call
     predicted = state.clone().requires_grad_(True)
     torch.testing.assert_close(
         mdp.observation(mdp.binding.bind(frame, state=predicted, action=previous, previous=previous, context=context)),

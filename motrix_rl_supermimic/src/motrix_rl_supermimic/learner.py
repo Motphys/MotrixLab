@@ -29,7 +29,7 @@ from motrix_rl_supermimic.networks import Critic, WorldModel, build_policy, reso
 from motrix_rl_supermimic.optim import MuonAdam, policy_multiplier
 from motrix_rl_supermimic.randomness import derive_seed, model_initialization, resolve_seed
 from motrix_rl_supermimic.replay import ReplayBuffer
-from motrix_rl_supermimic.survival import survival_cumprod
+from motrix_rl_supermimic.survival import SurvivalCumprod
 from motrix_rl_supermimic.task_mdp import compile_task_heads
 from motrix_rl_supermimic.wm_graph import WMLossGraph
 
@@ -337,7 +337,7 @@ class Learner:
                 )
                 r = self.mdp.reward(reward_ctx).view(cfg.horizon, -1)
                 d = self.mdp.soft_termination(reward_ctx).view(cfg.horizon, -1)
-                survival = survival_cumprod(1 - d)
+                survival = SurvivalCumprod.apply(1 - d)
                 before = torch.cat((torch.ones_like(survival[:1]), survival[:-1]), 0)
                 discounts = (cfg.gamma ** torch.arange(cfg.horizon, device=self.dev))[:, None]
                 objective = (discounts * before * r).sum(0)
