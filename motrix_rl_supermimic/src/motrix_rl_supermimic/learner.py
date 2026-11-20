@@ -32,6 +32,7 @@ from motrix_rl_supermimic.randomness import derive_seed, model_initialization, r
 from motrix_rl_supermimic.replay import ReplayBuffer
 from motrix_rl_supermimic.survival import SurvivalCumprod
 from motrix_rl_supermimic.task_mdp import compile_task_heads
+from motrix_rl_supermimic.transitions import Transitions
 from motrix_rl_supermimic.wm_graph import WMLossGraph
 
 __all__ = ["Learner"]
@@ -192,7 +193,7 @@ class Learner:
             compile_task_heads(self.mdp)
 
     @torch.no_grad()
-    def observe(self, transitions: dict[str, torch.Tensor]) -> torch.Tensor:
+    def observe(self, transitions: Transitions) -> torch.Tensor:
         """Consume a time-major batch of real transitions and return scaled mean reward.
 
         Inputs have leading (steps, environments) dimensions and canonical transition
@@ -202,27 +203,27 @@ class Learner:
         if self.wm_side is not None:
             # Queued WM updates still read replay and live normalizer buffers.
             torch.cuda.current_stream(self.dev).wait_stream(self.wm_side)
-        on_device = {name: transitions[name].to(self.dev) for name in self.buffer.data}
-        steps = on_device["r"].shape[0]
-        reward_sum = torch.zeros((), device=self.dev)
+        on_device = transitions.to(self.dev)
+        steps = on_device.reward.shape[0]
         for step in range(steps):
-            row = {name: values[step] for name, values in on_device.items()}
-            reward_sum += row["r"].mean()
+            row = on_device.at_step(step)
             self.buffer.add(row)
             # Reconstruct policy inputs rather than transporting them. Observation
             # noise is freshly sampled, matching the imagination path.
-            frame = row["f"]
             ctx = self.binding.bind(
-                frame, state=row["s"], action=row["a_prev"], previous=row["a_prev"], context=row["xi"]
+                row.frame,
+                state=row.state,
+                action=row.previous_action,
+                previous=row.previous_action,
+                context=row.context,
             )
             self.pi.obs_norm.update(self.mdp.observation(ctx))
             self.pi.goal_norm.update(self.mdp.goal(ctx))
-            s, s1 = row["s"], row["s1"]
-            self.wm.in_norm.update(self.wm.inputs(s, row["a"], self.mdp.normalize_context(row["xi"])))
-            self.wm.out_norm.update(self.wm.targets(s, s1))
-            self.wm.inc_norm.update(self.wm.increments(s, s1))
-            self.sim_steps += s.shape[0]
-        return reward_sum / steps / self.return_normalizer
+            self.wm.in_norm.update(self.wm.inputs(row.state, row.action, self.mdp.normalize_context(row.context)))
+            self.wm.out_norm.update(self.wm.targets(row.state, row.next_state))
+            self.wm.inc_norm.update(self.wm.increments(row.state, row.next_state))
+            self.sim_steps += row.state.shape[0]
+        return on_device.reward.mean() / self.return_normalizer
 
     def sync_imag_wm(self) -> None:
         """Wait for the side-stream WM updates, then copy live WM -> wm_imag.

@@ -20,6 +20,7 @@ from motrix_rl_supermimic.toy import (
     _ToyCommandCfg,
     _VelocityActionCfg,
 )
+from motrix_rl_supermimic.transitions import Transitions
 from motrix_rl_supermimic.world_context import WorldContextTerm, WorldContextTermCfg
 
 from motrix_env_core.config import configclass
@@ -235,7 +236,7 @@ def test_term_widths_drive_real_and_learner_assembly(dynamo_eager: None, tmp_pat
     assert learner.pi.goal_norm.mean.shape[-1] == task.goal_dim
     assert learner.critic.norm.mean.shape[-1] == task.critic_observation_dim + task.goal_dim
     transition = env.snapshot_transition(env.step(action.detach()))
-    learner.buffer.add(transition)
+    learner.buffer.add(Transitions.from_dict(transition))
     torch.testing.assert_close(learner.buffer.data["a"][0], action.detach())
     state = torch.zeros(env.num_envs, task.world_state.size)
     predicted = learner.wm(state, action, torch.empty(env.num_envs, task.world_context.size))

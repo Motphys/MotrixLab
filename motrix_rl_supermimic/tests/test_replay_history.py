@@ -8,6 +8,7 @@ import torch
 from _helpers import make_toy
 from motrix_rl_supermimic.replay import ReplayBuffer, transition_schema
 from motrix_rl_supermimic.toy import register as register_toy
+from motrix_rl_supermimic.transitions import Transitions
 
 
 def test_transition_schema_matches_replay_storage() -> None:
@@ -33,12 +34,12 @@ def test_first_post_reset_transition_repeats_new_episode_history(monkeypatch):
     env.step(torch.full((1, 1), 0.4))
     terminal = env.snapshot_transition(env.state)
     assert terminal["done"].item()
-    replay.add(terminal)
+    replay.add(Transitions.from_dict(terminal))
 
     env.step(torch.full((1, 1), 0.2))
     fresh = env.snapshot_transition(env.state)
     assert fresh["ep_step"].item() == 0
-    replay.add(fresh)
+    replay.add(Transitions.from_dict(fresh))
 
     def sample_latest(low, high, size, *, device=None):
         value = 1 if high == replay.size else 0
@@ -52,7 +53,7 @@ def test_first_post_reset_transition_repeats_new_episode_history(monkeypatch):
     assert not torch.equal(history["s"][:, 0], terminal["s"])
 
 
-def _row(step: int) -> dict[str, torch.Tensor]:
+def _row(step: int) -> Transitions:
     from motrix_rl_supermimic.replay import transition_schema
 
     row = {
@@ -61,7 +62,7 @@ def _row(step: int) -> dict[str, torch.Tensor]:
     }
     row["ep_step"].fill_(step)
     row["f"].fill_(step)
-    return row
+    return Transitions.from_dict(row)
 
 
 def test_replay_overwrite_does_not_fabricate_episode_prefix() -> None:

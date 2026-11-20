@@ -16,6 +16,7 @@ from collections.abc import Callable
 import torch
 
 from motrix_rl.transport.schema import TransitionField, TransitionSchema
+from motrix_rl_supermimic.transitions import Transitions
 
 __all__ = ["ReplayBuffer", "transition_schema"]
 
@@ -58,9 +59,9 @@ class ReplayBuffer:
         self.ptr, self.size = 0, 0
 
     @torch.no_grad()
-    def add(self, tr: dict[str, torch.Tensor]) -> None:
-        for k in self.data:
-            self.data[k][self.ptr] = tr[k]
+    def add(self, transitions: Transitions) -> None:
+        for name, value in transitions.to_dict().items():
+            self.data[name][self.ptr] = value
         self.ptr = (self.ptr + 1) % self.T
         self.size = min(self.size + 1, self.T)
 

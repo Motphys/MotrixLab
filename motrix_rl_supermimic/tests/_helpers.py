@@ -8,6 +8,7 @@ from motrix_rl_supermimic.imagination import ImaginationRuntime
 from motrix_rl_supermimic.manager_task import ManagerTaskMDP
 from motrix_rl_supermimic.mbrl_env import MbrlEnv, assemble_task
 from motrix_rl_supermimic.toy import ToyEnvCfg, register
+from motrix_rl_supermimic.transitions import Transitions
 from motrix_rl_supermimic.world_context import WorldContextTerm, WorldContextTermCfg
 
 from motrix_env_core.config import configclass
@@ -48,4 +49,4 @@ def ingest_toy_steps(learner, env: MbrlEnv, count: int) -> None:
             result = env.step(action)
             transition = env.snapshot_transition(result)
             views = {key: value.unsqueeze(0) for key, value in transition.items()}
-        learner.observe(views)
+        learner.observe(Transitions.from_dict(views))

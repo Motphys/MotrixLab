@@ -36,6 +36,7 @@ from motrix_rl_supermimic.networks import NormStatsView, build_policy, resolve_a
 from motrix_rl_supermimic.randomness import derive_seed, model_initialization, resolve_seed
 from motrix_rl_supermimic.replay import transition_schema
 from motrix_rl_supermimic.scheduling import UpdateCredit
+from motrix_rl_supermimic.transitions import Transitions
 from motrix_rl_supermimic.transport import GpuRingConnection, HostRingConnection
 
 
@@ -197,7 +198,9 @@ class SuperMimicTrainer(TrainerBase):
                 take = min(count, col.block_steps)
                 # CUDA-IPC slots fuse integer fields into float32. Restore the
                 # schema dtypes at the transport boundary, before consumption.
-                transitions = {field.name: views[field.name][:take].to(dtype=field.dtype) for field in schema.fields}
+                transitions = Transitions.from_dict(
+                    {field.name: views[field.name][:take].to(dtype=field.dtype) for field in schema.fields}
+                )
                 span_reward = learner.observe(transitions)
                 return_blocks.append(span_reward)
                 ring.commit_reads(take)

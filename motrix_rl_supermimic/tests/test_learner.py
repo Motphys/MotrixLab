@@ -13,6 +13,7 @@ from motrix_rl_supermimic.config import AgentCfg, SuperMimicCfg, TrainerCfg
 from motrix_rl_supermimic.learner import Learner
 from motrix_rl_supermimic.mbrl_env import assemble_task
 from motrix_rl_supermimic.toy import ToyEnvCfg
+from motrix_rl_supermimic.transitions import Transitions
 
 
 def test_critic_history_is_rejected_at_assembly_boundary(tmp_path):
@@ -53,7 +54,7 @@ def test_observe_consumes_selected_steps_and_advances_normalizers(tmp_path):
         "obs": torch.randn(steps, n, 4),
         "goal": torch.randn(steps, n, 2),
     }
-    span_reward = learner.observe({name: values[:3] for name, values in views.items()})
+    span_reward = learner.observe(Transitions.from_dict({name: values[:3] for name, values in views.items()}))
 
     assert learner.sim_steps == 3 * n
     for norm in (
