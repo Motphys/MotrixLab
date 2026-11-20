@@ -218,7 +218,7 @@ RL collector/adapter 负责组装 training transition，不由 env 生成 ring p
 
 - collector/play/evaluator 直接消费环境最终 obs，不另行维护真实轨迹窗口；stateless policy 若需要 `[B,H,D]`，按 spec reshape。
 - 以 observation spec 为 H 的唯一来源，checkpoint 重建维度与在线执行均使用同一描述，不重复配置历史长度。
-- 物理 recorder 与 state transition schema 保留，用于 world-model 训练；`StateSpec.observation_dim` 继续表示单帧 D，不能乘 H。
+- 物理 recorder 与 state transition schema 用于 world-model 训练；policy observation 的单帧 D 从 observation spec 的 frame space 派生，不能乘 H。
 - ring 数据仍由 SuperMimic collector/adapter 在 `env.step(action)` 后调用 `env.snapshot_transition(result)` 组装，再附加已有任务全局 transport 字段并发布。recorder 提供 `s/s1/a/a_prev/xi/f/ep_step`，step 结果提供 reward/done；物理端点不从 stacked obs 反推，也不以 reset 后 obs 替代。
 - 该物理 transition 路径不调用单帧观测读取接口、不发送完整 history；仅在要求精确观测回放时按需附加实际单帧。FastSAC 的观测提取与 SuperMimic 的物理 recorder 是不同数据源，不抽象为一个强制统一内容的 env transition。
 - learner 从状态、上一动作、context 和 frame 重新计算单帧，再按 spec 组窗；imagined rollout 用函数式 append 保留梯度。

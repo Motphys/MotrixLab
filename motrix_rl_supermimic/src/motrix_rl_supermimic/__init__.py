@@ -5,6 +5,5 @@
 
 from motrix_rl_supermimic.manager_task import ManagerTaskMDP
 from motrix_rl_supermimic.mbrl_env import MbrlEnv, MbrlEnvCfg
-from motrix_rl_supermimic.task_mdp import StateSpec
 
-__all__ = ["MbrlEnv", "MbrlEnvCfg", "ManagerTaskMDP", "StateSpec"]
+__all__ = ["MbrlEnv", "MbrlEnvCfg", "ManagerTaskMDP"]

@@ -78,7 +78,7 @@ def test_empty_context_uses_empty_affine_parameters() -> None:
     context = torch.empty(2, 3, 0, requires_grad=True)
     result = task.normalize_context(context)
     assert result.shape == context.shape
-    assert task.spec.context_dim == task.world_context.size == 0
+    assert task.world_context.size == task.world_context.size == 0
     assert task.world_context.slices == {}
     assert task.world_context.center.shape == task.world_context.scale.shape == (0,)
     assert torch.autograd.grad(result.sum(), context)[0].shape == context.shape
@@ -153,7 +153,7 @@ def test_task_program_builds_without_physics_and_exposes_extensions_explicitly(
 
     monkeypatch.setattr(ManagerEnv, "__init__", forbidden)
     task = assemble_task(make_cfg().for_imagined(), "cpu")
-    assert task.spec.state_dim == task.world_state.size
+    assert task.world_state.size == task.world_state.size
     assert task.reference_action() is None
     state = torch.zeros(5, 2, requires_grad=True)
     result = task.reward(
@@ -162,7 +162,7 @@ def test_task_program_builds_without_physics_and_exposes_extensions_explicitly(
             state=state,
             action=torch.ones(5, 1),
             previous=torch.zeros(5, 1),
-            context=state.new_zeros((5, task.spec.context_dim)),
+            context=state.new_zeros((5, task.world_context.size)),
         )
     )
     assert result.shape == (5,)
@@ -260,7 +260,7 @@ def test_imagined_program_assembles_existing_multiple_observation_and_reward_ter
             state=state,
             action=previous,
             previous=previous,
-            context=state.new_zeros((*frame.shape, task.spec.context_dim)),
+            context=state.new_zeros((*frame.shape, task.world_context.size)),
         )
     )
     torch.testing.assert_close(actual_reward, state[:, 0] * (2 * 0.5 - 3 * 2) * cfg.ctrl_dt)

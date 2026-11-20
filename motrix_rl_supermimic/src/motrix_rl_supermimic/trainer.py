@@ -34,8 +34,8 @@ from motrix_rl_supermimic.learner import Learner
 from motrix_rl_supermimic.mbrl_env import MbrlEnv, MbrlEnvCfg, assemble_task
 from motrix_rl_supermimic.networks import NormStatsView, build_policy, resolve_amp_dtype
 from motrix_rl_supermimic.randomness import derive_seed, model_initialization, resolve_seed
+from motrix_rl_supermimic.replay import transition_schema
 from motrix_rl_supermimic.scheduling import UpdateCredit
-from motrix_rl_supermimic.transition import transition_schema
 from motrix_rl_supermimic.transport import GpuRingConnection, HostRingConnection
 
 
@@ -150,7 +150,7 @@ class SuperMimicTrainer(TrainerBase):
                     raise RuntimeError("Collector exited before startup metadata")
                 if time.monotonic() - started > col.worker_timeout:
                     raise TimeoutError(f"No collector startup metadata for {col.worker_timeout}s")
-            real_spec, observation_spec, action_space = startup_rx.recv()
+            schema, observation_spec, action_space = startup_rx.recv()
             if (
                 observation_spec.policy.history_length != task.observation_spec.policy.history_length
                 or observation_spec.value_or_policy.history_length
@@ -169,7 +169,11 @@ class SuperMimicTrainer(TrainerBase):
                 or observation_spec["goal"].history_length != task.observation_spec["goal"].history_length
             ):
                 raise ValueError("Real and imagined goal observation specifications must match")
-            schema = transition_schema(real_spec, action_dim=action_space.shape[0])
+            expected_schema = transition_schema(
+                state_dim=task.world_state.size, context_dim=task.world_context.size, action_dim=task.action_dim
+            )
+            if schema.fields != expected_schema.fields:
+                raise ValueError("Real and imagined transition schemas must match")
             if same_gpu:
                 cursors = RingCursors()
                 slots = torch.zeros(

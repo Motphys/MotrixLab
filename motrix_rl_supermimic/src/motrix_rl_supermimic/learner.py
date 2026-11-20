@@ -71,7 +71,6 @@ class Learner:
     ) -> None:
         self.cfg, self.mdp, self.dev = cfg, task, device
         self.root_seed = resolve_seed(seed)
-        self.spec = spec = task.spec
         self.observation_spec = task.observation_spec
         if self.observation_spec.value_or_policy.history_length != 1:
             raise ValueError("SuperMimic critic requires value history_length=1; value history is not supported")
@@ -94,7 +93,7 @@ class Learner:
         with model_initialization(derive_seed(self.root_seed, "model/world_model")):
             self.wm = WorldModel(
                 task.world_state,
-                spec.context_dim,
+                task.world_context.size,
                 structured=a.wm_structured,
                 dt=task.dt,
                 amp_dtype=amp_dtype,
@@ -143,7 +142,14 @@ class Learner:
             for p in self.wm_imag.parameters():
                 p.requires_grad_(False)
         self.wm_side = torch.cuda.Stream() if self.wm_imag is not self.wm else None
-        self.buffer = ReplayBuffer(spec, t.buffer_steps, num_envs, self.dev, action_dim=task.action_dim)
+        self.buffer = ReplayBuffer(
+            t.buffer_steps,
+            num_envs,
+            self.dev,
+            state_dim=task.world_state.size,
+            context_dim=task.world_context.size,
+            action_dim=task.action_dim,
+        )
         valid_starts = self.mdp.imagination.valid_starts
         horizon = t.horizon
         self._valid_start_frames = lambda frames: valid_starts(frames, horizon)

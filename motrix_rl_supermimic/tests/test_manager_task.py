@@ -10,7 +10,6 @@ import torch
 from gymnasium.spaces import Box
 from motrix_rl_supermimic.imagination import ImaginationBindings, ImaginationInputs, ImaginationRuntime, ImaginationTerm
 from motrix_rl_supermimic.manager_task import ManagerTaskMDP, resolve_manager_task
-from motrix_rl_supermimic.task_mdp import StateSpec
 from motrix_rl_supermimic.world_context import WorldContext, WorldContextTerm
 from motrix_rl_supermimic.world_state import EuclideanState, WorldState, WorldStateTerm
 
@@ -20,8 +19,6 @@ from motrix_env_core.manager.observations import ObsTerm
 from motrix_env_core.manager.rewards import RewardTerm
 from motrix_env_core.manager.terminations import TerminationTerm
 from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
-
-SPEC = StateSpec(state_dim=4, context_dim=1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +81,6 @@ class FixtureImagination(ImaginationTerm):
 
 def make_task(imagination: ImaginationTerm | None = None) -> ManagerTaskMDP:
     return resolve_manager_task(
-        SPEC,
         0.02,
         3.0,
         FixtureImagination() if imagination is None else imagination,
@@ -92,7 +88,7 @@ def make_task(imagination: ImaginationTerm | None = None) -> ManagerTaskMDP:
         ObsTerm(1, value),
         RewardTerm(reward),
         TerminationTerm(soft),
-        world_state=WorldState({"state": WorldStateTerm(capture_state, EuclideanState(SPEC.state_dim))}),
+        world_state=WorldState({"state": WorldStateTerm(capture_state, EuclideanState(4))}),
         action_space=Box(-1.0, 1.0, (1,)),
         action_slices={"action": slice(0, 1)},
         reference_action=lambda: None,
@@ -173,7 +169,7 @@ def test_configured_observation_noise_is_shared_once_by_real_and_imagined_dispat
     from motrix_env_core.manager.resolver import ManagerTermResolver
 
     mdp = make_task()
-    state, frame = torch.randn(3, SPEC.state_dim), torch.arange(3)
+    state, frame = torch.randn(3, 4), torch.arange(3)
     previous, context = torch.ones(3, 1), torch.zeros(3, 1)
     ctx = make_task().binding.bind(frame, state=state, action=previous, previous=previous, context=context)
     clean = mdp.observation(mdp.binding.bind(frame, state=state, action=previous, previous=previous, context=context))
@@ -211,7 +207,7 @@ def test_resolved_numerical_calls_share_real_dispatch_and_reward_units() -> None
     assert mdp.reward_call.function is reward
     assert mdp.value_call.function is value
     assert mdp.soft_call.function is soft
-    state, action, previous = torch.randn(4, SPEC.state_dim), torch.randn(4, 1), torch.randn(4, 1)
+    state, action, previous = torch.randn(4, 4), torch.randn(4, 1), torch.randn(4, 1)
     context, frame = torch.randn(4, 1), torch.arange(4)
     real = make_task().binding.bind(frame, state=state, action=action, previous=previous, context=context)
     torch.testing.assert_close(mdp.reward(real), mdp.reward_call.invoke(real).float() * 0.06)
@@ -234,7 +230,7 @@ def test_heads_share_supplied_context_and_reward_soft_gradients_without_rebindin
             raise AssertionError("a numerical head rebound its supplied context")
 
     mdp = make_task(NoBinding())
-    state = torch.randn(4, SPEC.state_dim, requires_grad=True)
+    state = torch.randn(4, 4, requires_grad=True)
     action = torch.randn(4, mdp.action_dim, requires_grad=True)
     previous = torch.randn_like(action)
     xi, frame = torch.randn_like(action), torch.arange(4)
@@ -253,7 +249,7 @@ def test_heads_share_supplied_context_and_reward_soft_gradients_without_rebindin
 
 def test_reward_output_is_float32_with_gradients_from_float64_term() -> None:
     mdp = make_task()
-    state = torch.randn(2, SPEC.state_dim, dtype=torch.float64, requires_grad=True)
+    state = torch.randn(2, 4, dtype=torch.float64, requires_grad=True)
     action = torch.zeros(2, mdp.action_dim, dtype=torch.float64)
     result = mdp.reward(
         mdp.binding.bind(
@@ -261,7 +257,7 @@ def test_reward_output_is_float32_with_gradients_from_float64_term() -> None:
             state=state,
             action=action,
             previous=action,
-            context=state.new_zeros((2, mdp.spec.context_dim)),
+            context=state.new_zeros((2, mdp.world_context.size)),
         )
     )
     assert result.dtype == torch.float32
@@ -271,7 +267,7 @@ def test_reward_output_is_float32_with_gradients_from_float64_term() -> None:
 @pytest.mark.parametrize("n", [1, 15, 37])
 def test_arbitrary_predicted_batch_has_reward_and_observation_gradients(n: int) -> None:
     mdp = make_task()
-    state, action = torch.randn(n, SPEC.state_dim, requires_grad=True), torch.randn(n, 1, requires_grad=True)
+    state, action = torch.randn(n, 4, requires_grad=True), torch.randn(n, 1, requires_grad=True)
     frame, previous, context = torch.arange(n), torch.zeros(n, 1), torch.ones(n, 1)
     result = mdp.reward(
         mdp.binding.bind(
@@ -279,7 +275,7 @@ def test_arbitrary_predicted_batch_has_reward_and_observation_gradients(n: int) 
             state=state,
             action=action,
             previous=previous,
-            context=state.new_zeros((*frame.shape, mdp.spec.context_dim)),
+            context=state.new_zeros((*frame.shape, mdp.world_context.size)),
         )
     )
     gs, ga = torch.autograd.grad(result.sum(), (state, action))
@@ -298,9 +294,9 @@ def test_arbitrary_predicted_batch_has_reward_and_observation_gradients(n: int) 
 @pytest.mark.parametrize("shape", [(), (4,), (3, 5), (2, 3, 4)])
 def test_binder_flattens_horizon_batches_and_caller_restores_outputs(shape: tuple[int, ...]) -> None:
     mdp = make_task()
-    state = torch.randn(*shape, SPEC.state_dim, requires_grad=True)
+    state = torch.randn(*shape, 4, requires_grad=True)
     action = torch.randn(*shape, mdp.action_dim, requires_grad=True)
-    previous, context = torch.zeros_like(action), torch.randn(*shape, SPEC.context_dim)
+    previous, context = torch.zeros_like(action), torch.randn(*shape, 1)
     frame = torch.zeros(shape, dtype=torch.long)
     shared = mdp.binding.bind(frame, state=state, action=action, previous=previous, context=context)
     observed = mdp.binding.bind(frame, state=state, action=previous, previous=previous, context=context)
@@ -338,12 +334,12 @@ def test_explicit_input_binding_drives_same_numerical_dispatch_values() -> None:
             return replace(bindings, sim=Map({"state": inputs.state["state"] + 2}))
 
     mdp = make_task(ShiftedImagination())
-    state, frame = torch.zeros(2, SPEC.state_dim), torch.arange(2)
+    state, frame = torch.zeros(2, 4), torch.arange(2)
     action = torch.zeros(2, 1)
     context = mdp.binding.bind(frame, state=state, action=action, previous=action, context=torch.zeros(2, 1))
     expected = mdp.reward_call.invoke(context).to(torch.float32) * 0.06
     torch.testing.assert_close(mdp.reward(context), expected)
-    torch.testing.assert_close(expected, torch.full((2,), SPEC.state_dim * 4 * 0.06))
+    torch.testing.assert_close(expected, torch.full((2,), 4 * 4 * 0.06))
     assert mdp.reward_call.function is reward
 
 
@@ -382,16 +378,16 @@ def test_missing_predicted_input_reports_its_declared_key() -> None:
         mdp.reward(
             mdp.binding.bind(
                 torch.arange(3),
-                state=torch.zeros(3, SPEC.state_dim),
+                state=torch.zeros(3, 4),
                 action=torch.zeros(3, 1),
                 previous=torch.zeros(3, 1),
-                context=torch.zeros(3, mdp.spec.context_dim),
+                context=torch.zeros(3, mdp.world_context.size),
             )
         )
 
 
 def test_imagined_evaluation_does_not_advance_real_command_or_curriculum() -> None:
-    state, frame = torch.randn(3, SPEC.state_dim), torch.arange(3)
+    state, frame = torch.randn(3, 4), torch.arange(3)
     action, context = torch.zeros(3, 1), torch.ones(3, 1)
     real = make_task().binding.bind(frame, state=state, action=action, previous=action, context=context)
     reference = real.commands["reference"]

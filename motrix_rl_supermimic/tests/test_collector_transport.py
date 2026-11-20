@@ -12,9 +12,9 @@ from _helpers import make_toy
 from motrix_rl_supermimic.config import AgentCfg
 from motrix_rl_supermimic.networks import NormStatsView, build_policy
 from motrix_rl_supermimic.randomness import derive_seed
+from motrix_rl_supermimic.replay import transition_schema
 from motrix_rl_supermimic.toy import ToyEnvCfg, _flat_state
 from motrix_rl_supermimic.toy import register as register_toy
-from motrix_rl_supermimic.transition import transition_schema
 from motrix_rl_supermimic.transport import HostRingConnection
 
 from motrix_rl.transport.inference_bundle import InferenceBundleSpec, ModuleSection, NormalizerSection
@@ -51,7 +51,9 @@ def test_policy_bundle_and_transition_snapshots(monkeypatch, policy_device, weig
     manager = make_toy(num_envs=2, cfg=cfg)
     env = manager
     agent = AgentCfg(hidden=16, z_dim=8)
-    spec = env.state_spec
+    schema = transition_schema(
+        state_dim=env.world_state.size, context_dim=env.world_context.size, action_dim=env.action_space.shape[0]
+    )
     goal_dim = env.observation_spec["goal"].space.shape[0]
     obs_dim = env.observation_spec.policy.frame_space.shape[0]
     action_dim = env.action_space.shape[0]
@@ -145,14 +147,14 @@ def test_policy_bundle_and_transition_snapshots(monkeypatch, policy_device, weig
         actions.append(action.clone())
         return original_step(action)
 
-    parent_ring = HostTransitionRing(transition_schema(spec, action_dim=action_dim), 4, 2)
+    parent_ring = HostTransitionRing(schema, 4, 2)
     connection = HostRingConnection(parent_ring.schema, 4, 2, parent_ring.cursors, parent_ring.data)
     handshake = []
     metadata = []
 
     class Startup:
         def send(self, message):
-            assert message[0] == spec
+            assert message[0].fields == schema.fields
             metadata.append(message)
             handshake.append("metadata")
 
@@ -220,7 +222,7 @@ def test_policy_bundle_and_transition_snapshots(monkeypatch, policy_device, weig
     for action in actions:
         expected = 0.25 + 0.1 * torch.randn(action.shape, generator=exploration)
         torch.testing.assert_close(action, expected)
-    assert metadata[0][0] == spec
+    assert metadata[0][0].fields == schema.fields
     torch.testing.assert_close(transported[0]["s"], expected_states[0])
     torch.testing.assert_close(transported[0]["a"], actions[0])
     snapshot = transported[0]["s1"].clone()
@@ -251,7 +253,9 @@ def test_collector_preserves_block_and_healthy_episode_on_numerical_failure(monk
     env = manager
     manager.init_state()
     agent = AgentCfg(hidden=16, z_dim=8)
-    spec = env.state_spec
+    schema = transition_schema(
+        state_dim=env.world_state.size, context_dim=env.world_context.size, action_dim=env.action_space.shape[0]
+    )
     goal_dim = env.observation_spec["goal"].space.shape[0]
     obs_dim = env.observation_spec.policy.frame_space.shape[0]
     action_dim = env.action_space.shape[0]
@@ -292,13 +296,13 @@ def test_collector_preserves_block_and_healthy_episode_on_numerical_failure(monk
             else:
                 result.zero_()  # backend storage is overwritten every step
 
-    parent_ring = HostTransitionRing(transition_schema(spec, action_dim=action_dim), 4, 2)
+    parent_ring = HostTransitionRing(schema, 4, 2)
     connection = HostRingConnection(parent_ring.schema, 4, 2, parent_ring.cursors, parent_ring.data)
     handshake = []
 
     class Startup:
         def send(self, message):
-            assert message[0] == spec
+            assert message[0].fields == schema.fields
             handshake.append("metadata")
 
         def recv(self):

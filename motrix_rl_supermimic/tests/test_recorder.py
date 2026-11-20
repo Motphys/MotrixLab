@@ -3,23 +3,17 @@
 
 """Exported replay snapshots own their data and use final framework boundaries."""
 
-from dataclasses import replace
-
 import torch
 from motrix_rl_supermimic.recorder import TransitionRecorder
-from motrix_rl_supermimic.task_mdp import StateSpec
 
 from motrix_env_core.array.env import ArrayEnvState, EnvObs
 
-SPEC = StateSpec(state_dim=2, context_dim=0)
-
 
 def test_snapshot_owns_fields_and_combines_final_termination_and_truncation() -> None:
-    spec = replace(SPEC, context_dim=2)
-    recorder = TransitionRecorder.create(3, spec, action_dim=1)
+    recorder = TransitionRecorder.create(3, state_dim=2, context_dim=2, action_dim=1)
     values = {
-        "s": torch.arange(3 * SPEC.state_dim, dtype=torch.float32).reshape(3, -1),
-        "s1": torch.arange(3 * SPEC.state_dim, dtype=torch.float32).reshape(3, -1) + 100,
+        "s": torch.arange(3 * 2, dtype=torch.float32).reshape(3, -1),
+        "s1": torch.arange(3 * 2, dtype=torch.float32).reshape(3, -1) + 100,
         "frame": torch.tensor([12, 18, 24]),
         "context": torch.tensor([[0.3, 0.4], [0.5, 0.6], [0.7, 0.8]]),
         "action": torch.tensor([[0.1], [0.2], [0.3]]),

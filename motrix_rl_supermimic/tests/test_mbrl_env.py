@@ -65,7 +65,7 @@ def test_named_context_terms_derive_width_and_capture_live_partial_reset_data(dy
     env = make_toy(cfg=cfg, num_envs=2)
     env.init_state()
     task = assemble_task(cfg.for_imagined(), "cpu")
-    assert env.state_spec.context_dim == task.spec.context_dim == env.world_context.size == 3
+    assert task.world_context.size == env.world_context.size == 3
     assert env.world_context.slices == task.world_context.slices == {"reference": slice(0, 1), "physical": slice(1, 3)}
     env.command_terms["reference"].context.copy_(torch.tensor([[2.0], [4.0]]))
     env.sim.position.copy_(torch.tensor([[0.2], [-0.3]]))
@@ -146,7 +146,7 @@ def test_registered_toy_uses_configured_backend_and_records_transition(dynamo_ea
                 action=transition["a"],
                 previous=transition["a_prev"],
                 context=transition["s1"].new_zeros(
-                    (*(manager.command_terms["reference"].frame).shape, imagined.spec.context_dim)
+                    (*(manager.command_terms["reference"].frame).shape, imagined.world_context.size)
                 ),
             )
         ),
@@ -222,7 +222,8 @@ def test_term_widths_drive_real_and_learner_assembly(dynamo_eager: None, tmp_pat
     env = make_toy(cfg=cfg, num_envs=2)
     result = env.init_state()
     task = assemble_task(cfg.for_imagined(), "cpu")
-    assert task.spec == original.spec
+    assert task.world_state.size == original.world_state.size
+    assert task.world_context.size == original.world_context.size
     assert task.action_dim == original.action_dim + 2 == env.action_space.shape[0]
     assert task.observation_dim == result.obs.policy.shape[-1] == 6
     assert task.critic_observation_dim == result.obs.value.shape[-1] == 5
@@ -236,8 +237,8 @@ def test_term_widths_drive_real_and_learner_assembly(dynamo_eager: None, tmp_pat
     transition = env.snapshot_transition(env.step(action.detach()))
     learner.buffer.add(transition)
     torch.testing.assert_close(learner.buffer.data["a"][0], action.detach())
-    state = torch.zeros(env.num_envs, task.spec.state_dim)
-    predicted = learner.wm(state, action, torch.empty(env.num_envs, task.spec.context_dim))
+    state = torch.zeros(env.num_envs, task.world_state.size)
+    predicted = learner.wm(state, action, torch.empty(env.num_envs, task.world_context.size))
     assert predicted.shape == state.shape
 
 
@@ -290,7 +291,8 @@ def test_reference_command_rejects_non_integer_frame() -> None:
 
 def test_initial_observation_and_learner_task(env: MbrlEnv) -> None:
     imagined = assemble_task(env.cfg.for_imagined(), "cpu")
-    assert imagined.spec == env.state_spec
+    assert imagined.world_state.size == env.world_state.size
+    assert imagined.world_context.size == env.world_context.size
     assert env.command_terms["reference"].frame.tolist() == [0, 0, 0]
     assert env.observation_spec.policy.space.shape == (
         imagined.observation_dim * imagined.observation_spec.policy.history_length,
@@ -374,7 +376,7 @@ def test_shared_heads_frame_reward_units_and_action_history(
                     action=action,
                     previous=previous,
                     context=transition["s1"].new_zeros(
-                        (*env.command_terms["reference"].frame.shape, imagined.spec.context_dim)
+                        (*env.command_terms["reference"].frame.shape, imagined.world_context.size)
                     ),
                 )
             ),
@@ -435,7 +437,7 @@ def test_public_partial_reset_uses_manager_actions_commands_and_read_program(env
     assert env.state.episode_steps.tolist() == [0, 1, 0]
     torch.testing.assert_close(
         _flat_state(env.sim_data.view("position"), env.sim_data.view("velocity"))[[0, 2]],
-        torch.zeros(2, env.state_spec.state_dim),
+        torch.zeros(2, env.world_state.size),
     )
     torch.testing.assert_close(_flat_state(env.sim_data.view("position"), env.sim_data.view("velocity"))[1], before[1])
     assert env.command_terms["reference"].frame.tolist() == [0, 1, 0]
@@ -522,7 +524,7 @@ def test_status_buffer_and_control_duration(env: MbrlEnv) -> None:
 def test_compiled_task_heads_preserve_values_and_gradients(dynamo_eager: None) -> None:
     eager, compiled = make_toy_task(), make_toy_task()
     compile_task_heads(compiled)
-    state = torch.randn(3, eager.spec.state_dim, requires_grad=True)
+    state = torch.randn(3, eager.world_state.size, requires_grad=True)
     action = torch.randn(3, 1, requires_grad=True)
     previous, frame, context = torch.zeros_like(action), torch.arange(3), torch.zeros(3, 0)
     outputs = []
@@ -551,7 +553,7 @@ def test_compiled_task_heads_preserve_values_and_gradients(dynamo_eager: None) -
                     state=state,
                     action=action,
                     previous=previous,
-                    context=state.new_zeros((*frame.shape, task.spec.context_dim)),
+                    context=state.new_zeros((*frame.shape, task.world_context.size)),
                 )
             ).sum(),
             (state, action),
@@ -580,7 +582,7 @@ def test_inductor_manager_schedule_matches_shared_heads() -> None:
                     action=transition["a"],
                     previous=transition["a_prev"],
                     context=transition["s1"].new_zeros(
-                        (*((transition["f"] + 1) % len(TARGETS)).shape, imagined.spec.context_dim)
+                        (*((transition["f"] + 1) % len(TARGETS)).shape, imagined.world_context.size)
                     ),
                 )
             ),

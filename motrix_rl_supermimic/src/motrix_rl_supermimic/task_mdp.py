@@ -1,7 +1,7 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Derived world-state shape metadata and numerical head compilation.
+"""Numerical task head compilation.
 
 The analytic MDP contract itself is :class:`~motrix_rl_supermimic.manager_task.ManagerTaskMDP`:
 the learner independently builds one to evaluate predicted states for
@@ -12,7 +12,6 @@ env/simulator handles and remain device-agnostic and ``torch.compile``-friendly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -20,19 +19,7 @@ if TYPE_CHECKING:
 
 import torch
 
-__all__ = ["StateSpec", "compile_task_heads"]
-
-
-@dataclass(frozen=True)
-class StateSpec:
-    """Runtime shapes derived from constructed world-state terms.
-
-    Representation semantics belong to the composed WorldState, not this
-    recording/replay metadata. Context independently conditions dynamics.
-    """
-
-    state_dim: int
-    context_dim: int
+__all__ = ["compile_task_heads"]
 
 
 def compile_task_heads(task_mdp: ManagerTaskMDP) -> None:

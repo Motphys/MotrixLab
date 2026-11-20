@@ -23,7 +23,6 @@ from motrix_rl_supermimic.imagination import ImaginationCfg
 from motrix_rl_supermimic.manager_task import ManagerTaskMDP, resolve_manager_task
 from motrix_rl_supermimic.recorder import TransitionRecorder
 from motrix_rl_supermimic.reference_command import ReferenceCommand
-from motrix_rl_supermimic.task_mdp import StateSpec
 from motrix_rl_supermimic.world_context import WorldContext, WorldContextTermCfg
 from motrix_rl_supermimic.world_state import WorldState, WorldStateTermCfg
 
@@ -104,8 +103,12 @@ class MbrlEnv(ManagerEnv):
         build = self.build_context()
         self._world_state = WorldState({name: term(build) for name, term in cfg.world_model_state.items()})
         self._world_context = WorldContext({name: term(build) for name, term in cfg.world_model_context.items()})
-        self._state_spec = StateSpec(self._world_state.size, self._world_context.size)
-        self._recorder = TransitionRecorder.create(num_envs, self.state_spec, action_dim=self.action_space.shape[0])
+        self._recorder = TransitionRecorder.create(
+            num_envs,
+            state_dim=self.world_state.size,
+            context_dim=self.world_context.size,
+            action_dim=self.action_space.shape[0],
+        )
 
     @property
     def world_state(self) -> WorldState:
@@ -114,10 +117,6 @@ class MbrlEnv(ManagerEnv):
     @property
     def world_context(self) -> WorldContext:
         return self._world_context
-
-    @property
-    def state_spec(self) -> StateSpec:
-        return self._state_spec
 
     def _build_task_program(self) -> TorchTaskProgram:
         program = super()._build_task_program()
@@ -201,7 +200,6 @@ def _assemble_task(task: MbrlEnvCfg) -> ManagerTaskMDP:
     context = BuildContext(cfg=task, actions=actions, commands=commands, model=None, num_envs=1, seed=0)
     world_state = WorldState({name: term(context) for name, term in task.world_model_state.items()})
     world_context = WorldContext({name: term(context) for name, term in task.world_model_context.items()})
-    spec = StateSpec(world_state.size, world_context.size)
     imagination = task.imagination(context)
     groups = create_observation_groups(task, context)
     for name in ("policy", "value", "goal"):
@@ -252,7 +250,6 @@ def _assemble_task(task: MbrlEnvCfg) -> ManagerTaskMDP:
         return total
 
     return resolve_manager_task(
-        spec,
         task.ctrl_dt,
         1.0,
         imagination,

@@ -39,8 +39,8 @@ def test_ingest_consumes_only_the_requested_leading_steps(tmp_path):
     learner = Learner(cfg, assemble_task(env.cfg.for_imagined(), "cpu"), env.num_envs, env.cfg.ctrl_dt, "cpu", tmp_path)
     steps, n = 5, env.num_envs
     views = {
-        "s": torch.randn(steps, n, learner.mdp.spec.state_dim),
-        "s1": torch.randn(steps, n, learner.mdp.spec.state_dim),
+        "s": torch.randn(steps, n, learner.mdp.world_state.size),
+        "s1": torch.randn(steps, n, learner.mdp.world_state.size),
         "a": torch.randn(steps, n, 1),
         "a_prev": torch.randn(steps, n, 1),
         "xi": torch.zeros(steps, n, 0),
@@ -164,7 +164,7 @@ def test_mirror_augmentation_reflects_only_selected_windows(tmp_path) -> None:
     task = make_toy_task(cfg=ToyEnvCfg(world_model_context={"reference": ReferenceContextCfg()}))
     task.imagination.mirror = _SagittalMirror()
     learner = Learner(SuperMimicCfg(agent=AgentCfg(hidden=8, wm_mirror=0.5)), task, 1, 0.02, "cpu", tmp_path)
-    state = torch.randn(4, 2, task.spec.state_dim)
+    state = torch.randn(4, 2, task.world_state.size)
     batch = {
         "s": state,
         "s1": state.clone(),

@@ -8,23 +8,20 @@ from multiprocessing.connection import Connection
 
 import pytest
 import torch
-from motrix_rl_supermimic.task_mdp import StateSpec
-from motrix_rl_supermimic.transition import transition_schema
+from motrix_rl_supermimic.replay import transition_schema
 from motrix_rl_supermimic.transport import GpuRingConnection, HostRingConnection, connect_producer
 
 from motrix_rl.transport.gpu_ipc_ring import GpuIpcTransitionRing
 from motrix_rl.transport.ring import HostTransitionRing, RingCursors
 
-SPEC = StateSpec(state_dim=2, context_dim=0)
-
 
 def _row() -> dict[str, torch.Tensor]:
-    schema = transition_schema(SPEC, action_dim=1)
+    schema = transition_schema(state_dim=2, context_dim=0, action_dim=1)
     return {field.name: torch.full(schema.slot_shape(field, 3), 1, dtype=field.dtype) for field in schema.fields}
 
 
 def test_host_connection_attaches_algorithm_transition_fields() -> None:
-    schema = transition_schema(SPEC, action_dim=1)
+    schema = transition_schema(state_dim=2, context_dim=0, action_dim=1)
     owner = HostTransitionRing(schema, 2, 3)
     connection = HostRingConnection(schema, 2, 3, owner.cursors, owner.data)
     producer = connect_producer(connection)
@@ -55,7 +52,7 @@ def _gpu_descriptor_producer(channel: Connection) -> None:
 @pytest.mark.integration
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA IPC")
 def test_spawned_gpu_connection_serializes_shared_storage_without_endpoint_state() -> None:
-    schema = transition_schema(SPEC, action_dim=1)
+    schema = transition_schema(state_dim=2, context_dim=0, action_dim=1)
     cursors = RingCursors()
     slots = torch.zeros(2, 3, schema.feature_width, device="cuda")
     consumer = GpuIpcTransitionRing(cursors, slots, schema, 2, 3)

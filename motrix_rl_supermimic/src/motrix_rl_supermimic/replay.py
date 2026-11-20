@@ -5,7 +5,7 @@
 
 """Fixed-size replay of simulator transitions laid out as (time, env).
 
-State/context fields come from ``StateSpec`` and actions from the task space; extra scalar bookkeeping
+State/context widths come from their assembled terms and actions from the task space; scalar bookkeeping
 (frame index, episode step, done) is part of the provider contract.
 """
 
@@ -15,18 +15,20 @@ from collections.abc import Callable
 
 import torch
 
-from motrix_rl_supermimic.task_mdp import StateSpec
+from motrix_rl.transport.schema import TransitionField, TransitionSchema
 
-__all__ = ["ReplayBuffer", "transition_fields"]
+__all__ = ["ReplayBuffer", "transition_fields", "transition_schema"]
 
 
-def transition_fields(spec: StateSpec, *, action_dim: int) -> dict[str, tuple[tuple[int, ...], torch.dtype]]:
+def transition_fields(
+    *, state_dim: int, context_dim: int, action_dim: int
+) -> dict[str, tuple[tuple[int, ...], torch.dtype]]:
     return {
-        "s": ((spec.state_dim,), torch.float32),
-        "s1": ((spec.state_dim,), torch.float32),
+        "s": ((state_dim,), torch.float32),
+        "s1": ((state_dim,), torch.float32),
         "a": ((action_dim,), torch.float32),
         "a_prev": ((action_dim,), torch.float32),
-        "xi": ((spec.context_dim,), torch.float32),
+        "xi": ((context_dim,), torch.float32),
         "r": ((), torch.float32),
         "f": ((), torch.long),
         "ep_step": ((), torch.int32),
@@ -34,13 +36,36 @@ def transition_fields(spec: StateSpec, *, action_dim: int) -> dict[str, tuple[tu
     }
 
 
+def transition_schema(*, state_dim: int, context_dim: int, action_dim: int) -> TransitionSchema:
+    """Transport widths derived from assembled world state, context and actions."""
+    return TransitionSchema(
+        tuple(
+            TransitionField(name, shape, dtype)
+            for name, (shape, dtype) in transition_fields(
+                state_dim=state_dim, context_dim=context_dim, action_dim=action_dim
+            ).items()
+        )
+    )
+
+
 class ReplayBuffer:
-    def __init__(self, spec: StateSpec, T: int, N: int, device: str | torch.device = "cpu", *, action_dim: int) -> None:
+    def __init__(
+        self,
+        T: int,
+        N: int,
+        device: str | torch.device = "cpu",
+        *,
+        state_dim: int,
+        context_dim: int,
+        action_dim: int,
+    ) -> None:
         if T <= 0 or N <= 0:
             raise ValueError("Replay capacity and environment count must be positive")
-        self.spec, self.T, self.N, self.device = spec, T, N, device
+        self.T, self.N, self.device = T, N, device
         self.data: dict[str, torch.Tensor] = {}
-        for k, (shape, dt) in transition_fields(spec, action_dim=action_dim).items():
+        for k, (shape, dt) in transition_fields(
+            state_dim=state_dim, context_dim=context_dim, action_dim=action_dim
+        ).items():
             self.data[k] = torch.zeros((T, N) + shape, dtype=dt, device=device)
         self.ptr, self.size = 0, 0
 

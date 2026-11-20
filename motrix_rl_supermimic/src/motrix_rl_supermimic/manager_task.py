@@ -19,13 +19,11 @@ from motrix_env_core.manager.rewards import RewardTerm
 from motrix_env_core.manager.terminations import TerminationTerm
 from motrix_env_core.observations import ObservationSpec
 from motrix_rl_supermimic.imagination import ImaginationRuntime, ImaginationTerm
-from motrix_rl_supermimic.task_mdp import StateSpec
 from motrix_rl_supermimic.world_context import WorldContext
 from motrix_rl_supermimic.world_state import WorldState
 
 
 def resolve_manager_task(  # noqa: PLR0913
-    spec: StateSpec,
     dt: float,
     reward_weight: float,
     imagination: ImaginationTerm,
@@ -52,7 +50,6 @@ def resolve_manager_task(  # noqa: PLR0913
 
     resolver = ManagerTermResolver()
     return ManagerTaskMDP(
-        spec=spec,
         world_state=world_state,
         dt=dt,
         reward_weight=reward_weight,
@@ -81,7 +78,6 @@ class ManagerTaskMDP:
     parameters normalize world-model context independently of that binding.
     """
 
-    spec: StateSpec
     world_state: WorldState
     dt: float
     reward_weight: float

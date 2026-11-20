@@ -23,6 +23,7 @@ from motrix_rl_supermimic.config import AgentCfg
 from motrix_rl_supermimic.mbrl_env import MbrlEnv, MbrlEnvCfg
 from motrix_rl_supermimic.networks import NormStatsView, Policy, build_policy
 from motrix_rl_supermimic.randomness import derive_seed, model_initialization, resolve_seed
+from motrix_rl_supermimic.replay import transition_schema
 from motrix_rl_supermimic.transport import connect_producer
 
 
@@ -62,11 +63,13 @@ def collector_process(  # noqa: PLR0913
         env = build.make(num_envs=num_envs, mode="train", seed=env_seed)
         if not isinstance(env, MbrlEnv):
             raise TypeError("SuperMimic requires an environment inheriting MbrlEnv")
-        spec = env.state_spec
         observation_spec = env.observation_spec
         obs_dim = observation_spec.policy.frame_space.shape[0]
         action_dim = env.action_space.shape[0]
-        startup.send((spec, observation_spec, env.action_space))
+        schema = transition_schema(
+            state_dim=env.world_state.size, context_dim=env.world_context.size, action_dim=action_dim
+        )
+        startup.send((schema, observation_spec, env.action_space))
         ring = connect_producer(startup.recv())
         startup.close()
 

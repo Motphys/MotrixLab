@@ -282,12 +282,14 @@ def test_norm_stats_view_publishes_real_statistics():
 @pytest.mark.parametrize("transport", ["host", pytest.param("cuda", marks=pytest.mark.integration)])
 def test_transition_fields_roundtrip(transport):
     """Algorithm transition layout and values survive either transport endpoint."""
-    from motrix_rl_supermimic.transition import transition_schema
+    from motrix_rl_supermimic.replay import transition_schema
 
     from motrix_rl.transport.ring import HostTransitionRing, RingCursors
 
     task = make_toy_task()
-    schema = transition_schema(task.spec, action_dim=task.action_dim)
+    schema = transition_schema(
+        state_dim=task.world_state.size, context_dim=task.world_context.size, action_dim=task.action_dim
+    )
     if transport == "cuda":
         if not torch.cuda.is_available():
             pytest.skip("requires CUDA")
