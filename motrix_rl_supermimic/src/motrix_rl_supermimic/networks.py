@@ -178,19 +178,6 @@ class Policy(nn.Module):
         """Encode one or many goals; the last axis is the goal feature width."""
         return torch.tanh(run_mlp(self.enc, self.goal_norm(goal), self.amp_dtype))
 
-    def _load_from_state_dict(
-        self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
-    ):
-        # The reference-action module is task-owned and rebuilt from the task;
-        # a policy without it drops the checkpoint's reference-action keys so
-        # it can load a reference-skip checkpoint strictly.
-        if self.reference_action is None:
-            for key in [k for k in list(state_dict) if k.startswith(prefix + "reference_action.")]:
-                del state_dict[key]
-        return super()._load_from_state_dict(
-            state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
-        )
-
     def forward(self, obs_hist: torch.Tensor, goal: torch.Tensor, z: torch.Tensor | None = None) -> torch.Tensor:
         """obs_hist: (B, hist, obs_dim) noisy observations, newest last."""
         z = self.encode_goal(goal) if z is None else z

@@ -25,7 +25,6 @@ from motrix_env_core.manager.commands import CommandCfg, CommandTerm
 from motrix_env_core.manager.context import BuildContext, ManagerContext
 from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.manager.observations import ManagerObservationGroupCfg, ObservationTermCfg, ObsTerm
-from motrix_env_core.manager.random import RandomSource
 from motrix_env_core.manager.rewards import RewardTerm, RewardTermCfg
 from motrix_env_core.manager.sim_reset import ResetTerm
 from motrix_env_core.manager.terminations import TerminationTerm, TerminationTermCfg
@@ -33,10 +32,9 @@ from motrix_env_core.sim.backend import RenderConfig, SimBackend
 from motrix_env_core.sim.model import ActuatorSpec, ActuatorType, ModelQuery, SimModel
 from motrix_env_core.sim.read import DofPositionQuery, DofVelocityQuery, PhysicsReadProgram, SimDataQuery
 from motrix_env_core.sim.write import CtrlTargetsWrite, SimWrite, WriteProgram
-from motrix_rl_supermimic.imagination import ImaginationCfg, ImaginationTerm
+from motrix_rl_supermimic.imagination import ImaginationBindings, ImaginationCfg, ImaginationInputs, ImaginationTerm
 from motrix_rl_supermimic.mbrl_env import MbrlEnv, MbrlEnvCfg
 from motrix_rl_supermimic.reference_command import ReferenceCommand
-from motrix_rl_supermimic.task_config import WorldModelStateCfg
 from motrix_rl_supermimic.world_state import EuclideanState, WorldStateTerm, WorldStateTermCfg
 
 TARGETS = (0.0, 0.5, -0.5, 1.0)
@@ -79,77 +77,19 @@ def _noise(value: torch.Tensor) -> torch.Tensor:
     return value + torch.randn_like(value) * 1e-4
 
 
-def _bind_inputs(
-    state: torch.Tensor,
-    frame: torch.Tensor,
-    action: torch.Tensor,
-    previous: torch.Tensor,
-    context: torch.Tensor,
-    dt: float,
-) -> ManagerContext:
-    n = state.shape[0]
-    device = state.device
-    return ManagerContext(
-        env_id=torch.arange(n, device=device),
-        actions=Map(
-            {
-                "velocity": ActionState(
-                    torch.stack((previous, action), 1), torch.ones(1, dtype=torch.long, device=device)
-                )
-            }
-        ),
-        commands=Map({"reference": ToyReference(frame, context)}),
-        metrics=Map({}),
-        sim=Map({"position": state[:, 0:1], "velocity": state[:, 1:2]}),
-        dt=dt,
-        sim_reset_requested=torch.zeros(n, 1, dtype=torch.bool, device=device),
-        rand=RandomSource(),
-        terminated=torch.zeros(n, dtype=torch.bool, device=device),
-    )
-
-
 @dataclass(kw_only=True)
 class ToyImaginationTerm(ImaginationTerm):
-    dt: float
-    action_dim: int
+    def bind(self, inputs: ImaginationInputs) -> ImaginationBindings:
+        state = inputs.state["joint"]
+        return ImaginationBindings(
+            commands=Map({"reference": ToyReference(inputs.frame, state.new_empty((inputs.frame.numel(), 0)))}),
+            sim=Map({"position": state[:, 0:1], "velocity": state[:, 1:2]}),
+        )
 
-    def bind_context(
-        self,
-        frame: torch.Tensor,
-        *,
-        state: torch.Tensor | None = None,
-        action: torch.Tensor | None = None,
-        previous: torch.Tensor | None = None,
-        context: torch.Tensor | None = None,
-    ) -> ManagerContext:
-        frame = frame.reshape(-1)
-        if state is not None:
-            if action is None or previous is None or context is None:
-                raise ValueError("Physical imagination requires explicit action, previous, and context inputs")
-            n = frame.numel()
-            return _bind_inputs(
-                state.reshape(n, -1),
-                frame,
-                action.reshape(n, self.action_dim),
-                previous.reshape(n, self.action_dim),
-                context.reshape(n, context.shape[-1]),
-                self.dt,
-            )
-        if action is not None or previous is not None or context is not None:
-            raise ValueError("Frame-only imagination does not accept physical inputs without state")
-        device = frame.device
-        ids = torch.arange(frame.numel(), device=device)
-        flags = torch.zeros(frame.numel(), dtype=torch.bool, device=device)
-        return ManagerContext(
-            env_id=ids,
-            actions=Map({}),
-            commands=Map({"reference": ToyReference(frame, torch.empty(frame.numel(), 0, device=device))}),
-            metrics=Map({}),
+    def bind_reference(self, frame: torch.Tensor) -> ImaginationBindings:
+        return ImaginationBindings(
+            commands=Map({"reference": ToyReference(frame, torch.empty(frame.numel(), 0, device=frame.device))}),
             sim=Map({}),
-            dt=self.dt,
-            sim_reset_requested=torch.zeros(frame.numel(), 1, dtype=torch.bool, device=device),
-            rand=RandomSource(),
-            terminated=flags,
         )
 
     def valid_starts(self, frame: torch.Tensor, horizon: int) -> torch.Tensor:
@@ -159,7 +99,7 @@ class ToyImaginationTerm(ImaginationTerm):
 @configclass
 class ToyImaginationCfg(ImaginationCfg):
     def __call__(self, ctx: BuildContext) -> ToyImaginationTerm:
-        return ToyImaginationTerm(dt=ctx.cfg.ctrl_dt, action_dim=ctx.actions["velocity"].action_space.shape[0])
+        return ToyImaginationTerm()
 
 
 def _flat_state(position: torch.Tensor, velocity: torch.Tensor) -> torch.Tensor:
@@ -412,7 +352,7 @@ class ToyEnvCfg(MbrlEnvCfg):
     backend: str | None = _ToyBackend.name
     scene: SceneCfg = SceneCfg()
     sim_reset: ManagerResetCfg = _ToyResetsCfg()
-    world_model_state: WorldModelStateCfg = WorldModelStateCfg(terms={"joint": ToyWorldStateCfg()})
+    world_model_state: dict[str, WorldStateTermCfg] = {"joint": ToyWorldStateCfg()}
     imagination: ToyImaginationCfg = ToyImaginationCfg()
     soft_termination: TerminationTermCfg = _ToySoftCfg()
 

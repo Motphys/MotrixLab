@@ -32,13 +32,11 @@ def actor_inputs(
     frame = torch.zeros(3, dtype=torch.long, device=device)
     previous = torch.zeros(3, 1, device=device)
     obs = (
-        mdp.observation(
-            mdp.imagination.bind_context(frame, state=state, action=previous, previous=previous, context=xi)
-        )[:, None]
+        mdp.observation(mdp.binding.bind(frame, state=state, action=previous, previous=previous, context=xi))[:, None]
         .expand(-1, 2, -1)
         .contiguous()
     )
-    goal = mdp.goal(mdp.imagination.bind_context(frame))
+    goal = mdp.goal(mdp.binding.bind_reference(frame))
     return pi, ActorModels(wm, critic), mdp, cfg, (state, xi, frame, previous, obs, goal)
 
 

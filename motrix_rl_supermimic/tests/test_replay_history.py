@@ -135,15 +135,21 @@ def test_learner_samples_starts_with_bound_imagination_horizon(tmp_path) -> None
     from _helpers import make_toy_task
     from motrix_rl_supermimic.config import AgentCfg, SuperMimicCfg, TrainerCfg
     from motrix_rl_supermimic.learner import Learner
+    from motrix_rl_supermimic.toy import ToyEnvCfg, ToyImaginationCfg, ToyImaginationTerm
 
-    task = make_toy_task()
-    from motrix_rl_supermimic.toy import ToyImaginationTerm
+    from motrix_env_core.config import configclass
+    from motrix_env_core.manager.context import BuildContext
 
     class ClipImagination(ToyImaginationTerm):
         def valid_starts(self, frame: torch.Tensor, horizon: int) -> torch.Tensor:
             return frame + horizon < 5
 
-    task.imagination = ClipImagination(dt=task.dt, action_dim=task.imagination.action_dim)
+    @configclass
+    class ClipImaginationCfg(ToyImaginationCfg):
+        def __call__(self, ctx: BuildContext) -> ClipImagination:
+            return ClipImagination()
+
+    task = make_toy_task(cfg=ToyEnvCfg(imagination=ClipImaginationCfg()))
     cfg = SuperMimicCfg(agent=AgentCfg(hidden=8), trainer=TrainerCfg(pi_batch=16, horizon=3))
     learner = Learner(cfg, task, 1, 0.02, "cpu", tmp_path)
     for step in range(5):

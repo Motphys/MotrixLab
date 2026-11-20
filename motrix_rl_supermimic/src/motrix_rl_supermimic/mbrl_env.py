@@ -23,10 +23,9 @@ from motrix_rl_supermimic.imagination import ImaginationCfg
 from motrix_rl_supermimic.manager_task import ManagerTaskMDP, resolve_manager_task
 from motrix_rl_supermimic.recorder import TransitionRecorder
 from motrix_rl_supermimic.reference_command import ReferenceCommand
-from motrix_rl_supermimic.task_config import WorldModelStateCfg
 from motrix_rl_supermimic.task_mdp import StateSpec
 from motrix_rl_supermimic.world_context import WorldContext, WorldContextTermCfg
-from motrix_rl_supermimic.world_state import WorldState
+from motrix_rl_supermimic.world_state import WorldState, WorldStateTermCfg
 
 
 @configclass
@@ -41,10 +40,9 @@ class MbrlEnvCfg(ManagerBasedEnvCfg):
     # Name of the command whose reference timeline is captured for replay.
     reference_command: str = "reference"
     world_model_context: dict[str, WorldContextTermCfg] = {}
-    world_model_state: WorldModelStateCfg | None = None
+    world_model_state: dict[str, WorldStateTermCfg] = {}
     imagination: ImaginationCfg | None = None
     soft_termination: TerminationTermCfg | None = None
-    frame_step: int = 1
     # Fixed before construction so the ordinary goal group has a static width.
     goal_frames: int = 10
 
@@ -53,12 +51,12 @@ class MbrlEnvCfg(ManagerBasedEnvCfg):
         if type(self.goal_frames) is not int or self.goal_frames <= 0:
             raise ValueError("MBRL goal_frames must be a positive integer")
 
-    def prepare_runtime(self) -> MbrlEnvCfg:
-        """Prepare independently owned resources for one build without changing task options."""
-        return self
-
     def reference_action(self) -> torch.nn.Module | None:
-        """Build an optional task reference policy from configured host resources."""
+        """Build the optional reference policy without loading task runtime data.
+
+        Collector, learner and playback use this same factory inside their policy
+        initialization seed scope. Returned modules own their device-movable data.
+        """
         return None
 
     def for_imagined(self) -> MbrlEnvCfg:
@@ -90,10 +88,9 @@ class MbrlEnv(ManagerEnv):
     ) -> None:
         if cfg is None or not isinstance(cfg, MbrlEnvCfg):
             raise TypeError("MbrlEnv requires a Manager task configuration inheriting MbrlEnvCfg")
-        cfg = cfg.prepare_runtime()
         cfg.validate_goal_frames()
         super().__init__(cfg, num_envs, backend, seed)
-        if cfg.world_model_state is None:
+        if not cfg.world_model_state:
             raise TypeError("MbrlEnv requires world-model state terms")
         goal = self.observation_spec["goal"]
         if goal.history_length != 1:
@@ -105,7 +102,7 @@ class MbrlEnv(ManagerEnv):
             raise ValueError("ReferenceCommand.frame must be an int64 tensor with shape (num_envs,)")
         self._reference_command = reference
         build = self.build_context()
-        self._world_state = WorldState({name: term(build) for name, term in cfg.world_model_state.terms.items()})
+        self._world_state = WorldState({name: term(build) for name, term in cfg.world_model_state.items()})
         self._world_context = WorldContext({name: term(build) for name, term in cfg.world_model_context.items()})
         self._state_spec = StateSpec(self._world_state.size, self._world_context.size)
         self._recorder = TransitionRecorder.create(num_envs, self.state_spec, action_dim=self.action_space.shape[0])
@@ -180,15 +177,15 @@ def assemble_task(cfg: MbrlEnvCfg, device: str) -> ManagerTaskMDP:
 
 def _assemble_task(task: MbrlEnvCfg) -> ManagerTaskMDP:
     task.validate_goal_frames()
-    if task.world_model_state is None or task.imagination is None or task.soft_termination is None:
+    if not task.world_model_state or task.imagination is None or task.soft_termination is None:
         raise ValueError("MBRL configuration requires world_model_state, imagination and soft_termination")
-    if task.frame_step != 1:
-        raise ValueError("MBRL imagination currently supports frame_step=1 only")
     commands: dict[str, CommandTerm] = {}
     build = BuildContext(cfg=task, actions={}, commands=commands, model=None, num_envs=1, seed=0)
     for name, command_cfg in task.command_cfgs().items():
         commands[name] = command_cfg(build)
     actions = {}
+    action_slices: dict[str, slice] = {}
+    action_offset = 0
     for name, action in task.action_cfgs().items():
         build = BuildContext(cfg=task, actions=actions, commands=commands, model=None, num_envs=1, seed=0)
         # The imagined build has no compiled scene model: model-independent
@@ -197,9 +194,12 @@ def _assemble_task(task: MbrlEnvCfg) -> ManagerTaskMDP:
         actuators = () if action.actuator_names == () else None
         term = action(build, actuators)
         actions[name] = term
+        action_width = term.action_space.shape[0]
+        action_slices[name] = slice(action_offset, action_offset + action_width)
+        action_offset += action_width
 
     context = BuildContext(cfg=task, actions=actions, commands=commands, model=None, num_envs=1, seed=0)
-    world_state = WorldState({name: term(context) for name, term in task.world_model_state.terms.items()})
+    world_state = WorldState({name: term(context) for name, term in task.world_model_state.items()})
     world_context = WorldContext({name: term(context) for name, term in task.world_model_context.items()})
     spec = StateSpec(world_state.size, world_context.size)
     imagination = task.imagination(context)
@@ -265,5 +265,7 @@ def _assemble_task(task: MbrlEnvCfg) -> ManagerTaskMDP:
         world_context=world_context,
         observation_spec=observation_spec,
         action_space=action_space,
+        action_slices=action_slices,
         world_state=world_state,
+        reference_action=task.reference_action,
     )

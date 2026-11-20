@@ -1,7 +1,7 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-from dataclasses import FrozenInstanceError, dataclass
+from dataclasses import FrozenInstanceError, dataclass, field
 
 import numpy as np
 import pytest
@@ -73,6 +73,37 @@ def test_kernel_data_accepts_tensor_leaves() -> None:
     leaves = list(iter_leaves(value))
     assert [leaf_value for _, _, leaf_value in leaves] == [buffer]
     assert leaf_value_type(leaves[0][1]) is torch.Tensor
+
+
+def test_kernel_data_excludes_declared_host_resources_but_walks_numeric_state() -> None:
+    @dataclass(frozen=True, slots=True)
+    class _WithHostResource:
+        resource: object = field(metadata={"kernel_data": False}, repr=False, compare=False)
+        pose: _Pose
+        phase: float
+
+    resource = object()
+    position = torch.zeros(2, 3)
+    orientation = torch.ones(2, 4)
+    value = _WithHostResource(resource, _Pose(position, orientation), 0.5)
+
+    assert validate_kernel_data(value, context="host resource") is value
+    leaves = list(iter_leaves(value))
+    assert [path for path, _, _ in leaves] == [("pose", "position"), ("pose", "orientation"), ("phase",)]
+    assert leaves[0][2] is position
+    assert leaves[1][2] is orientation
+    assert leaves[2][2] == 0.5
+    assert value.resource is resource
+
+
+def test_kernel_data_host_resource_exclusion_does_not_skip_other_field_validation() -> None:
+    @dataclass(frozen=True, slots=True)
+    class _WithInvalidState:
+        resource: object = field(metadata={"kernel_data": False}, repr=False, compare=False)
+        state: str
+
+    with pytest.raises(TypeError, match="state expected a tensor or a numeric scalar"):
+        validate_kernel_data(_WithInvalidState(object(), "invalid"), context="invalid state")
 
 
 def test_kernel_data_rejects_ndarray_leaves() -> None:

@@ -329,11 +329,11 @@ class SuperMimicTrainer(TrainerBase):
             # CUDA-IPC slots fuse integer fields into float32; the frame index
             # must be integral for the analytic command lookup.
             frame = row["f"].long()
-            obs_ctx = learner.mdp.imagination.bind_context(
+            obs_ctx = learner.mdp.binding.bind(
                 frame, state=row["s"], action=row["a_prev"], previous=row["a_prev"], context=row["xi"]
             )
             learner.pi.obs_norm.update(learner.mdp.observation(obs_ctx))
-            learner.pi.goal_norm.update(learner.mdp.goal(learner.mdp.imagination.bind_context(frame)))
+            learner.pi.goal_norm.update(learner.mdp.goal(learner.mdp.binding.bind_reference(frame)))
             # Update world-model normalizers from the collected transitions.
             s, s1 = row["s"], row["s1"]
             learner.wm.in_norm.update(learner.wm.inputs(s, row["a"], learner.mdp.normalize_context(row["xi"])))

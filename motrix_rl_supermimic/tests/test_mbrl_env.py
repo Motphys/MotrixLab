@@ -102,7 +102,7 @@ def test_task_assembly_scopes_device_without_changing_callers_default() -> None:
         task = assemble_task(cfg.for_imagined(), "cpu")
         assert torch.empty(0).device.type == "meta"
     assert task.world_context.center.device.type == "cpu"
-    assert task.goal(task.imagination.bind_context(torch.tensor([0]))).device.type == "cpu"
+    assert task.goal(task.binding.bind_reference(torch.tensor([0]))).device.type == "cpu"
 
 
 @pytest.fixture()
@@ -140,7 +140,7 @@ def test_registered_toy_uses_configured_backend_and_records_transition(dynamo_ea
     torch.testing.assert_close(
         transition["r"],
         imagined.reward(
-            imagined.imagination.bind_context(
+            imagined.binding.bind(
                 manager.command_terms["reference"].frame,
                 state=transition["s1"],
                 action=transition["a"],
@@ -300,14 +300,14 @@ def test_initial_observation_and_learner_task(env: MbrlEnv) -> None:
     assert env.observation_spec["goal"].space.shape == (imagined.goal_dim,)
     assert imagined.observation_spec["goal"].space.shape == env.observation_spec["goal"].space.shape
     torch.testing.assert_close(
-        env.state.obs["goal"], imagined.goal(imagined.imagination.bind_context(env.command_terms["reference"].frame))
+        env.state.obs["goal"], imagined.goal(imagined.binding.bind_reference(env.command_terms["reference"].frame))
     )
     torch.testing.assert_close(env.command_terms["reference"].context, torch.zeros(3, 0))
     torch.testing.assert_close(env.action_terms["velocity"].state.current(), torch.zeros(3, 1))
     torch.testing.assert_close(
         env.state.obs.value,
         imagined.critic_observation(
-            imagined.imagination.bind_context(
+            imagined.binding.bind(
                 env.command_terms["reference"].frame,
                 state=_flat_state(env.sim_data.view("position"), env.sim_data.view("velocity")),
                 action=(_flat_state(env.sim_data.view("position"), env.sim_data.view("velocity"))).new_zeros(
@@ -323,7 +323,7 @@ def test_initial_observation_and_learner_task(env: MbrlEnv) -> None:
     torch.testing.assert_close(
         env.state.obs.policy[:, -imagined.observation_dim :],
         imagined.observation(
-            imagined.imagination.bind_context(
+            imagined.binding.bind(
                 env.command_terms["reference"].frame,
                 state=_flat_state(env.sim_data.view("position"), env.sim_data.view("velocity")),
                 action=env.action_terms["velocity"].state.current(),
@@ -368,7 +368,7 @@ def test_shared_heads_frame_reward_units_and_action_history(
         torch.testing.assert_close(
             transition["r"],
             imagined.reward(
-                imagined.imagination.bind_context(
+                imagined.binding.bind(
                     env.command_terms["reference"].frame,
                     state=transition["s1"],
                     action=action,
@@ -383,7 +383,7 @@ def test_shared_heads_frame_reward_units_and_action_history(
         torch.testing.assert_close(
             env.state.obs.policy[:, -imagined.observation_dim :],
             imagined.observation(
-                imagined.imagination.bind_context(
+                imagined.binding.bind(
                     env.command_terms["reference"].frame,
                     state=_flat_state(env.sim_data.view("position"), env.sim_data.view("velocity")),
                     action=action,
@@ -478,7 +478,7 @@ def test_truncation_keeps_endpoint_and_resets_episode(dynamo_eager: None) -> Non
     torch.testing.assert_close(
         result.final_obs.obs.value,
         imagined.critic_observation(
-            imagined.imagination.bind_context(
+            imagined.binding.bind(
                 torch.ones(2, dtype=torch.long),
                 state=env.snapshot_transition(env.state)["s1"],
                 action=(env.snapshot_transition(env.state)["s1"]).new_zeros(
@@ -498,7 +498,7 @@ def test_soft_termination_is_not_the_hard_environment_boundary(env: MbrlEnv) -> 
     env.sim_data.execute()
     task = assemble_task(env.cfg.for_imagined(), "cpu")
     action = torch.zeros(3, task.action_dim)
-    ctx = task.imagination.bind_context(
+    ctx = task.binding.bind(
         env.command_terms["reference"].frame,
         state=_flat_state(env.sim_data.view("position"), env.sim_data.view("velocity")),
         action=action,
@@ -528,20 +528,16 @@ def test_compiled_task_heads_preserve_values_and_gradients(dynamo_eager: None) -
     outputs = []
     for task in (eager, compiled):
         torch.manual_seed(0)
-        observed = task.imagination.bind_context(
-            frame, state=state, action=previous, previous=previous, context=context
-        )
-        physical = task.imagination.bind_context(frame, state=state, action=action, previous=previous, context=context)
-        critic_ctx = task.imagination.bind_context(
-            frame, state=state, action=previous, previous=previous, context=context
-        )
+        observed = task.binding.bind(frame, state=state, action=previous, previous=previous, context=context)
+        physical = task.binding.bind(frame, state=state, action=action, previous=previous, context=context)
+        critic_ctx = task.binding.bind(frame, state=state, action=previous, previous=previous, context=context)
         outputs.append(
             (
                 task.observation(observed),
                 task.reward(physical),
                 task.soft_termination(physical),
                 task.critic_observation(critic_ctx),
-                task.goal(task.imagination.bind_context(frame)),
+                task.goal(task.binding.bind_reference(frame)),
                 task.normalize_context(context),
             )
         )
@@ -550,7 +546,7 @@ def test_compiled_task_heads_preserve_values_and_gradients(dynamo_eager: None) -
     gradients = [
         torch.autograd.grad(
             task.reward(
-                task.imagination.bind_context(
+                task.binding.bind(
                     frame,
                     state=state,
                     action=action,
@@ -578,7 +574,7 @@ def test_inductor_manager_schedule_matches_shared_heads() -> None:
         torch.testing.assert_close(
             result.reward,
             imagined.reward(
-                imagined.imagination.bind_context(
+                imagined.binding.bind(
                     (transition["f"] + 1) % len(TARGETS),
                     state=transition["s1"],
                     action=transition["a"],

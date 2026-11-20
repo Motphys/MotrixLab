@@ -103,7 +103,7 @@ class Learner:
             )
         self.wm = self.wm.to(self.dev)
         with model_initialization(derive_seed(self.root_seed, "model/policy")):
-            reference_action = self.mdp.imagination.reference_action() if a.pi_ref_skip else None
+            reference_action = self.mdp.reference_action() if a.pi_ref_skip else None
             self.pi = build_policy(
                 a,
                 task.observation_dim,
@@ -240,7 +240,7 @@ class Learner:
 
     def observation_history(self, history: dict[str, torch.Tensor]) -> torch.Tensor:
         """Reconstruct noisy frames, then repeat the actual episode first frame."""
-        ctx = self.mdp.imagination.bind_context(
+        ctx = self.mdp.binding.bind(
             history["f"],
             state=history["s"],
             action=history["a_prev"],
@@ -256,9 +256,7 @@ class Learner:
     ) -> torch.Tensor:
         # Preserve the critic's action-independent inputs and normalized context.
         zero_action = context.new_zeros((*frame.shape, self.mdp.action_dim))
-        ctx = self.mdp.imagination.bind_context(
-            frame, state=state, action=zero_action, previous=zero_action, context=context
-        )
+        ctx = self.mdp.binding.bind(frame, state=state, action=zero_action, previous=zero_action, context=context)
         observation = self.mdp.critic_observation(ctx).reshape(*frame.shape, self.mdp.critic_observation_dim)
         return torch.cat((observation, goal), -1)
 
@@ -284,7 +282,7 @@ class Learner:
         context = self.mdp.normalize_context(xi)
         with torch.no_grad():
             obs = self.observation_history(history)
-        goal = initial_goal = self.mdp.goal(self.mdp.imagination.bind_context(frame))
+        goal = initial_goal = self.mdp.goal(self.mdp.binding.bind_reference(frame))
         states, frames, goals, actions, previous_actions = [], [], [], [], []
         _requires_grad(self.wm, False)
         _requires_grad(self.critic, False)
@@ -299,7 +297,7 @@ class Learner:
                 # sequence before predicting any states.
                 step_offsets = torch.arange(cfg.horizon + 1, device=frame.device)
                 reference_frames = frame[None, :] + step_offsets[:, None]
-                goal_sequence = self.mdp.goal(self.mdp.imagination.bind_context(reference_frames)).reshape(
+                goal_sequence = self.mdp.goal(self.mdp.binding.bind_reference(reference_frames)).reshape(
                     *reference_frames.shape, self.goal_dim
                 )
                 encoded_goals = self.pi.encode_goal(goal_sequence)
@@ -310,9 +308,7 @@ class Learner:
                     action = self.pi(obs, goal, encoded_goals[t])
                     state = wm_actor.step(state, action, context)
                     frame = frame + 1
-                    obs_ctx = self.mdp.imagination.bind_context(
-                        frame, state=state, action=action, previous=action, context=xi
-                    )
+                    obs_ctx = self.mdp.binding.bind(frame, state=state, action=action, previous=action, context=xi)
                     next_obs = self.mdp.observation(obs_ctx)
                     obs = append_observation(obs, next_obs)
                     goal = goal_sequence[t + 1]
@@ -326,7 +322,7 @@ class Learner:
                     return torch.stack(xs).flatten(0, 1)
 
                 all_states = flat(states)
-                reward_ctx = self.mdp.imagination.bind_context(
+                reward_ctx = self.mdp.binding.bind(
                     flat(frames),
                     state=all_states,
                     action=flat(actions),

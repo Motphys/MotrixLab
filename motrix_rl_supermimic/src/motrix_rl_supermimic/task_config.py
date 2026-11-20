@@ -9,16 +9,6 @@ from typing import Protocol
 
 import torch
 
-from motrix_env_core.config import configclass
-from motrix_rl_supermimic.world_state import WorldStateTermCfg
-
-
-@configclass
-class WorldModelStateCfg:
-    """Composable predicted-state terms with task-owned representations."""
-
-    terms: dict[str, WorldStateTermCfg]
-
 
 class TaskMirror(Protocol):
     """Task symmetry used together for world-model window augmentation."""

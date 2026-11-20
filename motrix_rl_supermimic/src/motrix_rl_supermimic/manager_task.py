@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 import torch
 from gymnasium.spaces import Box
+from torch import nn
 
 from motrix_env_core.manager.context import ManagerContext
 from motrix_env_core.manager.observations import ObsTerm
@@ -16,7 +18,7 @@ from motrix_env_core.manager.resolver import ObservationTermCall, RewardTermCall
 from motrix_env_core.manager.rewards import RewardTerm
 from motrix_env_core.manager.terminations import TerminationTerm
 from motrix_env_core.observations import ObservationSpec
-from motrix_rl_supermimic.imagination import ImaginationTerm
+from motrix_rl_supermimic.imagination import ImaginationRuntime, ImaginationTerm
 from motrix_rl_supermimic.task_mdp import StateSpec
 from motrix_rl_supermimic.world_context import WorldContext
 from motrix_rl_supermimic.world_state import WorldState
@@ -37,7 +39,9 @@ def resolve_manager_task(  # noqa: PLR0913
     world_context: WorldContext,
     observation_spec: ObservationSpec,
     action_space: Box,
+    action_slices: Mapping[str, slice],
     world_state: WorldState,
+    reference_action: Callable[[], nn.Module | None],
 ) -> ManagerTaskMDP:
     """Fuse the selected numerical terms into the simulator-free task MDP.
 
@@ -53,6 +57,7 @@ def resolve_manager_task(  # noqa: PLR0913
         dt=dt,
         reward_weight=reward_weight,
         imagination=imagination,
+        binding=ImaginationRuntime(imagination, world_state, world_context, action_slices, dt),
         policy_call=resolver.resolve_observation("policy", "task", policy),
         value_call=resolver.resolve_observation("value", "task", value),
         goal_call=resolver.resolve_observation("goal", "task", goal),
@@ -62,6 +67,7 @@ def resolve_manager_task(  # noqa: PLR0913
         action_space=action_space,
         goal_frames=goal_frames,
         world_context=world_context,
+        reference_action=reference_action,
     )
 
 
@@ -69,7 +75,7 @@ def resolve_manager_task(  # noqa: PLR0913
 class ManagerTaskMDP:
     """Simulator-free MDP over fused Manager numerical calls.
 
-    Callers bind frame-only or predicted inputs once through ``imagination`` and
+    Callers bind reference-only or predicted inputs once through ``binding`` and
     share the resulting Context across numerical heads. Heads return flat N-row
     tensors; callers restore their original leading batch dimensions. Affine
     parameters normalize world-model context independently of that binding.
@@ -80,6 +86,7 @@ class ManagerTaskMDP:
     dt: float
     reward_weight: float
     imagination: ImaginationTerm
+    binding: ImaginationRuntime
     policy_call: ObservationTermCall
     value_call: ObservationTermCall
     goal_call: ObservationTermCall
@@ -89,6 +96,8 @@ class ManagerTaskMDP:
     action_space: Box
     goal_frames: int
     world_context: WorldContext
+    # Defer module construction to the learner's policy-initialization seed scope.
+    reference_action: Callable[[], nn.Module | None]
 
     @property
     def action_dim(self) -> int:

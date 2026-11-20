@@ -107,14 +107,14 @@ def test_imagined_command_override_is_used_without_sharing_runtime_state() -> No
     frame = torch.arange(4)
     imagined = assemble_task(original.for_imagined(), "cpu")
     torch.testing.assert_close(
-        first.goal(first.imagination.bind_context(frame)), imagined.goal(imagined.imagination.bind_context(frame)) * 2
+        first.goal(first.binding.bind_reference(frame)), imagined.goal(imagined.binding.bind_reference(frame)) * 2
     )
     state = torch.zeros(4, 2)
     action, context = torch.zeros(4, first.action_dim), torch.zeros(4, 0)
-    first_command = first.imagination.bind_context(
+    first_command = first.binding.bind(
         frame.clone(), state=state, action=action, previous=action, context=context
     ).commands["reference"]
-    second_command = second.imagination.bind_context(
+    second_command = second.binding.bind(
         frame.clone(), state=state, action=action, previous=action, context=context
     ).commands["reference"]
     first_command.frame.fill_(7)
@@ -137,26 +137,12 @@ def test_configured_goal_term_is_shared_by_real_and_imagined_observations() -> N
     state = env.init_state()
     mdp = assemble_task(cfg.for_imagined(), "cpu")
     frame = env.command_terms["reference"].frame.clone()
-    torch.testing.assert_close(state.obs["goal"], mdp.goal(mdp.imagination.bind_context(frame)))
+    torch.testing.assert_close(state.obs["goal"], mdp.goal(mdp.binding.bind_reference(frame)))
     torch.testing.assert_close(
-        mdp.goal(mdp.imagination.bind_context(torch.tensor([[1, 2], [3, 4]]))).reshape(2, 2, -1)[..., 0],
+        mdp.goal(mdp.binding.bind_reference(torch.tensor([[1, 2], [3, 4]]))).reshape(2, 2, -1)[..., 0],
         torch.tensor([[8.0, 9.0], [10.0, 11.0]]),
     )
     torch.testing.assert_close(env.command_terms["reference"].frame, frame)
-
-
-@pytest.mark.parametrize("missing", ["action", "previous", "context"])
-def test_physical_imagination_requires_all_explicit_inputs(missing: str) -> None:
-    task = assemble_task(ToyEnvCfg().for_imagined(), "cpu")
-    inputs = {
-        "state": torch.zeros(2, 2),
-        "action": torch.zeros(2, task.action_dim),
-        "previous": torch.zeros(2, task.action_dim),
-        "context": torch.empty(2, 0),
-    }
-    inputs.pop(missing)
-    with pytest.raises(ValueError, match="explicit.*action.*previous.*context"):
-        task.imagination.bind_context(torch.arange(2), **inputs)
 
 
 def test_task_program_builds_without_physics_and_exposes_extensions_explicitly(
@@ -168,10 +154,10 @@ def test_task_program_builds_without_physics_and_exposes_extensions_explicitly(
     monkeypatch.setattr(ManagerEnv, "__init__", forbidden)
     task = assemble_task(make_cfg().for_imagined(), "cpu")
     assert task.spec.state_dim == task.world_state.size
-    assert task.imagination.reference_action() is None
+    assert task.reference_action() is None
     state = torch.zeros(5, 2, requires_grad=True)
     result = task.reward(
-        task.imagination.bind_context(
+        task.binding.bind(
             torch.arange(5),
             state=state,
             action=torch.ones(5, 1),
@@ -253,12 +239,12 @@ def test_imagined_program_assembles_existing_multiple_observation_and_reward_ter
         state[:, 0] = torch.tensor([0.1, 0.2, 0.3])
     frame, previous, context = torch.arange(3), torch.zeros(3, 1), torch.zeros(3, 0)
     actual_obs = task.observation(
-        task.imagination.bind_context(frame, state=state, action=previous, previous=previous, context=context)
+        task.binding.bind(frame, state=state, action=previous, previous=previous, context=context)
     )
     torch.testing.assert_close(actual_obs, torch.cat((state[:, :1] * 2, state[:, :1] * -3), -1))
     torch.testing.assert_close(
         task.critic_observation(
-            task.imagination.bind_context(
+            task.binding.bind(
                 frame,
                 state=state,
                 action=state.new_zeros((*frame.shape, task.action_dim)),
@@ -269,7 +255,7 @@ def test_imagined_program_assembles_existing_multiple_observation_and_reward_ter
         state[:, :1] * 4,
     )
     actual_reward = task.reward(
-        task.imagination.bind_context(
+        task.binding.bind(
             frame,
             state=state,
             action=previous,
@@ -297,12 +283,6 @@ def test_imagined_terms_reject_simulator_query_arguments() -> None:
     cfg = make_cfg()
     cfg.rewards = {"query": QueryReward(weight=1.0)}
     with pytest.raises(ValueError, match="declared input binding"):
-        assemble_task(cfg.for_imagined(), "cpu")
-
-
-def test_unsupported_frame_progression_is_rejected() -> None:
-    cfg = replace(make_cfg(), frame_step=2)
-    with pytest.raises(ValueError, match="frame_step=1"):
         assemble_task(cfg.for_imagined(), "cpu")
 
 

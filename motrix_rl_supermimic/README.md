@@ -46,7 +46,12 @@ mxlab train task=g1-supermimic-tracking/motrix.supermimic
   在 simulator read 后、command 更新和 reset 前保存终点；导出快照时合入框架最终 reward/done。
   State/context terms 读取的 simulator queries 由任务显式声明。
   普通 Manager 任务仍需满足可想象状态与共享解析计算的前提。
-  任务通过 `ImaginationCfg` 构造具名的 `ImaginationTerm`，实现输入绑定与有效起点判断；镜像增强、回报尺度和 checkpoint 元数据作为数据提供。
+  任务通过 `ImaginationCfg` 构造 `ImaginationTerm`，以 `bind(inputs)` 和 `bind_reference(frame)`
+  分别返回物理预测与 reference-only 的任务绑定。框架提供具名 state/context 视图、action history，
+  并负责数值 `ManagerContext` 外壳；任务不手工构造环境 ID、标志或 RNG capability。
+  有效起点判断、镜像增强、回报尺度和 checkpoint 元数据仍由任务提供。
+  可选参考动作策略统一由 `MbrlEnvCfg.reference_action()` 构造，learner、collector 和 play 使用同一入口；
+  评估环境差异通过标准 `for_play()` 配置变体表达。
 
 新任务继续配置普通 Manager terms；action/command 通过无环境的单一构造入口创建，
 learner 独立构造单行 terms，构造期按准确类型直接读取所需信息，不另维护静态 spec 层。

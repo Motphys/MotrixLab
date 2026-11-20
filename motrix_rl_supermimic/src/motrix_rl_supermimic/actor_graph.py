@@ -112,7 +112,7 @@ class ActorLoss(nn.Module):
         action = self.pi(obs, goal, z)
         state = self.models.wm.step(state, action, context)
         frame = frame + 1
-        ctx = self.mdp.imagination.bind_context(frame, state=state, action=action, previous=action, context=xi)
+        ctx = self.mdp.binding.bind(frame, state=state, action=action, previous=action, context=xi)
         next_obs = self.mdp.observation(ctx)
         obs = append_observation(obs, next_obs)
         return state, action, obs, frame
@@ -125,9 +125,7 @@ class ActorLoss(nn.Module):
         previous: torch.Tensor,
         context: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        ctx = self.mdp.imagination.bind_context(
-            frames, state=states, action=actions, previous=previous, context=context
-        )
+        ctx = self.mdp.binding.bind(frames, state=states, action=actions, previous=previous, context=context)
         return self.mdp.reward(ctx), self.mdp.soft_termination(ctx)
 
     def critic_input(
@@ -139,9 +137,7 @@ class ActorLoss(nn.Module):
     ) -> torch.Tensor:
         # Match the eager critic path: zero actions and already-normalized context.
         zero_action = context.new_zeros((*frame.shape, self.mdp.action_dim))
-        ctx = self.mdp.imagination.bind_context(
-            frame, state=state, action=zero_action, previous=zero_action, context=context
-        )
+        ctx = self.mdp.binding.bind(frame, state=state, action=zero_action, previous=zero_action, context=context)
         observation = self.mdp.critic_observation(ctx).reshape(*frame.shape, self.mdp.critic_observation_dim)
         return torch.cat((observation, goal), -1)
 
@@ -161,7 +157,7 @@ class ActorLoss(nn.Module):
         # sequence before predicting any states.
         step_offsets = torch.arange(cfg.horizon + 1, device=frame.device)
         reference_frames = frame[None, :] + step_offsets[:, None]
-        goal_sequence = self.mdp.goal(self.mdp.imagination.bind_context(reference_frames)).reshape(
+        goal_sequence = self.mdp.goal(self.mdp.binding.bind_reference(reference_frames)).reshape(
             *reference_frames.shape, goal.shape[-1]
         )
         encoded_goals = self.pi.encode_goal(goal_sequence)

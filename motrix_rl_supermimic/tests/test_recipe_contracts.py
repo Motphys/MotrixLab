@@ -18,7 +18,7 @@ from motrix_rl_supermimic.mbrl_env import assemble_task
 from motrix_rl_supermimic.networks import WorldModel
 from motrix_rl_supermimic.optim import policy_multiplier, trigger_decay
 from motrix_rl_supermimic.robot_state import CanonicalRobotState
-from motrix_rl_supermimic.toy import ToyEnvCfg, ToyImaginationCfg, ToyImaginationTerm
+from motrix_rl_supermimic.toy import ToyEnvCfg
 from motrix_rl_supermimic.wm_graph import FlattenFullLoss
 from motrix_rl_supermimic.world_state import WorldState, WorldStateTerm
 
@@ -82,7 +82,8 @@ def test_wm_loss_uses_inc_stats_for_scoring_and_out_stats_for_prediction(structu
         torch.testing.assert_close(a, e)
 
 
-class _SkipImagination(ToyImaginationTerm):
+@configclass
+class _ReferenceEnvCfg(ToyEnvCfg):
     def reference_action(self) -> torch.nn.Module:
         module = torch.nn.Linear(1, 1, bias=False)
         with torch.no_grad():
@@ -90,30 +91,15 @@ class _SkipImagination(ToyImaginationTerm):
         return module
 
 
-@configclass
-class _SkipDataCfg(ToyImaginationCfg):
-    def __call__(self, ctx) -> _SkipImagination:
-        return _SkipImagination(dt=ctx.cfg.ctrl_dt, action_dim=ctx.actions["velocity"].action_space.shape[0])
-
-
-def test_reference_action_policy_contract():
-    cfg = SuperMimicCfg(
-        agent=AgentCfg(hidden=16, pi_ref_skip=True),
-        trainer=TrainerCfg(iterations=1, warmup_steps=1, horizon=1, wm_window=1),
-    )
-    mdp = assemble_task(ToyEnvCfg(goal_frames=1, imagination=_SkipDataCfg()).for_imagined(), "cpu")
+@pytest.mark.parametrize("enabled", [False, True])
+def test_reference_action_policy_contract(tmp_path, enabled: bool) -> None:
+    from motrix_rl_supermimic.learner import Learner
     from motrix_rl_supermimic.networks import build_policy
 
-    reference_factory = mdp.imagination.reference_action
-    learner_policy = build_policy(
-        cfg.agent,
-        obs_dim=mdp.observation_dim,
-        goal_dim=mdp.goal_dim,
-        action_dim=mdp.action_dim,
-        device="cpu",
-        observation_spec=mdp.observation_spec.policy,
-        reference_action=reference_factory(),
-    )
+    cfg = SuperMimicCfg(agent=AgentCfg(hidden=16, pi_ref_skip=enabled))
+    env_cfg = _ReferenceEnvCfg(goal_frames=1)
+    mdp = assemble_task(env_cfg.for_imagined(), "cpu")
+    learner = Learner(cfg, mdp, 1, mdp.dt, "cpu", tmp_path)
     collector = build_policy(
         cfg.agent,
         obs_dim=mdp.observation_dim,
@@ -121,25 +107,34 @@ def test_reference_action_policy_contract():
         action_dim=mdp.action_dim,
         device="cpu",
         observation_spec=mdp.observation_spec.policy,
-        reference_action=reference_factory(),
+        reference_action=env_cfg.reference_action() if enabled else None,
     )
-    collector.load_state_dict(learner_policy.state_dict())
+    collector.load_state_dict(learner.pi.state_dict())
+    assert (learner.pi.reference_action is not None) == enabled
+    assert (collector.reference_action is not None) == enabled
     obs = torch.randn(3, 2, mdp.observation_dim)
-    goal = torch.randn(3, mdp.observation_spec["goal"].space.shape[0])
-    torch.testing.assert_close(learner_policy(obs, goal), collector(obs, goal))
-    # residual identity: zeroing the decoder leaves the reference action
-    plain = build_policy(
-        AgentCfg(hidden=16),
-        obs_dim=mdp.observation_dim,
-        goal_dim=mdp.goal_dim,
-        action_dim=mdp.action_dim,
-        device="cpu",
-        observation_spec=mdp.observation_spec.policy,
-    )
-    plain.load_state_dict(learner_policy.state_dict(), strict=True)
-    # plain carries the same residual head without the reference module, so
-    # learner == plain + reference_action(goal).
-    torch.testing.assert_close(learner_policy(obs, goal), plain(obs, goal) + goal)
+    goal = torch.randn(3, mdp.goal_dim)
+    torch.testing.assert_close(learner.pi(obs, goal), collector(obs, goal))
+    # A zero residual decoder leaves exactly the configured base action, or zero
+    # when reference actions are disabled on either construction path.
+    with torch.no_grad():
+        for policy in (learner.pi, collector):
+            policy.dec[-1].weight.zero_()
+            policy.dec[-1].bias.zero_()
+    expected = goal if enabled else torch.zeros_like(goal)
+    torch.testing.assert_close(learner.pi(obs, goal), expected)
+    torch.testing.assert_close(collector(obs, goal), expected)
+
+
+@pytest.mark.parametrize("source_reference", [False, True])
+def test_policy_checkpoint_requires_matching_reference_module(source_reference: bool) -> None:
+    from motrix_rl_supermimic.networks import Policy
+
+    cfg = _ReferenceEnvCfg()
+    source = Policy(4, 1, 1, hist=2, hidden=(8,), reference_action=cfg.reference_action() if source_reference else None)
+    target = Policy(4, 1, 1, hist=2, hidden=(8,), reference_action=None if source_reference else cfg.reference_action())
+    with pytest.raises(RuntimeError, match="reference_action.weight"):
+        target.load_state_dict(source.state_dict(), strict=True)
 
 
 def test_schedule_trigger_ramp_anneal_and_sticky_state():

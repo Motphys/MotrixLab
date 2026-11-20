@@ -10,7 +10,7 @@ import torch
 from _helpers import make_toy
 from motrix_rl_supermimic.config import AgentCfg, CollectorCfg, SuperMimicCfg, TrainerCfg
 from motrix_rl_supermimic.mbrl_env import assemble_task
-from motrix_rl_supermimic.toy import ToyEnvCfg, ToyImaginationTerm
+from motrix_rl_supermimic.toy import ToyEnvCfg
 from motrix_rl_supermimic.toy import register as register_toy
 
 pytestmark = pytest.mark.integration
@@ -202,11 +202,6 @@ class _RandomReference(torch.nn.Module):
         return self.offset.expand(goal.shape[0], 1)
 
 
-class _ReferenceImagination(ToyImaginationTerm):
-    def reference_action(self) -> torch.nn.Module:
-        return _RandomReference()
-
-
 @pytest.mark.parametrize("checkpoint_goal_frames", [2, 3])
 def test_play_loads_policy_and_preserves_step_failure(tmp_path, monkeypatch, checkpoint_goal_frames):
     pytest.importorskip("motrix_rl")
@@ -224,7 +219,6 @@ def test_play_loads_policy_and_preserves_step_failure(tmp_path, monkeypatch, che
     from motrix_rl_supermimic.learner import Learner
 
     task = assemble_task(play_env.cfg.for_imagined(), "cpu")
-    task.imagination = _ReferenceImagination(dt=task.dt)
     learner = Learner(cfg, task, play_env.num_envs, play_env.cfg.ctrl_dt, "cpu", tmp_path, seed=17)
     with torch.no_grad():
         for parameter in learner.pi.parameters():
@@ -283,8 +277,8 @@ def test_resume_uses_checkpoint_root_before_nonpersistent_reference_factory(tmp_
 
     register_toy()
     cfg = SuperMimicCfg(device="cpu", agent=AgentCfg(hidden=8, pi_ref_skip=True))
+    monkeypatch.setattr(ToyEnvCfg, "reference_action", lambda self: _RandomReference())
     task = assemble_task(ToyEnvCfg().for_imagined(), "cpu")
-    task.imagination = _ReferenceImagination(dt=task.dt)
     original = Learner(cfg, task, 1, 0.02, "cpu", tmp_path, seed=17)
     original.save(0)
     checkpoint_path = str(tmp_path / "last.pt")

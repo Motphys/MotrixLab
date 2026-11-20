@@ -51,7 +51,10 @@ def iter_leaves(value: Any) -> Iterator[tuple[tuple[str, ...], Any, Any]]:
 
     The structure is walked live in dataclass field order and Map insertion
     order. Structural mismatches raise ``TypeError`` for wrong nested classes,
-    invalid Map values, and class cycles.
+    invalid Map values, and class cycles. Dataclass fields declared with
+    ``metadata={"kernel_data": False}`` are host-only and excluded from the walk.
+    This exclusion does not make their objects usable in numerical functions;
+    numerical hooks must use the validated tensor and scalar fields instead.
     """
     if not is_kernel_data(value):
         raise TypeError(f"KernelData root must be a dataclass value, got {type(value).__name__}.")
@@ -72,6 +75,8 @@ def _iter_class_leaves(
     stack = (*stack, declared_type)
     hints = get_type_hints(declared_type, include_extras=True)
     for data_field in fields(declared_type):
+        if data_field.metadata.get("kernel_data", True) is False:
+            continue
         annotation = hints[data_field.name]
         field_path = (*path, data_field.name)
         field_value = getattr(value, data_field.name)
