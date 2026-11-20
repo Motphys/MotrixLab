@@ -1,0 +1,40 @@
+# @package _global_
+# Panda blind insertion (open-asset baseline): Franka Panda (Apache-2.0) +
+# parametric NIST-style square socket. Two-stage curriculum:
+#   stage-1  offset_cap=0.002 (set in cfg.py)  1500 iter
+#   stage-2  offset_cap=0.010, warm-start      2000 iter
+defaults:
+  - /algo_base@algo: rslrl.ppo
+  - _self_
+task:
+  env: panda-blind-insertion
+  rllib: rslrl
+  algo: ppo
+  train_backend: torch
+num_envs: 256
+play_num_envs: 32
+seed: 42
+logging:
+  interval: 50
+checkpoint:
+  interval: 500
+algo:
+  num_steps_per_env: 32
+  max_iterations: 1500
+  obs_groups:
+    actor: [policy]
+    critic: [value]
+  actor:
+    # Noise-std band: floor stops the PPO sigma collapse, ceiling stops the
+    # entropy blow-up (both measured on the piper predecessor task).
+    class_name: motrix_envs.manipulation.common.bounded_noise_mlp:BoundedNoiseMLPModel
+    min_noise_std: 0.20
+    max_noise_std: 0.80
+    hidden_dims: [256, 256, 128]
+    activation: elu
+    stochastic: true
+    init_noise_std: 1.0
+    noise_std_type: scalar
+  critic:
+    hidden_dims: [256, 256, 128]
+    activation: elu
