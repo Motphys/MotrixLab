@@ -8,8 +8,8 @@
 
 ### `PlanarVelocityCommand`
 
-当前公共 command 是 `PlanarVelocityCommand`，表示机体坐标系下的平面速度目标。其 `values` 是只读
-`float32` 数组，shape 固定为 `(batch_size, 3)`：
+当前公共 command 是 `PlanarVelocityCommand`，表示机体坐标系下的平面速度目标。其 `values` 是
+`torch.float32` 张量，shape 固定为 `(batch_size, 3)`：
 
 | 索引 | 属性                    | 含义       | 单位  |
 | ---: | ----------------------- | ---------- | ----- |
@@ -17,8 +17,10 @@
 |  `1` | `linear_velocity_y_mps` | 左右线速度 | m/s   |
 |  `2` | `yaw_rate_rad_s`        | yaw 角速度 | rad/s |
 
-训练环境通常构造 `(num_envs, 3)`；单机器人 deployment 使用 `(1, 3)`。构造函数会复制输入、转换为
-`float32`、拒绝空 batch 或非有限值，并将数组设为只读。速度范围由具体 task contract 管理。
+训练环境通常构造 `(num_envs, 3)`；单机器人 deployment 使用 `(1, 3)`。构造函数将输入转换为
+`torch.float32` 并克隆为独立副本，校验 shape、拒绝空 batch 或非有限值；之后修改原始输入不会影响 command。
+`@dataclass(frozen=True)` 禁止字段重新赋值，但不会让 Tensor 内容只读。消费方不应原地修改 `values` 或其属性返回的
+张量视图；这是使用约定，而不是技术上强制的只读保护。速度范围由具体 task contract 管理。
 
 以 `go2_walk/v1` 为例，artifact 保存 `command_lower`、`command_upper` 和三维 `command_scale`。task 将范围两端
 逐元素乘以 scale 后向 binding 提供可用端点，并在消费 command 时再次检查 batch size 和最终范围。

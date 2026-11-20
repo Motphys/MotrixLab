@@ -9,7 +9,7 @@ deployment, and a physical backend that implements `RobotInterface`.
 ### `PlanarVelocityCommand`
 
 The current shared command is `PlanarVelocityCommand`. It represents a body-frame planar-velocity target. Its `values` field is
-a read-only `float32` array with shape `(batch_size, 3)`:
+a `torch.float32` tensor with shape `(batch_size, 3)`:
 
 | Index | Property                | Meaning                          | Unit  |
 | ----: | ----------------------- | -------------------------------- | ----- |
@@ -17,9 +17,12 @@ a read-only `float32` array with shape `(batch_size, 3)`:
 |   `1` | `linear_velocity_y_mps` | Left/right linear velocity       | m/s   |
 |   `2` | `yaw_rate_rad_s`        | Yaw angular velocity             | rad/s |
 
-Training environments normally construct `(num_envs, 3)`, while single-robot deployment uses `(1, 3)`. Construction copies
-the input, converts it to `float32`, rejects empty batches and non-finite values, and makes the array read-only. The concrete
-task contract owns the velocity limits.
+Training environments normally construct `(num_envs, 3)`, while single-robot deployment uses `(1, 3)`. Construction converts
+the input to `torch.float32`, clones an independent copy, validates the shape, and rejects empty batches and non-finite values.
+Later changes to the original input do not affect the command. `@dataclass(frozen=True)` prevents field reassignment, but does
+not make tensor contents read-only. Consumers should not modify `values` or the tensor views returned by its properties in
+place; this is a usage convention, not technically enforced read-only protection. The concrete task contract owns the velocity
+limits.
 
 For example, a `go2_walk/v1` artifact stores `command_lower`, `command_upper`, and a three-dimensional `command_scale`. The task
 multiplies both range endpoints by the scale before exposing them to a binding, then checks the command batch size and final

@@ -155,8 +155,10 @@ Semantics:
 - `terminated` marks episode-ending conditions such as task failure; `truncated` marks
   the time limit at `max_episode_steps`. `ArrayEnv` combines both into `done` and
   triggers auto-reset.
-- The environment dimension must use vectorized NumPy operations; plain loops are only
-  allowed over a fixed number of joints, feet, or terms.
+- Actions, observations, rewards, termination flags, and reset indices all use `torch.Tensor`.
+  Use batched Torch tensor operations over the environment dimension; plain loops are only
+  allowed over a fixed number of joints, feet, or terms. NumPy in the example only declares
+  Gym space dtypes and infinite bounds; it does not imply a NumPy runtime frontend.
 - Constants (initial poses, space definitions, query names) are precomputed in
   `__init__` or config construction, not recreated inside the step loop.
 
@@ -191,8 +193,9 @@ under matching Env IDs, then publish a callback so installed applications can di
   requires a config with the same name registered via `@registry.envcfg("name")`.
 - The config registration target may be a config class or a zero-argument factory with
   a return type annotation (useful for returning customized config instances).
-- The registry infers the frontend type from the class hierarchy (`DirectEnv` belongs
-  to the `"np"` data backend); never specify it manually.
+- The registry identifies the Direct/Manager workflow from the class hierarchy. Both `DirectEnv`
+  and `ManagerEnv` use the Torch tensor frontend; never specify the frontend type manually.
+  Select the simulator with `sim`, independently of the frontend tensor type.
 - The first docstring line and the `zh_CN:` line of the config serve as the
   environment's English and Chinese descriptions shown in the environment overview.
 

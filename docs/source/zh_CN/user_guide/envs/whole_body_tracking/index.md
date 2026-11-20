@@ -91,8 +91,8 @@ WBT_Deploy_detail
 
 ## 内置任务
 
-所有内置任务均使用 MotrixSim NumPy 后端，并提供一份 `motrix.fastsac` 训练配置。`algo.asynchronous` 用于选择同步或
-异步执行，不改变算法身份。每个 Env ID 选择一份完整配置，包括机器人、motion、跟踪身体、奖励和终止条件。点击
+所有内置任务均使用 MotrixSim 仿真后端，环境数值计算使用 Torch 张量，并提供一份 `motrix.fastsac` 训练配置。
+`algo.asynchronous` 用于选择同步或异步执行，不改变算法身份。每个 Env ID 选择一份完整配置，包括机器人、motion、跟踪身体、奖励和终止条件。点击
 训练曲线缩略图可查看 SVG 大图。
 
 :::{div} task-table

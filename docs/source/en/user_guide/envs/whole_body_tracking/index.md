@@ -92,10 +92,10 @@ WBT_Deploy_detail
 
 ## Built-in tasks
 
-All built-in tasks use the MotrixSim NumPy backend and provide one `motrix.fastsac` training config. Its `algo.asynchronous`
-field selects synchronous or asynchronous execution without changing the algorithm identity. Each environment ID selects a
-complete config, including the robot, motion, tracked bodies, rewards, and termination rules. Click a training-curve
-thumbnail to open the full-size SVG.
+All built-in tasks use the MotrixSim simulator backend, compute environment numerics with Torch tensors, and provide one
+`motrix.fastsac` training config. Its `algo.asynchronous` field selects synchronous or asynchronous execution without changing
+the algorithm identity. Each environment ID selects a complete config, including the robot, motion, tracked bodies, rewards,
+and termination rules. Click a training-curve thumbnail to open the full-size SVG.
 
 :::{div} task-table
 | Environment ID | Robot | Reference motion | Duration | Available training configs | Training curve |

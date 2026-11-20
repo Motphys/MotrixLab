@@ -147,7 +147,9 @@ class CartPoleEnv(DirectEnv):
 
 - `terminated` 表示任务失败等回合终止条件；`truncated` 表示达到 `max_episode_steps`
   的时间截断。两者由 `ArrayEnv` 合成 `done` 并触发 auto-reset。
-- 环境维度必须使用 NumPy 向量化操作；只有遍历固定数量的关节、脚或 term 时才允许普通循环。
+- 动作、观测、奖励、终止标志与 reset 索引均使用 `torch.Tensor`；环境维度必须使用 Torch 批量张量操作，
+  只有遍历固定数量的关节、脚或 term 时才允许普通循环。示例中的 NumPy 仅用于声明 Gym space 的 dtype 与无穷边界，
+  不代表环境运行时使用 NumPy 前端。
 - 常量（初始姿态、空间定义、query 名称）在 `__init__` 或配置构造阶段预计算，
   不在 step 循环中重复创建。
 
@@ -182,8 +184,8 @@ DirectEnv 和 ManagerEnv 使用相同的注册机制：先用一致的 Env ID �
   `@registry.envcfg("name")` 注册，否则报错。
 - 配置注册对象可以是配置类，也可以是带返回类型标注的零参数 factory
   （适合返回经过定制的配置实例）。
-- registry 根据环境类的继承关系推断前端类型（`DirectEnv` 属于 `"np"` 数据后端），
-  不要手动指定。
+- registry 根据环境类的继承关系识别 Direct/Manager 工作流；`DirectEnv` 与 `ManagerEnv` 都使用 Torch 张量前端，
+  不要手动指定前端类型。仿真后端通过 `sim` 选择，与前端张量类型无关。
 - 配置 docstring 的首行与 `zh_CN:` 行分别作为环境的英文、中文描述，
   展示在环境概览中。
 
