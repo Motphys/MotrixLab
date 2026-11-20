@@ -6,14 +6,11 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from dataclasses import dataclass, fields
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager.context import BuildContext
 from motrix_env_core.manager.terms import BaseTerm, canonicalize_term_args
-
-if TYPE_CHECKING:
-    from motrix_env_core.manager.env import ManagerEnv
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -50,10 +47,10 @@ class ManagerRewardsCfg:
         return term_cfgs
 
 
-def create_reward_terms(cfg: dict[str, RewardTermCfg], env: ManagerEnv) -> dict[str, RewardTerm]:
+def create_reward_terms(cfg: dict[str, RewardTermCfg], ctx: BuildContext) -> dict[str, RewardTerm]:
     terms = {}
     for name, term_cfg in cfg.items():
-        created = term_cfg(BuildContext(env, f"rewards.{name}"))
+        created = term_cfg(ctx)
         if not isinstance(created, RewardTerm):
             raise TypeError(f"Manager reward {name} __call__() must return RewardTerm, got {type(created).__name__}.")
         terms[name] = RewardTerm(

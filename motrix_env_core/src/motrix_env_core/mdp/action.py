@@ -11,9 +11,10 @@ import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import RobotCfg
-from motrix_env_core.manager import ActionCfg, ActionState, ActionTerm, ManagerEnv
+from motrix_env_core.manager.actions import ActionCfg, ActionState, ActionTerm
+from motrix_env_core.manager.context import BuildContext
 from motrix_env_core.mdp.action_space import joint_position_action_space_from_ctrl_ranges
-from motrix_env_core.sim.model import ActuatorSpec, ActuatorType
+from motrix_env_core.sim.model import ActuatorSpec, ActuatorType, SimModel
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,30 +116,31 @@ class JointPositionActionCfg(ActionCfg):
     action_scales_by_effort_limit_over_p_gain: bool = False
     action_delay_steps: tuple[int, int] = (0, 0)
 
-    def __call__(self, env: ManagerEnv, actuators: tuple[ActuatorSpec, ...] | None) -> JointPositionActionTerm:
+    def __call__(self, ctx: BuildContext, actuators: tuple[ActuatorSpec, ...] | None) -> JointPositionActionTerm:
+        model = ctx.model
         if actuators is None:
-            actuators = env.model.actuators
-        robot = env.cfg.scene.objs.robot
+            actuators = model.actuators
+        robot = ctx.cfg.scene.objs.robot
         if not isinstance(robot, RobotCfg):
             raise TypeError(f"scene robot must be RobotCfg, got {type(robot).__name__}")
         if "default" not in robot.key_pose.poses:
             raise ValueError("robot must define key pose 'default'")
-        kps = self._read_position_actuator_kps(env)
+        kps = self._read_position_actuator_kps(model)
         default_angles = self._resolve_default_pose(
-            env,
+            model,
             tuple(robot.resolve_name(name) for name in robot.key_pose.joint_names),
             tuple(robot.key_pose.poses["default"]),
         )
-        action_scales = self._init_action_scales(env, kps)
-        joint_lower, joint_upper = env.model.others["robot_joint_position_limits"]
-        expected_model_shape = (env.num_actuators,)
+        action_scales = self._init_action_scales(model, kps)
+        joint_lower, joint_upper = model.others["robot_joint_position_limits"]
+        expected_model_shape = (len(model.actuators),)
         if joint_lower.shape != expected_model_shape or joint_upper.shape != expected_model_shape:
             raise ValueError(
                 "robot joint position limits must match the model actuator count: "
                 f"lower={joint_lower.shape}, upper={joint_upper.shape}, expected={expected_model_shape}."
             )
         actuator_names = tuple(spec.name for spec in actuators)
-        all_names = tuple(spec.name for spec in env.model.actuators)
+        all_names = tuple(spec.name for spec in model.actuators)
         indices = torch.tensor([all_names.index(name) for name in actuator_names], dtype=torch.int64)
         lo, hi = self.action_delay_steps
         if lo < 0 or hi < lo:
@@ -146,12 +148,12 @@ class JointPositionActionCfg(ActionCfg):
         # Keep current and previous actions even when delay is disabled.
         width = max(hi + 1, 2)
         state = JointPositionActionState(
-            action_queue=torch.zeros((env.num_envs, width, len(actuators)), dtype=torch.float32),
+            action_queue=torch.zeros((ctx.num_envs, width, len(actuators)), dtype=torch.float32),
             default_angles=default_angles[indices],
             joint_lower=joint_lower[indices],
             joint_upper=joint_upper[indices],
             action_scales=action_scales[indices],
-            delay_steps=torch.zeros(env.num_envs, dtype=torch.int64),
+            delay_steps=torch.zeros(ctx.num_envs, dtype=torch.int64),
             action_ptr=torch.zeros(1, dtype=torch.int64),
             delay_lo=int(lo),
             delay_hi=int(hi),
@@ -164,16 +166,16 @@ class JointPositionActionCfg(ActionCfg):
                 raise ValueError(f"position actuator {spec.name!r} must define or inherit ctrl_range")
             ctrl_ranges.append(spec.ctrl_range)
         space = joint_position_action_space_from_ctrl_ranges(
-            torch.tensor(ctrl_ranges, dtype=torch.float32), state.default_angles, state.action_scales
+            torch.tensor(ctrl_ranges, dtype=torch.float32), state.default_angles.cpu(), state.action_scales.cpu()
         )
         term = JointPositionActionTerm(space, state)
         # Reset-time delay resampling is reproducible per environment seed.
-        term.generator.manual_seed(int(getattr(env, "_rand_seed", 0)) + 0x5EED)
+        term.generator.manual_seed(ctx.seed + 0x5EED)
         return term
 
     @staticmethod
     def _resolve_default_pose(
-        env: ManagerEnv,
+        model: SimModel,
         joint_names: tuple[str, ...],
         joint_positions: tuple[float, ...],
     ) -> torch.Tensor:
@@ -183,7 +185,7 @@ class JointPositionActionCfg(ActionCfg):
                 f"{len(joint_positions)} positions"
             )
         actuator_joint_names = []
-        for spec in env.model.actuators:
+        for spec in model.actuators:
             actuator_joint_names.append(spec.target_name)
         positions = dict(zip(joint_names, joint_positions, strict=True))
         missing = sorted(set(actuator_joint_names).difference(positions))
@@ -195,13 +197,13 @@ class JointPositionActionCfg(ActionCfg):
         return torch.tensor([positions[name] for name in actuator_joint_names], dtype=torch.float32)
 
     @staticmethod
-    def _read_position_actuator_kps(env: ManagerEnv) -> torch.Tensor:
-        return torch.as_tensor(env.model.others["actuator_kp"]).detach().cpu()
+    def _read_position_actuator_kps(model: SimModel) -> torch.Tensor:
+        return torch.as_tensor(model.others["actuator_kp"]).detach().cpu()
 
     @staticmethod
-    def _read_position_actuator_effort_limits(env: ManagerEnv) -> torch.Tensor:
+    def _read_position_actuator_effort_limits(model: SimModel) -> torch.Tensor:
         effort_limits = []
-        for spec in env.model.actuators:
+        for spec in model.actuators:
             if spec.force_range is None or len(spec.force_range) != 2:
                 raise ValueError(f"actuator '{spec.name}' must define a two-valued force_range")
             low, high = float(spec.force_range[0]), float(spec.force_range[1])
@@ -213,14 +215,14 @@ class JointPositionActionCfg(ActionCfg):
             effort_limits.append(effort_limit)
         return torch.tensor(effort_limits, dtype=torch.float32)
 
-    def _init_action_scales(self, env: ManagerEnv, kps: torch.Tensor) -> torch.Tensor:
+    def _init_action_scales(self, model: SimModel, kps: torch.Tensor) -> torch.Tensor:
         if not math.isfinite(self.action_scale) or self.action_scale <= 0.0:
             raise ValueError(f"action_scale must be positive and finite, got {self.action_scale}")
         if self.action_scales_by_effort_limit_over_p_gain:
-            effort = self._read_position_actuator_effort_limits(env)
+            effort = self._read_position_actuator_effort_limits(model).to(kps.device)
             safe_kp = torch.where(kps == 0.0, torch.ones_like(kps), kps)
             return torch.where(kps == 0.0, torch.zeros_like(kps), self.action_scale * effort / safe_kp)
-        return torch.full((env.num_actuators,), self.action_scale, dtype=torch.float32)
+        return torch.full((len(model.actuators),), self.action_scale, dtype=torch.float32, device=kps.device)
 
 
 __all__ = ["JointPositionActionState", "JointPositionActionTerm", "JointPositionActionCfg"]

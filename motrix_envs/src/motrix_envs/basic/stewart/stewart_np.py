@@ -9,6 +9,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     BodyAngularVelocityWrite,
@@ -198,7 +199,9 @@ class StewartEnv(DirectEnv):
         self._action_dim = 2
         self._obs_dim = 15 + (10 if cfg.disturbance_enabled and cfg.disturbance_include_obs else 0)
         self._action_space = gym.spaces.Box(-1.0, 1.0, (self._action_dim,), dtype=np.float32)
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (self._obs_dim,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (self._obs_dim,), dtype=np.float32))}
+        )
 
         self._model_action_dim = self.num_actuators
         if self._model_action_dim != 6:
@@ -262,8 +265,8 @@ class StewartEnv(DirectEnv):
         self._disturb_rot_jitter_scale = torch.zeros((num_envs, 2), dtype=torch.float32)
 
     @property
-    def observation_space(self) -> gym.spaces.Box:
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self) -> gym.spaces.Box:

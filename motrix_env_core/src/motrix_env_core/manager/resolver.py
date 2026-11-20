@@ -170,39 +170,42 @@ class CommandResetHook:
 
 
 @dataclass(frozen=True)
-class RewardTermCall:
+class TermCall:
+    """A resolved invocation bound to the context supplied at execution time."""
+
+    function: Callable
+    args: tuple[PreparedArg, ...]
+
+    def invoke(self, ctx: ManagerContext, *outputs: torch.Tensor | Map[torch.Tensor]) -> Any:
+        args = tuple(ctx.sim[arg.key] if isinstance(arg, SimArg) else arg.value for arg in self.args)
+        return self.function(ctx, *outputs, *args)
+
+
+@dataclass(frozen=True)
+class RewardTermCall(TermCall):
     """One reward term call with its resolver-assigned buffer column."""
 
     index: int
-    function: Callable
-    args: tuple[PreparedArg, ...]
 
 
 @dataclass(frozen=True)
-class TerminationTermCall:
+class TerminationTermCall(TermCall):
     """One termination term call with its resolver-assigned buffer column."""
 
     index: int
-    function: Callable
-    args: tuple[PreparedArg, ...]
 
 
 @dataclass(frozen=True)
-class ObservationTermCall:
+class ObservationTermCall(TermCall):
     """One observation term call writing its group slice."""
 
     group: str
     name: str
-    function: Callable
-    args: tuple[PreparedArg, ...]
 
 
 @dataclass(frozen=True)
-class SimResetTermCall:
-    """One simulator reset term call (write offsets stay on ``ResolvedSimReset``)."""
-
-    function: Callable
-    args: tuple[PreparedArg, ...]
+class SimResetTermCall(TermCall):
+    """One simulator reset call (write offsets stay on ResolvedSimReset)."""
 
 
 @dataclass(frozen=True)
@@ -252,10 +255,12 @@ __all__ = [
     "MetricFieldLayout",
     "ObservationGroupLayout",
     "ObservationTermCall",
+    "ManagerTermResolver",
     "ObservationTermLayout",
     "PreparedArg",
     "ResolvedManagerProgram",
     "ResolvedSimReset",
+    "TermCall",
     "RewardTermCall",
     "ScalarTermLayout",
     "SimArg",
@@ -283,12 +288,104 @@ def _manager_sim_inputs(sim_data: PhysicsReadProgram) -> Mapping[str, ManagerSim
     return MappingProxyType(inputs)
 
 
+class ManagerTermResolver:
+    """Resolve numerical Manager terms against an explicit simulator query map."""
+
+    def __init__(self, query_keys: Mapping[SimDataQuery, str] | None = None) -> None:
+        self._query_keys = {} if query_keys is None else dict(query_keys)
+
+    def resolve_observation(self, group: str, name: str, term: ObsTerm) -> ObservationTermCall:
+        function = term.dispatch
+        parameters = tuple(inspect.signature(function).parameters.values())
+        if any(
+            parameter.kind not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            for parameter in parameters
+        ):
+            raise TypeError(f"Manager observation {group}.{name} dispatch args must be positional parameters.")
+        if len(parameters) != 2 + len(term.args):
+            raise TypeError(
+                f"Manager observation {group}.{name} dispatch must take a ManagerContext parameter, an "
+                "torch.Tensor output parameter, and "
+                f"{len(term.args)} positional args; got "
+                f"{tuple(parameter.name for parameter in parameters)}."
+            )
+        annotations = get_type_hints(function, include_extras=True)
+        if (
+            annotations.get(parameters[0].name) is not ManagerContext
+            or annotations.get(parameters[1].name) is not torch.Tensor
+        ):
+            raise TypeError(
+                f"Manager observation {group}.{name} dispatch must annotate its first two parameters as "
+                "ManagerContext and torch.Tensor (conventionally named ctx and out)."
+            )
+        args = tuple(self._resolve_term_arg(value) for index, value in enumerate(term.args))
+        return ObservationTermCall(function=function, args=args, group=group, name=name)
+
+    def resolve_reward(self, name: str, index: int, term: RewardTerm) -> RewardTermCall:
+        return RewardTermCall(
+            function=term.dispatch, args=self._resolve_dispatch_args("reward", name, term), index=index
+        )
+
+    def resolve_termination(self, name: str, index: int, term: TerminationTerm) -> TerminationTermCall:
+        return TerminationTermCall(
+            function=term.dispatch, args=self._resolve_dispatch_args("termination", name, term), index=index
+        )
+
+    def _resolve_dispatch_args(self, group: str, name: str, term: Any) -> tuple[PreparedArg, ...]:
+        function = term.dispatch
+        parameters = tuple(inspect.signature(function).parameters.values())
+        if any(
+            parameter.kind not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            for parameter in parameters
+        ):
+            raise TypeError(f"Manager {group} {name} dispatch args must be positional parameters.")
+        if len(parameters) != 1 + len(term.args):
+            raise TypeError(
+                f"Manager {group} {name} dispatch must take a ManagerContext parameter followed by "
+                f"{len(term.args)} positional args; got {tuple(parameter.name for parameter in parameters)}."
+            )
+        annotations = get_type_hints(function, include_extras=True)
+        if annotations.get(parameters[0].name) is not ManagerContext:
+            raise TypeError(
+                f"Manager {group} {name} dispatch must annotate its first parameter as ManagerContext "
+                f"(conventionally named ctx)."
+            )
+        return tuple(self._resolve_term_arg(value) for index, value in enumerate(term.args))
+
+    # -- argument resolution ---------------------------------------------------
+
+    def _resolve_term_arg(self, value: Any) -> PreparedArg:
+        """Resolve one manager term argument into a prepared descriptor.
+
+        Carrier dataclass and tensor/ndarray arguments pass through as
+        constants: Dynamo traces their attribute access and tensor ops
+        directly. Float-like numpy scalars normalize to Python floats;
+        simulator queries resolve to their read-program batched array; every
+        other value is a literal constant.
+        """
+        if is_kernel_data(value):
+            return ConstantArg(value)
+        if isinstance(value, (torch.Tensor, np.ndarray)):
+            return ConstantArg(value)
+        if isinstance(value, np.floating):
+            return ConstantArg(float(value))
+        if isinstance(value, SimDataQuery):
+            # A query passed as a term argument resolves to its registered
+            # read-program batched view; the dispatch receives the array in
+            # the argument's position.
+            if value not in self._query_keys:
+                raise ValueError(f"Manager term query {value!r} has no declared input binding")
+            return SimArg(self._query_keys[value])
+        return ConstantArg(value)
+
+
 class ManagerProgramResolver:
     """Resolve one fixed manager config into executor-neutral metadata."""
 
     def __init__(self, env: ManagerEnv):
         self._env = env
         self._sim_inputs = _manager_sim_inputs(env.sim_data)
+        self._term_resolver = ManagerTermResolver(env._term_query_keys)
 
     def build(self) -> ResolvedManagerProgram:
         build_started = perf_counter()
@@ -396,10 +493,11 @@ class ManagerProgramResolver:
             for parameter in parameters
         ):
             raise TypeError(f"Manager simulator reset term {name!r} dispatch args must be positional parameters.")
-        if len(parameters) != 2 + len(term.args):
+        if len(parameters) != 3 + len(term.args):
             raise TypeError(
                 f"Manager simulator reset term {name!r} dispatch must take a ManagerContext parameter, a "
-                f"Map[torch.Tensor] sim-writes parameter, and {len(term.args)} positional args; got "
+                "torch.Tensor env-ids parameter, a Map[torch.Tensor] sim-writes parameter, "
+                f"and {len(term.args)} positional args; got "
                 f"{tuple(parameter.name for parameter in parameters)}."
             )
         annotations = get_type_hints(function, include_extras=True)
@@ -408,16 +506,18 @@ class ManagerProgramResolver:
                 f"Manager simulator reset term {name!r} dispatch must annotate its first parameter as "
                 "ManagerContext (conventionally named ctx)."
             )
-        sim_writes_annotation = annotations.get(parameters[1].name)
+        if annotations.get(parameters[1].name) is not torch.Tensor:
+            raise TypeError(f"Manager simulator reset term {name!r} must annotate env_ids as torch.Tensor.")
+        sim_writes_annotation = annotations.get(parameters[2].name)
         if get_origin(sim_writes_annotation) is not Map or get_args(sim_writes_annotation) != (torch.Tensor,):
             raise TypeError(
-                f"Manager simulator reset term {name!r} dispatch must annotate its second parameter as "
+                f"Manager simulator reset term {name!r} dispatch must annotate its third parameter as "
                 "Map[torch.Tensor] (conventionally named sim_writes)."
             )
         dispatcher = function
         args = tuple(self._resolve_term_arg(value) for index, value in enumerate(term.args))
         return ResolvedSimReset(
-            SimResetTermCall(dispatcher, args),
+            SimResetTermCall(function=dispatcher, args=args),
             f"sim_reset_{name}_writes",
             output_offset,
             len(fields),
@@ -438,19 +538,10 @@ class ManagerProgramResolver:
             actions=Map(actions),
             commands=Map(commands),
             metrics=Map(metrics),
-            rand=self._env._rand,
             sim=Map(sim),
             dt=float(self._env.cfg.ctrl_dt),
+            rand=self._env._random,
             sim_reset_requested=self._env._sim_reset_requested,
-            # Reset-pass context owned here: ``reset_ids`` is the compact row
-            # index of the current reset pass (rebound per call by the reset
-            # kernel wrapper), the episode mask is full-batch scratch filled
-            # by _reset_rows and gathered per pass, and ``terminated`` is the
-            # termination buffer the manager state is assembled over (see
-            # ManagerEnv._new_state), so kernels and ``state.terminated``
-            # share one tensor.
-            reset_ids=torch.zeros(0, dtype=torch.int64),
-            reset_episode=torch.zeros((self._env.num_envs, 1), dtype=torch.bool),
             terminated=torch.zeros(self._env.num_envs, dtype=torch.bool),
         )
         self._validate_context_leaves(value)
@@ -487,7 +578,14 @@ class ManagerProgramResolver:
                 f"Manager term command.{name} {function_name} must annotate its first parameter after the "
                 "receiver as ManagerContext (conventionally named ctx)."
             )
-        if argument_parameters:
+        if function_name == "reset":
+            if len(argument_parameters) != 2 or any(
+                annotations.get(parameter.name) is not torch.Tensor for parameter in argument_parameters
+            ):
+                raise TypeError(
+                    f"Manager term command.{name} reset must take annotated torch.Tensor env_ids and episode_reset."
+                )
+        elif argument_parameters:
             raise TypeError(
                 f"Manager term command.{name} {function_name} has unsupported dependency parameters "
                 f"{[parameter.name for parameter in argument_parameters]}; read manager and simulator data "
@@ -518,31 +616,7 @@ class ManagerProgramResolver:
         return resolved_groups, layout_groups
 
     def _resolve_observation(self, group: str, name: str, term: ObsTerm) -> ObservationTermCall:
-        function = term.dispatch
-        parameters = tuple(inspect.signature(function).parameters.values())
-        if any(
-            parameter.kind not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-            for parameter in parameters
-        ):
-            raise TypeError(f"Manager observation {group}.{name} dispatch args must be positional parameters.")
-        if len(parameters) != 2 + len(term.args):
-            raise TypeError(
-                f"Manager observation {group}.{name} dispatch must take a ManagerContext parameter, an "
-                "torch.Tensor output parameter, and "
-                f"{len(term.args)} positional args; got "
-                f"{tuple(parameter.name for parameter in parameters)}."
-            )
-        annotations = get_type_hints(function, include_extras=True)
-        if (
-            annotations.get(parameters[0].name) is not ManagerContext
-            or annotations.get(parameters[1].name) is not torch.Tensor
-        ):
-            raise TypeError(
-                f"Manager observation {group}.{name} dispatch must annotate its first two parameters as "
-                "ManagerContext and torch.Tensor (conventionally named ctx and out)."
-            )
-        args = tuple(self._resolve_term_arg(value) for index, value in enumerate(term.args))
-        return ObservationTermCall(group, name, function, args)
+        return self._term_resolver.resolve_observation(group, name, term)
 
     # -- rewards and terminations --------------------------------------------
 
@@ -556,8 +630,7 @@ class ManagerProgramResolver:
         layout = []
         weights = []
         for index, (name, term) in enumerate(reward_terms.items()):
-            args = self._resolve_dispatch_args("reward", name, term)
-            terms.append(RewardTermCall(index, term.dispatch, args))
+            terms.append(self._term_resolver.resolve_reward(name, index, term))
             layout.append(ScalarTermLayout(name, index))
             try:
                 weights.append(float(term_cfgs[name].weight))
@@ -572,60 +645,17 @@ class ManagerProgramResolver:
         terms = []
         layout = []
         for index, (name, term) in enumerate(termination_terms.items()):
-            args = self._resolve_dispatch_args("termination", name, term)
-            terms.append(TerminationTermCall(index, term.dispatch, args))
+            terms.append(self._term_resolver.resolve_termination(name, index, term))
             layout.append(ScalarTermLayout(name, index))
         return tuple(terms), tuple(layout)
 
-    def _resolve_dispatch_args(self, group: str, name: str, term: Any) -> tuple[PreparedArg, ...]:
-        function = term.dispatch
-        parameters = tuple(inspect.signature(function).parameters.values())
-        if any(
-            parameter.kind not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-            for parameter in parameters
-        ):
-            raise TypeError(f"Manager {group} {name} dispatch args must be positional parameters.")
-        if len(parameters) != 1 + len(term.args):
-            raise TypeError(
-                f"Manager {group} {name} dispatch must take a ManagerContext parameter followed by "
-                f"{len(term.args)} positional args; got {tuple(parameter.name for parameter in parameters)}."
-            )
-        annotations = get_type_hints(function, include_extras=True)
-        if annotations.get(parameters[0].name) is not ManagerContext:
-            raise TypeError(
-                f"Manager {group} {name} dispatch must annotate its first parameter as ManagerContext "
-                f"(conventionally named ctx)."
-            )
-        return tuple(self._resolve_term_arg(value) for index, value in enumerate(term.args))
-
-    # -- argument resolution ---------------------------------------------------
-
     def _resolve_term_arg(self, value: Any) -> PreparedArg:
-        """Resolve one manager term argument into a prepared descriptor.
-
-        Carrier dataclass and tensor/ndarray arguments pass through as
-        constants: Dynamo traces their attribute access and tensor ops
-        directly. Float-like numpy scalars normalize to Python floats;
-        simulator queries resolve to their read-program batched array; every
-        other value is a literal constant.
-        """
-        if is_kernel_data(value):
-            return ConstantArg(value)
-        if isinstance(value, (torch.Tensor, np.ndarray)):
-            return ConstantArg(value)
-        if isinstance(value, np.floating):
-            return ConstantArg(float(value))
-        if isinstance(value, SimDataQuery):
-            # A query passed as a term argument resolves to its registered
-            # read-program batched view; the dispatch receives the array in
-            # the argument's position.
-            return SimArg(self._env._term_query_keys[value])
-        return ConstantArg(value)
+        return self._term_resolver._resolve_term_arg(value)
 
     def _validate_context_leaves(self, value: ManagerContext) -> None:
         """Validate the context tree's leaves once at resolution time.
 
-        Command terms, action states, and the rand value are already
+        Command terms and action states are already
         canonicalized at construction; this walk covers the assembled context
         itself (env id, sim views, metric views) with the same leaf-type
         contract. Nothing is stored: terms hold the live host objects.
@@ -647,22 +677,15 @@ class ManagerProgramResolver:
                 )
 
     def _validate_observation_spaces(self, groups: dict[str, ObservationGroupEntry]) -> None:
-        expected_policy = self._env.policy_observation_space.shape
-        if expected_policy != (groups["policy"].size,):
-            raise ValueError(
-                f"Policy observation space has shape {expected_policy}, "
-                f"manager config produces {(groups['policy'].size,)}."
-            )
-        if self._env.policy_observation_space.dtype != np.dtype(np.float32):
-            raise TypeError("Manager policy observation space must use float32 dtype.")
-        if "value" in groups:
-            expected_value = self._env.value_observation_space.shape
-            if expected_value != (groups["value"].size,):
+        spec = self._env.observation_spec
+        if spec.groups.keys() != groups.keys():
+            raise ValueError("Environment observation groups must match the manager config's groups.")
+        for name, group in groups.items():
+            space = spec[name].space
+            expected = (group.size * group.history_length,)
+            if space.shape != expected:
                 raise ValueError(
-                    f"Value observation space has shape {expected_value}, "
-                    f"manager config produces {(groups['value'].size,)}."
+                    f"Observation group {name!r} space has shape {space.shape}, manager config produces {expected}."
                 )
-            if self._env.value_observation_space.dtype != np.dtype(np.float32):
-                raise TypeError("Manager value observation space must use float32 dtype.")
-        elif self._env.has_value_observation:
-            raise ValueError("Environment declares a value observation space but manager config has no 'value' group.")
+            if space.dtype != np.dtype(np.float32):
+                raise TypeError(f"Manager observation group {name!r} space must use float32 dtype.")

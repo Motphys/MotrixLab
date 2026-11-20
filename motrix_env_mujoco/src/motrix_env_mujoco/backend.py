@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import torch
+
 from motrix_env_core.config.sim import SimCfg
 from motrix_env_core.sim.backend import SimBackend
 from motrix_env_core.sim.model import SimModelCompiler
@@ -40,7 +42,7 @@ class MuJoCoSimBackend(SimBackend):
     def num_actuators(self) -> int:
         raise NotImplementedError(self._GAP)
 
-    def step(self, substeps: int) -> None:
+    def step(self, substeps: int, result: torch.Tensor | None = None) -> None:
         raise NotImplementedError(self._GAP)
 
     def compile_reads(self, queries) -> PhysicsReadProgram:

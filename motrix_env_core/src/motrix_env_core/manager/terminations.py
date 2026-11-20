@@ -86,7 +86,7 @@ class TerminationManager:
                     f"{existing_name!r} and {name!r}; each configured termination type must be unique."
                 )
             termination_types[type(term_cfg)] = name
-            created = term_cfg(BuildContext(self._env, f"terminations.{name}"))
+            created = term_cfg(self._env.build_context())
             if not isinstance(created, TerminationTerm):
                 raise TypeError(
                     f"Manager termination {name} __call__() must return TerminationTerm, got {type(created).__name__}."

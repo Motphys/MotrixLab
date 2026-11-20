@@ -11,20 +11,20 @@ Torch 是唯一执行器——历史上并存过的 Numba fused-kernel 路径与
 `executor="numba"|"torch"` 双执行器切换已经移除。相关背景见
 [Manager Runtime 设计](./runtime.md)。
 
-执行方式默认为 `torch.compile`：每个 kernel（evaluate/observe/reset）把整段
-term 调度编译为 Inductor 图（observe 按组拆图；进程 OMP 池默认封顶 32 线程，
+执行方式默认为 `torch.compile(fullgraph=False)`：每个 kernel（evaluate/observe/reset）
+编译 term 调度的数值计算；`ctx.rand` 直接调用可 trace 的 Torch 默认随机算子，
+不人为建立抽样 eager 边界（observe 按组拆图；进程 OMP 池与图内线程数见下文，
 图内线程数与 chunk 由 `MOTRIX_TORCH_COMPILE_THREADS`/`MOTRIX_TORCH_MIN_CHUNK` 控制；
-reset 以静态
-dynamic gather-compact 形式编译，见下文 reset 路径）。RNG draw 顺序与 eager
-  在 evaluate/observe 内完全一致；Inductor 重结合仅带来
-≤1e-8 量级的 reward 差异。调试可用 `TorchManagerRuntime(env, program,
+reset 以 dynamic gather-compact 形式编译，见下文 reset 路径）。随机序列的可复现性需在
+相同执行模式、Torch 版本、设备和随机调用顺序等前提下验证；不承诺 eager 与 compiled
+产生相同随机序列，也不保证跨模式数值差异的固定上限。调试可用 `TorchManagerRuntime(env, program,
 compile=False)` 或 `runtime.compile_enabled = False` 回到逐 term eager 执行。
 
 ## 解析与执行的分工
 
-- `ManagerProgramResolver`（backend-neutral）负责输入准备：组装唯一常驻的
+- `ManagerProgramResolver`（backend-neutral）负责输入准备：组装常驻的基础
   `ManagerContext` 宿主实例（Map 容纳真实的 command/action term 实例，`sim`/
-  `metrics` 为零拷贝 tensor 视图，`rand` 为 tensor 批量 `RandValue`，`dt` 为
+  `metrics` 为零拷贝 tensor 视图，`dt` 为
   Python float），并以 `iter_leaves` 做一次性 leaf 类型校验；carrier dataclass
   term 参数按常量参数原样透传，Dynamo 直接 trace 其属性访问。构建
   `ManagerLayout`、`ReadPlan`、per-term-kind typed call records（command hooks
@@ -32,7 +32,7 @@ compile=False)` 或 `runtime.compile_enabled = False` 回到逐 term eager 执�
   index 与参数描述符等），并校验签名注解契约。它不做任何代码生成、缓存或
   dispatcher 编译。
 - `TorchManagerRuntime` 消费这些元数据并执行 term 调度；所有写入落回
-  host 持有的 numpy 缓冲（reward terms/masks/obs/command state/metrics），
+  host 持有的 Torch 张量缓冲（reward terms/masks/obs/command state/metrics），
   `ManagerEnv` 的公共 API 与状态面保持不变。
 
 ## 执行器行为
@@ -42,19 +42,26 @@ compile=False)` 或 `runtime.compile_enabled = False` 回到逐 term eager 执�
   command `advance`（rewards/terminations 读 pre-advance command state）；
   observe 按 group/term 顺序写 obs 切片；reset = command `reset`
   （compact）→ sim-reset terms 写 compact 行。
-- RNG：per-lane SplitMix64（`manager.rand.draw_uniform`），批量语义为
-  term 一次 draw `count=k` 等价于 per-lane 连续调用 k 次。
-- 常驻 context：三个 kernel 共用同一 `ManagerContext` 实例；simulator-backed
-  tensor 视图由 read program 原地重写 arena 保持有效，term 实例与标量字段即
-  宿主对象本身（graph-break-free 编译的关键：无转译层，guard 落在对象
-  identity 上）。
-- reset 路径是 **dynamic gather-compact** 设计：`ctx.reset_ids` 携带本 pass 的
-  K 个 reset 行（动态长度，`mark_dynamic` 防 0/1 特化，一次 `dynamic=True`
-  编译覆盖所有 K）。command `reset` 钩子直接在常驻实例上按 ids
+- RNG：term 使用 `ctx.rand.uniform(shape)` / `ctx.rand.uniform_like(tensor)`。
+  `RandomSource()` 无构造参数、不持有 generator，分别直接封装 `torch.rand` 与
+  `torch.rand_like`，消费相应设备的默认 Torch 随机流；不提供实例或用途隔离。
+  训练入口负责根 seed，ManagerEnv 构造不调用 `torch.manual_seed`。
+- 随机算子编译：没有 `@torch.compiler.disable` 边界。Torch 2.7 数值实验已验证
+  该入口可由 `fullgraph=True` trace，但不据此承诺整个 ManagerEnv fullgraph 编译成功，
+  也不把微基准当作整环境吞吐或 CUDA graph capture 兼容性的证明。
+- 常驻 context：evaluate/observe/reset 共用 `ManagerContext`，observe 不替换随机流。
+  simulator-backed tensor 视图由 read program 原地重写 arena 保持有效，term 实例
+  与标量字段即宿主对象本身（无转译层，guard 落在对象 identity 上）。终态 preview
+  消费共享默认流，可改变后续正常观测噪声及 command/reset 抽样。
+  seed 与可复现性边界见[训练随机性与 Seed 所有权](../randomness-and-seeding.md)。
+- reset 路径是 **dynamic gather-compact** 设计：显式 `env_ids` 参数携带本 pass 的
+  K 个原始环境行号，command reset 另接收对齐的 bool `(K,)` `episode_reset`，区分 episode 与 sim-only reset；
+  context/query 输入始终为全批 N 行（通过 `mark_dynamic` 与 `dynamic=True` 请求 reset 符号批宽，
+  Torch 的零/单行处理仍可能触发特化，不保证所有 K 共享一次编译）。command `reset` 钩子直接在常驻实例上按 ids
   gather/scatter；sim-reset terms 直接填 `(K, *write_shape)` staging（无
   `stage[ids]` 二次 gather）；wrapper 把 staging 拷到全批 reset buffer 头部。
-  RNG 语义：reset pass 在全批流上 draw 后 gather 对应行，pass 之外的 lane
-  的 SplitMix64 序列同样推进。实测 reset kernel 随 K 伸缩（2048 envs）：
+  reset term 可直接为本 pass 的 compact 行抽样；随机流会推进，但非选中行的
+  环境状态保持不变。以下 reset kernel 性能数据为既有测量（2048 envs）：
   K=1 → 0.089ms、K=16 → 0.097ms、K=2048 → 0.275ms（旧的静态全批 masked
   kernel 不随 K 变化，恒 ~0.40ms）。
 
@@ -68,8 +75,6 @@ ctx（`ManagerContext` 宿主实例）字段全部是**整批**张量：
 - `ctx.actions[name]` 是真实 `ActionState`；`.current()/previous()` 为纯 tensor
   gather 方法，返回 `(N, A)`；`action_queue/action_ptr` 同理
 - `ctx.metrics[name]` → `(N, 1)` 可写张量
-- `ctx.rand.next_uniform(count=k)` → `(N, k)`，`[-1,1)`，原地推进状态；
-  `ctx.rand.uniform_range(count, low, high)` 同理
 - `ctx.dt` float、`ctx.env_id` `(N,)`、`ctx.sim_reset_requested` `(N,1)` bool
 
 函数签名约定（第一个参数注解为 `ManagerContext`，observation 的 `out`
@@ -80,14 +85,20 @@ float，数组参数为批量张量）：
 - reward：返回 `(N,)` float32 张量
 - termination：返回 `(N,)` bool 张量；metric 写 `ctx.metrics[name][:, 0] = value`
 - observation：`out` 为 `(N, size)` 张量切片，直接写入；noise 用
-  `ctx.rand.next_uniform(size) * amplitude`（count == out.shape[1] 保持 RNG 顺序）
-- reset：`(ctx, sim_writes, *args)`，ctx 第 0 维 = 本 pass 的 K（`ctx.reset_ids`），
-  `sim_writes[name]` 为 compact `(K, *write_shape)` 张量
+  `(2 * ctx.rand.uniform_like(out) - 1) * amplitude`
+- reset：`(ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], *static)`；
+  ctx 与 query 参数保持全批 N 行，`env_ids` 为 K 个原始行号，读取时显式 gather；
+  `sim_writes[name]` 为 compact `(K, *write_shape)` 张量，第 j 行对应 `env_ids[j]`，不得二次按原始行号 gather
 
 Command hooks（`update`/`advance`/`reset`）是 CommandTerm 类上的实例方法，
-签名 `(self, ctx)`（resolver 按方法名解析，无标记装饰器）；`self` 就是宿主 `CommandTerm` 实例
-（三个 kernel 都在常驻实例上执行，编译图对其 identity 建 guard——reset 为
-gather-compact，直接按 `ctx.reset_ids` 在常驻实例上 gather/scatter）。
+`update`/`advance` 签名为 `(self, ctx: ManagerContext)`，reset 为
+`(self, ctx: ManagerContext, env_ids: torch.Tensor, episode_reset: torch.Tensor)`
+（resolver 按方法名解析，无标记装饰器）；`self` 就是宿主 `CommandTerm` 实例。
+三个 kernel 都在常驻实例和全批 context 上执行，编译图对其 identity 建 guard；reset
+直接按 `env_ids` gather/scatter，用与 `env_ids` 对齐的 bool `(K,)` `episode_reset` 限定回合级行为：
+True 表示回合级重置（含初始化与显式重开），False 表示仅 sim reset、当前回合继续；
+它不等于 `terminated`，也不必然表示上一回合已经结束。
+`ManagerContext` 不保存 reset 选择字段。
 ActionTerm 的 `process/_reset` 保持宿主路径不变。
 
 标量参数（float）以 Python float 传入；字符串参数直接传入。
@@ -123,6 +134,5 @@ ActionTerm 的 `process/_reset` 保持宿主路径不变。
   （env `MOTRIX_TORCH_COMPILE_THREADS` 覆盖）。numactl 在单 NUMA node 上无效。
 - **冷惩罚测量**。物理后首个编译 kernel 存在冷缓存惩罚：同段计算重复执行 0.29ms vs 物理后执行
   0.59ms（Numba 因单小并行区天然免疫）。
-- **已知残余**。EPYC 上相对 Numba 约 1ms 残余 = 冷缓存惩罚 + reset 静态全批布尔掩码设计
-  （RNG 状态 `where(mask, ...)` 门控）带来的约 3x lane 计算结构性成本；本机持平 16.8–17.0ms。
-  拉平高线程数仍需跨图 region 融合或持久 lane kernel（future work）。
+- **测量适用范围**。以上基准是单 Torch 执行器迁移阶段的记录；`ctx.rand` 的数值
+  trace 实验也不是整环境吞吐或 CUDA graph capture 验收，相关结论须单独测量。

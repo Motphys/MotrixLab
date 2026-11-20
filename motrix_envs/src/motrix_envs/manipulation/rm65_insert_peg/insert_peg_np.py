@@ -8,6 +8,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     BodyJointPositionQuery,
     BodyJointPositionWrite,
@@ -93,7 +94,9 @@ class PegInsertEnv(DirectEnv):
 
         self._obs_dim = 45
         self._action_space = gym.spaces.Box(-1, 1, (self._action_dim,), dtype=np.float32)
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (self._obs_dim,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (self._obs_dim,), dtype=np.float32))}
+        )
 
         self._init_dof_pos = torch.cat([self.default_joint_pos, torch.zeros(1, dtype=torch.float32)])
         self._init_dof_vel = torch.zeros(self._num_dof_vel, dtype=torch.float32)
@@ -176,8 +179,8 @@ class PegInsertEnv(DirectEnv):
         return peg_xy
 
     @property
-    def observation_space(self):
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self):
@@ -337,7 +340,7 @@ class PegInsertEnv(DirectEnv):
         # name is applied via setattr so static audits can tell this
         # sanctioned observation-stage write apart from the forbidden
         # transition-time writes.
-        setattr(state, "obs", EnvObs(policy=obs))
+        setattr(state, "obs", EnvObs({"policy": obs}))
         return state
 
     def compute_transition(self, state: ArrayEnvState):

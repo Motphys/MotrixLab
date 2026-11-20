@@ -60,14 +60,13 @@ class RslrlEnvWrap(VecEnv):
     @property
     def num_obs(self) -> int:
         """Size of observation space."""
-        return self._env.policy_observation_space.shape[0]
+        return self._env.observation_spec.policy.space.shape[0]
 
     @property
     def num_privileged_obs(self) -> int | None:
         """Size of privileged critic observations, if provided."""
-        if not self._env.has_value_observation:
-            return None
-        return self._env.value_observation_space.shape[0]
+        value = self._env.observation_spec.value
+        return value.space.shape[0] if value is not None else None
 
     @property
     def num_actions(self) -> int:

@@ -9,6 +9,7 @@ from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.math import quaternion
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     BatchLinkAngularVelocityQuery,
     BatchLinkLinearVelocityQuery,
@@ -133,7 +134,9 @@ class ShadowHandReposeEnv(DirectEnv):
 
         # Initialize spaces
         self._action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(self._num_actuators,), dtype=np.float32)
-        self._observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(157,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(low=-np.inf, high=np.inf, shape=(157,), dtype=np.float32))}
+        )
 
         # Get actuator control ranges from model
         self._actuator_ctrl_lower = torch.tensor(
@@ -172,8 +175,8 @@ class ShadowHandReposeEnv(DirectEnv):
         self._successes = torch.zeros(num_envs, dtype=torch.int64)
 
     @property
-    def observation_space(self):
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self):
@@ -290,7 +293,7 @@ class ShadowHandReposeEnv(DirectEnv):
         # name is applied via setattr so static audits can tell this
         # sanctioned observation-stage write apart from the forbidden
         # transition-time writes.
-        setattr(state, "obs", EnvObs(policy=obs))
+        setattr(state, "obs", EnvObs({"policy": obs}))
         return state
 
     def compute_transition(self, state: ArrayEnvState):

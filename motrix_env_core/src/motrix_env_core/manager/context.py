@@ -5,20 +5,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import torch
 
 from motrix_env_core.manager.kernel_data import Map
-from motrix_env_core.manager.rand import RandValue
+from motrix_env_core.manager.random import RandomSource
 
 if TYPE_CHECKING:
     from motrix_env_core.base import EnvCfg
-    from motrix_env_core.manager.env import ManagerEnv
+    from motrix_env_core.manager.actions import ActionTerm
+    from motrix_env_core.manager.commands import CommandTerm
     from motrix_env_core.sim import SimModel
-
-T = TypeVar("T")
 
 
 @dataclass(slots=True)
@@ -40,7 +40,6 @@ class ManagerContext:
     actions: Map
     commands: Map
     metrics: Map
-    rand: RandValue
     sim: Map
     dt: float
     # Writable per-lane flag: a command term sets it inside a fused kernel to
@@ -48,60 +47,52 @@ class ManagerContext:
     # transition. It is not an episode reset: episode bookkeeping and
     # action-term state are untouched (see CommandTerm.advance).
     sim_reset_requested: torch.Tensor
-    # Read-only flags valid inside reset hooks. ``reset_ids`` are the compact
-    # rows of the current reset pass (dynamic length K, aligned with every
-    # gathered tensor and compact staging buffer); ``reset_episode`` marks
-    # which of those rows are episode resets (False for mid-episode
-    # sim-reset rows), so a ``reset`` hook can apply episode-boundary
-    # statistics selectively.
-    reset_ids: torch.Tensor
-    reset_episode: torch.Tensor
     # Read-only mirror of the latest transition's termination union, backing
     # episode-boundary statistics inside reset hooks.
     terminated: torch.Tensor
+    # Stateless capability, not tensor kernel data. All consumers on a device
+    # share Torch's default stream; separate contexts do not imply RNG isolation.
+    rand: RandomSource
 
 
+@dataclass(frozen=True, slots=True)
 class BuildContext:
-    """NumPy build context retained for the current runtime builder.
+    """Explicit construction inputs and independently owned terms, without an environment.
 
-    Handed to ``__call__`` after the model and read program are compiled.
-    Exposes a curated surface of the environment — the term's address, the
-    compiled model (including ``bodies``), and the already-created
-    action/command term registries. Terms must not reach past
-    this surface into environment internals.
+    ManagerEnv constructs terms in this order: commands (declaration order),
+    command metric materialization/validation, simulator resets, actions,
+    rewards, terminations, then observations.
 
-    Note: reset terms are built before the read program and the action and
-    command registries exist; their build contexts must not touch
-    ``action_terms``/``command_terms``.
+    Availability during each factory call:
+
+    * Command: ``actions`` is empty; ``commands`` contains only preceding
+      commands, whose metrics have not yet been materialized. Later commands
+      and the command currently being constructed are unavailable.
+    * Simulator reset and action: ``commands`` is complete and validated;
+      ``actions`` is empty throughout all action factories. Action construction
+      publishes the collection only after every action factory returns.
+    * Reward, termination, and observation: both collections are complete.
+
+    Treat dependencies as read-only. These mappings are not a lazy resolver:
+    missing entries are not constructed on access. A factory must not retain
+    an early mapping expecting it to become the final action collection.
+    Contexts constructed outside ManagerEnv must receive their dependencies
+    explicitly; this ordering only describes ManagerEnv's construction flow.
+
+    ``num_envs`` is the row count of the instance being constructed, not the
+    batch size of a later rollout. ``seed`` initializes that owner's
+    construction/reset generators; numerical terms access the process-default
+    Torch RNG through the explicit ``ManagerContext.rand`` capability.
     """
 
-    def __init__(self, env: ManagerEnv, address: str) -> None:
-        self._env = env
-        self.address = address
-
-    @property
-    def cfg(self) -> EnvCfg:
-        return self._env.cfg
-
-    @property
-    def model(self) -> SimModel:
-        return self._env.model
-
-    @property
-    def num_envs(self) -> int:
-        return self._env.num_envs
-
-    @property
-    def num_actuators(self) -> int:
-        return self._env.num_actuators
-
-    @property
-    def action_terms(self) -> Any:
-        return self._env.action_terms
-
-    @property
-    def command_terms(self) -> Any:
-        return self._env.command_terms
+    cfg: EnvCfg
+    actions: Mapping[str, ActionTerm]
+    commands: Mapping[str, CommandTerm]
+    # Compiled scene model when one exists; model-free task builds construct
+    # terms without it.
+    model: SimModel | None = None
+    num_envs: int = field(kw_only=True)
+    seed: int = field(kw_only=True)
 
 
 __all__ = ["BuildContext", "ManagerContext"]

@@ -24,7 +24,7 @@ IsaacLab-like ManagerCfg
 - 用户可以继续按 action、command、observation、reward、termination 和 event 组织配置。
 - 配置层可接受 IsaacLab 常见的嵌套属性修改和以 `None` 删除 term。
 - 每个被接受的 term 最终必须成为 concrete runtime term；native typed cfg 直接创建，functional cfg 由框架在构建期生成。
-- [kernel-data dataclass](./kernel-abi.md)、[`ManagerContext`](./kernel-abi.md) 和 [SimDataQuery 读侧编译](./sim-read-program.md) 的契约保持不变。
+- kernel-data dataclass、`ManagerContext` 和 [SimDataQuery 读侧编译](./sim-read-program.md) 的契约保持不变。
 
 非目标：
 

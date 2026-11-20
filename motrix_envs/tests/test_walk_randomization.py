@@ -12,6 +12,8 @@ import pytest
 import torch
 
 from motrix_env_core.manager import ManagerEnv
+from motrix_env_core.manager.observation_manager import ObservationManager
+from motrix_env_core.manager.observations import ObservationGroupEntry
 from motrix_env_core.mdp.action import JointPositionActionCfg, JointPositionActionState, JointPositionActionTerm
 from motrix_envs.locomotion.humanoid.g1 import make_g129dof_walk_flat_cfg
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.randomization import WalkRandomizationCfg
@@ -55,15 +57,19 @@ def _tiny_delay_manager(num_envs: int = 2, num_actuators: int = 3, lo: int = 0, 
     controls = torch.empty((num_envs, num_actuators), dtype=torch.float32)
     env._action_writes = SimpleNamespace(buffer=lambda name: controls, execute=lambda: None)
     env._command_terms = {}
-    env._state = SimpleNamespace(terminated=torch.zeros(num_envs, dtype=torch.bool))
+    env._state = SimpleNamespace(
+        terminated=torch.zeros(num_envs, dtype=torch.bool),
+        episode_steps=torch.zeros(num_envs, dtype=torch.long),
+        final_obs=None,
+    )
+    env.observation_manager = ObservationManager({"policy": ObservationGroupEntry("policy", (), 1)}, num_envs)
     env._compiled_manager_program = SimpleNamespace(
         context=SimpleNamespace(
-            reset_episode=torch.zeros((num_envs, 1), dtype=torch.bool),
             terminated=env._state.terminated,
         )
     )
     env.perf = SimpleNamespace(scope=lambda name: nullcontext())
-    env._reset_sim_rows = lambda env_ids: None
+    env._reset_sim_rows = lambda env_ids, episode_reset: None
     return env, term.state, controls
 
 

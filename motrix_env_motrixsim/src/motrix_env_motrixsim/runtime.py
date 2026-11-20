@@ -350,6 +350,7 @@ class MotrixSimBackend(SimBackend):
         self._model: mtx.SceneModel = MotrixSimSceneCompiler().compile(scene, sim, render=render)
         self._data: mtx.SceneData = mtx.SceneData(self._model, batch=[num_envs])
         self._num_envs = num_envs
+        self._step_status = np.zeros(num_envs, dtype=np.int32)
         self._model_compiler = MotrixSimModelCompiler(self._model)
         self._write_compiler = MotrixSimWriteCompiler(self._model, self._data)
 
@@ -388,8 +389,17 @@ class MotrixSimBackend(SimBackend):
             system_camera=self._scene.system_camera,
         )
 
-    def step(self, substeps: int) -> None:
-        self._model.step_n(self._data, substeps)
+    def step(self, substeps: int, result: torch.Tensor | None = None) -> None:
+        """Advance the simulator and optionally write per-row status codes."""
+        if result is None:
+            self._model.step_n(self._data, substeps)
+            return
+        if result.device.type == "cpu" and result.is_contiguous():
+            # The NumPy view lets the engine write directly into caller-owned storage.
+            self._model.step_n(self._data, substeps, result=result.numpy())
+            return
+        self._model.step_n(self._data, substeps, result=self._step_status)
+        result.copy_(torch.from_numpy(self._step_status))
 
     def sample_terrain_height(self, geom_name: str, env_ids: torch.Tensor, xy: torch.Tensor) -> torch.Tensor:
         """Sample terrain height; torch public contract bridged to numpy at the engine edge."""

@@ -7,6 +7,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     DofPositionLimitsQuery,
     GeomPairCollidingQuery,
@@ -105,7 +106,7 @@ def _tolerance(
 
 class ManipulatorBase(DirectEnv):
     _cfg: BringBallCfg
-    _observation_space: gym.spaces.Box
+    _observation_spec: ObservationSpec
     _action_space: gym.spaces.Box
 
     def __init__(
@@ -149,7 +150,7 @@ class ManipulatorBase(DirectEnv):
         self._grasp_act_i = int(actuator_indices["grasp"])
 
         self._init_action_space()
-        self._init_obs_space()
+        self._init_observation_spec()
 
         # Episode-scoped action history: full-batch buffers, reset writes the
         # done rows in place.
@@ -165,13 +166,15 @@ class ManipulatorBase(DirectEnv):
         self._act_low = torch.from_numpy(ctrl_ranges[:, 0])
         self._act_high = torch.from_numpy(ctrl_ranges[:, 1])
 
-    def _init_obs_space(self):
+    def _init_observation_spec(self) -> None:
         # arm_pos(sin,cos)=16 + arm_vel=8 + touch=5 + hand=3 + object=3 + target=3 + rel=3
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (41,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (41,), dtype=np.float32))}
+        )
 
     @property
-    def observation_space(self) -> gym.spaces.Box:
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self) -> gym.spaces.Box:
@@ -220,7 +223,7 @@ class ManipulatorBase(DirectEnv):
         rel = object_pos - target_pos
 
         obs = torch.cat([arm_pos, arm_vel, touch, hand_pos, object_pos, target_pos, rel], dim=-1)
-        assert obs.shape[1] == self._observation_space.shape[0]
+        assert obs.shape[1] == self._observation_spec.policy.space.shape[0]
         return state.replace(obs=obs)
 
     def _sample_arm_joint_angles(self, num: int) -> torch.Tensor:

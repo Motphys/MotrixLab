@@ -70,7 +70,7 @@ def build_g1_walk_profile(env_name: str) -> DeploymentProfile:
         )
 
     action_shape = env.action_space.shape
-    observation_shape = env.policy_observation_space.shape
+    observation_shape = env.observation_spec.policy.space.shape
     expected_action_shape = (robot.joint_count,)
     if action_shape != expected_action_shape:
         raise ValueError(f"G1 walk action space must have shape {expected_action_shape}, got {action_shape}")

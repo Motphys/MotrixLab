@@ -28,6 +28,7 @@ from motrix_env_core.array.env import ArrayEnvState, EnvObs
 from motrix_env_core.base import EnvCfg
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.registry import EnvBuildSpec
 from motrix_env_core.renderer import RecordConfig, RenderConfig
 
@@ -46,7 +47,7 @@ def _make_env():
     )
     env = Mock(spec=DirectEnv)
     state = ArrayEnvState(
-        obs=EnvObs(torch.zeros((_NUM_ENVS, _OBS_DIM), dtype=torch.float32)),
+        obs=EnvObs({"policy": torch.zeros((_NUM_ENVS, _OBS_DIM), dtype=torch.float32)}),
         reward=torch.ones(_NUM_ENVS, dtype=torch.float32),
         terminated=torch.zeros(_NUM_ENVS, dtype=torch.bool),
         truncated=torch.zeros(_NUM_ENVS, dtype=torch.bool),
@@ -55,9 +56,7 @@ def _make_env():
     env.cfg = SimpleNamespace(max_episode_steps=100)
     env.num_envs = _NUM_ENVS
     env.action_space = action_space
-    env.policy_observation_space = policy_space
-    env.value_observation_space = policy_space
-    env.has_value_observation = False
+    env.observation_spec = ObservationSpec({"policy": ObservationGroupSpec(policy_space)})
     env.state = state
     env.init_state.return_value = state
     env.step.return_value = state
@@ -117,11 +116,13 @@ class _AsyncEnv:
         self._num_envs = num_envs
         self._device = torch.device("cpu")
         self._action_space = gym.spaces.Box(-1.0, 1.0, (_ACT_DIM,), dtype=np.float32)
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (_OBS_DIM,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (_OBS_DIM,), dtype=np.float32))}
+        )
 
     @property
-    def observation_space(self) -> gym.Space:
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self) -> gym.Space:
@@ -155,7 +156,7 @@ class _AsyncTestEnv(_AsyncEnv, DirectEnv):
         # Torch tensor currency (#157): state fields are torch tensors on the
         # frontend, matching the wrap's expectations after the migration.
         return ArrayEnvState(
-            obs=EnvObs(torch.full((self.num_envs, _OBS_DIM), value, dtype=torch.float32)),
+            obs=EnvObs({"policy": torch.full((self.num_envs, _OBS_DIM), value, dtype=torch.float32)}),
             reward=torch.full((self.num_envs,), value, dtype=torch.float32),
             terminated=torch.zeros(self.num_envs, dtype=torch.bool),
             truncated=torch.zeros(self.num_envs, dtype=torch.bool),

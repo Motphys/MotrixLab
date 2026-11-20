@@ -11,12 +11,11 @@ import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager import (
-    CommandCfg,
-    CommandTerm,
     ManagerContext,
-    ManagerEnv,
     metric,
 )
+from motrix_env_core.manager.commands import CommandCfg, CommandTerm
+from motrix_env_core.manager.context import BuildContext
 
 
 def _phase(
@@ -51,8 +50,8 @@ def _phase(
 
 
 def _uniform_range(u: torch.Tensor, low, high) -> torch.Tensor:
-    """Float32 ``low + (high - low) * 0.5 * (u + 1)`` matching the kernel convention."""
-    return low + (high - low) * 0.5 * (u + 1.0)
+    """Map a unit-interval draw into the configured uniform range."""
+    return low + (high - low) * u
 
 
 def _resample_command(
@@ -63,23 +62,13 @@ def _resample_command(
     stand_prob,
     resample: torch.Tensor,
 ) -> None:
-    """Resample velocity commands on ``resample`` lanes, preserving other lanes' RNG rows.
-
-    The draw counts and per-lane order are fixed: one 3-draw uniform batch
-    then one stand-probability draw; lanes that do not resample keep their
-    pre-draw RNG state.
-    """
-    if not bool(resample.any()):
-        return
-    previous_state = ctx.rand.state.clone()
-    u = ctx.rand.next_uniform(3)
-    sampled = _uniform_range(u, low, high)
-    stand_u = ctx.rand.next_uniform(1)[:, 0]
-    stand = (stand_u.to(torch.float64) + 1.0) * 0.5 < float(stand_prob)
-    sampled = torch.where(stand[:, None], torch.zeros_like(sampled), sampled)
-    keep_state = ~resample[:, None]
-    ctx.rand.state.copy_(torch.where(keep_state, previous_state, ctx.rand.state))
-    commands.copy_(torch.where(resample[:, None], sampled, commands))
+    """Resample velocity commands only on the selected lanes."""
+    ids = resample.nonzero().flatten()
+    sampled = _uniform_range(
+        ctx.rand.uniform((ids.numel(), 3), dtype=commands.dtype, device=commands.device), low, high
+    )
+    stand = ctx.rand.uniform((ids.numel(),), dtype=commands.dtype, device=commands.device) < float(stand_prob)
+    commands[ids] = torch.where(stand[:, None], torch.zeros_like(sampled), sampled)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,18 +162,18 @@ class WalkCommand(CommandTerm):
             resample,
         )
 
-    def reset(self: "WalkCommand", ctx: ManagerContext) -> None:
+    def reset(self: "WalkCommand", ctx: ManagerContext, env_ids: torch.Tensor, episode_reset: torch.Tensor) -> None:
         """Update the penalty-scale curriculum, then resample the reset rows.
 
-        Compact semantics: gather this pass's rows (``ctx.reset_ids``) into
+        Compact semantics: gather this pass's rows (``env_ids``) into
         locals, resample them, and scatter back. The curriculum EMA samples
         the episode length over the episode-reset rows among them
-        (``ctx.reset_episode`` — exactly the done lanes, matching the direct
-        env's ``done = terminated | truncated``), guarded so a pass with no
+        (``episode_reset`` — including initialization and explicit restarts,
+        not just terminated/truncated lanes), guarded so a pass with no
         episode rows leaves both EMA and scale untouched.
         """
-        idx = ctx.reset_ids
-        episode = ctx.reset_episode
+        idx = env_ids
+        episode = episode_reset
         do_update = episode.any()
         avg_ep_len = self.avg_ep_len
         penalty_scale = self.penalty_scale
@@ -212,18 +201,23 @@ class WalkCommand(CommandTerm):
         steps[:, 0] = 0.0
         width = float(self.gait_period_width)
         if width > 0.0:
-            u = ctx.rand.next_uniform(1)[idx, 0]
+            u = ctx.rand.uniform((idx.numel(),), dtype=command.dtype, device=command.device)
             jitter = _uniform_range(u, -width, width)
             period = float(self.gait_period_base) + jitter.to(torch.float64)
             phase_step[:, 0] = (2.0 * math.pi * ctx.dt / period.clamp(min=0.1)).to(torch.float32)
-        first = _uniform_range(ctx.rand.next_uniform(1)[idx, 0], -math.pi, math.pi)
+        first = _uniform_range(
+            ctx.rand.uniform((idx.numel(),), dtype=command.dtype, device=command.device), -math.pi, math.pi
+        )
         offsets = torch.empty_like(phase_offset)
         offsets[:, 0] = first
         offsets[:, 1] = ((first.to(torch.float64) + 2.0 * math.pi) % (2.0 * math.pi) - math.pi).to(torch.float32)
         phase_offset.copy_(offsets)
-        sampled = _uniform_range(ctx.rand.next_uniform(3)[idx], self.vel_limit_low, self.vel_limit_high)
-        stand_u = ctx.rand.next_uniform(1)[idx, 0]
-        stand = (stand_u.to(torch.float64) + 1.0) * 0.5 < float(self.stand_prob)
+        sampled = _uniform_range(
+            ctx.rand.uniform((idx.numel(), 3), dtype=command.dtype, device=command.device),
+            self.vel_limit_low,
+            self.vel_limit_high,
+        )
+        stand = ctx.rand.uniform((idx.numel(),), dtype=command.dtype, device=command.device) < float(self.stand_prob)
         command.copy_(torch.where(stand[:, None], torch.zeros_like(sampled), sampled))
         _phase(command, phase, sin_cos, phase_offset, steps[:, 0], phase_step[:, 0])
         self.command[idx] = command
@@ -256,9 +250,9 @@ class WalkCommandCfg(CommandCfg):
         (1.0, 1.0, 1.0),
     )
 
-    def __call__(self, env: ManagerEnv) -> WalkCommand:
-        num_envs = env.num_envs
-        return WalkCommand(
+    def __call__(self, ctx: BuildContext) -> CommandTerm:
+        num_envs = ctx.num_envs
+        state = WalkCommand(
             vel_limit_low=torch.tensor(self.vel_limit[0], dtype=torch.float32),
             vel_limit_high=torch.tensor(self.vel_limit[1], dtype=torch.float32),
             stand_prob=float(self.stand_prob),
@@ -289,3 +283,4 @@ class WalkCommandCfg(CommandCfg):
             phase=torch.zeros((num_envs, 2), dtype=torch.float32),
             steps=torch.zeros((num_envs, 1), dtype=torch.float32),
         )
+        return state

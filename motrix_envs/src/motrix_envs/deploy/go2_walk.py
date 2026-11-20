@@ -39,7 +39,7 @@ def build_go2_walk_profile(env_name: str) -> DeploymentProfile:
     )
     kp, kd = read_position_servo_gains(model, robot.joint_names)
     action_shape = env.action_space.shape
-    observation_shape = env.policy_observation_space.shape
+    observation_shape = env.observation_spec.policy.space.shape
     if len(action_shape) != 1 or len(observation_shape) != 1:
         raise ValueError("Go2 deployment requires flat policy observation and action spaces")
     action_size = action_shape[0]

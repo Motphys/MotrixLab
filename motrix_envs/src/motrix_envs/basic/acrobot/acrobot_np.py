@@ -8,6 +8,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     DofPositionQuery,
     DofVelocityQuery,
@@ -53,15 +54,17 @@ class AcrobotEnv(DirectEnv):
         self._reset_position = self._reset_program.buffer("arm_position")
         self._reset_velocity = self._reset_program.buffer("arm_velocity")
         self._action_space = gym.spaces.Box(-1.0, 1.0, (1,), dtype=np.float32)
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (6,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (6,), dtype=np.float32))}
+        )
         self._target_radius = 0.2
 
         self._step_count = torch.zeros(self._num_envs, dtype=torch.int64)
         self._max_steps = int(cfg.max_episode_seconds / cfg.ctrl_dt)
 
     @property
-    def observation_space(self):
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self):

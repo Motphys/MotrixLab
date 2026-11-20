@@ -372,7 +372,11 @@ def run_collector_process(
             ring = GpuIpcTransitionRing(
                 ring,
                 ring_slots,
-                fastsac_transition_schema(obs_dim, critic_obs_dim, act_dim),
+                fastsac_transition_schema(
+                    env.observation_spec.policy.space.shape[-1],
+                    env.observation_spec.value_or_policy.space.shape[-1],
+                    act_dim,
+                ),
                 opts.ring_capacity,
                 num_envs,
                 payload_store=final_store,

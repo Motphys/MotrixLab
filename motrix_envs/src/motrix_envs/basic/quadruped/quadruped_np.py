@@ -9,6 +9,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     BodyAngularVelocityWrite,
@@ -134,7 +135,7 @@ def _rotate_z_axis(quat: torch.Tensor) -> torch.Tensor:
 
 class QuadrupedEnv(DirectEnv):
     _cfg: QuadrupedBaseCfg
-    _observation_space: gym.spaces.Box
+    _observation_spec: ObservationSpec
     _action_space: gym.spaces.Box
 
     def __init__(
@@ -225,10 +226,10 @@ class QuadrupedEnv(DirectEnv):
         # value already is the effective terrain size everywhere.
         self._terrain_size = float(cfg.terrain_size)
 
-        self._init_obs_space()
+        self._init_observation_spec()
         self._init_action_space()
 
-    def _init_obs_space(self):
+    def _init_observation_spec(self) -> None:
         num_obs = self._body_dof_pos + self._body_dof_vel + self.num_actuators
         num_obs += 3  # torso velocity
         num_obs += 1  # torso upright
@@ -243,7 +244,9 @@ class QuadrupedEnv(DirectEnv):
         if self._cfg.include_target:
             num_obs += 3
 
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (num_obs,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (num_obs,), dtype=np.float32))}
+        )
 
     def _init_action_space(self):
         ctrl_ranges = np.asarray([spec.ctrl_range for spec in self.model.actuators], dtype=np.float32)
@@ -259,8 +262,8 @@ class QuadrupedEnv(DirectEnv):
         self._last_actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32)
 
     @property
-    def observation_space(self) -> gym.spaces.Box:
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self) -> gym.spaces.Box:

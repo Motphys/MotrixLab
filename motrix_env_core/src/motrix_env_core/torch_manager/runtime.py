@@ -25,20 +25,19 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import torch
 
-from motrix_env_core.manager.context import ManagerContext
-from motrix_env_core.manager.kernel import KernelOutputs
+from motrix_env_core.array.env import EnvObs
+from motrix_env_core.manager.kernel import EvaluationOutputs
 from motrix_env_core.manager.resolver import (
     CommandAdvanceHook,
     CommandResetHook,
     CommandUpdateHook,
     ObservationTermCall,
     RewardTermCall,
-    SimArg,
     SimResetTermCall,
     TerminationTermCall,
 )
@@ -95,9 +94,9 @@ def _apply_default_thread_cap(num_envs: int) -> None:
 class TorchTaskProgram:
     """Drop-in replacement task program backed by Torch kernels."""
 
-    evaluate_kernel: Callable[[torch.Tensor, tuple[torch.Tensor, ...], Any], None]
-    observe_kernel: Callable[[Any], None]
-    reset_kernel: Callable[[torch.Tensor, tuple[torch.Tensor, ...]], None]
+    evaluate_kernel: Callable[[torch.Tensor, tuple[torch.Tensor, ...], EvaluationOutputs], None]
+    observe_kernel: Callable[[EnvObs], None]
+    reset_kernel: Callable[[torch.Tensor, torch.Tensor, tuple[torch.Tensor, ...]], None]
     reward_weights: torch.Tensor
 
 
@@ -130,9 +129,9 @@ class CompiledKernels:
 class TorchManagerRuntime:
     """Execute one resolved manager program with batched Torch kernels.
 
-    ``compile`` fuses each kernel's whole term schedule into one Inductor
-    graph over the captured persistent tensors; ``compile=False`` keeps the
-    per-term eager schedule for debugging.
+    ``compile`` traces numerical work and default Torch random draws over
+    persistent tensors. ``compile=False`` keeps the per-term eager schedule
+    for debugging.
     """
 
     def __init__(self, env: ManagerEnv, program: ResolvedManagerProgram, compile: bool = True) -> None:
@@ -184,23 +183,21 @@ class TorchManagerRuntime:
         self,
         reward_weights: torch.Tensor,
         buffers: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        outputs: KernelOutputs,
+        evaluation_outputs: EvaluationOutputs,
     ) -> None:
         kernel = self._compiled_kernels.get_or_build(
             ("evaluate", id(buffers), id(reward_weights)),
             lambda: self._build_compiled_evaluate(reward_weights, buffers),
         )
-        kernel(outputs.reward, outputs.terminated)
+        kernel(evaluation_outputs.reward, evaluation_outputs.terminated)
 
-    def observe(self, outputs: KernelOutputs) -> None:
+    def observe(self, outputs: EnvObs) -> None:
         kernel = self._compiled_kernels.get_or_build("observe", self._build_compiled_observe)
-        value_obs = outputs.value_obs
-        kernel(
-            outputs.policy_obs,
-            value_obs if value_obs is not None and value_obs.numel() else None,
-        )
+        kernel(outputs)
 
-    def reset(self, env_ids: torch.Tensor, reset_buffers: tuple[torch.Tensor, ...]) -> None:
+    def reset(
+        self, env_ids: torch.Tensor, episode_reset: torch.Tensor, reset_buffers: tuple[torch.Tensor, ...]
+    ) -> None:
         if not self.command_reset_hooks and not self._reset_terms:
             return
         # Normalize ids onto the kernel tensors' device (via the context
@@ -210,7 +207,7 @@ class TorchManagerRuntime:
         kernel = self._compiled_kernels.get_or_build(
             ("reset", id(reset_buffers)), lambda: self._build_compiled_reset(reset_buffers)
         )
-        kernel(ids)
+        kernel(ids, episode_reset)
 
     def _build_compiled_evaluate(
         self,
@@ -225,23 +222,23 @@ class TorchManagerRuntime:
         dt = ctx.dt
         update_hooks = self.command_updates
         advance_hooks = self.command_advances
-        reward_plan = tuple((term, self._invocation_args(term)) for term in self.rewards)
-        termination_plan = tuple((term, self._invocation_args(term)) for term in self.terminations)
+        reward_plan = self.rewards
+        termination_plan = self.terminations
 
         def kernel(reward_view: torch.Tensor, terminated_view: torch.Tensor) -> None:
             for hook in update_hooks:
                 receiver = ctx.commands[hook.receiver_key]
                 hook.function(receiver, ctx)
             total = None
-            for term, args in reward_plan:
-                value = term.function(ctx, *args).to(torch.float32)
+            for term in reward_plan:
+                value = term.invoke(ctx).to(torch.float32)
                 weighted = value * weights[term.index] * dt
                 raw_terms[:, term.index] = value
                 weighted_terms[:, term.index] = weighted
                 total = weighted if total is None else total + weighted
             terminated = None
-            for term, args in termination_plan:
-                mask = term.function(ctx, *args).to(torch.bool)
+            for term in termination_plan:
+                mask = term.invoke(ctx).to(torch.bool)
                 termination_masks[:, term.index] = mask
                 terminated = mask if terminated is None else terminated | mask
             for hook in advance_hooks:
@@ -254,7 +251,7 @@ class TorchManagerRuntime:
             return torch.compile(kernel, dynamic=False, options=_compile_options())
         return kernel
 
-    def _build_compiled_observe(self) -> Callable[[torch.Tensor, torch.Tensor | None], None]:
+    def _build_compiled_observe(self) -> Callable[[EnvObs], None]:
         ctx = self.ctx
         # Each term writes a private contiguous buffer; a single fused
         # ``cat + copy`` assembles the group output. Writing through strided
@@ -272,10 +269,7 @@ class TorchManagerRuntime:
         per_term_plan = tuple(
             (
                 group_name,
-                tuple(
-                    (call, self._invocation_args(call), buf)
-                    for call, buf in zip(self.observations[group_name], bufs, strict=True)
-                ),
+                tuple((call, buf) for call, buf in zip(self.observations[group_name], bufs, strict=True)),
             )
             for group_name, bufs in term_bufs.items()
         )
@@ -285,42 +279,39 @@ class TorchManagerRuntime:
         # which measurably beats a single fused graph on many-core hosts.
 
         def make_group_kernel(
-            entries: tuple[tuple[ObservationTermCall, tuple[Any, ...], torch.Tensor], ...],
+            entries: tuple[tuple[ObservationTermCall, torch.Tensor], ...],
         ) -> Callable[[torch.Tensor], None]:
             def group_kernel(target: torch.Tensor) -> None:
-                for call, args, buf in entries:
-                    call.function(ctx, buf, *args)
-                target.copy_(torch.cat([buf for _call, _args, buf in entries], dim=1))
+                for call, buf in entries:
+                    call.invoke(ctx, buf)
+                target.copy_(torch.cat([buf for _call, buf in entries], dim=1))
 
             if self.compile_enabled:
                 return torch.compile(group_kernel, dynamic=False, options=_compile_options())
             return group_kernel
 
         group_kernels = {group_name: make_group_kernel(entries) for group_name, entries in per_term_plan}
-        policy_kernel = group_kernels.get("policy")
-        value_kernel = group_kernels.get("value")
 
-        def kernel(policy_obs: torch.Tensor, value_obs: torch.Tensor | None) -> None:
-            if policy_kernel is not None:
-                policy_kernel(policy_obs)
-            if value_obs is not None and value_kernel is not None:
-                value_kernel(value_obs)
+        def kernel(outputs: EnvObs) -> None:
+            for name, group_kernel in group_kernels.items():
+                group_kernel(outputs[name])
 
         return kernel
 
-    def _build_compiled_reset(self, reset_buffers: tuple[torch.Tensor, ...]) -> Callable[[torch.Tensor], None]:
+    def _build_compiled_reset(
+        self, reset_buffers: tuple[torch.Tensor, ...]
+    ) -> Callable[[torch.Tensor, torch.Tensor], None]:
         """Compile the reset schedule as a dynamic gather-compact graph.
 
-        The kernel receives the reset lanes' ids (``ctx.reset_ids``, dynamic
+        The kernel receives the reset lanes' ids (``env_ids``, dynamic
         length K). Command ``reset`` hooks run against the live receiver
         instances and scatter their per-lane writes back through those ids;
         sim reset terms fill compact ``(K, ...)`` staging buffers, and the
         wrapper copies each staging block to the head of the full-batch reset
         buffers (``SimResetRuntime.apply`` scatters them to the backend rows).
         Only the selected lanes are computed — no full-batch clone/merge —
-        and one symbolic-shape compilation covers every K. RNG draws advance
-        the whole-batch stream (gathered per compact row), so lanes not in
-        this pass still move their SplitMix64 sequence.
+        with a symbolic compact axis where supported. Terms use default Torch
+        random draws through ``ctx.rand`` inside the numerical graph.
         """
         ctx = self.ctx
         command_reset_hooks = self.command_reset_hooks
@@ -329,7 +320,6 @@ class TorchManagerRuntime:
                 call,
                 tuple(reset_buffers[offset + index] for index in range(len(fields_))),
                 fields_,
-                self._invocation_args(call),
             )
             for call, offset, fields_ in self._reset_terms
         )
@@ -339,49 +329,40 @@ class TorchManagerRuntime:
             for index in range(len(fields_))
         )
 
-        def kernel(lane_ctx: ManagerContext) -> tuple[torch.Tensor, ...]:
-            count = lane_ctx.reset_ids.shape[0]
+        def kernel(env_ids: torch.Tensor, episode_reset: torch.Tensor) -> tuple[torch.Tensor, ...]:
+            count = env_ids.shape[0]
             for hook in command_reset_hooks:
-                receiver = lane_ctx.commands[hook.receiver_key]
-                hook.function(receiver, lane_ctx)
+                receiver = ctx.commands[hook.receiver_key]
+                hook.function(receiver, ctx, env_ids, episode_reset)
             staging: list[torch.Tensor] = []
-            for call, buffers, fields_, args in write_plan:
+            for call, buffers, fields_ in write_plan:
                 sim_writes = {
                     name: torch.empty((count, *buffer.shape[1:]), dtype=buffer.dtype)
                     for name, buffer in zip(fields_, buffers, strict=True)
                 }
-                call.function(lane_ctx, _WritesMap(sim_writes), *args)
+                # Only the reset-lane axis is dynamic. Preserve fixed field
+                # widths across graph breaks (e.g. K=4 versus quaternion width 4).
+                for output in sim_writes.values():
+                    for dim in range(1, output.ndim):
+                        torch._dynamo.mark_static(output, dim)
+                call.invoke(ctx, env_ids, _WritesMap(sim_writes))
                 staging.extend(sim_writes[name] for name in fields_)
             return tuple(staging)
 
         if self.compile_enabled:
             kernel = torch.compile(kernel, dynamic=True, options=_compile_options())
 
-        def wrapper(ids: torch.Tensor) -> None:
-            # Mark the compact axis symbolic so K=1 (and every other size)
-            # shares one compilation instead of specializing and recompiling.
+        def wrapper(ids: torch.Tensor, episode_reset: torch.Tensor) -> None:
+            # Request a symbolic compact axis; Torch's zero/one handling
+            # can still specialize graph segments.
             torch._dynamo.mark_dynamic(ids, 0)
-            lane_ctx = replace(ctx, reset_ids=ids, reset_episode=ctx.reset_episode[ids, 0])
-            staging = kernel(lane_ctx)
+            torch._dynamo.mark_dynamic(episode_reset, 0)
+            staging = kernel(ids, episode_reset)
             count = ids.shape[0]
             for buffer, stage in zip(buffer_plan, staging, strict=True):
                 buffer[:count] = stage
 
         return wrapper
-
-    # -- helpers ------------------------------------------------------------
-
-    def _invocation_args(
-        self,
-        call: RewardTermCall | TerminationTermCall | ObservationTermCall | SimResetTermCall,
-    ) -> tuple[Any, ...]:
-        args: list[Any] = []
-        for arg in call.args:
-            if isinstance(arg, SimArg):
-                args.append(self.ctx.sim[arg.key])
-            else:
-                args.append(arg.value)
-        return tuple(args)
 
 
 class _WritesMap:

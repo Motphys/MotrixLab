@@ -63,8 +63,8 @@ class Trainer(TrainerBase):
 
     def _make_agent(self, env: FastSacEnvWrap) -> FastSacAgent:
         inner = env.env
-        obs_dim = inner.policy_observation_space.shape[-1]
-        critic_obs_dim = inner.value_observation_space.shape[-1]
+        obs_dim = inner.observation_spec.policy.space.shape[-1]
+        critic_obs_dim = inner.observation_spec.value_or_policy.space.shape[-1]
         act_dim = inner.action_space.shape[-1]
         device = self._device()
         low = env.action_low

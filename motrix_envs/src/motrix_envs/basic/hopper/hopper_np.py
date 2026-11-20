@@ -8,6 +8,7 @@ import torch
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
+from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     BodyJointPositionLimitsQuery,
@@ -37,7 +38,7 @@ _SIM_MODEL_QUERIES = {"joint_position_limits": BodyJointPositionLimitsQuery(body
 @registry.env("dm-hopper-stand")
 @registry.env("dm-hopper-hop")
 class HopperEnv(DirectEnv):
-    _observation_space: gym.spaces.Box
+    _observation_spec: ObservationSpec
     _action_space: gym.spaces.Box
 
     def __init__(
@@ -57,19 +58,21 @@ class HopperEnv(DirectEnv):
         )
         self._reset_position = self._reset_program.buffer("hopper_position")
         self._reset_velocity = self._reset_program.buffer("hopper_velocity")
-        self._init_obs_space()
+        self._init_observation_spec()
         self._init_action_space()
 
         self._stand_height = cfg.stand_height
         self._hop_speed = cfg.hop_speed
         self._joint_pos_lower, self._joint_pos_upper = self.model.others["joint_position_limits"]
 
-    def _init_obs_space(self):
+    def _init_observation_spec(self) -> None:
         num = 0
         num += self.num_dof_pos - 1
         num += self.num_dof_vel
         num += 2
-        self._observation_space = gym.spaces.Box(-np.inf, np.inf, (num,), dtype=np.float32)
+        self._observation_spec = ObservationSpec(
+            {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (num,), dtype=np.float32))}
+        )
 
     def _init_action_space(self):
         ctrl_ranges = np.asarray([spec.ctrl_range for spec in self.model.actuators], dtype=np.float32)
@@ -81,8 +84,8 @@ class HopperEnv(DirectEnv):
         )
 
     @property
-    def observation_space(self) -> gym.spaces.Box:
-        return self._observation_space
+    def observation_spec(self) -> ObservationSpec:
+        return self._observation_spec
 
     @property
     def action_space(self) -> gym.spaces.Box:

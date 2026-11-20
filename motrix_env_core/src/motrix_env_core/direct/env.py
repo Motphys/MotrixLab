@@ -78,7 +78,7 @@ class DirectEnv(ArrayEnv[DirectEnvCfgType]):
         )
 
     def physics_step(self) -> None:
-        self.sim.step(self._cfg.sim_substeps)
+        self.sim.step(self._cfg.sim_substeps, result=self.engine_error_codes)
 
 
 __all__ = ["DirectEnv", "DirectEnvCfg"]

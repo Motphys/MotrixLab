@@ -16,7 +16,7 @@ ArrayEnv 的默认捕获 hook 返回 None，明确表示当前实现不提供快
 
 捕获读取 compute_transition 已刷新的 simulator 数据，并发生在 transition kernel 之后、command reset 之前。它与同一 pre-reset 状态的正常 observe 使用相同输入；不回退 command，不额外刷新 simulator。
 
-Observation term 应仅读取上下文并写观测输出，不推进 command 或历史；现有噪声 term 可以消费 ctx.rand。终态捕获直接使用共享 per-lane RNG，不备份或恢复；额外 observe 消耗噪声随机数，因此可改变同 seed 下后续 reset 和正常观测的随机轨迹，但不要求保持捕获前后的随机序列一致。终态捕获会额外执行一次整批 observe，因此不能用观察函数维护每步只应更新一次的状态。捕获使用独立预绑定 output slot，不写正常 observation 双缓冲；torch 高级索引已生成独立行张量，无需额外 copy。
+Observation term 应仅读取上下文并写观测输出，不推进 command 或历史；噪声 term 通过 `ctx.rand` 使用当前设备的默认 Torch 随机流。正常 observe、终态 preview 与 task evaluate/command/reset 不做用途隔离。终态捕获不备份或恢复 RNG；额外 observe 消耗共享默认流，可改变同 seed 下后续正常观测噪声以及 command/reset 的随机样本，不要求保持捕获前后的随机序列一致，也不承诺 preview 与正常噪声完全独立或相同，见[随机性与 seed 所有权](./randomness-and-seeding.md)。终态捕获会额外执行一次整批 observe，因此不能用观察函数维护每步只应更新一次的状态。捕获使用独立预绑定 output slot，不写正常 observation 双缓冲；torch 高级索引已生成独立行张量，无需额外 copy。
 
 当前 compiled observe 不支持行子集，因此少量截断仍有整批执行成本。性能优化必须先分别测量 kernel 与 compact row gather 成本，不为了潜在用途新增编译入口。
 
