@@ -92,8 +92,10 @@ SpaceMouse example defines a device-specific frame query and maps selected compo
 
 ```python
 from abc import abstractmethod
+from collections.abc import Sequence
 
 import numpy as np
+import torch
 
 from motrix_env_core.input import CommandBinding, InputDevice, PlanarVelocityCommand
 
@@ -110,9 +112,9 @@ class SpaceMouseDevice(InputDevice):
 
 
 class SpaceMousePlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
-    def __init__(self, device: SpaceMouseDevice, scale: np.ndarray) -> None:
+    def __init__(self, device: SpaceMouseDevice, scale: Sequence[float]) -> None:
         self._device = device
-        self._scale = np.asarray(scale, dtype=np.float32)
+        self._scale = torch.tensor(scale, dtype=torch.float32)
 
     def read_command(self, *, batch_size: int = 1) -> PlanarVelocityCommand:
         if not isinstance(batch_size, int) or isinstance(batch_size, bool) or batch_size <= 0:
@@ -121,14 +123,18 @@ class SpaceMousePlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
         translation = self._device.translation()
         rotation = self._device.rotation()
         value = (
-            np.asarray(
+            torch.tensor(
                 [translation[0], translation[1], rotation[2]],
-                dtype=np.float32,
+                dtype=torch.float32,
             )
             * self._scale
         )
-        return PlanarVelocityCommand(np.repeat(value[None, :], batch_size, axis=0))
+        return PlanarVelocityCommand(value[None, :].repeat(batch_size, 1))
 ```
+
+The device's raw hardware queries retain NumPy arrays here. The binding converts the selected components to Torch before
+scaling and batch replication. The output `PlanarVelocityCommand.values` is a `torch.float32` tensor of shape `(batch_size, 3)`;
+command construction copies and validates the data.
 
 A production implementation should also validate scale shape and finiteness in the constructor. The concrete device provider
 owns translation/rotation shape, units, normalized range, and frame stability. Keep a subtype and binding in an application
@@ -137,11 +143,13 @@ reuse requirement exists.
 
 ## Adding a Task-specific Command
 
-When the task objective is not planar velocity, define another immutable dataclass and then:
+When the task objective is not planar velocity, define another frozen dataclass and then:
 
 1. Choose its package based on semantic reuse scope.
 2. Specify batch-first shape, component order, coordinate frame, and units.
-3. Copy and validate dtype, shape, and finite values during construction so the command retains immutable data.
+3. Create a separately owned tensor copy and validate dtype, shape, and finite values during construction so later changes to
+   the original input do not affect the command. A frozen dataclass only prevents field reassignment, not tensor mutation;
+   consumers should not modify command tensors in place.
 4. Implement `CommandBinding[NewCommand]`; it may read a device, configuration, network source, or RNG.
 5. Make the training task or `DeployTask[NewCommand]` validate task ranges and consume the type.
 6. Add separate command, binding, and task-integration tests.

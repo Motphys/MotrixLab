@@ -169,7 +169,7 @@ The reward uses a staged composite design that encourages search, pre-grasp alig
 
     ```python
     insert_reward = insert_depth * reward_cfg.insert_weight * 6.0
-    depth_insert_bonus = reward_cfg.depth_insert_bonus * np.tanh(insert_depth / 0.01)
+    depth_insert_bonus = reward_cfg.depth_insert_bonus * torch.tanh(insert_depth / 0.01)
     ```
 
     Rewards descending toward the socket entry, increasing insertion depth, and maintaining a well-aligned pose near the socket. Insertion depth is tracked only after a grasp has been established, XY error is below `0.008 m`, and peg uprightness is greater than `0.97`.

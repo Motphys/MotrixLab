@@ -41,7 +41,7 @@ mxlab train task=g1-walk-flat/motrix.fastsac algo.asynchronous=false
 mxlab train task=cartpole/skrl.ppo task.train_backend=jax
 mxlab train task=cartpole/skrl.ppo task.train_backend=torch
 
-# 指定 manager 环境注入的仿真器
+# 为 Direct/Manager 环境选择仿真后端（与训练后端独立）
 mxlab train task=g1-wbt-dance/motrix.fastsac sim=motrixsim
 ```
 
@@ -86,7 +86,7 @@ mxlab export-onnx run_dir=/path/to/run output=/tmp/policy.onnx
 | -------------------- | --------------------------------------- | ------------------- |
 | `task=...`           | 环境、框架、算法和后端差异配置          | 训练时必填       |
 | `task.train_backend` | 训练后端（`jax` / `torch`）             | 所选 Task           |
-| `sim`                | manager 环境的仿真器；np 环境保持未设置 | `null` / 自动选择   |
+| `sim`                | Direct/Manager 环境的仿真后端，与训练后端独立 | `null` / 自动选择   |
 | `num_envs`           | 并行训练环境数量                        | 所选 Task           |
 | `seed`               | 固定种子；`null` 表示运行时随机选择     | 所选 Task           |
 | `resume`             | 续训的 run 目录或 checkpoint            | `null`              |

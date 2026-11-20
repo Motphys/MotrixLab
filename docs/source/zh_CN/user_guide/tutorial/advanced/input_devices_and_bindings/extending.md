@@ -90,8 +90,10 @@ file descriptor 或 SDK handle，也负责关闭共享 device。
 
 ```python
 from abc import abstractmethod
+from collections.abc import Sequence
 
 import numpy as np
+import torch
 
 from motrix_env_core.input import CommandBinding, InputDevice, PlanarVelocityCommand
 
@@ -108,9 +110,9 @@ class SpaceMouseDevice(InputDevice):
 
 
 class SpaceMousePlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
-    def __init__(self, device: SpaceMouseDevice, scale: np.ndarray) -> None:
+    def __init__(self, device: SpaceMouseDevice, scale: Sequence[float]) -> None:
         self._device = device
-        self._scale = np.asarray(scale, dtype=np.float32)
+        self._scale = torch.tensor(scale, dtype=torch.float32)
 
     def read_command(self, *, batch_size: int = 1) -> PlanarVelocityCommand:
         if not isinstance(batch_size, int) or isinstance(batch_size, bool) or batch_size <= 0:
@@ -119,14 +121,17 @@ class SpaceMousePlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
         translation = self._device.translation()
         rotation = self._device.rotation()
         value = (
-            np.asarray(
+            torch.tensor(
                 [translation[0], translation[1], rotation[2]],
-                dtype=np.float32,
+                dtype=torch.float32,
             )
             * self._scale
         )
-        return PlanarVelocityCommand(np.repeat(value[None, :], batch_size, axis=0))
+        return PlanarVelocityCommand(value[None, :].repeat(batch_size, 1))
 ```
+
+此处 device 的原始硬件查询保留 NumPy 数组；binding 在读取所需分量后转为 Torch，再进行缩放与批量复制。
+输出 `PlanarVelocityCommand.values` 是形状为 `(batch_size, 3)` 的 `torch.float32` 张量，command 构造时会复制并校验数据。
 
 生产实现还应在 constructor 验证 scale shape/有限性，并由具体 device provider 保证 translation/rotation 的 shape、
 单位、归一化范围和 frame 内稳定性。若这个 subtype 和 binding 只服务一个外部应用，可以留在该应用包中；确认存在
@@ -134,11 +139,12 @@ class SpaceMousePlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
 
 ## 新增任务专用 Command
 
-当任务目标使用平面速度之外的语义时，定义新的 immutable dataclass，并依次完成：
+当任务目标使用平面速度之外的语义时，定义新的 frozen dataclass，并依次完成：
 
 1. 选择 command 所属 package；以语义复用范围为准。
 2. 明确 batch-first shape、各分量顺序、坐标系和单位。
-3. 在构造时复制并验证 dtype、shape 和有限性，避免输入被外部修改。
+3. 在构造时创建由 command 独立持有的 Tensor 副本，并验证 dtype、shape 和有限性，使原始输入的后续修改不影响 command。
+   frozen dataclass 仅禁止字段重新赋值，不会让 Tensor 内容只读；约定消费方不原地修改 command 张量。
 4. 实现 `CommandBinding[NewCommand]`；binding 可以读取 device，也可以读取配置、网络或 RNG。
 5. 让 training task 或 `DeployTask[NewCommand]` 校验任务范围并消费该类型。
 6. 为 command、binding 和 task integration 分别添加测试。

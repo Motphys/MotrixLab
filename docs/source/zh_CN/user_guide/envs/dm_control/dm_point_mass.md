@@ -61,7 +61,7 @@
 
 ```python
 # 指数距离奖励 - 离目标越近奖励越强
-distance_reward = np.exp(-10 * dist_to_target)
+distance_reward = torch.exp(-10 * dist_to_target)
 ```
 
 ### 目标到达和停留奖励
@@ -78,7 +78,7 @@ continuous_reward = 30.0 * in_target
 
 ```python
 # 在目标内时，距离目标中心越远的惩罚
-center_penalty = np.where(in_target, 10.0 * dist_to_target, 0.0)
+center_penalty = torch.where(in_target, 10.0 * dist_to_target, torch.zeros_like(dist_to_target))
 
 # 控制惩罚，鼓励平滑移动
 control_penalty = 0.1 * vel_magnitude

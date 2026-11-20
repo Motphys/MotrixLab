@@ -41,7 +41,7 @@ Run these commands from the repository root: the CLI discovers `./configs` in th
 mxlab train task=cartpole/skrl.ppo task.train_backend=jax
 mxlab train task=cartpole/skrl.ppo task.train_backend=torch
 
-# Specify the simulator injected into manager-based environments
+# Select the simulator for Direct/Manager environments (independent of the training backend)
 mxlab train task=g1-wbt-dance/motrix.fastsac sim=motrixsim
 ```
 
@@ -86,7 +86,7 @@ mxlab export-onnx run_dir=/path/to/run output=/tmp/policy.onnx
 | -------------------- | ------------------------------------------------------------------------- | --------------------- |
 | `task=...`           | Environment, framework, algorithm, backend delta                          | Required for training      |
 | `task.train_backend` | Training backend (`jax` / `torch`)                                        | Selected Task         |
-| `sim`                | Simulator for manager environments; leave unset for np-style environments | `null` / auto-select  |
+| `sim`                | Simulator for Direct/Manager environments, independent of the training backend | `null` / auto-select  |
 | `num_envs`           | Number of parallel training environments                                  | Selected Task         |
 | `seed`               | Fixed seed; `null` chooses one at runtime                                 | Selected Task         |
 | `resume`             | Run directory or checkpoint to resume from                                | `null`                |
