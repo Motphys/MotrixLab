@@ -8,14 +8,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, NamedTuple
 
 import torch
 
 from motrix_env_core.math.rotation import mat_to_quat, mm3, mv3, quat_to_mat, so3_exp, so3_log, yaw_mat
-from motrix_rl_supermimic.world_state import WorldStateTerm
+from motrix_rl_supermimic.world_state import StateComputation, StateStatistics, WorldStateTerm
 
-_RobotState = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+
+class RobotState(NamedTuple):
+    """Decomposed free-root state; root velocities are in the world frame.
+
+    Rotation is a matrix ``(..., 3, 3)``; root vectors are ``(..., 3)``
+    and joint vectors are ``(..., num_joints)``. Fields borrow their tensors.
+    """
+
+    position: torch.Tensor
+    rotation: torch.Tensor
+    linear_velocity: torch.Tensor
+    angular_velocity: torch.Tensor
+    joint_position: torch.Tensor
+    joint_velocity: torch.Tensor
 
 
 @dataclass(frozen=True)
@@ -51,81 +64,134 @@ class CanonicalRobotState(WorldStateTerm):
     def prediction_dim(self) -> int:
         return 12 + 2 * self.num_joints
 
-    def unpack(self, state: torch.Tensor) -> _RobotState:
+    def unpack(self, state: torch.Tensor) -> RobotState:
         joint_end = 13 + self.num_joints
-        return (
-            state[..., :3],
-            quat_to_mat(state[..., 3:7]),
-            state[..., 7:10],
-            state[..., 10:13],
-            state[..., 13:joint_end],
-            state[..., joint_end:],
+        return RobotState(
+            position=state[..., :3],
+            rotation=quat_to_mat(state[..., 3:7]),
+            linear_velocity=state[..., 7:10],
+            angular_velocity=state[..., 10:13],
+            joint_position=state[..., 13:joint_end],
+            joint_velocity=state[..., joint_end:],
         )
 
     @staticmethod
-    def pack(state: _RobotState) -> torch.Tensor:
-        p, rotation, v, w, q, qd = state
-        return torch.cat((p, mat_to_quat(rotation), v, w, q, qd), -1)
+    def pack(state: RobotState) -> torch.Tensor:
+        return torch.cat(
+            (
+                state.position,
+                mat_to_quat(state.rotation),
+                state.linear_velocity,
+                state.angular_velocity,
+                state.joint_position,
+                state.joint_velocity,
+            ),
+            -1,
+        )
 
-    def features(self, state: torch.Tensor) -> torch.Tensor:
-        p, rotation, v, w, q, qd = self.unpack(state)
+    def prepare(self, state: torch.Tensor) -> StateComputation:
+        return _RobotStateComputation(self.unpack(state), self)
+
+    @staticmethod
+    def _features(parts: RobotState) -> torch.Tensor:
+        rotation = parts.rotation
         heading = yaw_mat(rotation)
         inverse = rotation.transpose(-1, -2)
         tilt = mm3(heading.transpose(-1, -2), rotation)[..., :, :2].reshape(rotation.shape[:-2] + (6,))
-        return torch.cat((p[..., 2:3], tilt, mv3(inverse, v), mv3(inverse, w), q, qd), -1)
-
-    def increments(self, state: torch.Tensor, next_state: torch.Tensor) -> torch.Tensor:
-        p, rotation, v, w, q, qd = self.unpack(state)
-        p1, rotation1, v1, w1, q1, qd1 = self.unpack(next_state)
-        heading = yaw_mat(rotation)
-        inverse = rotation.transpose(-1, -2)
         return torch.cat(
             (
-                mv3(heading.transpose(-1, -2), p1 - p),
-                so3_log(mm3(inverse, rotation1)),
-                mv3(inverse, v1 - v),
-                mv3(inverse, w1 - w),
-                q1 - q,
-                qd1 - qd,
+                parts.position[..., 2:3],
+                tilt,
+                mv3(inverse, parts.linear_velocity),
+                mv3(inverse, parts.angular_velocity),
+                parts.joint_position,
+                parts.joint_velocity,
+            ),
+            -1,
+        )
+
+    def increments(self, state: torch.Tensor, next_state: torch.Tensor) -> torch.Tensor:
+        return self._increments(self.unpack(state), self.unpack(next_state))
+
+    @staticmethod
+    def _increments(current: RobotState, following: RobotState) -> torch.Tensor:
+        heading = yaw_mat(current.rotation)
+        inverse = current.rotation.transpose(-1, -2)
+        return torch.cat(
+            (
+                mv3(heading.transpose(-1, -2), following.position - current.position),
+                so3_log(mm3(inverse, following.rotation)),
+                mv3(inverse, following.linear_velocity - current.linear_velocity),
+                mv3(inverse, following.angular_velocity - current.angular_velocity),
+                following.joint_position - current.joint_position,
+                following.joint_velocity - current.joint_velocity,
             ),
             -1,
         )
 
     def _drift(
-        self, state: _RobotState, v1: torch.Tensor, w1: torch.Tensor, qd1: torch.Tensor, dt: float
+        self, state: RobotState, v1: torch.Tensor, w1: torch.Tensor, qd1: torch.Tensor, dt: float
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        _, rotation, v, w, _, qd = state
         a, b = dt * (1 - self.DRIFT_W), dt * self.DRIFT_W
         return (
-            mv3(yaw_mat(rotation).transpose(-1, -2), a * v + b * v1),
-            mv3(rotation.transpose(-1, -2), a * w + b * w1),
-            a * qd + b * qd1,
+            mv3(yaw_mat(state.rotation).transpose(-1, -2), a * state.linear_velocity + b * v1),
+            mv3(state.rotation.transpose(-1, -2), a * state.angular_velocity + b * w1),
+            a * state.joint_velocity + b * qd1,
         )
 
     def targets(
         self, state: torch.Tensor, next_state: torch.Tensor, *, structured: bool = False, dt: float = 0.02
     ) -> torch.Tensor:
-        increments = self.increments(state, next_state)
+        current, following = self.unpack(state), self.unpack(next_state)
+        return self._targets(current, following, self._increments(current, following), structured=structured, dt=dt)
+
+    def statistics(
+        self, state: torch.Tensor, next_state: torch.Tensor, *, structured: bool = False, dt: float = 0.02
+    ) -> StateStatistics:
+        current, following = self.unpack(state), self.unpack(next_state)
+        increments = self._increments(current, following)
+        return StateStatistics(
+            self._features(current),
+            self._targets(current, following, increments, structured=structured, dt=dt),
+            increments,
+        )
+
+    def _targets(
+        self,
+        current: RobotState,
+        following: RobotState,
+        increments: torch.Tensor,
+        *,
+        structured: bool,
+        dt: float,
+    ) -> torch.Tensor:
         if not structured:
             return increments
         dp, dth, dv, dw, dq, dqd = increments.split((3, 3, 3, 3, self.num_joints, self.num_joints), -1)
-        next_parts = self.unpack(next_state)
-        gp, gth, gq = self._drift(self.unpack(state), next_parts[2], next_parts[3], next_parts[5], dt)
+        gp, gth, gq = self._drift(
+            current, following.linear_velocity, following.angular_velocity, following.joint_velocity, dt
+        )
         return torch.cat((dp - gp, dth - gth, dv, dw, dq - gq, dqd), -1)
 
-    def integrate(
-        self, state: torch.Tensor, prediction: torch.Tensor, *, structured: bool = False, dt: float = 0.02
-    ) -> torch.Tensor:
-        parts = self.unpack(state)
-        p, rotation, v, w, q, qd = parts
+    def _integrate(self, parts: RobotState, prediction: torch.Tensor, *, structured: bool, dt: float) -> torch.Tensor:
+        rotation = parts.rotation
         dp, dth, dv, dw, dq, dqd = prediction.split((3, 3, 3, 3, self.num_joints, self.num_joints), -1)
-        v1 = v + mv3(rotation, dv)
-        w1 = w + mv3(rotation, dw)
-        qd1 = qd + dqd
+        v1 = parts.linear_velocity + mv3(rotation, dv)
+        w1 = parts.angular_velocity + mv3(rotation, dw)
+        qd1 = parts.joint_velocity + dqd
         if structured:
             gp, gth, gq = self._drift(parts, v1, w1, qd1, dt)
             dp, dth, dq = dp + gp, dth + gth, dq + gq
-        return self.pack((p + mv3(yaw_mat(rotation), dp), mm3(rotation, so3_exp(dth)), v1, w1, q + dq, qd1))
+        return self.pack(
+            RobotState(
+                position=parts.position + mv3(yaw_mat(rotation), dp),
+                rotation=mm3(rotation, so3_exp(dth)),
+                linear_velocity=v1,
+                angular_velocity=w1,
+                joint_position=parts.joint_position + dq,
+                joint_velocity=qd1,
+            )
+        )
 
     def error(self, pred: torch.Tensor, truth: torch.Tensor) -> torch.Tensor:
         return self.increments(truth, pred)
@@ -135,3 +201,17 @@ class CanonicalRobotState(WorldStateTerm):
         return torch.cat(
             [torch.full((width,), scale, device=device) for width, scale in zip(widths, self.error_scales)], -1
         )
+
+
+@dataclass(frozen=True)
+class _RobotStateComputation(StateComputation):
+    """Borrow a decoded robot state and its codec for one numerical step."""
+
+    state: RobotState
+    codec: CanonicalRobotState
+
+    def features(self) -> torch.Tensor:
+        return self.codec._features(self.state)
+
+    def integrate(self, prediction: torch.Tensor, *, structured: bool = False, dt: float = 0.02) -> torch.Tensor:
+        return self.codec._integrate(self.state, prediction, structured=structured, dt=dt)

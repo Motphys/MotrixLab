@@ -8,12 +8,33 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager.context import BuildContext
 from motrix_env_core.manager.kernel_data import Map
+
+
+class StateComputation(ABC):
+    """Numerical evaluation bound to borrowed state tensors for one step."""
+
+    @abstractmethod
+    def features(self) -> torch.Tensor:
+        raise NotImplementedError
+
+    @abstractmethod
+    def integrate(self, prediction: torch.Tensor, *, structured: bool = False, dt: float = 0.02) -> torch.Tensor:
+        raise NotImplementedError
+
+
+class StateStatistics(NamedTuple):
+    """World-model normalization samples for one observed transition."""
+
+    features: torch.Tensor
+    targets: torch.Tensor
+    increments: torch.Tensor
 
 
 class WorldStateTerm(ABC):
@@ -52,9 +73,13 @@ class WorldStateTerm(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def prepare(self, state: torch.Tensor) -> StateComputation:
+        """Bind numerical evaluation to one borrowed captured state slice."""
+        raise NotImplementedError
+
     def features(self, state: torch.Tensor) -> torch.Tensor:
         """Encode one captured state slice into world-model input features."""
-        raise NotImplementedError
+        return self.prepare(state).features()
 
     @abstractmethod
     def increments(self, state: torch.Tensor, next_state: torch.Tensor) -> torch.Tensor:
@@ -77,7 +102,6 @@ class WorldStateTerm(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def integrate(
         self, state: torch.Tensor, prediction: torch.Tensor, *, structured: bool = False, dt: float = 0.02
     ) -> torch.Tensor:
@@ -86,7 +110,17 @@ class WorldStateTerm(ABC):
         Inverse of :meth:`targets`: returns the next state in raw state space
         and re-adds the passive drift when ``structured=True``.
         """
-        raise NotImplementedError
+        return self.prepare(state).integrate(prediction, structured=structured, dt=dt)
+
+    def statistics(
+        self, state: torch.Tensor, next_state: torch.Tensor, *, structured: bool = False, dt: float = 0.02
+    ) -> StateStatistics:
+        """Collect feature, target, and increment normalization samples."""
+        return StateStatistics(
+            self.features(state),
+            self.targets(state, next_state, structured=structured, dt=dt),
+            self.increments(state, next_state),
+        )
 
     @abstractmethod
     def error(self, pred: torch.Tensor, truth: torch.Tensor) -> torch.Tensor:
@@ -122,8 +156,8 @@ class EuclideanState(WorldStateTerm):
     def prediction_dim(self) -> int:
         return self.size
 
-    def features(self, state: torch.Tensor) -> torch.Tensor:
-        return state
+    def prepare(self, state: torch.Tensor) -> StateComputation:
+        return _EuclideanStateComputation(state)
 
     def increments(self, state: torch.Tensor, next_state: torch.Tensor) -> torch.Tensor:
         return next_state - state
@@ -133,16 +167,42 @@ class EuclideanState(WorldStateTerm):
     ) -> torch.Tensor:
         return self.increments(state, next_state)
 
-    def integrate(
-        self, state: torch.Tensor, prediction: torch.Tensor, *, structured: bool = False, dt: float = 0.02
-    ) -> torch.Tensor:
-        return state + prediction
-
     def error(self, pred: torch.Tensor, truth: torch.Tensor) -> torch.Tensor:
         return pred - truth
 
     def error_floor(self, device: str | torch.device) -> torch.Tensor:
         return torch.full((self.size,), self.error_scale, device=device)
+
+
+@dataclass(frozen=True)
+class _EuclideanStateComputation(StateComputation):
+    state: torch.Tensor
+
+    def features(self) -> torch.Tensor:
+        return self.state
+
+    def integrate(self, prediction: torch.Tensor, *, structured: bool = False, dt: float = 0.02) -> torch.Tensor:
+        return self.state + prediction
+
+
+@dataclass(frozen=True)
+class WorldStateComputation(StateComputation):
+    """One step's ordered term evaluations, with no persistent state cache."""
+
+    terms: tuple[StateComputation, ...]
+    prediction_slices: tuple[slice, ...]
+
+    def features(self) -> torch.Tensor:
+        return torch.cat([term.features() for term in self.terms], -1)
+
+    def integrate(self, prediction: torch.Tensor, *, structured: bool = False, dt: float = 0.02) -> torch.Tensor:
+        return torch.cat(
+            [
+                term.integrate(prediction[..., prediction_slice], structured=structured, dt=dt)
+                for term, prediction_slice in zip(self.terms, self.prediction_slices)
+            ],
+            -1,
+        )
 
 
 @configclass
@@ -182,10 +242,31 @@ class WorldState:
         for name, term in self.terms.items():
             term.capture(sim, out[..., self.slices[name]])
 
+    def prepare(self, state: torch.Tensor) -> WorldStateComputation:
+        return WorldStateComputation(
+            tuple(term.prepare(state[..., self.slices[name]]) for name, term in self.terms.items()),
+            tuple(self._prediction_slices.values()),
+        )
+
     def features(self, state: torch.Tensor) -> torch.Tensor:
-        return torch.cat(
-            [term.features(state[..., self.slices[name]]) for name, term in self.terms.items()],
-            -1,
+        return self.prepare(state).features()
+
+    def statistics(
+        self, state: torch.Tensor, next_state: torch.Tensor, *, structured: bool = False, dt: float = 0.02
+    ) -> StateStatistics:
+        statistics = [
+            term.statistics(
+                state[..., self.slices[name]],
+                next_state[..., self.slices[name]],
+                structured=structured,
+                dt=dt,
+            )
+            for name, term in self.terms.items()
+        ]
+        return StateStatistics(
+            torch.cat([sample.features for sample in statistics], -1),
+            torch.cat([sample.targets for sample in statistics], -1),
+            torch.cat([sample.increments for sample in statistics], -1),
         )
 
     def increments(self, state: torch.Tensor, next_state: torch.Tensor) -> torch.Tensor:
@@ -216,18 +297,7 @@ class WorldState:
     def integrate(
         self, state: torch.Tensor, prediction: torch.Tensor, *, structured: bool = False, dt: float = 0.02
     ) -> torch.Tensor:
-        return torch.cat(
-            [
-                term.integrate(
-                    state[..., self.slices[name]],
-                    prediction[..., self._prediction_slices[name]],
-                    structured=structured,
-                    dt=dt,
-                )
-                for name, term in self.terms.items()
-            ],
-            -1,
-        )
+        return self.prepare(state).integrate(prediction, structured=structured, dt=dt)
 
     def error(self, pred: torch.Tensor, truth: torch.Tensor) -> torch.Tensor:
         return torch.cat(

@@ -67,11 +67,12 @@ class FlattenFullLoss(nn.Module):
         out_std = torch.sqrt(self.out_var + self.out_eps**2)
         for j in range(self.window):
             xi_n = self.normalize_context(xis[:, j])
-            inp = self.wm.inputs(state, actions[:, j], xi_n)
+            computation = self.wm.world_state.prepare(state)
+            inp = torch.cat((computation.features(), actions[:, j], xi_n), -1)
             inp = (inp - self.in_mean) / torch.sqrt(self.in_var + self.in_eps**2)
             y = run_mlp(self.wm.net, inp, self.wm.amp_dtype)
             prediction = y * out_std + self.out_mean
-            state = self.wm.world_state.integrate(state, prediction, structured=self.wm.structured, dt=self.wm.dt)
+            state = computation.integrate(prediction, structured=self.wm.structured, dt=self.wm.dt)
             predictions.append(state)
         states = torch.stack(predictions, 1)
         std = torch.maximum(torch.sqrt(self.inc_var + self.wm.inc_norm.eps**2), self.err_floor)

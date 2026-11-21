@@ -219,9 +219,7 @@ class Learner:
             )
             self.pi.obs_norm.update(self.mdp.observation(ctx))
             self.pi.goal_norm.update(self.mdp.goal(ctx))
-            self.wm.in_norm.update(self.wm.inputs(row.state, row.action, self.mdp.normalize_context(row.context)))
-            self.wm.out_norm.update(self.wm.targets(row.state, row.next_state))
-            self.wm.inc_norm.update(self.wm.increments(row.state, row.next_state))
+            self.wm.update_norms(row.state, row.next_state, row.action, self.mdp.normalize_context(row.context))
             self.sim_steps += row.state.shape[0]
         return on_device.reward.mean() / self.return_normalizer
 

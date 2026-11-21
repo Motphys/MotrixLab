@@ -134,10 +134,22 @@ class WorldModel(nn.Module):
     def targets(self, state: torch.Tensor, next_state: torch.Tensor) -> torch.Tensor:
         return self.world_state.targets(state, next_state, structured=self.structured, dt=self.dt)
 
+    @torch.no_grad()
+    def update_norms(
+        self, state: torch.Tensor, next_state: torch.Tensor, action: torch.Tensor, context: torch.Tensor
+    ) -> None:
+        """Share transition decoding across the three world-model normalizers."""
+        statistics = self.world_state.statistics(state, next_state, structured=self.structured, dt=self.dt)
+        self.in_norm.update(torch.cat((statistics.features, action, context), -1))
+        self.out_norm.update(statistics.targets)
+        self.inc_norm.update(statistics.increments)
+
     def step(self, state: torch.Tensor, action: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
-        output = run_mlp(self.net, self.in_norm(self.inputs(state, action, context)), self.amp_dtype)
+        computation = self.world_state.prepare(state)
+        inputs = torch.cat((computation.features(), action, context), -1)
+        output = run_mlp(self.net, self.in_norm(inputs), self.amp_dtype)
         prediction = output * self.out_norm.std() + self.out_norm.mean
-        return self.world_state.integrate(state, prediction, structured=self.structured, dt=self.dt)
+        return computation.integrate(prediction, structured=self.structured, dt=self.dt)
 
     def forward(self, state: torch.Tensor, action: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
         return self.step(state, action, context)

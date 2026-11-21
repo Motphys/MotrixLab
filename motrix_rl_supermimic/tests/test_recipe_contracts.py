@@ -17,7 +17,7 @@ from motrix_rl_supermimic.config import AgentCfg, SuperMimicCfg, TrainerCfg
 from motrix_rl_supermimic.mbrl_env import assemble_task
 from motrix_rl_supermimic.networks import WorldModel
 from motrix_rl_supermimic.optim import policy_multiplier, trigger_decay
-from motrix_rl_supermimic.robot_state import CanonicalRobotState
+from motrix_rl_supermimic.robot_state import CanonicalRobotState, RobotState
 from motrix_rl_supermimic.toy import ToyEnvCfg
 from motrix_rl_supermimic.wm_graph import FlattenFullLoss
 from motrix_rl_supermimic.world_state import WorldState
@@ -49,13 +49,13 @@ def test_wm_loss_uses_inc_stats_for_scoring_and_out_stats_for_prediction(structu
     wm, robot = _wm(structured=structured)
 
     batch, window = 3, 2
-    state = (
-        torch.randn(batch, 3),
-        torch.eye(3).repeat(batch, 1, 1),
-        torch.randn(batch, 3),
-        torch.randn(batch, 3),
-        torch.randn(batch, 1),
-        torch.randn(batch, 1),
+    state = RobotState(
+        position=torch.randn(batch, 3),
+        rotation=torch.eye(3).repeat(batch, 1, 1),
+        linear_velocity=torch.randn(batch, 3),
+        angular_velocity=torch.randn(batch, 3),
+        joint_position=torch.randn(batch, 1),
+        joint_velocity=torch.randn(batch, 1),
     )
     initial = robot.pack(state)
     actions = torch.randn(batch, window, 2)

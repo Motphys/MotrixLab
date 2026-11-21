@@ -5,8 +5,8 @@
 
 import pytest
 import torch
-from motrix_rl_supermimic.networks import WorldModel
-from motrix_rl_supermimic.robot_state import CanonicalRobotState
+from motrix_rl_supermimic.networks import WorldModel, run_mlp
+from motrix_rl_supermimic.robot_state import CanonicalRobotState, RobotState
 from motrix_rl_supermimic.wm_graph import FlattenFullLoss
 from motrix_rl_supermimic.world_state import EuclideanState, WorldState
 
@@ -73,17 +73,54 @@ def test_composed_euclidean_model_features_dynamics_and_loss_vjp(structured: boo
 
 
 @pytest.mark.parametrize("structured", [False, True])
+def test_named_robot_state_compiles_with_dynamics_values_and_gradients(structured: bool) -> None:
+    robot = SimRobot(2)
+    state = robot.pack(
+        RobotState(
+            position=torch.randn(2, 3),
+            rotation=so3_exp(torch.randn(2, 3) * 0.2),
+            linear_velocity=torch.randn(2, 3),
+            angular_velocity=torch.randn(2, 3),
+            joint_position=torch.randn(2, 2),
+            joint_velocity=torch.randn(2, 2),
+        )
+    ).requires_grad_()
+    prediction = (torch.randn(2, robot.prediction_dim) * 0.05).requires_grad_()
+
+    def evaluate(state: torch.Tensor, prediction: torch.Tensor) -> tuple[RobotState, torch.Tensor]:
+        parts = robot.unpack(state)
+        next_state = robot.integrate(robot.pack(parts), prediction, structured=structured)
+        return parts, next_state
+
+    expected_parts, expected = evaluate(state, prediction)
+    actual_parts, actual = torch.compile(evaluate, backend="aot_eager", fullgraph=True)(state, prediction)
+    assert isinstance(actual_parts, RobotState)
+    torch.testing.assert_close(actual_parts.position, expected_parts.position)
+    torch.testing.assert_close(actual_parts.rotation, expected_parts.rotation)
+    torch.testing.assert_close(actual_parts.linear_velocity, expected_parts.linear_velocity)
+    torch.testing.assert_close(actual_parts.angular_velocity, expected_parts.angular_velocity)
+    torch.testing.assert_close(actual_parts.joint_position, expected_parts.joint_position)
+    torch.testing.assert_close(actual_parts.joint_velocity, expected_parts.joint_velocity)
+    torch.testing.assert_close(actual, expected)
+    weight = torch.randn_like(actual)
+    expected_vjp = torch.autograd.grad(expected, (state, prediction), weight)
+    actual_vjp = torch.autograd.grad(actual, (state, prediction), weight)
+    for actual_gradient, expected_gradient in zip(actual_vjp, expected_vjp, strict=True):
+        torch.testing.assert_close(actual_gradient, expected_gradient)
+
+
+@pytest.mark.parametrize("structured", [False, True])
 def test_robot_codec_roundtrip_and_composition_preserve_values_and_vjp(structured: bool) -> None:
     robot = SimRobot(2)
     world = WorldState({"robot": robot, "object": SimEuclidean(3)})
     state = robot.pack(
-        (
-            torch.randn(4, 3),
-            so3_exp(torch.randn(4, 3) * 0.2),
-            torch.randn(4, 3),
-            torch.randn(4, 3),
-            torch.randn(4, 2),
-            torch.randn(4, 2),
+        RobotState(
+            position=torch.randn(4, 3),
+            rotation=so3_exp(torch.randn(4, 3) * 0.2),
+            linear_velocity=torch.randn(4, 3),
+            angular_velocity=torch.randn(4, 3),
+            joint_position=torch.randn(4, 2),
+            joint_velocity=torch.randn(4, 2),
         )
     ).requires_grad_()
     prediction = (torch.randn(4, robot.prediction_dim) * 0.05).requires_grad_()
@@ -109,3 +146,58 @@ def test_robot_codec_roundtrip_and_composition_preserve_values_and_vjp(structure
     actual_vjp = torch.autograd.grad(composed, variables, weight)
     for actual, reference in zip(actual_vjp, expected_vjp, strict=True):
         torch.testing.assert_close(actual, reference)
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_prepared_mixed_state_model_step_matches_flat_path_and_compiles(structured: bool) -> None:
+    robot = SimRobot(2)
+    world = WorldState({"robot": robot, "object": SimEuclidean(3)})
+    model = WorldModel(world, context_dim=1, hidden=(8,), structured=structured, action_dim=2)
+    with torch.no_grad():
+        model.net[-1].weight.normal_(0, 0.01)
+        model.out_norm.mean.normal_(0, 0.01)
+    state = torch.randn(2, world.size)
+    state[:, 3:7] = torch.tensor([0.1, 0.2, 0.3, 0.9])
+    state[:, 3:7] /= state[:, 3:7].norm(dim=-1, keepdim=True)
+    state.requires_grad_()
+    action = torch.randn(2, 2, requires_grad=True)
+    context = torch.randn(2, 1)
+    inputs = model.inputs(state, action, context)
+    prediction = run_mlp(model.net, model.in_norm(inputs)) * model.out_norm.std() + model.out_norm.mean
+    expected = world.integrate(state, prediction, structured=structured, dt=model.dt)
+    actual = torch.compile(model.step, backend="aot_eager", fullgraph=True)(state, action, context)
+    torch.testing.assert_close(actual, expected)
+    # Output remains a canonical flat snapshot, including a unit root quaternion.
+    torch.testing.assert_close(actual[:, 3:7].norm(dim=-1), torch.ones(2))
+    weight = torch.randn_like(actual)
+    variables = (state, action, *model.parameters())
+    expected_gradients = torch.autograd.grad(expected, variables, weight)
+    actual_gradients = torch.autograd.grad(actual, variables, weight)
+    for actual_gradient, expected_gradient in zip(actual_gradients, expected_gradients, strict=True):
+        torch.testing.assert_close(actual_gradient, expected_gradient)
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_combined_world_model_statistics_preserve_normalizer_updates(structured: bool) -> None:
+    import copy
+
+    robot = SimRobot(2)
+    world = WorldState({"robot": robot, "object": SimEuclidean(3)})
+    model = WorldModel(world, context_dim=1, hidden=(8,), structured=structured, action_dim=2)
+    expected = copy.deepcopy(model)
+    # Two updates protect ordered accumulation, not just one batch's moments.
+    for _ in range(2):
+        state = torch.randn(2, 3, world.size)
+        state[..., 3:7] = torch.tensor([0.1, 0.2, 0.3, 0.9])
+        state[..., 3:7] /= state[..., 3:7].norm(dim=-1, keepdim=True)
+        next_state = world.integrate(state, torch.randn(2, 3, world.prediction_dim) * 0.01, structured=structured)
+        action, context = torch.randn(2, 3, 2), torch.randn(2, 3, 1)
+        expected.in_norm.update(expected.inputs(state, action, context))
+        expected.out_norm.update(expected.targets(state, next_state))
+        expected.inc_norm.update(expected.increments(state, next_state))
+        model.update_norms(state, next_state, action, context)
+    for name in ("in_norm", "out_norm", "inc_norm"):
+        actual_buffers = dict(model.get_submodule(name).named_buffers())
+        expected_buffers = dict(expected.get_submodule(name).named_buffers())
+        for key, value in actual_buffers.items():
+            torch.testing.assert_close(value, expected_buffers[key])
