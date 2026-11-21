@@ -13,13 +13,13 @@ from typing import ClassVar
 import torch
 
 from motrix_env_core.math.rotation import mat_to_quat, mm3, mv3, quat_to_mat, so3_exp, so3_log, yaw_mat
-from motrix_rl_supermimic.world_state import StateRepresentation
+from motrix_rl_supermimic.world_state import WorldStateTerm
 
 _RobotState = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
 
 @dataclass(frozen=True)
-class CanonicalRobotState(StateRepresentation):
+class CanonicalRobotState(WorldStateTerm):
     """Flat ``(p, quat_xyzw, v, w, q, qd)`` with frame-local predictions.
 
     Position increments use the root heading frame; rotation, linear velocity,

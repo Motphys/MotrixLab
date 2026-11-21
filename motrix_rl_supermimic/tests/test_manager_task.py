@@ -11,7 +11,7 @@ from gymnasium.spaces import Box
 from motrix_rl_supermimic.imagination import ImaginationBindings, ImaginationInputs, ImaginationRuntime, ImaginationTerm
 from motrix_rl_supermimic.manager_task import ManagerTaskMDP
 from motrix_rl_supermimic.world_context import WorldContext, WorldContextTerm
-from motrix_rl_supermimic.world_state import EuclideanState, WorldState, WorldStateTerm
+from motrix_rl_supermimic.world_state import EuclideanState, WorldState
 
 from motrix_env_core.manager.context import ManagerContext
 from motrix_env_core.manager.kernel_data import Map
@@ -41,8 +41,9 @@ def capture_context(ctx: ManagerContext, out: torch.Tensor) -> None:
     out.copy_(ctx.commands["reference"].context)
 
 
-def capture_state(ctx: ManagerContext, out: torch.Tensor) -> None:
-    out.copy_(ctx.sim["state"])
+class SimStateTerm(EuclideanState):
+    def capture(self, sim: Map[torch.Tensor], out: torch.Tensor) -> None:
+        out.copy_(sim["state"])
 
 
 def policy(ctx: ManagerContext, out: torch.Tensor) -> None:
@@ -88,7 +89,7 @@ def make_task(imagination: ImaginationTerm | None = None) -> tuple[ManagerTaskMD
         ObsTerm(1, value),
         RewardTerm(reward),
         TerminationTerm(soft),
-        world_state=WorldState({"state": WorldStateTerm(capture_state, EuclideanState(4))}),
+        world_state=WorldState({"state": SimStateTerm(4)}),
         action_space=Box(-1.0, 1.0, (1,)),
         reference_action=lambda: None,
         goal=ObsTerm(3, goal),
@@ -130,8 +131,8 @@ def test_runtime_slices_named_physical_inputs_and_preserves_all_gradients() -> N
 
     world_state = WorldState(
         {
-            "agent": WorldStateTerm(capture_state, EuclideanState(2)),
-            "object": WorldStateTerm(capture_state, EuclideanState(3)),
+            "agent": SimStateTerm(2),
+            "object": SimStateTerm(3),
         }
     )
     world_context = WorldContext(

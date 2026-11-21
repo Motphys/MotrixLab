@@ -20,19 +20,20 @@ from motrix_rl_supermimic.optim import policy_multiplier, trigger_decay
 from motrix_rl_supermimic.robot_state import CanonicalRobotState
 from motrix_rl_supermimic.toy import ToyEnvCfg
 from motrix_rl_supermimic.wm_graph import FlattenFullLoss
-from motrix_rl_supermimic.world_state import WorldState, WorldStateTerm
+from motrix_rl_supermimic.world_state import WorldState
 
 from motrix_env_core.config import configclass
 
 
-def _capture_robot(ctx, out: torch.Tensor) -> None:
-    out.copy_(ctx.sim["robot"])
+class _CaptureRobot(CanonicalRobotState):
+    def capture(self, sim, out: torch.Tensor) -> None:
+        out.copy_(sim["robot"])
 
 
 def _wm(seed: int = 13, *, structured: bool = False):
     torch.manual_seed(seed)
-    robot = CanonicalRobotState(num_joints=1, error_scales=(0.01,) * 6)
-    world_state = WorldState({"robot": WorldStateTerm(_capture_robot, robot)})
+    robot = _CaptureRobot(num_joints=1, error_scales=(0.01,) * 6)
+    world_state = WorldState({"robot": robot})
     wm = WorldModel(world_state, context_dim=3, hidden=(16, 16, 16), structured=structured, action_dim=2)
     with torch.no_grad():
         wm.net[-1].weight.normal_(0, 0.001)

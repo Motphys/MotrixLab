@@ -35,7 +35,7 @@ from motrix_env_core.sim.write import CtrlTargetsWrite, SimWrite, WriteProgram
 from motrix_rl_supermimic.imagination import ImaginationBindings, ImaginationCfg, ImaginationInputs, ImaginationTerm
 from motrix_rl_supermimic.mbrl_env import MbrlEnv, MbrlEnvCfg
 from motrix_rl_supermimic.reference_command import ReferenceCommand
-from motrix_rl_supermimic.world_state import EuclideanState, WorldStateTerm, WorldStateTermCfg
+from motrix_rl_supermimic.world_state import EuclideanState, WorldStateTermCfg
 
 TARGETS = (0.0, 0.5, -0.5, 1.0)
 
@@ -106,14 +106,15 @@ def _flat_state(position: torch.Tensor, velocity: torch.Tensor) -> torch.Tensor:
     return torch.cat((position, velocity), -1)
 
 
-def _capture_state(ctx: ManagerContext, out: torch.Tensor) -> None:
-    out.copy_(_flat_state(ctx.sim["position"], ctx.sim["velocity"]))
+class ToyJointState(EuclideanState):
+    def capture(self, sim: Map[torch.Tensor], out: torch.Tensor) -> None:
+        out.copy_(_flat_state(sim["position"], sim["velocity"]))
 
 
 @configclass
 class ToyWorldStateCfg(WorldStateTermCfg):
-    def __call__(self, ctx: BuildContext) -> WorldStateTerm:
-        return WorldStateTerm(_capture_state, EuclideanState(size=2))
+    def __call__(self, ctx: BuildContext) -> ToyJointState:
+        return ToyJointState(size=2)
 
 
 class _ToyReads(PhysicsReadProgram):

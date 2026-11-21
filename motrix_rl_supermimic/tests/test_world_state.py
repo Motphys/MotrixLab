@@ -8,21 +8,27 @@ import torch
 from motrix_rl_supermimic.networks import WorldModel
 from motrix_rl_supermimic.robot_state import CanonicalRobotState
 from motrix_rl_supermimic.wm_graph import FlattenFullLoss
-from motrix_rl_supermimic.world_state import EuclideanState, WorldState, WorldStateTerm
+from motrix_rl_supermimic.world_state import EuclideanState, WorldState
 
-from motrix_env_core.manager.context import ManagerContext
+from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.math.rotation import so3_exp
 
 
-def capture(ctx: ManagerContext, out: torch.Tensor) -> None:
-    out.copy_(ctx.sim["state"])
+class SimEuclidean(EuclideanState):
+    def capture(self, sim: Map[torch.Tensor], out: torch.Tensor) -> None:
+        out.copy_(sim["state"])
+
+
+class SimRobot(CanonicalRobotState):
+    def capture(self, sim: Map[torch.Tensor], out: torch.Tensor) -> None:
+        out.copy_(sim["state"])
 
 
 def composed_state() -> WorldState:
     return WorldState(
         {
-            "agent": WorldStateTerm(capture, EuclideanState(2, error_scale=0.1)),
-            "object": WorldStateTerm(capture, EuclideanState(3, error_scale=0.2)),
+            "agent": SimEuclidean(2, error_scale=0.1),
+            "object": SimEuclidean(3, error_scale=0.2),
         }
     )
 
@@ -68,8 +74,8 @@ def test_composed_euclidean_model_features_dynamics_and_loss_vjp(structured: boo
 
 @pytest.mark.parametrize("structured", [False, True])
 def test_robot_codec_roundtrip_and_composition_preserve_values_and_vjp(structured: bool) -> None:
-    robot = CanonicalRobotState(2)
-    world = WorldState({"robot": WorldStateTerm(capture, robot), "object": WorldStateTerm(capture, EuclideanState(3))})
+    robot = SimRobot(2)
+    world = WorldState({"robot": robot, "object": SimEuclidean(3)})
     state = robot.pack(
         (
             torch.randn(4, 3),

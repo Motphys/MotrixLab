@@ -128,7 +128,7 @@ class MbrlEnv(ManagerEnv):
         action_states = tuple((term.state, self.action_slices[name]) for name, term in self.action_terms.items())
 
         def begin() -> None:
-            world_state.capture(ctx, recorder.s)
+            world_state.capture(ctx.sim, recorder.s)
             world_context.capture(ctx, recorder.context)
             recorder.frame.copy_(reference.frame)
 
@@ -138,7 +138,7 @@ class MbrlEnv(ManagerEnv):
                 recorder.previous[:, action_slice].copy_(state.previous())
 
         def end() -> None:
-            world_state.capture(ctx, recorder.s1)
+            world_state.capture(ctx.sim, recorder.s1)
 
         self._capture_begin = torch.compile(begin, dynamic=False)
         self._capture_actions = torch.compile(actions, dynamic=False)
