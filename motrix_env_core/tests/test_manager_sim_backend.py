@@ -462,7 +462,7 @@ def test_reset_dispatch_gathers_explicit_ids_and_scatters_compact_outputs(
 
 
 def test_reset_dynamic_rows_preserve_mapping_writes_and_frozen_state(request: pytest.FixtureRequest) -> None:
-    """Reset compact staging keeps selected rows across changing K values.
+    """Compact write views reuse backend storage across changing K values.
 
     The reset term intentionally receives an ordinary ``Mapping`` and a nested
     frozen dataclass carrying caller-owned tensors, with an in-memory backend.
@@ -479,6 +479,11 @@ def test_reset_dynamic_rows_preserve_mapping_writes_and_frozen_state(request: py
         nested: _NestedState
 
     state = _ResetState(_NestedState(torch.tensor([[100.0, 101.0], [200.0, 201.0], [300.0, 301.0], [400.0, 401.0]])))
+    write_addresses: list[int] = []
+
+    @torch.compiler.disable
+    def record_storage(output: torch.Tensor) -> None:
+        write_addresses.append(output.data_ptr())
 
     def reset_selected(
         context: ManagerContext,
@@ -488,6 +493,7 @@ def test_reset_dynamic_rows_preserve_mapping_writes_and_frozen_state(request: py
     ) -> None:
         # Keep the dynamic staging axis live across a deliberate graph break.
         torch._dynamo.graph_break()
+        record_storage(outputs["joint_position"])
         outputs["joint_position"].copy_(frozen_state.nested.values[selected])
 
     @configclass(kw_only=True)
@@ -505,7 +511,15 @@ def test_reset_dynamic_rows_preserve_mapping_writes_and_frozen_state(request: py
     runtime = _FakeBackend.last
     runtime.reset_calls.clear()
 
-    for ids in (torch.tensor([3, 0, 2]), torch.tensor([1]), torch.tensor([2, 0])):
+    for ids in (
+        torch.tensor([3, 0, 2]),
+        torch.tensor([2, 1, 0]),
+        torch.tensor([1]),
+        torch.tensor([2, 0]),
+        torch.tensor([0, 3, 1]),
+        torch.arange(4),
+    ):
+        state.nested.values.add_(1.0)
         before = runtime.dof_pos.clone()
         env.reset(ids)
         expected = state.nested.values[ids]
@@ -514,6 +528,8 @@ def test_reset_dynamic_rows_preserve_mapping_writes_and_frozen_state(request: py
         untouched = torch.ones(4, dtype=torch.bool)
         untouched[ids] = False
         torch.testing.assert_close(runtime.dof_pos[untouched], before[untouched])
+    assert write_addresses
+    assert set(write_addresses) == {env._sim_reset_runtime.buffers[0].data_ptr()}
 
 
 def test_manager_frontend_does_not_import_motrixsim() -> None:

@@ -61,7 +61,10 @@ compile=False)` 或 `runtime.compile_enabled = False` 回到逐 term eager 执�
   context/query 输入始终为全批 N 行（通过 `mark_dynamic` 与 `dynamic=True` 请求 reset 符号批宽，
   Torch 的零/单行处理仍可能触发特化，不保证所有 K 共享一次编译）。command `reset` 钩子直接在常驻实例上按 ids
   gather/scatter；sim-reset terms 直接填 `(K, *write_shape)` staging（无
-  `stage[ids]` 二次 gather）；wrapper 把 staging 拷到全批 reset buffer 头部。
+  `stage[ids]` 二次 gather）。term 直接写 backend write buffer 的前 K 行视图，不另外分配
+  staging storage，也不复制一次 compact 前缀。`SimResetRuntime.apply` 仍先克隆有效前缀，
+  再 scatter 到原始 `env_ids`，避免乱序行号的源/目标重叠。write buffer 是串行 reset 调用的
+  可覆盖 scratch；term 必须完整写入声明输出，异常时不执行 backend，但不提供状态事务回滚。
   reset term 可直接为本 pass 的 compact 行抽样；随机流会推进，但非选中行的
   环境状态保持不变。以下 reset kernel 性能数据为既有测量（2048 envs）：
   K=1 → 0.089ms、K=16 → 0.097ms、K=2048 → 0.275ms（旧的静态全批 masked
