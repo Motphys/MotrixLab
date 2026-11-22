@@ -63,6 +63,11 @@ class BenchmarkRegistry:
         return (
             _lazy_builtin("env.step", "Benchmark the public environment step contract.", "motrixlab.benchmark.env"),
             _lazy_builtin(
+                "fastsac.collector",
+                "Benchmark the FastSAC collector step (policy inference + env.step + host ring push).",
+                "motrixlab.benchmark.collector",
+            ),
+            _lazy_builtin(
                 "physics.step", "Benchmark native MotrixSim physics throughput.", "motrixlab.benchmark.physics"
             ),
         )

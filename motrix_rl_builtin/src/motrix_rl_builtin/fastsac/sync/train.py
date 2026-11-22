@@ -80,6 +80,8 @@ class Trainer(TrainerBase):
             device=device,
             action_scale=action_scale,
             action_bias=action_bias,
+            observation_spec=env.observation_spec,
+            final_obs_bootstrap=env.max_episode_steps is not None,
         )
 
     def _set_seed(self, seed: int | None) -> None:
@@ -241,11 +243,20 @@ class Trainer(TrainerBase):
                 else:
                     actions = agent.act(obs, deterministic=False)
 
+                frame = env.stage_frames(obs, critic_obs)
                 result = env.step(actions)
                 next_obs, next_critic_obs = result.obs, result.critic_obs
                 rewards, terminated, truncated = result.reward, result.terminated, result.truncated
 
-                agent.rb.extend(obs, critic_obs, actions, rewards, terminated.long(), truncated.long())
+                agent.rb.extend(
+                    frame.policy, frame.value_or_policy, actions, rewards, terminated.long(), truncated.long()
+                )
+                if agent.rb._final_slot is not None:
+                    final = env.final_frames(result)
+                    if final is not None:
+                        agent.rb.write_final(
+                            final.env_ids, agent.rb.ptr - 1, final.obs.policy, final.obs.value_or_policy
+                        )
 
                 ep_return += rewards
                 ep_len += 1

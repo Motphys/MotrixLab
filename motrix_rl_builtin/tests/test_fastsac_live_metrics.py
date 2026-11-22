@@ -221,6 +221,11 @@ class _SyncEnv:
         self._t = 0
         self._diverge_at = diverge_at
 
+    def stage_frames(self, obs, critic_obs):
+        from motrix_env_core.array.env import EnvObs
+
+        return EnvObs({"policy": obs.clone(), "value": critic_obs.clone()})
+
     def reset(self):
         return torch.zeros(self.num_envs, 2), torch.zeros(self.num_envs, 3)
 
@@ -248,7 +253,7 @@ class _SyncAgent:
         self.num_envs = num_envs
         self.act_dim = 1
         self.actor = SimpleNamespace(action_scale=torch.ones(1), action_bias=torch.zeros(1))
-        self.rb = SimpleNamespace(extend=lambda *columns: None, num_stored=0, buffer_size=4)
+        self.rb = SimpleNamespace(extend=lambda *columns: None, num_stored=0, buffer_size=4, _final_slot=None)
         self.global_step = 0
         self.window_metrics = SimpleNamespace(stats_and_reset=lambda: {"qf_loss": 0.25, "actor_loss": -1.5})
 
@@ -376,13 +381,14 @@ class _FastTime:
 
 
 class _ProbeEnv:
+    observation_spec = ObservationSpec(
+        {
+            "policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (2,))),
+            "value": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (3,))),
+        }
+    )
     env = SimpleNamespace(
-        observation_spec=ObservationSpec(
-            {
-                "policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (2,))),
-                "value": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (3,))),
-            }
-        ),
+        observation_spec=observation_spec,
         action_space=SimpleNamespace(shape=(1,)),
     )
     action_low = torch.tensor([-1.0])

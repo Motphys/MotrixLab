@@ -43,6 +43,12 @@ class _CpuEnv:
     def env(self):
         return self
 
+    def stage_frames(self, obs, critic_obs):
+        return EnvObs({"policy": obs.clone(), "value": critic_obs.clone()})
+
+    def final_frames(self, result):
+        return result.final_obs
+
     def reset(self):
         return torch.zeros(_NUM_ENVS, _OBS_DIM), torch.zeros(_NUM_ENVS, _CRITIC_OBS_DIM)
 
@@ -385,7 +391,7 @@ def test_compiled_cuda_stochastic_actions_change_and_stay_in_bounds() -> None:
     assert torch.all(second <= high)
 
 
-class _BackpressureEnv:
+class _BackpressureEnv(_CpuEnv):
     num_envs = 2
 
     def __init__(self):

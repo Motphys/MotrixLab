@@ -20,6 +20,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn, optim
 
+from motrix_env_core.observations import ObservationSpec
 from motrix_rl_builtin.fastsac.buffer import EmpiricalNormalization, SimpleReplayBuffer
 from motrix_rl_builtin.fastsac.config import FastSacAgentCfg
 from motrix_rl_builtin.fastsac.networks import Actor, Critic
@@ -40,6 +41,7 @@ class FastSacAgent:
         writer=None,
         world_size: int = 1,
         final_obs_bootstrap: bool = False,
+        observation_spec: ObservationSpec | None = None,
     ):
         """Build the actor, twin distributional critics, optimizers and replay buffer.
 
@@ -130,12 +132,19 @@ class FastSacAgent:
             self.obs_normalizer = nn.Identity()
             self.critic_obs_normalizer = nn.Identity()
 
+        # Preserve FastSAC's normalization policy: update statistics from
+        # sampled final-width windows, not independently from transported frames.
         self.rb = SimpleReplayBuffer(
             n_env=num_envs,
             buffer_size=cfg.buffer_size,
-            n_obs=obs_dim,
+            n_obs=obs_dim if observation_spec is None else observation_spec.policy.frame_space.shape[-1],
             n_act=act_dim,
-            n_critic_obs=critic_obs_dim,
+            n_critic_obs=critic_obs_dim
+            if observation_spec is None
+            else observation_spec.value_or_policy.frame_space.shape[-1],
+            policy_history=1 if observation_spec is None else observation_spec.policy.history_length,
+            value_history=1 if observation_spec is None else observation_spec.value_or_policy.history_length,
+            shared_observations=observation_spec is not None and observation_spec.value is None,
             n_steps=cfg.num_steps,
             gamma=cfg.gamma,
             device=device,
