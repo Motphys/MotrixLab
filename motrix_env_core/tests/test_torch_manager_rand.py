@@ -7,7 +7,6 @@ import pytest
 import torch
 
 from motrix_env_core.manager.context import ManagerContext
-from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.manager.random import RandomSource
 from motrix_env_core.mdp.observations import add_uniform_noise
 
@@ -15,10 +14,10 @@ from motrix_env_core.mdp.observations import add_uniform_noise
 def _context() -> ManagerContext:
     return ManagerContext(
         env_id=torch.arange(4),
-        actions=Map({}),
-        commands=Map({}),
-        metrics=Map({}),
-        sim=Map({}),
+        actions=dict({}),
+        commands=dict({}),
+        metrics=dict({}),
+        sim=dict({}),
         dt=0.02,
         sim_reset_requested=torch.zeros(4, dtype=torch.bool),
         terminated=torch.zeros(4, dtype=torch.bool),

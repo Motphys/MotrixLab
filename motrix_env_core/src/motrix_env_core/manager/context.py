@@ -11,13 +11,13 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from motrix_env_core.manager.kernel_data import Map
+import motrix_env_core.manager.actions as action_types
+import motrix_env_core.manager.commands as command_types
 from motrix_env_core.manager.random import RandomSource
 
 if TYPE_CHECKING:
     from motrix_env_core.base import EnvCfg
     from motrix_env_core.manager.actions import ActionTerm
-    from motrix_env_core.manager.commands import CommandTerm
     from motrix_env_core.sim import SimModel
 
 
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 class ManagerContext:
     """Framework-owned manager data available to every compiled term.
 
-    Terms receive this host instance directly: attribute access, ``Map``
+    Terms receive this host instance directly: attribute access, ``dict``
     string lookups, and term-state methods trace under Dynamo with guards on
     object identity. Every entry is the live host object — the actual
     ``CommandTerm``/``ActionState`` dataclass instances, zero-copy tensor
@@ -37,10 +37,10 @@ class ManagerContext:
     """
 
     env_id: torch.Tensor
-    actions: Map
-    commands: Map
-    metrics: Map
-    sim: Map
+    actions: Mapping[str, action_types.ActionState]
+    commands: Mapping[str, command_types.CommandTerm]
+    metrics: Mapping[str, torch.Tensor]
+    sim: Mapping[str, torch.Tensor]
     dt: float
     # Writable per-lane flag: a command term sets it inside a fused kernel to
     # request simulator-state rematerialization for that lane after the
@@ -87,7 +87,7 @@ class BuildContext:
 
     cfg: EnvCfg
     actions: Mapping[str, ActionTerm]
-    commands: Mapping[str, CommandTerm]
+    commands: Mapping[str, command_types.CommandTerm]
     # Compiled scene model when one exists; model-free task builds construct
     # terms without it.
     model: SimModel | None = None

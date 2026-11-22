@@ -7,7 +7,6 @@ import pytest
 import torch
 
 from motrix_env_core.manager.context import ManagerContext
-from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.manager.observations import ObsTerm
 from motrix_env_core.manager.random import RandomSource
 from motrix_env_core.manager.resolver import ManagerTermResolver
@@ -21,10 +20,10 @@ def _context(values: torch.Tensor) -> ManagerContext:
     return ManagerContext(
         rand=RandomSource(),
         env_id=torch.arange(count),
-        actions=Map({}),
-        commands=Map({}),
-        metrics=Map({}),
-        sim=Map({"position": values}),
+        actions=dict({}),
+        commands=dict({}),
+        metrics=dict({}),
+        sim=dict({"position": values}),
         dt=0.02,
         sim_reset_requested=torch.zeros(count, dtype=torch.bool),
         terminated=torch.zeros(count, dtype=torch.bool),

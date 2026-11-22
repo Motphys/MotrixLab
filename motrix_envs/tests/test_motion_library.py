@@ -170,7 +170,7 @@ def test_library_loads_only_declared_extension_channels(tmp_path):
     )
 
     undeclared = MotionLibrary([tmp_path / "a.npz", tmp_path / "b.npz"], **_TASK_ORDER).assemble()
-    assert undeclared.extensions.keys_tuple == ()
+    assert not undeclared.extensions
 
     declared = MotionLibrary(
         [tmp_path / "a.npz", tmp_path / "b.npz"], extension_channels=("smpl_joints",), **_TASK_ORDER
@@ -258,7 +258,7 @@ def test_wbt_motion_clip_single_clip_metadata(tmp_path):
     )
     # The single clip spans the whole frame axis, so every frame ends at T-1.
     np.testing.assert_array_equal(clip.frame_clip_end, [5] * 6)
-    assert clip.extensions.keys_tuple == ()
+    assert not clip.extensions
 
 
 def test_wbt_motion_clip_loads_declared_extension_channel(tmp_path):

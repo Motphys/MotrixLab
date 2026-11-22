@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import numpy as np
 import torch
 
@@ -14,7 +16,6 @@ from motrix_env_core.manager import (
     ResetTerm,
     ResetTermCfg,
 )
-from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.math.quaternion import mul
 from motrix_env_core.sim import (
     BodyAngularVelocityWrite,
@@ -29,7 +30,7 @@ from motrix_env_core.sim import (
 def _reset_body_pos(
     ctx: ManagerContext,
     env_ids: torch.Tensor,
-    sim_writes: Map[torch.Tensor],
+    sim_writes: Mapping[str, torch.Tensor],
     noise_amplitude: torch.Tensor,
 ) -> None:
     motion = ctx.commands["motion"]
@@ -60,7 +61,7 @@ class BodyPosResetCfg(ResetTermCfg):
 def _reset_body_rot(
     ctx: ManagerContext,
     env_ids: torch.Tensor,
-    sim_writes: Map[torch.Tensor],
+    sim_writes: Mapping[str, torch.Tensor],
     noise_amplitude: torch.Tensor,
 ) -> None:
     motion = ctx.commands["motion"]
@@ -114,7 +115,7 @@ class BodyRotResetCfg(ResetTermCfg):
 def _reset_body_lin_vel(
     ctx: ManagerContext,
     env_ids: torch.Tensor,
-    sim_writes: Map[torch.Tensor],
+    sim_writes: Mapping[str, torch.Tensor],
     noise_amplitude: torch.Tensor,
 ) -> None:
     motion = ctx.commands["motion"]
@@ -145,7 +146,7 @@ class BodyLinVelResetCfg(ResetTermCfg):
 def _reset_body_rot_vel(
     ctx: ManagerContext,
     env_ids: torch.Tensor,
-    sim_writes: Map[torch.Tensor],
+    sim_writes: Mapping[str, torch.Tensor],
     noise_amplitude: torch.Tensor,
 ) -> None:
     motion = ctx.commands["motion"]
@@ -174,7 +175,7 @@ class BodyRotVelResetCfg(ResetTermCfg):
 
 
 def _reset_body_dof_pos(
-    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], noise_scale: float
+    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Mapping[str, torch.Tensor], noise_scale: float
 ) -> None:
     motion = ctx.commands["motion"]
     steps = motion.steps[env_ids, 0]

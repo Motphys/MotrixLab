@@ -169,6 +169,9 @@ class OutOfBoundsTermination:
 ```
 
 Observation、reward、termination term 不应通过共享全局 registry 查找其他 term；需要的数据依赖应通过 `ManagerContext` 的固定 store 表达。
+`ctx.actions` 的类型为 `Mapping[str, ActionState]`，`ctx.commands` 为 `Mapping[str, CommandTerm]`，
+`ctx.sim` 与 `ctx.metrics` 为 `Mapping[str, torch.Tensor]`（`Mapping` 从 `collections.abc` 导入）。
+运行时这些映射是普通 `dict`，构造后 key 固定；term 只读取条目或原地更新 tensor，不修改映射结构。
 
 ## 7. Reset
 
@@ -186,9 +189,10 @@ True 表示回合级重置（含初始化与显式重开），False 表示仅 si
 按 `env_ids` 对常驻全批状态 gather/scatter，用 `episode_reset` 限定回合级统计。
 
 sim-reset dispatch 签名为
-`(ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], *static) -> None`。
+`(ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Mapping[str, torch.Tensor], *static) -> None`。
 `ManagerContext` 与 query 参数始终保持全批 N 行，不携带 reset 选择字段；
 只有 `sim_writes` 为紧凑 `(K, *write_shape)`，第 j 行对应 `env_ids[j]`。
+`sim_writes` 运行时也是普通 `dict`，key 固定；dispatch 原地写入 tensor，不修改映射结构。
 读取全批输入时按原始行号 gather，写入紧凑 buffer 时不要再次按 `env_ids` 索引。
 sim-only reset 不重启 episode bookkeeping 或清 action history。
 

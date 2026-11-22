@@ -80,7 +80,7 @@ README 或教程；插件与任务 package 的 README 不重复这些内容，�
 
 Manager 数值 term 是普通 Python 函数，契约由签名注解表达并由 resolver 校验（首参数注解
 `ManagerContext`，observation 的 `out` 注解 `torch.Tensor`）；sim-reset dispatch 签名为
-`(ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], *static)`。
+`(ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Mapping[str, torch.Tensor], *static)`。
 数值执行由 Torch 执行器按整批张量调度；reset 时 ctx 仍为全批 N，`env_ids` 是 K 个原始环境行号，
 `sim_writes` 为紧凑 K 行。kernel_data 类上的钩子方法由 resolver 按方法名与签名注解解析：
 `ActionState.current/previous` 为实例方法；CommandTerm 的 `update`/`advance` 签名为
@@ -88,6 +88,9 @@ Manager 数值 term 是普通 Python 函数，契约由签名注解表达并由 
 `(self, ctx: ManagerContext, env_ids: torch.Tensor, episode_reset: torch.Tensor)`，
 其中 `episode_reset` 为与 `env_ids` 对齐的 bool `(K,)`：True 表示回合级重置（含初始化与显式重开），
 False 表示仅 sim reset、当前回合继续；它不等于 `terminated`，也不必然表示上一回合已经结束。
+`Mapping` 从 `collections.abc` 导入；`ctx.actions` 为 `Mapping[str, ActionState]`，
+`ctx.commands` 为 `Mapping[str, CommandTerm]`，`ctx.sim`/`ctx.metrics` 为 `Mapping[str, torch.Tensor]`。
+这些映射与 `sim_writes` 运行时均为普通 `dict`，构造后 key 固定；term 只读取条目或原地更新 tensor，不修改映射结构。
 运行时契约见 `wiki/design/manager/runtime.md`。
 
 ### 环境配置与注册规范

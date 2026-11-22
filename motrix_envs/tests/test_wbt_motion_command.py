@@ -13,7 +13,6 @@ rebuild plus selected-row state updates with seeded Torch sampling.
 import torch
 
 from motrix_env_core.manager.context import ManagerContext
-from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.manager.random import RandomSource
 from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommand, _sample_motion_step
 from motrix_envs.motion import WbtMotionClip
@@ -35,7 +34,7 @@ def _clip(num_frames: int) -> WbtMotionClip:
         reference_body_pos_w=torch.zeros((num_frames, 3), dtype=torch.float32),
         reference_body_quat_w=torch.zeros((num_frames, 4), dtype=torch.float32),
         frame_clip_end=torch.full((num_frames,), num_frames - 1, dtype=torch.int64),
-        extensions=Map({}),
+        extensions={},
     )
 
 
@@ -87,10 +86,10 @@ def _ctx(
     return ManagerContext(
         rand=RandomSource(),
         env_id=torch.arange(num_envs, dtype=torch.int64),
-        actions=Map({}),
-        commands=Map({}),
-        metrics=Map({}),
-        sim=Map({}),
+        actions={},
+        commands={},
+        metrics={},
+        sim={},
         dt=0.02,
         sim_reset_requested=torch.zeros((num_envs, 1), dtype=torch.bool),
         terminated=torch.zeros(num_envs, dtype=torch.bool) if terminated is None else terminated,

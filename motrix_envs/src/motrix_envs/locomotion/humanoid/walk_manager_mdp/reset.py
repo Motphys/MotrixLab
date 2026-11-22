@@ -3,6 +3,7 @@
 
 """Simulator reset terms for the humanoid velocity-tracking task."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -15,7 +16,6 @@ from motrix_env_core.manager import (
     ResetTermCfg,
 )
 from motrix_env_core.manager.context import BuildContext
-from motrix_env_core.manager.kernel_data.map import Map
 from motrix_env_core.mdp.terrain import HeightFieldGrid, heightfield_lookup
 from motrix_env_core.sim.write import (
     ActuatorDampingWrite,
@@ -112,7 +112,7 @@ def _sample_spawn_xy(
 
 
 def _sample_randomized_dynamics(
-    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], params: WalkResetParams
+    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Mapping[str, torch.Tensor], params: WalkResetParams
 ) -> None:
     """Sample randomized dynamics into the reset write buffers on compact rows."""
     count = env_ids.numel()
@@ -162,7 +162,7 @@ def _sample_randomized_dynamics(
 
 
 def _write_spawn_state(
-    sim_writes: Map[torch.Tensor], params: WalkResetParams, x: torch.Tensor, y: torch.Tensor, z: torch.Tensor
+    sim_writes: Mapping[str, torch.Tensor], params: WalkResetParams, x: torch.Tensor, y: torch.Tensor, z: torch.Tensor
 ) -> None:
     position = sim_writes["position"][:, 0, :3]
     position[:, 0] = x.to(torch.float32)
@@ -176,7 +176,7 @@ def _write_spawn_state(
 
 
 def reset_walk_state(
-    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], params: WalkResetParams
+    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Mapping[str, torch.Tensor], params: WalkResetParams
 ) -> None:
     """Spawn-state-only reset for configs without dynamics randomization."""
     pose = params.init_pose
@@ -187,7 +187,7 @@ def reset_walk_state(
 
 
 def reset_walk_state_randomized(
-    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], params: WalkResetParams
+    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Mapping[str, torch.Tensor], params: WalkResetParams
 ) -> None:
     """Reset plus in-kernel dynamics randomization (kp/damping/friction/mass/com)."""
     pose = params.init_pose
@@ -260,7 +260,7 @@ class WalkStateResetCfg(ResetTermCfg):
             actuator_names = tuple(spec.name for spec in ctx.model.actuators)
             link_names = body.link_names
             base_index = link_names.index(body.base_link_name)
-            # Keep the write-map schema stable: Map keys are part of the
+            # Keep the write-map schema stable: mapping keys are part of the
             # compiled type even when a particular range is degenerate.
             writes.update(
                 kp=ActuatorKpWrite(actuator_names),

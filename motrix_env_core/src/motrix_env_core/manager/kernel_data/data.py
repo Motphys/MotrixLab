@@ -3,21 +3,20 @@
 
 """Structured values passed directly to manager kernels.
 
-Kernel data is made of frozen dataclasses, :class:`Map` containers, tensors,
+Kernel data is made of frozen dataclasses, mapping containers, tensors,
 and numeric scalar leaves. This module validates that structure at
 construction time; it does not build a runtime lookup or resolved tree.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import fields, is_dataclass
 from typing import Any, TypeVar, get_origin, get_type_hints
 
 import numpy as np
 import torch
 
-from motrix_env_core.manager.kernel_data.map import Map
 from motrix_env_core.sim.read import SimDataQuery
 
 KernelDataType = TypeVar("KernelDataType")
@@ -49,9 +48,9 @@ def leaf_value_type(annotation: Any) -> type | None:
 def iter_leaves(value: Any) -> Iterator[tuple[tuple[str, ...], Any, Any]]:
     """Yield ``(path, annotation, value)`` leaves from one kernel-data value.
 
-    The structure is walked live in dataclass field order and Map insertion
+    The structure is walked live in dataclass field order and mapping iteration
     order. Structural mismatches raise ``TypeError`` for wrong nested classes,
-    invalid Map values, and class cycles.
+    invalid mapping values, and class cycles.
     """
     if not is_kernel_data(value):
         raise TypeError(f"KernelData root must be a dataclass value, got {type(value).__name__}.")
@@ -75,11 +74,9 @@ def _iter_class_leaves(
         annotation = hints[data_field.name]
         field_path = (*path, data_field.name)
         field_value = getattr(value, data_field.name)
-        if annotation is Map or get_origin(annotation) is Map:
-            if not isinstance(field_value, Map):
-                raise TypeError(
-                    f"KernelData {declared_type.__name__}.{'.'.join(field_path)} requires a concrete Map value."
-                )
+        if annotation is Mapping or get_origin(annotation) is Mapping:
+            if not isinstance(field_value, Mapping):
+                raise TypeError(f"KernelData {declared_type.__name__}.{'.'.join(field_path)} requires a Mapping value.")
             yield from _iter_map_leaves(field_value, field_path, stack)
         elif is_kernel_data_type(annotation):
             yield from _iter_class_leaves(annotation, field_value, field_path, stack)
@@ -88,13 +85,13 @@ def _iter_class_leaves(
 
 
 def _iter_map_leaves(
-    value: Map,
+    value: Mapping[str, Any],
     path: tuple[str, ...],
     stack: tuple[type, ...],
 ) -> Iterator[tuple[tuple[str, ...], Any, Any]]:
-    for key, entry_value in zip(value.keys_tuple, value.values_tuple, strict=True):
+    for key, entry_value in value.items():
         entry_path = (*path, key)
-        if isinstance(entry_value, Map):
+        if isinstance(entry_value, Mapping):
             yield from _iter_map_leaves(entry_value, entry_path, stack)
         elif is_kernel_data(entry_value):
             yield from _iter_class_leaves(type(entry_value), entry_value, entry_path, stack)

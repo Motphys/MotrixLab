@@ -21,7 +21,7 @@ _STATIC_LEAVES = (bool, int, float, str, torch.Tensor, SimDataQuery)
 def canonicalize_term_args(args: tuple[Any, ...], *, context: str) -> tuple[Any, ...]:
     """Validate and canonicalize positional term arguments.
 
-    Accepted leaves are scalars (including strings for compile-time Map-name
+    Accepted leaves are scalars (including strings for compile-time mapping-key
     lookups), scalar tuples, tensors, simulator data queries, and kernel-data
     dataclass carriers (which are normalized in place).
     """

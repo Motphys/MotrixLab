@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -16,7 +17,6 @@ from motrix_env_core.manager import (
     ResetTerm,
     ResetTermCfg,
 )
-from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.math.quaternion import from_euler
 from motrix_env_core.sim import (
     BodyAngularVelocityWrite,
@@ -31,7 +31,7 @@ from motrix_env_core.sim import (
 def _reset_body_pos(
     ctx: ManagerContext,
     env_ids: torch.Tensor,
-    sim_writes: Map[torch.Tensor],
+    sim_writes: Mapping[str, torch.Tensor],
     spawn: torch.Tensor,
     noise_amplitude: torch.Tensor,
 ) -> None:
@@ -58,7 +58,7 @@ class BodyPosResetCfg(ResetTermCfg):
 
 
 def _reset_body_rot(
-    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], noise_amplitude: torch.Tensor
+    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Mapping[str, torch.Tensor], noise_amplitude: torch.Tensor
 ) -> None:
     angles = (2 * ctx.rand.uniform((env_ids.numel(), 3), device=env_ids.device) - 1) * noise_amplitude
     quat = from_euler(angles)
@@ -84,7 +84,7 @@ class BodyRotResetCfg(ResetTermCfg):
 
 
 def _reset_body_lin_vel(
-    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], noise_amplitude: torch.Tensor
+    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Mapping[str, torch.Tensor], noise_amplitude: torch.Tensor
 ) -> None:
     noise = 2 * ctx.rand.uniform((env_ids.numel(), 3), device=env_ids.device) - 1
     sim_writes["linear_velocity"][:, 0].copy_(noise * noise_amplitude)
@@ -108,7 +108,7 @@ class BodyLinVelResetCfg(ResetTermCfg):
 
 
 def _reset_body_rot_vel(
-    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], noise_amplitude: torch.Tensor
+    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Mapping[str, torch.Tensor], noise_amplitude: torch.Tensor
 ) -> None:
     noise = 2 * ctx.rand.uniform((env_ids.numel(), 3), device=env_ids.device) - 1
     sim_writes["angular_velocity"][:, 0].copy_(noise * noise_amplitude)
@@ -140,7 +140,7 @@ class DofResetParams:
 
 
 def _reset_body_dof_pos(
-    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], params: DofResetParams
+    ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Mapping[str, torch.Tensor], params: DofResetParams
 ) -> None:
     noise = 2 * ctx.rand.uniform((env_ids.numel(), params.default_pos.shape[0]), device=env_ids.device) - 1
     value = params.default_pos + noise * params.noise_scale
@@ -188,7 +188,7 @@ class BodyDofPosResetCfg(ResetTermCfg):
 def _reset_ball(
     ctx: ManagerContext,
     env_ids: torch.Tensor,
-    sim_writes: Map[torch.Tensor],
+    sim_writes: Mapping[str, torch.Tensor],
     spawn: torch.Tensor,
     noise_amplitude: torch.Tensor,
     velocity_noise_amplitude: torch.Tensor,
