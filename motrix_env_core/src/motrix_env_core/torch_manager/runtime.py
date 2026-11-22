@@ -10,7 +10,7 @@ typed call records) and executes the manager term schedule — command
 evaluate; per-group observation terms for observe; command ``reset``
 hooks plus simulator reset terms for reset — with one batched tensor call
 per term. Terms receive the real host objects: Dynamo traces dataclass
-attribute access, frozen ``Map`` lookups, and term-state methods directly,
+attribute access, fixed-key ``dict`` lookups, and term-state methods directly,
 guarding on object identity.
 
 By default each kernel schedule is additionally fused with ``torch.compile``
@@ -329,25 +329,16 @@ class TorchManagerRuntime:
             for index in range(len(fields_))
         )
 
-        def kernel(env_ids: torch.Tensor, episode_reset: torch.Tensor) -> tuple[torch.Tensor, ...]:
-            count = env_ids.shape[0]
+        def kernel(
+            env_ids: torch.Tensor,
+            episode_reset: torch.Tensor,
+            writes_by_term: tuple[dict[str, torch.Tensor], ...],
+        ) -> None:
             for hook in command_reset_hooks:
                 receiver = ctx.commands[hook.receiver_key]
                 hook.function(receiver, ctx, env_ids, episode_reset)
-            staging: list[torch.Tensor] = []
-            for call, buffers, fields_ in write_plan:
-                sim_writes = {
-                    name: torch.empty((count, *buffer.shape[1:]), dtype=buffer.dtype)
-                    for name, buffer in zip(fields_, buffers, strict=True)
-                }
-                # Only the reset-lane axis is dynamic. Preserve fixed field
-                # widths across graph breaks (e.g. K=4 versus quaternion width 4).
-                for output in sim_writes.values():
-                    for dim in range(1, output.ndim):
-                        torch._dynamo.mark_static(output, dim)
-                call.invoke(ctx, env_ids, _WritesMap(sim_writes))
-                staging.extend(sim_writes[name] for name in fields_)
-            return tuple(staging)
+            for (call, _buffers, _fields), sim_writes in zip(write_plan, writes_by_term, strict=True):
+                call.invoke(ctx, env_ids, sim_writes)
 
         if self.compile_enabled:
             kernel = torch.compile(kernel, dynamic=True, options=_compile_options())
@@ -357,20 +348,31 @@ class TorchManagerRuntime:
             # can still specialize graph segments.
             torch._dynamo.mark_dynamic(ids, 0)
             torch._dynamo.mark_dynamic(episode_reset, 0)
-            staging = kernel(ids, episode_reset)
             count = ids.shape[0]
+            writes_by_term = tuple(
+                {
+                    name: torch.empty((count, *buffer.shape[1:]), dtype=buffer.dtype)
+                    for name, buffer in zip(fields_, buffers, strict=True)
+                }
+                for _call, buffers, fields_ in write_plan
+            )
+            # Allocate eagerly so the compact axis can be marked dynamic before
+            # tracing, including when a term resumes after a graph break.
+            for sim_writes in writes_by_term:
+                for output in sim_writes.values():
+                    torch._dynamo.mark_dynamic(output, 0)
+                    for dim in range(1, output.ndim):
+                        torch._dynamo.mark_static(output, dim)
+            kernel(ids, episode_reset, writes_by_term)
+            staging = tuple(
+                sim_writes[name]
+                for (_call, _buffers, fields_), sim_writes in zip(write_plan, writes_by_term, strict=True)
+                for name in fields_
+            )
             for buffer, stage in zip(buffer_plan, staging, strict=True):
                 buffer[:count] = stage
 
         return wrapper
-
-
-class _WritesMap:
-    def __init__(self, writes: dict[str, torch.Tensor]) -> None:
-        self._writes = writes
-
-    def __getitem__(self, name: str) -> torch.Tensor:
-        return self._writes[name]
 
 
 __all__ = ["TorchManagerRuntime", "TorchTaskProgram"]

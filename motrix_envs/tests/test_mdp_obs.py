@@ -12,7 +12,6 @@ import torch
 from motrix_env_core.config.scene import KeyPoseCfg, ModelFileCfg, RobotCfg
 from motrix_env_core.manager.actions import ActionState, ActionTerm
 from motrix_env_core.manager.context import BuildContext
-from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.manager.random import RandomSource
 from motrix_env_core.mdp.observations import (
     ActionsObsCfg,
@@ -90,8 +89,8 @@ def _env() -> SimpleNamespace:
         cfg=SimpleNamespace(scene=SimpleNamespace(objs=_FakeObjs(robot))),
         num_envs=1,
         seed=17,
-        actions=Map({"joint_position": _action()}),
-        commands=Map({}),
+        actions={"joint_position": _action()},
+        commands={},
         model=SimModel(actuators=(), init_dof_pos=torch.zeros(3), bodies={"robot": body_model}),
     )
 
@@ -101,8 +100,8 @@ def test_actions_observation_reads_current_actions() -> None:
         cfg=SimpleNamespace(),
         num_envs=1,
         seed=17,
-        actions=Map({"joint_position": _action()}),
-        commands=Map({}),
+        actions={"joint_position": _action()},
+        commands={},
     )
     cfg = ActionsObsCfg()
     term = cfg.__call__(env)

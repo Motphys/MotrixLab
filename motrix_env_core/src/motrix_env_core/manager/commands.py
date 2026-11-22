@@ -5,15 +5,11 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass, fields
-from typing import TYPE_CHECKING
 
 import torch
 
+import motrix_env_core.manager.context as context
 from motrix_env_core.config import configclass
-from motrix_env_core.manager.context import BuildContext
-
-if TYPE_CHECKING:
-    from motrix_env_core.manager.context import ManagerContext
 
 
 # Keep inherited fields out of base-class slots: Torch 2.7 Dynamo only resolves
@@ -41,11 +37,11 @@ class CommandTerm(abc.ABC):
     command: torch.Tensor
 
     @abc.abstractmethod
-    def update(self, ctx: ManagerContext) -> None:
+    def update(self, ctx: context.ManagerContext) -> None:
         """Update the derived command data in the fused kernel."""
 
     @abc.abstractmethod
-    def advance(self, ctx: ManagerContext) -> None:
+    def advance(self, ctx: context.ManagerContext) -> None:
         """Advance persistent command state in the transition kernel.
 
         Setting ``ctx.sim_reset_requested`` for the lane requests simulator-state
@@ -58,7 +54,7 @@ class CommandTerm(abc.ABC):
         """
 
     @abc.abstractmethod
-    def reset(self, ctx: ManagerContext, env_ids: torch.Tensor, episode_reset: torch.Tensor) -> None:
+    def reset(self, ctx: context.ManagerContext, env_ids: torch.Tensor, episode_reset: torch.Tensor) -> None:
         """Reset persistent command state in the reset kernel.
 
         Args:
@@ -77,7 +73,7 @@ class CommandTerm(abc.ABC):
 @configclass(kw_only=True)
 class CommandCfg(abc.ABC):
     @abc.abstractmethod
-    def __call__(self, ctx: BuildContext) -> CommandTerm:
+    def __call__(self, ctx: context.BuildContext) -> CommandTerm:
         """Construct one independently owned command term without an environment."""
         raise NotImplementedError
 

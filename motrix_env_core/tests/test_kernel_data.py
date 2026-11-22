@@ -1,6 +1,7 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Mapping
 from dataclasses import FrozenInstanceError, dataclass
 
 import numpy as np
@@ -8,7 +9,6 @@ import pytest
 import torch
 
 from motrix_env_core.manager.kernel_data import (
-    Map,
     is_kernel_data,
     iter_leaves,
     leaf_value_type,
@@ -110,13 +110,34 @@ def test_iter_leaves_rejects_class_cycle() -> None:
         list(iter_leaves(_Node(_Cyclic(None))))  # type: ignore[arg-type]
 
 
-def test_iter_leaves_rejects_map_annotation_without_map_value() -> None:
+def test_iter_leaves_walks_nested_mappings_and_dataclasses_without_copying_tensors() -> None:
     @dataclass(frozen=True, slots=True)
-    class _HoldsMap:
-        values: Map
+    class _MappedState:
+        poses: Mapping[str, _Pose]
+        values: Mapping[str, Mapping[str, torch.Tensor]]
 
-    with pytest.raises(TypeError, match="requires a concrete Map value"):
-        list(iter_leaves(_HoldsMap({"a": 1.0})))  # type: ignore[arg-type]
+    position = torch.zeros(2, 3)
+    orientation = torch.ones(2, 4)
+    value = _MappedState({"robot": _Pose(position, orientation)}, {"sensor": {"position": position}})
+
+    assert validate_kernel_data(value, context="mapped state") is value
+    leaves = list(iter_leaves(value))
+    assert [path for path, _, _ in leaves] == [
+        ("poses", "robot", "position"),
+        ("poses", "robot", "orientation"),
+        ("values", "sensor", "position"),
+    ]
+    assert leaves[0][2] is leaves[2][2] is position
+    assert leaves[1][2] is orientation
+
+
+def test_iter_leaves_rejects_mapping_annotation_without_mapping_value() -> None:
+    @dataclass(frozen=True, slots=True)
+    class _HoldsMapping:
+        values: Mapping[str, float]
+
+    with pytest.raises(TypeError, match="requires a Mapping value"):
+        list(iter_leaves(_HoldsMapping([1.0])))  # type: ignore[arg-type]
 
 
 def test_kernel_data_rejects_unsupported_leaf() -> None:

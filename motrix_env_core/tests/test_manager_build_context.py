@@ -12,7 +12,6 @@ from motrix_env_core.manager.actions import ActionState, ActionTerm
 from motrix_env_core.manager.commands import CommandTerm
 from motrix_env_core.manager.context import BuildContext, ManagerContext
 from motrix_env_core.manager.env import ManagerBasedEnvCfg
-from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.mdp.observations import ActionsObsCfg, CommandObsCfg
 from motrix_env_core.sim.model import SimModel
 
@@ -49,8 +48,8 @@ def test_host_action_and_command_terms_build_observation_widths_without_environm
         cfg=cfg,
         num_envs=1,
         seed=17,
-        actions=Map({"residual": MutableAction(7)}),
-        commands=Map({"reference": Goal(torch.zeros(1, 11))}),
+        actions=dict({"residual": MutableAction(7)}),
+        commands=dict({"reference": Goal(torch.zeros(1, 11))}),
     )
     assert ActionsObsCfg(action_name="residual")(ctx).size == 7
     assert CommandObsCfg(command_name="reference")(ctx).size == 11
@@ -69,8 +68,8 @@ def test_explicit_model_is_borrowed() -> None:
         cfg=ManagerBasedEnvCfg(),
         num_envs=1,
         seed=17,
-        actions=Map({}),
-        commands=Map({}),
+        actions=dict({}),
+        commands=dict({}),
     )
     assert ctx.model is None
     model = SimModel(actuators=(), init_dof_pos=torch.zeros(0))

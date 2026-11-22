@@ -46,8 +46,12 @@ Each config group is a `@configclass` data class whose field names are the term 
 and whose values are term config objects. Factory methods receive `BuildContext`: use
 `ctx.cfg`, `ctx.model`, `ctx.num_envs`, `ctx.actions`, and `ctx.commands` for configuration,
 model data, and already-created terms rather than accessing a whole environment. Numerical
-callbacks receive `ManagerContext`; the two contexts serve different stages. The sections
-below cover each group and how to define it.
+callbacks receive `ManagerContext`; the two contexts serve different stages.
+Its `ctx.actions` is typed as `Mapping[str, ActionState]`, `ctx.commands` as
+`Mapping[str, CommandTerm]`, and `ctx.sim` and `ctx.metrics` as `Mapping[str, torch.Tensor]`.
+These mappings are ordinary `dict` objects at runtime with keys fixed after construction;
+callbacks only read entries or update tensors in place, without changing the mapping structure.
+Import `Mapping` from `collections.abc`. The sections below cover each group and how to define it.
 
 ## Lifecycle
 
@@ -264,15 +268,20 @@ kernel in declaration order.
 returns `ResetTerm(dispatch, *args, writes={...})`. `writes` declares which simulator
 state the term writes (`BodyPositionWrite`, `JointVelocityWrite`, ...; the dict keys are
 the write channels inside the dispatch); the dispatch computes the values to write.
-Its signature is `(ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], *static)`.
+Its signature is `(ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Mapping[str, torch.Tensor], *static)`.
 `ctx` and query arguments retain the full batch of `N` environments. `env_ids` contains
 this pass's `K` original environment row indices; gather full-batch inputs with these
 indices. Only `sim_writes` is compact: row `j` writes environment `env_ids[j]`, so do
 not index these write buffers by `env_ids` again.
+`sim_writes` is also an ordinary `dict` at runtime with fixed keys; the dispatch writes
+its tensors in place without changing the mapping structure.
 
 ```python
+from collections.abc import Mapping
+
+
 def _reset_body_pos(ctx: ManagerContext, env_ids: torch.Tensor,
-                    sim_writes: Map[torch.Tensor],
+                    sim_writes: Mapping[str, torch.Tensor],
                     spawn: tuple[float, float, float],
                     noise: tuple[float, float, float]) -> None:
     position = sim_writes["position"]  # compact (K, ...) rows for this reset pass

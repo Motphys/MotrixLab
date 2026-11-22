@@ -19,7 +19,6 @@ from motrix_env_core.config.sim_reset import ManagerResetCfg, ResetTermCfg
 from motrix_env_core.manager.actions import ActionCfg, ActionState, ActionTerm, ManagerActionsCfg
 from motrix_env_core.manager.context import BuildContext, ManagerContext
 from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
-from motrix_env_core.manager.kernel_data import Map
 from motrix_env_core.manager.observations import (
     ManagerObservationGroupCfg,
     ManagerObservationsCfg,
@@ -433,7 +432,7 @@ def test_reset_dispatch_gathers_explicit_ids_and_scatters_compact_outputs(
     )
 
     def reset_position(
-        context: ManagerContext, selected: torch.Tensor, outputs: Map[torch.Tensor], offset: float
+        context: ManagerContext, selected: torch.Tensor, outputs: Mapping[str, torch.Tensor], offset: float
     ) -> None:
         outputs["joint_position"].copy_(context.sim["dof_pos"][selected] + offset)
 
@@ -460,6 +459,61 @@ def test_reset_dispatch_gathers_explicit_ids_and_scatters_compact_outputs(
     env.reset(torch.tensor([1]))
     expected[1] += 10.0
     torch.testing.assert_close(env.sim.dof_pos, expected)
+
+
+def test_reset_dynamic_rows_preserve_mapping_writes_and_frozen_state(request: pytest.FixtureRequest) -> None:
+    """Reset compact staging keeps selected rows across changing K values.
+
+    The reset term intentionally receives an ordinary ``Mapping`` and a nested
+    frozen dataclass carrying caller-owned tensors, with an in-memory backend.
+    """
+    torch._dynamo.reset()
+    request.addfinalizer(torch._dynamo.reset)
+
+    @dataclass(frozen=True, slots=True)
+    class _NestedState:
+        values: torch.Tensor
+
+    @dataclass(frozen=True, slots=True)
+    class _ResetState:
+        nested: _NestedState
+
+    state = _ResetState(_NestedState(torch.tensor([[100.0, 101.0], [200.0, 201.0], [300.0, 301.0], [400.0, 401.0]])))
+
+    def reset_selected(
+        context: ManagerContext,
+        selected: torch.Tensor,
+        outputs: Mapping[str, torch.Tensor],
+        frozen_state: _ResetState,
+    ) -> None:
+        # Keep the dynamic staging axis live across a deliberate graph break.
+        torch._dynamo.graph_break()
+        outputs["joint_position"].copy_(frozen_state.nested.values[selected])
+
+    @configclass(kw_only=True)
+    class DynamicResetCfg(ResetTermCfg):
+        def __call__(self, ctx: BuildContext) -> ResetTerm:
+            return ResetTerm(reset_selected, state, writes={"joint_position": CtrlTargetsWrite()})
+
+    @configclass
+    class DynamicResetsCfg(ManagerResetCfg):
+        selected: DynamicResetCfg = DynamicResetCfg()
+
+    cfg = _FakeManagerCfg(sim_reset=DynamicResetsCfg())
+    env = ManagerEnv(cfg, num_envs=4, backend="fake-manager")
+    env.init_state()
+    runtime = _FakeBackend.last
+    runtime.reset_calls.clear()
+
+    for ids in (torch.tensor([3, 0, 2]), torch.tensor([1]), torch.tensor([2, 0])):
+        before = runtime.dof_pos.clone()
+        env.reset(ids)
+        expected = state.nested.values[ids]
+        torch.testing.assert_close(runtime.dof_pos[ids], expected)
+        torch.testing.assert_close(runtime.reset_calls[-1][1], expected)
+        untouched = torch.ones(4, dtype=torch.bool)
+        untouched[ids] = False
+        torch.testing.assert_close(runtime.dof_pos[untouched], before[untouched])
 
 
 def test_manager_frontend_does_not_import_motrixsim() -> None:

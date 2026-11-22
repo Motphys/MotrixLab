@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING
 import gymnasium as gym
 import torch
 
+import motrix_env_core.manager.context as context
 from motrix_env_core.config import configclass
-from motrix_env_core.manager.context import BuildContext
 from motrix_env_core.manager.kernel_data import validate_kernel_data
 
 if TYPE_CHECKING:
@@ -99,7 +99,7 @@ class ActionCfg(abc.ABC):
     actuator_names: tuple[str, ...] | None = None
 
     @abc.abstractmethod
-    def __call__(self, ctx: BuildContext, actuators: tuple[ActuatorSpec, ...] | None) -> ActionTerm:
+    def __call__(self, ctx: context.BuildContext, actuators: tuple[ActuatorSpec, ...] | None) -> ActionTerm:
         """Assemble the action space, persistent state, and host callbacks."""
 
 

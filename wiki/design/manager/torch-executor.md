@@ -23,8 +23,10 @@ compile=False)` 或 `runtime.compile_enabled = False` 回到逐 term eager 执�
 ## 解析与执行的分工
 
 - `ManagerProgramResolver`（backend-neutral）负责输入准备：组装常驻的基础
-  `ManagerContext` 宿主实例（Map 容纳真实的 command/action term 实例，`sim`/
-  `metrics` 为零拷贝 tensor 视图，`dt` 为
+  `ManagerContext` 宿主实例（`actions: Mapping[str, ActionState]`、
+  `commands: Mapping[str, CommandTerm]` 容纳真实的状态/term 实例，`sim`/
+  `metrics: Mapping[str, torch.Tensor]` 为零拷贝 tensor 视图；这些映射运行时均为普通
+  `dict`，构造后 key 固定，数值调用只读取条目或原地更新 tensor，不修改映射结构；`dt` 为
   Python float），并以 `iter_leaves` 做一次性 leaf 类型校验；carrier dataclass
   term 参数按常量参数原样透传，Dynamo 直接 trace 其属性访问。构建
   `ManagerLayout`、`ReadPlan`、per-term-kind typed call records（command hooks
@@ -79,16 +81,17 @@ ctx（`ManagerContext` 宿主实例）字段全部是**整批**张量：
 
 函数签名约定（第一个参数注解为 `ManagerContext`，observation 的 `out`
 注解为 `torch.Tensor`（`(N, size)` 切片），reset 的 `sim_writes` 注解为
-`Map[torch.Tensor]`——resolver 校验这些契约注解；标量参数到达时为 Python
+`Mapping[str, torch.Tensor]`——resolver 校验这些契约注解；标量参数到达时为 Python
 float，数组参数为批量张量）：
 
 - reward：返回 `(N,)` float32 张量
 - termination：返回 `(N,)` bool 张量；metric 写 `ctx.metrics[name][:, 0] = value`
 - observation：`out` 为 `(N, size)` 张量切片，直接写入；noise 用
   `(2 * ctx.rand.uniform_like(out) - 1) * amplitude`
-- reset：`(ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], *static)`；
+- reset：`(ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Mapping[str, torch.Tensor], *static)`；
   ctx 与 query 参数保持全批 N 行，`env_ids` 为 K 个原始行号，读取时显式 gather；
-  `sim_writes[name]` 为 compact `(K, *write_shape)` 张量，第 j 行对应 `env_ids[j]`，不得二次按原始行号 gather
+  `sim_writes[name]` 为 compact `(K, *write_shape)` 张量，第 j 行对应 `env_ids[j]`，不得二次按原始行号 gather；
+  `sim_writes` 也是 key 固定的普通 `dict`，dispatch 原地写入 tensor，不修改映射结构
 
 Command hooks（`update`/`advance`/`reset`）是 CommandTerm 类上的实例方法，
 `update`/`advance` 签名为 `(self, ctx: ManagerContext)`，reset 为

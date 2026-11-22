@@ -17,7 +17,6 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from motrix_env_core.manager.kernel_data import Map
 from motrix_envs.motion.loader import MotrixMotion
 from motrix_envs.motion.tracked import MotionChannel, WbtMotionClip
 
@@ -109,12 +108,10 @@ class MotionLibrary:
             frame_clip_end=torch.cat(
                 [segment.frame_clip_end + offset for segment, offset in zip(segments, clip_offsets)]
             ),
-            extensions=Map(
-                {
-                    name: MotionChannel(torch.cat([segment.extensions[name].data for segment in segments]))
-                    for name in self.extension_channels
-                }
-            ),
+            extensions={
+                name: MotionChannel(torch.cat([segment.extensions[name].data for segment in segments]))
+                for name in self.extension_channels
+            },
         )
 
     def _validate_corpus(self, motions: list[MotrixMotion]) -> None:

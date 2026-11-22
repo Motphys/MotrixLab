@@ -5,12 +5,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
 import torch
 
-from motrix_env_core.manager.kernel_data import Map
 from motrix_envs.motion.loader import MotionFormatError, MotrixMotion
 
 
@@ -45,8 +45,7 @@ def load_extension_channel(motion: MotrixMotion, name: str) -> np.ndarray:
 class MotionChannel:
     """One declared ``ext_`` channel, aligned with the clip's frame axis.
 
-    Map leaves are flattened by value type, so each
-    channel is wrapped in this record whose field is shared across lanes.
+    Each channel is wrapped in a record so its tensor is shared across lanes.
     """
 
     data: torch.Tensor
@@ -96,7 +95,7 @@ class WbtMotionClip:
     reference_body_pos_w: torch.Tensor
     reference_body_quat_w: torch.Tensor
     frame_clip_end: torch.Tensor
-    extensions: Map
+    extensions: Mapping[str, MotionChannel]
 
     @staticmethod
     def create(
@@ -145,10 +144,8 @@ class WbtMotionClip:
             reference_body_pos_w=torch.from_numpy(np.ascontiguousarray(motion.body_pos_w[:, reference_index])),
             reference_body_quat_w=torch.from_numpy(np.ascontiguousarray(motion.body_quat_w[:, reference_index])),
             frame_clip_end=torch.full((motion.num_frames,), motion.num_frames - 1, dtype=torch.int64),
-            extensions=Map(
-                {
-                    name: MotionChannel(torch.from_numpy(load_extension_channel(motion, name)))
-                    for name in extension_channels
-                }
-            ),
+            extensions={
+                name: MotionChannel(torch.from_numpy(load_extension_channel(motion, name)))
+                for name in extension_channels
+            },
         )

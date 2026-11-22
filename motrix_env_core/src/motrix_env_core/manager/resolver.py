@@ -28,7 +28,6 @@ import torch
 from motrix_env_core.manager.context import ManagerContext
 from motrix_env_core.manager.env import ManagerEnv, ReadPlan
 from motrix_env_core.manager.kernel_data import (
-    Map,
     is_kernel_data,
     iter_leaves,
     leaf_value_type,
@@ -176,7 +175,7 @@ class TermCall:
     function: Callable
     args: tuple[PreparedArg, ...]
 
-    def invoke(self, ctx: ManagerContext, *outputs: torch.Tensor | Map[torch.Tensor]) -> Any:
+    def invoke(self, ctx: ManagerContext, *outputs: torch.Tensor | Mapping[str, torch.Tensor]) -> Any:
         args = tuple(ctx.sim[arg.key] if isinstance(arg, SimArg) else arg.value for arg in self.args)
         return self.function(ctx, *outputs, *args)
 
@@ -228,7 +227,7 @@ class ResolvedManagerProgram:
     ``ManagerLayout.rewards``/``terminations`` ordering.
 
     ``context`` is the live :class:`ManagerContext` host instance handed to
-    every term; its tensors and Map entries alias the environment's
+    every term; its tensors and mapping entries alias the environment's
     persistent state, so it is built once and never rebuilt.
     """
 
@@ -496,7 +495,7 @@ class ManagerProgramResolver:
         if len(parameters) != 3 + len(term.args):
             raise TypeError(
                 f"Manager simulator reset term {name!r} dispatch must take a ManagerContext parameter, a "
-                "torch.Tensor env-ids parameter, a Map[torch.Tensor] sim-writes parameter, "
+                "torch.Tensor env-ids parameter, a Mapping[str, torch.Tensor] sim-writes parameter, "
                 f"and {len(term.args)} positional args; got "
                 f"{tuple(parameter.name for parameter in parameters)}."
             )
@@ -509,10 +508,10 @@ class ManagerProgramResolver:
         if annotations.get(parameters[1].name) is not torch.Tensor:
             raise TypeError(f"Manager simulator reset term {name!r} must annotate env_ids as torch.Tensor.")
         sim_writes_annotation = annotations.get(parameters[2].name)
-        if get_origin(sim_writes_annotation) is not Map or get_args(sim_writes_annotation) != (torch.Tensor,):
+        if get_origin(sim_writes_annotation) is not Mapping or get_args(sim_writes_annotation) != (str, torch.Tensor):
             raise TypeError(
                 f"Manager simulator reset term {name!r} dispatch must annotate its third parameter as "
-                "Map[torch.Tensor] (conventionally named sim_writes)."
+                "Mapping[str, torch.Tensor] (conventionally named sim_writes)."
             )
         dispatcher = function
         args = tuple(self._resolve_term_arg(value) for index, value in enumerate(term.args))
@@ -535,10 +534,10 @@ class ManagerProgramResolver:
         commands = dict(self._env.command_terms)
         value = ManagerContext(
             env_id=torch.arange(self._env.num_envs, dtype=torch.int64),
-            actions=Map(actions),
-            commands=Map(commands),
-            metrics=Map(metrics),
-            sim=Map(sim),
+            actions=actions,
+            commands=commands,
+            metrics=metrics,
+            sim=sim,
             dt=float(self._env.cfg.ctrl_dt),
             rand=self._env._random,
             sim_reset_requested=self._env._sim_reset_requested,

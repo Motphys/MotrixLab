@@ -110,6 +110,9 @@ recompile；用 `gather`/`where`/masked reduction 表达。
 Term 不要求继承统一实现基类，但必须遵循对应 protocol：
 
 ```python
+from collections.abc import Mapping
+
+
 @dataclass(frozen=True, slots=True)
 class BaseActionState:
     action_queue: torch.Tensor  # host (N, W, A), lane (W, A); W >= 2
@@ -126,9 +129,10 @@ class ActionTerm:
 
 class ManagerContext:
     env_id: np.ndarray
-    actions: Map
-    commands: Map
-    sim: Map
+    actions: Mapping[str, ActionState]
+    commands: Mapping[str, CommandTerm]
+    sim: Mapping[str, torch.Tensor]
+    metrics: Mapping[str, torch.Tensor]
 
 
 class ObservationTerm:
@@ -163,8 +167,11 @@ class CommandTerm:
 
 # Simulator reset dispatch: ctx/query inputs stay whole-batch; writes are compact K rows.
 def sim_reset(ctx: ManagerContext, env_ids: torch.Tensor,
-              sim_writes: Map[torch.Tensor], *static) -> None: ...
+              sim_writes: Mapping[str, torch.Tensor], *static) -> None: ...
 ```
+
+`ManagerContext` 的上述映射与 `sim_writes` 运行时均为普通 `dict`，构造后 key 固定；
+term 只读取条目或原地更新 tensor，不修改映射结构。
 
 Command term 的三个 hooks 都是常驻实例上的数值实例方法，无 host reset 钩子。
 `advance(self, ctx)` 在 evaluate 末尾推进整批状态，

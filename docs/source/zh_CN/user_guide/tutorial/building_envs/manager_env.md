@@ -42,7 +42,11 @@ registry.env("my-task")(ManagerEnv)
 配置里的每个组是一个 `@configclass` 数据类，字段名即项名，字段值是项配置对象。
 构造方法接收 `BuildContext`，通过 `ctx.cfg`、`ctx.model`、`ctx.num_envs`、
 `ctx.actions` 和 `ctx.commands` 读取配置、模型与已创建的项，不接收整个环境。
-数值回调接收的是 `ManagerContext`，不要混用两者。下文按组介绍各项的职责与定义。
+数值回调接收的是 `ManagerContext`，不要混用两者。
+其中 `ctx.actions` 的类型为 `Mapping[str, ActionState]`，`ctx.commands` 为
+`Mapping[str, CommandTerm]`，`ctx.sim` 与 `ctx.metrics` 为 `Mapping[str, torch.Tensor]`。
+这些映射运行时是普通 `dict`，构造后 key 固定；回调只读取条目或原地更新 tensor，不修改映射结构。
+`Mapping` 从 `collections.abc` 导入。下文按组介绍各项的职责与定义。
 
 ## 生命周期
 
@@ -240,14 +244,18 @@ class BadOrientationTerminationCfg(TerminationTermCfg):
 `ResetTerm(dispatch, *args, writes={...})`。`writes` 声明本 term 要写哪些仿真状态
 （`BodyPositionWrite`、`JointVelocityWrite` 等，键名即 dispatch 里的写入通道）；
 dispatch 计算写入值，签名为
-`(ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Map[torch.Tensor], *static)`。
+`(ctx: ManagerContext, env_ids: torch.Tensor, sim_writes: Mapping[str, torch.Tensor], *static)`。
 `ctx` 与 query 参数始终保持全批 N 个环境；`env_ids` 是本次 reset 的 K 个原始环境行号，
 读取全批输入时按这些行号 gather。只有 `sim_writes` 是紧凑布局：第 j 行对应环境
 `env_ids[j]`，不要再用 `env_ids` 索引写入缓冲。
+`sim_writes` 运行时也是普通 `dict`，key 固定；dispatch 原地写入 tensor，不修改映射结构。
 
 ```python
+from collections.abc import Mapping
+
+
 def _reset_body_pos(ctx: ManagerContext, env_ids: torch.Tensor,
-                    sim_writes: Map[torch.Tensor],
+                    sim_writes: Mapping[str, torch.Tensor],
                     spawn: tuple[float, float, float],
                     noise: tuple[float, float, float]) -> None:
     position = sim_writes["position"]  # 本次 reset 的紧凑 (K, ...) 行
