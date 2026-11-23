@@ -20,59 +20,112 @@ NUMA modes (``--numa``):
           the sum across workers. Reproduces the per-node process sharding
           validated on a many-core host.
 
-Reports per-call latency (median + p10/p90), batch steps/s (step_n calls per
-second over all parallel envs in the process), and total env steps/s.
+Results are structured ``BenchmarkResult`` objects rendered by the dispatcher;
+per-call latency (median + p10/p90) and env steps/s are carried by the
+standard schema, and NUMA aggregation notes travel in result metadata.
 
 This module imports the simulation runtime at import time and is therefore
-loaded lazily by ``motrixlab.commands.bench`` only for ``--mode physics``.
+loaded lazily by the named ``physics.step`` benchmark.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
-import time
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 import motrixsim as mtx
 import numpy as np
 
+from motrix_bench import (
+    BenchmarkConfig,
+    BenchmarkResult,
+    PreparedCase,
+    dump_results,
+    load_results,
+    run_case,
+)
 from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
 from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler
 from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
-from motrixlab.benchmark.report import render_table
-
-RESULT_HEADERS = [
-    "mode",
-    "robot",
-    "num_envs",
-    "median ms",
-    "p10 ms",
-    "p90 ms",
-    "batch steps/s",
-    "total env steps/s",
-]
-
-_WARMUP_DEFAULT = 20
 
 
-def _detect_num_nodes() -> int:
-    """Count online NUMA nodes from /sys; return 1 if unavailable / single-NUMA."""
+@dataclass(frozen=True, slots=True)
+class PhysicsStepConfig(BenchmarkConfig):
+    """Typed configuration for the ``physics.step`` benchmark."""
+
+    robot: str = field(kw_only=True)
+    num_envs: tuple[int, ...] = field(kw_only=True)
+    numa: str = "single"
+    node: int = 0
+    dt: float = 0.005
+    solver_iterations: int = 3
+    nstep: int = 1
+    out_json: str = ""
+
+    def __post_init__(self) -> None:
+        # Direct call: zero-arg super() resolves to the pre-slots class.
+        BenchmarkConfig.__post_init__(self)
+        if not self.num_envs:
+            raise ValueError("num_envs requires at least one value")
+        if any(num_envs < 1 for num_envs in self.num_envs):
+            raise ValueError("num_envs values must be positive")
+        if self.dt <= 0:
+            raise ValueError("dt must be positive")
+        if self.solver_iterations < 1:
+            raise ValueError("solver_iterations must be positive")
+        if self.nstep < 1:
+            raise ValueError("nstep must be positive")
+
+
+def configure(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--robot", required=True, help="Registered robot name.")
+    parser.add_argument("--num-envs", type=int, nargs="+", default=[2048])
+    parser.add_argument("--numa", choices=("single", "node", "shard", "_worker"), default="single")
+    parser.add_argument("--node", type=int, default=0)
+    parser.add_argument("--dt", type=float, default=0.005)
+    parser.add_argument("--solver-iterations", type=int, default=3)
+    parser.add_argument("--nstep", type=int, default=1)
+    parser.add_argument("--steps", type=int, default=200, help="Timed iterations; was --iters.")
+    parser.add_argument("--warmup", type=int, default=20)
+    parser.add_argument("--out-json", default="")
+
+
+def build_config(args: argparse.Namespace) -> PhysicsStepConfig:
+    return PhysicsStepConfig(
+        steps=args.steps,
+        warmup=args.warmup,
+        robot=args.robot,
+        num_envs=tuple(args.num_envs),
+        numa=args.numa,
+        node=args.node,
+        dt=args.dt,
+        solver_iterations=args.solver_iterations,
+        nstep=args.nstep,
+        out_json=args.out_json,
+    )
+
+
+def _detect_numa_nodes() -> list[int]:
+    """Return online NUMA node IDs, preserving sparse IDs (for example 0,2)."""
     try:
         text = Path("/sys/devices/system/node/online").read_text().strip()
-        # formats like "0" or "0-1" or "0,2"
-        if "-" in text:
-            lo, hi = text.split("-")
-            return int(hi) - int(lo) + 1
-        return len([x for x in text.split(",") if x])
-    except Exception:
-        return 1
+        nodes: list[int] = []
+        for part in text.split(","):
+            if "-" in part:
+                lo, hi = (int(value) for value in part.split("-", 1))
+                nodes.extend(range(lo, hi + 1))
+            elif part:
+                nodes.append(int(part))
+        return nodes or [0]
+    except (OSError, ValueError):
+        return [0]
 
 
 def _current_binding() -> str:
@@ -94,25 +147,17 @@ def _current_binding() -> str:
 def _device_context() -> dict:
     return {
         "num_cpus": os.cpu_count(),
-        "num_numa_nodes": _detect_num_nodes(),
+        "num_numa_nodes": len(_detect_numa_nodes()),
         "binding": _current_binding(),
     }
 
 
-def measure(
-    *,
-    robot: str,
-    num_envs: int,
-    dt: float,
-    solver_iterations: int,
-    nstep: int,
-    warmup: int,
-    iters: int,
-) -> dict:
-    """Run the physics-only measurement in this process. Returns a metrics dict."""
-    robot_cfg = registry.make_robot_config(robot)
+def _prepare_with_info(config: PhysicsStepConfig) -> tuple[PreparedCase, dict]:
+    """Prepare the case for ``config.num_envs[0]`` plus its scene metadata."""
+    num_envs = config.num_envs[0]
+    robot_cfg = registry.make_robot_config(config.robot)
     scene = StandardSceneCfg(objs=StandardSceneObjsCfg(robot=robot_cfg))
-    sim = SimCfg(dt=dt, solver_iterations=solver_iterations)
+    sim = SimCfg(dt=config.dt, solver_iterations=config.solver_iterations)
     model = MotrixSimSceneCompiler().compile(scene, sim)
 
     data = mtx.SceneData(model, batch=[num_envs])
@@ -131,79 +176,30 @@ def measure(
         if num_actuators > 0:
             data.actuator_ctrls = np.ascontiguousarray(ctrl)
 
-    for _ in range(warmup):
-        reset_state()
-        model.step_n(data, nstep)
-
-    samples = np.empty((iters,), dtype=np.float64)
-    for i in range(iters):
-        reset_state()
-        start = time.perf_counter()
-        model.step_n(data, nstep)
-        samples[i] = time.perf_counter() - start
-
-    median_s = float(np.median(samples))
-    p10_s = float(np.percentile(samples, 10))
-    p90_s = float(np.percentile(samples, 90))
-    batch_steps_per_s = 1.0 / median_s
-    # Each step_n call advances nstep native substeps across num_envs envs.
-    total_env_steps_per_s = batch_steps_per_s * num_envs * nstep
-
-    return {
-        "robot": robot,
-        "num_envs": num_envs,
-        "dt": dt,
-        "solver_iterations": solver_iterations,
-        "nstep": nstep,
-        "iters": iters,
+    case = PreparedCase(
+        step=lambda: model.step_n(data, config.nstep),
+        before_step=reset_state,
+        items_per_step=float(num_envs * config.nstep),
+        unit="env steps",
+    )
+    metadata = {
+        "robot": config.robot,
+        "dt": config.dt,
+        "solver_iterations": config.solver_iterations,
+        "nstep": config.nstep,
         "actuators": num_actuators,
         "links": num_links,
-        "median_ms": median_s * 1e3,
-        "p10_ms": p10_s * 1e3,
-        "p90_ms": p90_s * 1e3,
-        "batch_steps_per_s": batch_steps_per_s,
-        "total_env_steps_per_s": total_env_steps_per_s,
+        "device": _device_context(),
     }
+    return case, metadata
 
 
-def _result_row(label: str, r: dict) -> list[str]:
-    return [
-        label,
-        str(r["robot"]),
-        str(r["num_envs"]),
-        f"{r['median_ms']:.3f}",
-        f"{r['p10_ms']:.3f}",
-        f"{r['p90_ms']:.3f}",
-        f"{r['batch_steps_per_s']:.1f}",
-        f"{r['total_env_steps_per_s']:,.0f}",
-    ]
+def prepare(config: PhysicsStepConfig) -> PreparedCase:
+    case, _ = _prepare_with_info(config)
+    return case
 
 
-def run_single(args: argparse.Namespace) -> tuple[list[list[str]], list[str]]:
-    r = _measure_from_args(args)
-    return ([_result_row(f"single-process ({args.numa})", r)], [])
-
-
-def _measure_from_args(args: argparse.Namespace) -> dict:
-    return measure(
-        robot=args.robot,
-        num_envs=args.num_envs,
-        dt=args.dt,
-        solver_iterations=args.solver_iterations,
-        nstep=args.nstep,
-        warmup=args.warmup,
-        iters=args.iters,
-    )
-
-
-def _worker_entry(args: argparse.Namespace) -> None:
-    """Internal: run one measurement and write JSON to --out-json. Used by node/shard drivers."""
-    r = _measure_from_args(args)
-    r["node"] = args.node
-    Path(args.out_json).write_text(json.dumps(r), encoding="utf-8")
-
-
-def _worker_command(args: argparse.Namespace, node: int, num_envs: int, out_json: str) -> list[str]:
+def _worker_command(config: PhysicsStepConfig, node: int, num_envs: int, out_json: str) -> list[str]:
     """Build a numactl-wrapped ``python -m`` command for one pinned worker."""
     numactl = shutil.which("numactl")
     if numactl is None:
@@ -217,8 +213,7 @@ def _worker_command(args: argparse.Namespace, node: int, num_envs: int, out_json
         sys.executable,
         "-m",
         "motrixlab.commands.bench",
-        "--mode",
-        "physics",
+        "physics.step",
         "--numa",
         "_worker",
         "--node",
@@ -226,114 +221,145 @@ def _worker_command(args: argparse.Namespace, node: int, num_envs: int, out_json
         "--num-envs",
         str(num_envs),
         "--robot",
-        args.robot,
+        config.robot,
         "--dt",
-        str(args.dt),
+        str(config.dt),
         "--solver-iterations",
-        str(args.solver_iterations),
+        str(config.solver_iterations),
         "--nstep",
-        str(args.nstep),
+        str(config.nstep),
         "--warmup",
-        str(args.warmup),
-        "--iters",
-        str(args.iters),
+        str(config.warmup),
+        "--steps",
+        str(config.steps),
         "--out-json",
         out_json,
     ]
 
 
-def run_node(args: argparse.Namespace) -> tuple[list[list[str]], list[str]]:
-    """Re-exec the measurement pinned to NUMA node 0."""
-    notes: list[str] = []
-    num_nodes = _detect_num_nodes()
-    if num_nodes < 2:
-        notes.append(f"only {num_nodes} NUMA node(s) detected; --numa node is a no-op here")
+def _run_worker(config: PhysicsStepConfig) -> list[BenchmarkResult]:
+    """Internal single-batch mode used by node/shard drivers via a subprocess."""
+    if not config.out_json:
+        raise ValueError("--numa _worker requires --out-json")
+    batch = replace(config, num_envs=(config.num_envs[0],))
+    case, metadata = _prepare_with_info(batch)
+    result = run_case(
+        case,
+        batch,
+        benchmark="physics.step",
+        label=f"node {batch.node} num_envs={batch.num_envs[0]}",
+        config=asdict(batch),
+        metadata=metadata,
+    )
+    dump_results(config.out_json, [result])
+    return []
+
+
+def _run_single(config: PhysicsStepConfig) -> list[BenchmarkResult]:
+    results: list[BenchmarkResult] = []
+    for num_envs in config.num_envs:
+        batch = replace(config, num_envs=(num_envs,))
+        case, metadata = _prepare_with_info(batch)
+        results.append(
+            run_case(
+                case,
+                batch,
+                benchmark="physics.step",
+                label=f"single-process (numa=single) num_envs={num_envs}",
+                config=asdict(batch),
+                metadata=metadata,
+            )
+        )
+    return results
+
+
+def _run_node(config: PhysicsStepConfig) -> list[BenchmarkResult]:
+    """Re-exec the measurement pinned to the requested NUMA node."""
+    numa_nodes = _detect_numa_nodes()
+    if config.node not in numa_nodes:
+        raise ValueError(f"--node {config.node} is not an online NUMA node; available: {numa_nodes}")
+    num_envs = config.num_envs[0]
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
         out_json = f.name
     try:
-        cmd = _worker_command(args, node=0, num_envs=args.num_envs, out_json=out_json)
+        cmd = _worker_command(config, node=config.node, num_envs=num_envs, out_json=out_json)
         subprocess.run(cmd, check=True, env=os.environ.copy())
-        r = json.loads(Path(out_json).read_text())
-        return ([_result_row("node-pinned (cpunodebind=0, membind=0)", r)], notes)
+        results = load_results(out_json)
     finally:
         Path(out_json).unlink(missing_ok=True)
+    label = f"node-pinned (cpunodebind={config.node}, membind={config.node}) num_envs={num_envs}"
+    return [replace(result, label=label) for result in results]
 
 
-def run_shard(args: argparse.Namespace) -> tuple[list[list[str]], list[str]]:
+def _run_shard(config: PhysicsStepConfig) -> list[BenchmarkResult]:
     """Spawn one pinned worker per NUMA node, each running num_envs/num_nodes envs."""
-    num_nodes = _detect_num_nodes()
+    numa_nodes = _detect_numa_nodes()
+    num_nodes = len(numa_nodes)
     if num_nodes < 2:
         raise RuntimeError(f"--numa shard requires >=2 NUMA nodes; detected {num_nodes}. Use --numa single or node.")
-    if args.num_envs % num_nodes != 0:
-        raise ValueError(f"--num-envs ({args.num_envs}) must be divisible by num_nodes ({num_nodes})")
-    per_node = args.num_envs // num_nodes
-    tmp_paths = []
-    procs = []
-    for node in range(num_nodes):
-        fd, tmp_path = tempfile.mkstemp(suffix=f"_node{node}.json")
-        os.close(fd)
-        tmp_paths.append(tmp_path)
-        cmd = _worker_command(args, node=node, num_envs=per_node, out_json=tmp_path)
-        procs.append((node, subprocess.Popen(cmd, env=os.environ.copy())))
-    for node, p in procs:
-        rc = p.wait()
-        if rc != 0:
-            raise RuntimeError(f"node {node} worker exited with code {rc}")
+    all_results: list[BenchmarkResult] = []
+    for total_envs in config.num_envs:
+        if total_envs % num_nodes != 0:
+            raise ValueError(f"--num-envs ({total_envs}) must be divisible by num_nodes ({num_nodes})")
+        per_node = total_envs // num_nodes
+        tmp_paths: list[str] = []
+        procs: list[tuple[int, subprocess.Popen[bytes]]] = []
+        try:
+            for node in numa_nodes:
+                fd, tmp_path = tempfile.mkstemp(suffix=f"_node{node}.json")
+                os.close(fd)
+                tmp_paths.append(tmp_path)
+                cmd = _worker_command(config, node=node, num_envs=per_node, out_json=tmp_path)
+                procs.append((node, subprocess.Popen(cmd, env=os.environ.copy())))
+            for node, p in procs:
+                rc = p.wait()
+                if rc != 0:
+                    raise RuntimeError(f"node {node} worker exited with code {rc}")
+            results = [loaded for path in tmp_paths for loaded in load_results(path)]
+        finally:
+            for _, p in procs:
+                if p.poll() is None:
+                    p.terminate()
+            for _, p in procs:
+                if p.poll() is None:
+                    p.wait()
+            for path in tmp_paths:
+                Path(path).unlink(missing_ok=True)
 
-    results = [json.loads(Path(p).read_text()) for p in tmp_paths]
-    for p in tmp_paths:
-        Path(p).unlink(missing_ok=True)
-
-    aggregate_env_steps = sum(r["total_env_steps_per_s"] for r in results)
-    slowest_median = max(r["median_ms"] for r in results)
-    notes = [
-        f"sharded {args.num_envs} envs across {num_nodes} NUMA nodes -> {per_node} envs/worker",
-        f"aggregate ({len(results)} workers x {per_node} envs = {args.num_envs} total): "
-        f"sum total env steps/s {aggregate_env_steps:,.0f}",
-        f"slowest worker median {slowest_median:.3f} ms -> "
-        f"{args.num_envs / slowest_median * 1000:,.0f} env steps/s at wall-clock",
-        "compare: single-process total env steps/s is the number to beat",
-    ]
-    rows = [_result_row(f"shard node {r['node']}", r) for r in results]
-    return rows, notes
+        aggregate_env_steps = sum(result.sustained_items_per_second or 0.0 for result in results)
+        slowest_median_ms = max(result.median_ms for result in results)
+        notes = [
+            f"sharded {total_envs} envs across {num_nodes} NUMA nodes -> {per_node} envs/worker",
+            f"aggregate ({len(results)} workers x {per_node} envs = {total_envs} total): "
+            f"sum env steps/s {aggregate_env_steps:,.0f}",
+            f"slowest worker median {slowest_median_ms:.3f} ms -> "
+            f"{total_envs / slowest_median_ms * 1000:,.0f} env steps/s at wall-clock",
+        ]
+        for result in results:
+            metadata = dict(result.metadata)
+            metadata["notes"] = list(notes)
+            all_results.append(replace(result, metadata=metadata))
+    return all_results
 
 
-def main(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    if any(num_envs < 1 for num_envs in args.num_envs):
-        parser.error("--num-envs values must be positive")
-    if args.warmup is None:
-        args.warmup = _WARMUP_DEFAULT
+def run(config: PhysicsStepConfig) -> list[BenchmarkResult]:
+    if config.numa == "_worker":
+        return _run_worker(config)
+    if config.numa == "single":
+        return _run_single(config)
+    if config.numa == "node":
+        return _run_node(config)
+    return _run_shard(config)
 
-    if args.numa == "_worker":
-        if not args.out_json:
-            parser.error("--numa _worker requires --out-json")
-        if len(args.num_envs) != 1:
-            parser.error("internal worker mode requires exactly one --num-envs value")
-        args.num_envs = args.num_envs[0]
-        _worker_entry(args)
-        return
 
-    rows: list[list[str]] = []
-    notes: list[str] = []
-    for num_envs in args.num_envs:
-        args.num_envs = num_envs
-        if args.numa == "single":
-            batch_rows, batch_notes = run_single(args)
-        elif args.numa == "node":
-            batch_rows, batch_notes = run_node(args)
-        else:
-            batch_rows, batch_notes = run_shard(args)
-        rows.extend(batch_rows)
-        for note in batch_notes:
-            if note not in notes:
-                notes.append(note)
+def register():
+    from .registry import BenchmarkSpec
 
-    context = _device_context()
-    print(render_table(RESULT_HEADERS, rows))
-    print(
-        f"sim: robot={args.robot} dt={args.dt}s solver_iterations={args.solver_iterations} "
-        f"nstep={args.nstep} warmup={args.warmup} iters={args.iters}"
+    return BenchmarkSpec(
+        "physics.step",
+        "Benchmark native MotrixSim physics throughput.",
+        configure,
+        build_config,
+        prepare,
+        run,
     )
-    print(f"context: cpus={context['num_cpus']} numa_nodes={context['num_numa_nodes']} binding=[{context['binding']}]")
-    for note in notes:
-        print(note)

@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from motrixlab.benchmark.runner import split_num_envs
 
 from motrix_rl import numa
 
@@ -38,13 +37,6 @@ def test_known_unusable_topology_is_not_bypassed(tmp_path):
     status.write_text("Mems_allowed_list:\t0\n")
     with pytest.raises(ValueError, match="No online NUMA"):
         numa.discover_nodes(tmp_path, status, {8})
-
-
-def test_batch_split_preserves_total_and_is_balanced():
-    nodes = [numa.NodePlacement(index, (index,)) for index in (0, 2, 5)]
-    assert split_num_envs(8, nodes) == [3, 3, 2]
-    with pytest.raises(ValueError, match="must be at least"):
-        split_num_envs(2, nodes)
 
 
 def test_missing_libnuma_reports_cpu_only(monkeypatch):
