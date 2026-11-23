@@ -244,11 +244,12 @@ class Collector:
         t_sample = time.perf_counter()
         actions = self._sample_actions(warming)
         t_env = time.perf_counter()
+        frame = self.env.stage_frames(self.obs, self.critic_obs)
         result = self.env.step(actions)
         t_payload = time.perf_counter()
         final_payload = None
         if self.ring.payload_store is not None:
-            final = result.final_obs
+            final = self.env.final_frames(result)
             if final is not None:
                 final_payload = FinalObsPayload(
                     torch.as_tensor(final.env_ids, dtype=torch.long),
@@ -262,8 +263,8 @@ class Collector:
         # Capacity was established before stepping; no other producer can use it.
         self.ring.push(
             {
-                "obs": self.obs.detach(),
-                "critic_obs": self.critic_obs.detach(),
+                "obs": frame.policy.detach(),
+                "critic_obs": frame.value_or_policy.detach(),
                 "actions": actions.detach(),
                 "rewards": rewards,
                 "dones": terminated,

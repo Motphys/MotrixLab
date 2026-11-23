@@ -123,6 +123,7 @@ class Trainer(TrainerBase):
             action_scale=action_scale,
             action_bias=action_bias,
             writer=self._writer,
+            observation_spec=env.observation_spec,
         )
 
     def _set_seed(self, seed: int | None) -> None:
@@ -153,6 +154,9 @@ class Trainer(TrainerBase):
         probe = self._make_env(1, render=None, device=torch.device("cpu"))
         obs_dim, critic_obs_dim, act_dim, action_scale, action_bias = self._dims(probe)
         max_episode_steps = probe.max_episode_steps
+        observation_spec = probe.observation_spec
+        frame_dim = observation_spec.policy.frame_space.shape[-1]
+        value_frame_dim = observation_spec.value_or_policy.frame_space.shape[-1]
         probe.close()
         dims = (obs_dim, critic_obs_dim, act_dim)
 
@@ -225,9 +229,9 @@ class Trainer(TrainerBase):
         # host inventory.
         annotate_run(self._context.run_dir, system=capture_system_info(topology=topology))
         final_obs_enabled = max_episode_steps is not None
-        transition_schema = fastsac_transition_schema(obs_dim, critic_obs_dim, act_dim)
+        transition_schema = fastsac_transition_schema(frame_dim, value_frame_dim, act_dim)
         final_stores: list[FinalObsStorage] | None = (
-            [FinalObsStorage(async_options.ring_capacity, shard, obs_dim, critic_obs_dim) for shard in env_shards]
+            [FinalObsStorage(async_options.ring_capacity, shard, frame_dim, value_frame_dim) for shard in env_shards]
             if final_obs_enabled
             else None
         )
@@ -354,6 +358,7 @@ class Trainer(TrainerBase):
                 ),
                 kwargs={
                     "rank": rank,
+                    "observation_spec": observation_spec,
                     "learner_data_queue": learner_data_queue,
                     "num_learners": num_learners,
                     "rendezvous_file": rendezvous_file,
