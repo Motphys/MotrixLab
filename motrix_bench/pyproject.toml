@@ -1,0 +1,13 @@
+[build-system]
+requires = ["uv_build>=0.11.23,<0.12"]
+build-backend = "uv_build"
+
+[project]
+name = "motrix-bench"
+version = "0.5.0"
+description = "Lightweight benchmark measurement primitives for MotrixLab."
+requires-python = ">=3.10,<3.14"
+license = "Apache-2.0"
+
+[tool.uv.build-backend]
+module-name = "motrix_bench"

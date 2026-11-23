@@ -1,15 +1,20 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Environment preparation shared by latency and throughput measurements.
+"""Environment preparation shared by benchmark measurements.
 
 Runtime imports are deliberately lazy so workers can apply NUMA placement first.
 """
 
 from __future__ import annotations
 
-import argparse
 import os
+from typing import TYPE_CHECKING
+
+from motrix_bench import PreparedCase
+
+if TYPE_CHECKING:
+    from .env import EnvStepConfig
 
 
 def load_runtime():
@@ -24,59 +29,40 @@ def load_runtime():
     return np, registry, (DirectEnv, ManagerEnv)
 
 
-def prepare_env(
-    name: str,
-    args: argparse.Namespace,
-    num_envs: int,
-    actions=None,
-    expected_action_spec=None,
-):
-    """Create an environment and compatible fixed actions, checking comparisons."""
+def prepare_case(config: EnvStepConfig, num_envs: int) -> tuple[object, PreparedCase]:
+    """Create one environment and its standard :class:`PreparedCase`."""
     np, registry, manager_env_type = load_runtime()
-    kwargs = {"mode": args.env_mode, "num_envs": num_envs}
-    if args.sim_backend is not None:
-        kwargs["sim_backend"] = args.sim_backend
+    name = config.env_name
+    kwargs = {"mode": config.mode, "num_envs": num_envs}
+    if config.sim_backend is not None:
+        kwargs["sim_backend"] = config.sim_backend
     env = registry.make(name, **kwargs)
     try:
+        actual_num_envs = int(env.num_envs)
+        if actual_num_envs != num_envs:
+            raise ValueError(f"Environment {name!r} created {actual_num_envs} environments, requested {num_envs}.")
         space = env.action_space
-        action_spec = space.shape, space.dtype, np.asarray(space.low), np.asarray(space.high)
-        if expected_action_spec is not None:
-            expected_shape, expected_dtype, expected_low, expected_high = expected_action_spec
-            shape, dtype, low, high = action_spec
-            if shape != expected_shape or dtype != expected_dtype:
-                raise ValueError(
-                    f"Cannot compare {name!r}: action space {(shape, dtype)} does not match "
-                    f"the reference {(expected_shape, expected_dtype)}."
-                )
-            if not np.array_equal(low, expected_low) or not np.array_equal(high, expected_high):
-                raise ValueError(f"Cannot compare {name!r}: action bounds do not match the reference environment.")
-        if actions is None:
-            shape = (env.num_envs, *space.shape)
-            if args.zero_actions:
-                actions = np.zeros(shape, dtype=space.dtype)
-            else:
-                low = np.where(np.isfinite(space.low), space.low, -1.0)
-                high = np.where(np.isfinite(space.high), space.high, 1.0)
-                actions = np.random.default_rng(args.seed).uniform(low, high, size=shape).astype(space.dtype)
-        elif not isinstance(actions, np.ndarray):
-            # Compare runs pass the previous env's actions through; canonicalize
-            # back to numpy so every env receives identically valued actions.
-            actions = np.asarray(actions)
-        # Direct and Manager environments both consume tensor actions; hand each
-        # env a zero-copy tensor view of the same canonical numpy values.
+        shape = (actual_num_envs, *space.shape)
+        if config.zero_actions:
+            actions = np.zeros(shape, dtype=space.dtype)
+        else:
+            low = np.where(np.isfinite(space.low), space.low, -1.0)
+            high = np.where(np.isfinite(space.high), space.high, 1.0)
+            actions = np.random.default_rng(config.seed).uniform(low, high, size=shape).astype(space.dtype)
         if isinstance(env, manager_env_type):
             import torch
 
             actions = torch.from_numpy(np.ascontiguousarray(actions))
-        return env, actions, action_spec
+        case = PreparedCase(
+            step=lambda: env.step(actions),
+            close=lambda: close_env(env),
+            items_per_step=float(actual_num_envs),
+            unit="env steps",
+        )
+        return env, case
     except BaseException:
         close_env(env)
         raise
-
-
-def warmup(env, actions, count: int) -> None:
-    for _ in range(count):
-        env.step(actions)
 
 
 def close_env(env) -> None:

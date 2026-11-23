@@ -40,8 +40,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import numpy as np
-from report import render_table
 
+from motrix_bench import BenchmarkConfig, PreparedCase, run_case
 from motrix_rl.metrics import JSONL_FILENAME, HttpSink, JsonlSink, MetricsLogger
 from motrix_rl.training_logger import TrainingLogger
 
@@ -55,6 +55,45 @@ _HEADERS = [
     "jsonl lines",
     "delivered",
 ]
+
+
+def _render_table(headers: list[str], rows: list[list[str]]) -> str:
+    """Render an aligned ASCII table; numeric-looking columns right-align."""
+    numeric = [
+        all(
+            cell.replace(",", "").replace(".", "").replace("+", "").replace("-", "").replace("%", "").isdigit()
+            or cell in {"—", "-"}
+            for cell in (row[column] for row in rows)
+        )
+        if rows
+        else False
+        for column in range(len(headers))
+    ]
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, cell in enumerate(row):
+            widths[index] = max(widths[index], len(cell))
+
+    def border(left: str, middle: str, right: str) -> str:
+        return left + middle.join("-" * (width + 2) for width in widths) + right
+
+    def format_row(cells: list[str]) -> str:
+        parts = [
+            cell.rjust(width) if is_numeric else cell.ljust(width)
+            for cell, width, is_numeric in zip(cells, widths, numeric)
+        ]
+        return "| " + " | ".join(parts) + " |"
+
+    return "\n".join(
+        [
+            border("+", "+", "+"),
+            format_row(list(headers)),
+            border("+", "+", "+"),
+            *(format_row(row) for row in rows),
+            border("+", "+", "+"),
+        ]
+    )
+
 
 # Disk faults, standing in for a slow, hung or broken run_dir.
 _SLOW, _STUCK, _ERROR = "slow", "stuck", "error"
@@ -232,15 +271,23 @@ def _run(scenario: _Scenario, args, workload, services: dict[str, _Service], dow
         log.scalars({}, 0, env_steps=0)  # opens TensorBoard (a one-off startup cost) before timing; sends nothing
 
         emit_ns = []
-        started = time.perf_counter()
-        for iteration in range(args.iters):
+        iteration = 0
+
+        def step() -> None:
+            nonlocal iteration
             workload()
             if iteration % args.log_every == 0:
                 values["train/key_0"] = float(iteration)
                 emit_started = time.perf_counter_ns()
                 log.scalars(values, iteration, env_steps=iteration * 4096, live_extra=lambda: sys_samples)
                 emit_ns.append(time.perf_counter_ns() - emit_started)
-        elapsed = time.perf_counter() - started
+            iteration += 1
+
+        result = run_case(
+            PreparedCase(step=step, items_per_step=1.0),
+            BenchmarkConfig(steps=args.iters),
+        )
+        elapsed = result.elapsed_seconds
 
         # Not timed. Healthy sinks flush in milliseconds; a faulty one would only
         # sit out the close timeout, so it is left behind instead.
@@ -257,7 +304,7 @@ def _run(scenario: _Scenario, args, workload, services: dict[str, _Service], dow
         delivered = services[scenario.http].take_count()
     elif scenario.http == _DOWN:
         delivered = 0
-    return _Result(args.iters / elapsed, emit_ns, lines, delivered)
+    return _Result(result.throughput or (args.iters / elapsed), emit_ns, lines, delivered)
 
 
 def _percentile(values: list[int], q: float) -> float:
@@ -333,7 +380,7 @@ def main() -> None:
             ]
         )
 
-    print(render_table(_HEADERS, rows))
+    print(_render_table(_HEADERS, rows))
     emitted = len(range(0, args.iters, args.log_every))
     print(
         f"loop: workload={args.workload} iters={args.iters} step~{args.step_ms}ms log_every={args.log_every} "

@@ -15,7 +15,11 @@ dependencies = [
     "gymnasium==1.1.1",
     "numpy>=1.26",
     "torch>=2.7,<3",
+    "motrix-bench==0.5.0",
 ]
 
 [project.entry-points."motrix_rl.frameworks"]
 builtin = "motrix_rl_builtin.plugin:register"
+
+[project.entry-points."motrixlab.benchmarks"]
+"fastsac.collector.step" = "motrix_rl_builtin.fastsac.benchmark:register"
