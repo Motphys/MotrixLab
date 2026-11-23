@@ -75,12 +75,25 @@ def test_kernel_data_accepts_tensor_leaves() -> None:
     assert leaf_value_type(leaves[0][1]) is torch.Tensor
 
 
+def test_kernel_data_accepts_numeric_tuple_leaves() -> None:
+    @dataclass(frozen=True, slots=True)
+    class _Ranges:
+        scale: tuple[float, float]
+        noise: tuple[float, float, float]
+
+    value = _Ranges((0.8, 1.2), (0.0, 0.01, 0.0))
+    assert validate_kernel_data(value, context="ranges") is value
+    leaves = list(iter_leaves(value))
+    assert [leaf_value_type(annotation) for _, annotation, _ in leaves] == [tuple, tuple]
+    assert [leaf_value for _, _, leaf_value in leaves] == [(0.8, 1.2), (0.0, 0.01, 0.0)]
+
+
 def test_kernel_data_rejects_ndarray_leaves() -> None:
     @dataclass(frozen=True, slots=True)
     class _Numpy:
         position: np.ndarray
 
-    with pytest.raises(TypeError, match="expected a tensor or a numeric scalar"):
+    with pytest.raises(TypeError, match="expected a tensor, a numeric scalar, or a numeric tuple"):
         validate_kernel_data(_Numpy(np.zeros(2)), context="numpy")
 
 
