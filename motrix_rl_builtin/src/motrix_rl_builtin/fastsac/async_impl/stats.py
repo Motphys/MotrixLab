@@ -14,8 +14,8 @@ from queue import Empty
 from typing import Any, Protocol, TypedDict
 
 from motrix_rl.console import PanelSystemSampler, TrainingPanelSession, TrainingPanelStats
+from motrix_rl.console.metrics import ROLLOUT_MEANS, system_scalars
 from motrix_rl.training_logger import TrainingLogger
-from motrix_rl_builtin.fastsac.live_metrics import ROLLOUT_MEANS, system_scalars
 
 TimingTree = dict[str, object]
 

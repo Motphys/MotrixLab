@@ -76,3 +76,31 @@ def test_default_memory_policy_restore_uses_null_mask(monkeypatch):
     monkeypatch.setattr(numa, "_load_libnuma", lambda: Library())
     numa.set_memory_policy(numa.MemoryPolicy(0, (0,)))
     assert calls == [(0, None, 0)]
+
+
+def test_worker_cpu_spec_intersects_allocation_and_preserves_empty_default(monkeypatch):
+    monkeypatch.setattr(numa, "available_cpu_ids", lambda: {2, 4, 6})
+    assert numa.resolve_worker_cpus(None, "worker") == set()
+    assert numa.resolve_worker_cpus("0:4,6,6,99", "worker") == {2, 4, 6}
+    assert numa.resolve_worker_cpus("0:1000000000", "worker") == {2, 4, 6}
+    assert numa.resolve_worker_cpus("7:9", "worker") == set()
+    with pytest.raises(ValueError, match="start > end"):
+        numa.resolve_worker_cpus("6:2", "worker")
+    with pytest.raises(ValueError, match="invalid core spec"):
+        numa.resolve_worker_cpus("two", "worker")
+
+
+def test_worker_budget_does_not_override_default_and_survives_denied_affinity(monkeypatch):
+    import torch
+
+    threads = []
+    monkeypatch.setattr(torch, "set_num_threads", threads.append)
+
+    def denied(cpus):
+        raise PermissionError("restricted")
+
+    monkeypatch.setattr(numa, "_set_worker_cpu_affinity", denied)
+    numa.pin_worker_cpus(set())
+    assert threads == []
+    numa.pin_worker_cpus({2, 4})
+    assert threads == [2]
