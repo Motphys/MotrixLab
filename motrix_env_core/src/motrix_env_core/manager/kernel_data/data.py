@@ -67,14 +67,15 @@ def _iter_class_leaves(
     path: tuple[str, ...],
     stack: tuple[type, ...],
 ) -> Iterator[tuple[tuple[str, ...], Any, Any]]:
-    if declared_type in stack:
+    if declared_type in stack or type(value) in stack:
         chain = " -> ".join(item.__name__ for item in (*stack, declared_type))
         raise TypeError(f"KernelData cycle detected: {chain}.")
-    if type(value) is not declared_type:
+    if not isinstance(value, declared_type):
         raise TypeError(f"KernelData value must be {declared_type.__name__}, got {type(value).__name__}.")
-    stack = (*stack, declared_type)
-    hints = get_type_hints(declared_type, include_extras=True)
-    for data_field in fields(declared_type):
+    value_type = type(value)
+    stack = (*stack, value_type)
+    hints = get_type_hints(value_type, include_extras=True)
+    for data_field in fields(value_type):
         annotation = hints[data_field.name]
         field_path = (*path, data_field.name)
         field_value = getattr(value, data_field.name)

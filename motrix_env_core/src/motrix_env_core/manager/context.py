@@ -53,6 +53,12 @@ class ManagerContext:
     # Stateless capability, not tensor kernel data. All consumers on a device
     # share Torch's default stream; separate contexts do not imply RNG isolation.
     rand: RandomSource
+    # Read-only mirror of the latest transition's weighted reward total,
+    # sharing storage with ``state.reward`` (one tensor from state assembly).
+    # The evaluate kernel writes it before the command ``advance`` hooks run,
+    # so a hook observes the current step's reward — per-step curriculum
+    # accumulators (return-based start sampling) fold it in place.
+    reward: torch.Tensor
 
 
 @dataclass(frozen=True, slots=True)

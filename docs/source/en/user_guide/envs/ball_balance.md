@@ -87,8 +87,6 @@ The episode ends with `terminated` (failure) when any of the following holds:
 | Height failure | Base height < 0.22 m | Fell off the ball or collapsed |
 | Orientation failure | Horizontal component of the base-frame gravity > 0.6 (about 37° tilt) | Severe tilting |
 | Ball escaped | Horizontal distance from the ball center to the feet midpoint > 0.20 m | The ball rolled out from under the feet |
-| Joint position fault | Any joint exceeds its limit by more than 0.5 rad, or a joint angle is non-finite | Numerical divergence or joint-limit failure |
-| Joint velocity fault | Any joint velocity magnitude > 100 rad/s, or non-finite | Numerical divergence |
 
 Reaching 20 s (1000 control steps) ends the episode with `truncated` (time limit), which is not a failure.
 

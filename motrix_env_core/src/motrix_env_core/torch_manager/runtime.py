@@ -241,10 +241,10 @@ class TorchManagerRuntime:
                 mask = term.invoke(ctx).to(torch.bool)
                 termination_masks[:, term.index] = mask
                 terminated = mask if terminated is None else terminated | mask
+            reward_view.copy_(total if total is not None else torch.zeros_like(reward_view))
             for hook in advance_hooks:
                 receiver = ctx.commands[hook.receiver_key]
                 hook.function(receiver, ctx)
-            reward_view.copy_(total if total is not None else torch.zeros_like(reward_view))
             terminated_view.copy_(terminated if terminated is not None else torch.zeros_like(terminated_view))
 
         if self.compile_enabled:

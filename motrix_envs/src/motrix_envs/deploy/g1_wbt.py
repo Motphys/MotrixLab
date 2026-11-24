@@ -73,8 +73,6 @@ def build_g1_wbt_profile(env_name: str) -> DeploymentProfile:
         motion_frames=len(clip),
         reference_body_name=motion_cfg.reference_body_name,
         termination_ref_orientation_threshold=term.bad_ref_ori.threshold,
-        termination_joint_position_threshold=term.bad_dof_pos.threshold,
-        termination_joint_velocity_threshold=term.bad_dof_vel.threshold,
     )
     return DeploymentProfile(
         robot=robot,

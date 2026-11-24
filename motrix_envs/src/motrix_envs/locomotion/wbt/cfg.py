@@ -30,7 +30,6 @@ from motrix_env_core.mdp.observations import (
     UniformNoiseCfg,
 )
 from motrix_env_core.mdp.rewards import ActionRateRewardCfg
-from motrix_env_core.mdp.terminations import BadDofVelocityTerminationCfg
 from motrix_env_core.sim import (
     ActuatorKpQuery,
     BatchLinkAngularVelocityQuery,
@@ -72,7 +71,6 @@ from motrix_envs.locomotion.wbt.mdp.rewards import (
 )
 from motrix_envs.locomotion.wbt.mdp.terminations import (
     BadBodyZTerminationCfg,
-    BadDofPositionTerminationCfg,
     BadRefOrientationTerminationCfg,
     BadRefZTerminationCfg,
 )
@@ -139,11 +137,6 @@ class TerminationsCfg(ManagerTerminationsCfg):
     bad_ref_z: BadRefZTerminationCfg = BadRefZTerminationCfg(threshold=0.5)
     bad_ref_ori: BadRefOrientationTerminationCfg = BadRefOrientationTerminationCfg(threshold=0.8)
     bad_body_z: BadBodyZTerminationCfg = BadBodyZTerminationCfg(threshold=0.25)
-    bad_dof_pos: BadDofPositionTerminationCfg = BadDofPositionTerminationCfg(threshold=0.5)
-    bad_dof_vel: BadDofVelocityTerminationCfg = BadDofVelocityTerminationCfg(
-        body="robot",
-        threshold=100.0,
-    )
 
 
 @configclass
@@ -244,7 +237,7 @@ class WbtEnvCfg(ManagerBasedEnvCfg):
     def for_play(self) -> WbtEnvCfg:
         cfg = deepcopy(self)
         cfg.max_episode_seconds = None
-        cfg.commands.motion.adaptive_sampling_enabled = False
+        cfg.commands.motion.sampling_mode = "uniform"
         cfg.commands.motion.start_at_timestep_zero_prob = 1.0
         cfg.commands.motion.sequential_clips = True
         cfg.commands.motion.hold_at_clip_end = False

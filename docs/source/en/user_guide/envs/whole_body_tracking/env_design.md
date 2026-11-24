@@ -90,13 +90,13 @@ Each raw term is multiplied by its `WbtRewardScales` weight and then by `ctrl_dt
 | Reference-height error      | `terminated` | Reference-body world-Z error exceeds `bad_ref_pos_threshold`                                                           | Overall robot height has clearly diverged from the motion                       |
 | Reference-orientation error | `terminated` | The projected-gravity Z-component difference between motion and robot reference bodies exceeds `bad_ref_ori_threshold` | The robot has fallen or its overall orientation has diverged                    |
 | Key-body height error       | `terminated` | Maximum Z error over `bad_motion_body_pos_body_names` exceeds `bad_motion_body_pos_threshold`                          | A key part such as a foot or hand is badly misplaced                            |
-| Invalid joint position      | `terminated` | A joint position is non-finite, or maximum distance beyond a hard limit exceeds the threshold                          | Stop invalid or diverging joint states                                          |
-| Invalid joint velocity      | `terminated` | A joint velocity is non-finite, or its maximum absolute value exceeds `bad_dof_vel_abs`                                | Stop numerical velocity spikes before they grow                                 |
 | Time limit                  | `truncated`  | Training reaches `max_episode_seconds`, 10 s in built-in configs                                                       | Normal training time limit, not bad tracking                                    |
 | Motion final frame          | Neither      | `motion_steps` reaches the clip end                                                                                    | Resample and reset motion state during training; restart at frame 0 during play |
 
 `undesired_contacts` contributes only a reward penalty and does not terminate the episode. Termination rates and error means
 are written to `state.metrics`.
+
+MotrixSim numerical failures terminate and reset the affected environments through the shared environment runtime.
 
 ## Reset logic
 

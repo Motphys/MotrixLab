@@ -38,8 +38,6 @@ def _spec(scale):
         kd=[1] * 29,
         motion_frames=2,
         termination_ref_orientation_threshold=0.4,
-        termination_joint_position_threshold=0.5,
-        termination_joint_velocity_threshold=10,
     )
 
 

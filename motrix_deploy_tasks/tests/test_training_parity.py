@@ -120,8 +120,6 @@ def test_g1_profile_uses_config_not_environment_and_embeds_named_motion(monkeypa
     np.testing.assert_array_equal(payload["reference_quaternion_xyzw"], motion.body_quat_w[:, torso])
     assert restored.motion_frames == len(motion.joint_pos)
     assert restored.termination_ref_orientation_threshold == cfg.terminations.bad_ref_ori.threshold
-    assert restored.termination_joint_position_threshold == cfg.terminations.bad_dof_pos.threshold
-    assert restored.termination_joint_velocity_threshold == cfg.terminations.bad_dof_vel.threshold
     kp = np.asarray(restored.kp)
     expected_scale = np.zeros_like(kp)
     np.divide(profile.robot.torque_limit, kp, out=expected_scale, where=kp != 0)

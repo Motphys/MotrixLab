@@ -542,6 +542,7 @@ class ManagerProgramResolver:
             rand=self._env._random,
             sim_reset_requested=self._env._sim_reset_requested,
             terminated=torch.zeros(self._env.num_envs, dtype=torch.bool),
+            reward=torch.zeros(self._env.num_envs, dtype=torch.float32),
         )
         self._validate_context_leaves(value)
         return value
