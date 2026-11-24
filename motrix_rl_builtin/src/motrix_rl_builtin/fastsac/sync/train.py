@@ -12,12 +12,12 @@ from motrix_env_core import registry as env_registry
 from motrix_env_core.renderer import RenderConfig
 from motrix_rl import checkpoints
 from motrix_rl.console import EpisodeWindow, PanelSystemSampler, TrainingPanelSession, TrainingPanelStats
+from motrix_rl.console.metrics import ROLLOUT_MEANS, system_scalars
 from motrix_rl.contracts import TrainerBase, TrainerContext
 from motrix_rl.device import resolve_default_device
 from motrix_rl.training_logger import TrainingLogger
 from motrix_rl_builtin.fastsac.agent import FastSacAgent
 from motrix_rl_builtin.fastsac.config import FastSacCfg
-from motrix_rl_builtin.fastsac.live_metrics import ROLLOUT_MEANS, system_scalars
 from motrix_rl_builtin.fastsac.wrap import FastSacEnvWrap
 
 # Enable TF32 matmul on Ampere+ GPUs. SAC training has no precision concern with

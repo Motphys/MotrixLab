@@ -183,7 +183,7 @@ def _assert_live_matches_tensorboard(
 
 
 def test_system_scalars_use_the_fixed_key_list():
-    from motrix_rl_builtin.fastsac.live_metrics import system_scalars
+    from motrix_rl.console.metrics import system_scalars
 
     gib = 1024**3
     stats = SimpleNamespace(
