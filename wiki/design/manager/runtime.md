@@ -215,3 +215,9 @@ Observation terms use the host-side ``ObservationTerm(size, dispatch, *args)`` f
 - sim snapshot 只来自编译后的 read program；
 - `ctx.env_id` 和所有 lane 形状 leaves 使用同一原始 environment id；
 - Manager 不引入 generic `ManagerValue` registry 或独立 Hydra backend 维度。
+
+## Transition reward and nested metrics
+
+The evaluate kernel publishes the weighted transition reward to `ctx.reward` before command
+`advance` hooks. It aliases `state.reward`. Nested kernel-data metrics are initialized to zero
+and collected recursively so motion curricula can own their statistics.

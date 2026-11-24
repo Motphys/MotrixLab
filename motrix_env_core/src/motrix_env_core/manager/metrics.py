@@ -8,6 +8,8 @@ from typing import Any
 
 import torch
 
+from motrix_env_core.manager.kernel_data import is_kernel_data
+
 _METRIC_METADATA_KEY = "motrix_metric"
 _UNBOUND_METRIC = object()
 _EXPORT_DTYPES = frozenset(
@@ -65,7 +67,12 @@ def _field_metric(data_field: Any) -> Metric | None:
 
 
 def materialize_metrics(value: Any, num_envs: int, *, context: str) -> Any:
-    """Replace metric() placeholders with writable ``(num_envs,)`` tensor views."""
+    """Replace metric() placeholders with writable ``(num_envs,)`` tensor views.
+
+    Recurses into nested kernel-data members, so a term holding a structured
+    sub-object (e.g. a curriculum sampler) rebuilds that child with its
+    metric fields materialized; parents are rebuilt only when a child changed.
+    """
 
     if not is_dataclass(value):
         return value
@@ -81,6 +88,11 @@ def materialize_metrics(value: Any, num_envs: int, *, context: str) -> Any:
             shape = () if spec.scalar else (num_envs,)
             current = torch.empty(shape, dtype=dtype)
             changed = True
+        elif is_kernel_data(current):
+            materialized = materialize_metrics(current, num_envs, context=f"{context} field {data_field.name!r}")
+            if materialized is not current:
+                current = materialized
+                changed = True
         values.append(current)
     return type(value)(*values) if changed else value
 
@@ -92,18 +104,30 @@ def collect_metrics(
     context: str,
     context_path: tuple[str, ...],
 ) -> tuple[tuple[str, torch.Tensor], ...]:
-    """Validate direct metric fields on one canonical manager term.
+    """Collect metric fields from one canonical manager term, recursing into
+    nested kernel-data members.
 
     Metric fields remain torch tensors for kernel execution. The manager
     frontend creates zero-copy NumPy views only when exposing host metrics.
+    Names come from each field's declaration and must stay unique across the
+    whole term tree (the manager frontend rejects duplicates).
     """
-    del context_path
     bindings = []
     for data_field in fields(value):
         spec = _field_metric(data_field)
+        child = getattr(value, data_field.name)
         if spec is None:
+            if is_kernel_data(child):
+                bindings.extend(
+                    collect_metrics(
+                        child,
+                        num_envs,
+                        context=f"{context} field {data_field.name!r}",
+                        context_path=(*context_path, data_field.name),
+                    )
+                )
             continue
-        tensor = getattr(value, data_field.name)
+        tensor = child
         if not isinstance(tensor, torch.Tensor):
             raise TypeError(f"{context} metric field {data_field.name!r} must hold a torch.Tensor.")
         if tensor.device.type != "cpu":

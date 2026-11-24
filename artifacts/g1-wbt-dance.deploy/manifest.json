@@ -361,8 +361,6 @@
       "preparation_settle_duration_s": 1.0,
       "preparation_timeout_s": 5.0,
       "reference_body_name": "torso_link",
-      "termination_joint_position_threshold": 0.5,
-      "termination_joint_velocity_threshold": 100.0,
       "termination_ref_orientation_threshold": 0.8
     },
     "name": "g1_wbt/v1"

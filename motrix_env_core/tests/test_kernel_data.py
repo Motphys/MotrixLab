@@ -166,3 +166,40 @@ def test_ndarrays_and_tensors_are_not_kernel_data_values() -> None:
     assert not is_kernel_data(np.zeros(2))
     assert not is_kernel_data(torch.zeros(2))
     assert is_kernel_data(_Pose(torch.zeros(2), torch.zeros(2)))
+
+
+def test_kernel_data_base_class_field_accepts_subclass_instance() -> None:
+    """A field annotated with a kernel-data base walks the runtime type's leaves."""
+
+    @dataclass(frozen=True, slots=True)
+    class _CurriculumBase:
+        pass
+
+    @dataclass(frozen=True, slots=True)
+    class _Uniform(_CurriculumBase):
+        num_frames: int
+
+    @dataclass(frozen=True, slots=True)
+    class _Adaptive(_CurriculumBase):
+        failed: torch.Tensor
+        cdf: torch.Tensor
+
+    @dataclass(frozen=True, slots=True)
+    class _Impostor:
+        failed: torch.Tensor
+
+    @dataclass(frozen=True, slots=True)
+    class _Command:
+        sampler: _CurriculumBase
+
+    adaptive = _Command(_Adaptive(torch.zeros(3), torch.ones(3)))
+    leaves = [(path, leaf_value) for path, _, leaf_value in iter_leaves(adaptive)]
+    assert [path for path, _ in leaves] == [("sampler", "failed"), ("sampler", "cdf")]
+    assert leaves[0][1] is adaptive.sampler.failed
+    validate_kernel_data(adaptive, context="adaptive command")
+
+    uniform = _Command(_Uniform(128))
+    assert [(path, leaf_value) for path, _, leaf_value in iter_leaves(uniform)] == [(("sampler", "num_frames"), 128)]
+
+    with pytest.raises(TypeError, match="must be _CurriculumBase, got _Impostor"):
+        list(iter_leaves(_Command(_Impostor(torch.zeros(1)))))  # type: ignore[arg-type]

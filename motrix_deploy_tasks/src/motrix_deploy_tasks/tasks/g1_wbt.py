@@ -59,8 +59,6 @@ class G1WbtTaskSpec(TaskSpec):
     motion_frames: Annotated[int, Field(ge=1)]
     reference_body_name: str = "torso_link"
     termination_ref_orientation_threshold: NonNegativeFloat
-    termination_joint_position_threshold: NonNegativeFloat
-    termination_joint_velocity_threshold: NonNegativeFloat
 
 
 @dataclass(frozen=True)
@@ -277,13 +275,6 @@ class G1WbtPolicyProcessor(PolicyProcessor[None]):
         gravity_error = abs(2 * (reference[0] ** 2 + reference[1] ** 2 - torso[0] ** 2 - torso[1] ** 2))
         if gravity_error > self.spec.termination_ref_orientation_threshold:
             return "bad_ref_ori"
-        violation = np.maximum(self.robot.position_lower - state.joint_position, 0) + np.maximum(
-            state.joint_position - self.robot.position_upper, 0
-        )
-        if np.max(violation) > self.spec.termination_joint_position_threshold:
-            return "bad_dof_pos"
-        if np.any(np.abs(state.joint_velocity) > self.spec.termination_joint_velocity_threshold):
-            return "bad_dof_vel"
         return None
 
 

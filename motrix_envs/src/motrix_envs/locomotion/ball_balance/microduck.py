@@ -34,7 +34,6 @@ from motrix_env_core.mdp.observations import (
     UniformNoiseCfg,
 )
 from motrix_env_core.mdp.rewards import ActionRateRewardCfg, AliveRewardCfg
-from motrix_env_core.mdp.terminations import BadDofVelocityTerminationCfg
 from motrix_env_core.sim import (
     ActuatorKpQuery,
     BatchLinkPositionQuery,
@@ -80,7 +79,6 @@ from motrix_envs.locomotion.wbt.mdp.rewards import (
     DofLimitRewardCfg,
     UndesiredContactsRewardCfg,
 )
-from motrix_envs.locomotion.wbt.mdp.terminations import BadDofPositionTerminationCfg
 
 _BALL_ASSET_DIR = Path(__file__).parent / "assets"
 _BALL_RADIUS = 0.14
@@ -130,8 +128,6 @@ class TerminationsCfg(ManagerTerminationsCfg):
     bad_base_z: BadBaseZTerminationCfg = BadBaseZTerminationCfg(threshold=0.22)
     bad_orientation: BadOrientationTerminationCfg = BadOrientationTerminationCfg(threshold=0.6)
     ball_escaped: BallEscapedTerminationCfg = BallEscapedTerminationCfg(threshold=0.20)
-    bad_dof_pos: BadDofPositionTerminationCfg = BadDofPositionTerminationCfg(threshold=0.5)
-    bad_dof_vel: BadDofVelocityTerminationCfg = BadDofVelocityTerminationCfg(threshold=100.0)
 
 
 @configclass

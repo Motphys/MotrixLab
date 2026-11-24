@@ -86,12 +86,12 @@ Actor 的参考身体姿态、基座角速度、关节位置和关节速度会�
 | 参考高度偏差     | `terminated` | 参考身体世界 Z 误差超过 `bad_ref_pos_threshold`                                    | 机器人整体高度已明显偏离 motion                            |
 | 参考朝向偏差     | `terminated` | motion 与机器人参考身体的投影重力 Z 分量差超过 `bad_ref_ori_threshold`             | 机器人倾倒或整体朝向严重偏离                               |
 | 关键身体高度偏差 | `terminated` | `bad_motion_body_pos_body_names` 中最大 Z 误差超过 `bad_motion_body_pos_threshold` | 脚或手等关键部位严重失配                                   |
-| 关节位置异常     | `terminated` | 关节位置非有限，或超出 hard limit 的最大距离超过阈值                               | 阻止无效或发散的关节状态继续传播                           |
-| 关节速度异常     | `terminated` | 关节速度非有限，或最大绝对值超过 `bad_dof_vel_abs`                                 | 在数值速度尖峰扩大前结束回合                               |
 | 时间上限         | `truncated`  | 训练回合达到 `max_episode_seconds`，内置配置为 10 s                                | 正常达到训练时限，不表示 bad tracking                      |
 | Motion 末帧      | 两者都不是   | `motion_steps` 到达 clip 末尾                                                      | 训练时重采样起始帧并重置 motion 状态；play 时从第 0 帧重播 |
 
 `undesired_contacts` 只产生奖励惩罚，不直接终止回合。各类终止比例与误差均值记录在 `state.metrics`。
+
+MotrixSim 数值失败由通用环境运行时终止并重置对应环境。
 
 ## 重置逻辑
 

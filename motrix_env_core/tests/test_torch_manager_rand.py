@@ -21,6 +21,7 @@ def _context() -> ManagerContext:
         dt=0.02,
         sim_reset_requested=torch.zeros(4, dtype=torch.bool),
         terminated=torch.zeros(4, dtype=torch.bool),
+        reward=torch.zeros(4),
         rand=RandomSource(),
     )
 

@@ -10,6 +10,7 @@ without a simulator backend.
 """
 
 from dataclasses import dataclass, fields, replace
+from dataclasses import field as dataclass_field
 
 import gymnasium as gym
 import numpy as np
@@ -226,20 +227,32 @@ class _CounterCommandCfg(CommandCfg):
     def __call__(self, ctx: BuildContext) -> CommandTerm:
         shape = (ctx.num_envs, 1)
         return _CounterCommand(
-            double=torch.zeros(shape, dtype=torch.float32),
             command=torch.zeros(shape, dtype=torch.float32),
+            double=torch.zeros(shape, dtype=torch.float32),
+            reward_sum=torch.zeros(shape, dtype=torch.float32),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _CounterGauges:
+    """Nested kernel-data sub-object carrying its own metric gauge."""
+
+    step_sum: torch.Tensor = metric(name="counter_step_sum", scalar=True)
 
 
 @dataclass(frozen=True, slots=True)
 class _CounterCommand(CommandTerm):
     double: torch.Tensor = metric()
+    reward_sum: torch.Tensor = metric(name="reward_sum")
+    gauges: _CounterGauges = dataclass_field(default_factory=_CounterGauges)
 
     def update(self: "_CounterCommand", ctx: ManagerContext) -> None:
         self.double[:, 0] = 2.0 * ctx.actions["test"].source[:, 0]
 
     def advance(self: "_CounterCommand", ctx: ManagerContext) -> None:
         self.command[:, 0] += ctx.dt
+        self.reward_sum[:, 0] += ctx.reward
+        self.gauges.step_sum.fill_(1.0)
 
     def reset(self: "_CounterCommand", ctx: ManagerContext, env_ids: torch.Tensor, episode_reset: torch.Tensor) -> None:
         self.command[env_ids, 0] = -1.0
@@ -839,7 +852,11 @@ def test_reset_passes_compact_episode_reset_in_selected_lane_order(
     @configclass
     class EpisodeCommandCfg(CommandCfg):
         def __call__(self, ctx: BuildContext) -> CommandTerm:
-            return EpisodeCommand(command=torch.zeros(ctx.num_envs, 1), double=torch.zeros(ctx.num_envs, 1))
+            return EpisodeCommand(
+                command=torch.zeros(ctx.num_envs, 1),
+                double=torch.zeros(ctx.num_envs, 1),
+                reward_sum=torch.zeros(ctx.num_envs, 1),
+            )
 
     cfg = _ManagerEnvCfg(commands={"counter": EpisodeCommandCfg()})
     env = ManagerEnv(cfg, num_envs=4)
@@ -1082,3 +1099,36 @@ def test_dispatch_term_parameter_names_are_not_constrained() -> None:
     env.compute_transition(state)
 
     np.testing.assert_allclose(state.reward, 2.0 * 0.5 * env.cfg.ctrl_dt)
+
+
+def test_nested_kernel_data_metrics_are_materialized_and_collected() -> None:
+    env = _ManagerEnv(num_envs=2)
+    command = _counter_command(env)
+    state = env.step(torch.zeros((2, 1), dtype=torch.float32))
+
+    # The nested gauge was materialized at construction and registered under
+    # its declared name; the advance hook wrote through it.
+    assert "counter_step_sum" in env.metrics
+    assert env.metrics["counter_step_sum"].data_ptr() == command.gauges.step_sum.data_ptr()
+    assert command.gauges.step_sum.item() == 1.0
+    assert state.metrics["counter_step_sum"].item() == 1.0
+    assert state.process_metrics()["counter_step_sum"] == 1.0
+
+
+def test_context_reward_mirrors_state_reward_in_advance_hook() -> None:
+    env = _ManagerEnv(num_envs=2)
+    command = _counter_command(env)
+    first = env.step(torch.full((2, 1), 0.1, dtype=torch.float32))
+    assert env._compiled_manager_program is not None
+    context = env._compiled_manager_program.context
+    first_reward = first.reward.clone()
+    # The mirror shares storage with the state reward from birth, and the
+    # advance hook already saw the transition the evaluate kernel just wrote
+    # (not the previous step's total).
+    assert context.reward is first.reward
+    np.testing.assert_allclose(command.reward_sum[:, 0], first_reward)
+    np.testing.assert_allclose(context.reward, first_reward)
+
+    second = env.step(torch.full((2, 1), 0.2, dtype=torch.float32))
+    assert context.reward is second.reward
+    np.testing.assert_allclose(command.reward_sum[:, 0], first_reward + second.reward)

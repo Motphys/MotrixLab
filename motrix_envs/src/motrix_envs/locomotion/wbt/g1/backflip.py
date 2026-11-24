@@ -11,7 +11,6 @@ from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SystemCameraCfg
 from motrix_env_core.manager import ManagerEnv
 from motrix_env_core.mdp.rewards import ActionRateRewardCfg
-from motrix_env_core.mdp.terminations import BadDofVelocityTerminationCfg
 from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
 from motrix_envs.locomotion.wbt.cfg import CommandsCfg, RewardsCfg, TerminationsCfg
 from motrix_envs.locomotion.wbt.mdp.command import WbtMotionCommandCfg
@@ -23,7 +22,6 @@ from motrix_envs.locomotion.wbt.mdp.rewards import (
 )
 from motrix_envs.locomotion.wbt.mdp.terminations import (
     BadBodyZTerminationCfg,
-    BadDofPositionTerminationCfg,
     BadRefOrientationTerminationCfg,
     BadRefZTerminationCfg,
 )
@@ -120,7 +118,7 @@ class G1BackflipWbtEnvCfg(G1WbtEnvCfg):
             # flight window land on the reference ballistic trajectory; judge
             # skill by frame-0-start episodes (play), since training-time
             # means stay diluted by mid-clip starts.
-            adaptive_sampling_enabled=False,
+            sampling_mode="uniform",
             start_at_timestep_zero_prob=0.2,
             # Hold the final frame instead of wrap-rematerializing: an episode
             # that reaches the clip end keeps tracking the landing hold until
@@ -145,9 +143,6 @@ class G1BackflipWbtEnvCfg(G1WbtEnvCfg):
                 "right_ankle_roll_link",
             ),
         ),
-        # Kept as NaN/divergence guards; they never fire on healthy rollouts.
-        bad_dof_pos=BadDofPositionTerminationCfg(threshold=0.5),
-        bad_dof_vel=BadDofVelocityTerminationCfg(threshold=100.0),
     )
 
     rewards: G1BackflipRewardsCfg = G1BackflipRewardsCfg()

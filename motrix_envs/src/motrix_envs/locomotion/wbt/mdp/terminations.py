@@ -122,25 +122,3 @@ class BadBodyZTerminationCfg(_WbtTerminationCfg):
             float(self.threshold),
             metric_names=("body_z_max_err",),
         )
-
-
-def bad_dof_position_termination(ctx: ManagerContext, threshold: float) -> torch.Tensor:
-    action = ctx.actions["joint_position"]
-    position = ctx.sim["robot_dof_pos"]
-    zero = torch.zeros_like(position)
-    violation = torch.maximum(action.joint_lower - position, zero) + torch.maximum(position - action.joint_upper, zero)
-    finite = torch.all(torch.isfinite(position), dim=-1)
-    error = torch.max(violation, dim=-1).values
-    error = torch.where(finite, error, torch.full_like(error, float("inf")))
-    ctx.metrics["dof_limit_violation_max"][:, 0] = error
-    return error > threshold
-
-
-@configclass(kw_only=True)
-class BadDofPositionTerminationCfg(_WbtTerminationCfg):
-    def __call__(self, ctx) -> TerminationTerm:
-        return TerminationTerm(
-            bad_dof_position_termination,
-            float(self.threshold),
-            metric_names=("dof_limit_violation_max",),
-        )

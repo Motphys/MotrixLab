@@ -43,8 +43,6 @@ def _task(
         kd=[1] * 29,
         motion_frames=len(motion),
         termination_ref_orientation_threshold=0.4,
-        termination_joint_position_threshold=0.5,
-        termination_joint_velocity_threshold=10,
         **(preparation or {}),
     )
     robot = RobotSpec(
@@ -128,7 +126,7 @@ def test_orientation_termination_uses_latest_observed_reference_frame():
     assert task.check_termination(state) == "bad_ref_ori"
 
 
-def test_measured_base_and_waist_orientation_and_joint_safety_termination():
+def test_measured_base_and_waist_orientation_termination():
     task = _task()
     state = _state()
     state.base_orientation_xyzw[:] = [1, 0, 0, 0]
@@ -137,12 +135,6 @@ def test_measured_base_and_waist_orientation_and_joint_safety_termination():
     state.base_orientation_xyzw[:] = [0, 0, 0, 1]
     state.joint_position[2] = 1
     assert task.check_termination(state) == "bad_ref_ori"
-    state.joint_position.fill(0)
-    state.joint_position[0] = task.robot.position_upper[0] + 1
-    assert task.check_termination(state) == "bad_dof_pos"
-    state.joint_position.fill(0)
-    state.joint_velocity[0] = task.spec.termination_joint_velocity_threshold + 1
-    assert task.check_termination(state) == "bad_dof_vel"
 
 
 def test_spec_roundtrip_and_motion_shape_validation():

@@ -27,6 +27,7 @@ def _context(values: torch.Tensor) -> ManagerContext:
         dt=0.02,
         sim_reset_requested=torch.zeros(count, dtype=torch.bool),
         terminated=torch.zeros(count, dtype=torch.bool),
+        reward=torch.zeros(count),
     )
 
 

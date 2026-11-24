@@ -389,7 +389,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         context = self._compiled_manager_program.context
         context.terminated.fill_(True)  # keep the seed-all-lanes init contract
         return super()._new_state(
-            self.observation_manager.observation, reward, context.terminated, truncated, episode_steps
+            self.observation_manager.observation, context.reward, context.terminated, truncated, episode_steps
         )
 
     def init_state(self) -> ArrayEnvState:

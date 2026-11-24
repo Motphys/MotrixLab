@@ -46,6 +46,7 @@ def _ctx() -> ManagerContext:
         dt=0.02,
         sim_reset_requested=torch.zeros((_NUM_ENVS, 1), dtype=torch.bool),
         terminated=torch.zeros(_NUM_ENVS, dtype=torch.bool),
+        reward=torch.zeros(_NUM_ENVS, dtype=torch.float32),
     )
 
 

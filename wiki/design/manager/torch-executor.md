@@ -142,3 +142,9 @@ ActionTerm 的 `process/_reset` 保持宿主路径不变。
   0.59ms（Numba 因单小并行区天然免疫）。
 - **测量适用范围**。以上基准是单 Torch 执行器迁移阶段的记录；`ctx.rand` 的数值
   trace 实验也不是整环境吞吐或 CUDA graph capture 验收，相关结论须单独测量。
+
+## Transition reward and nested metrics
+
+The evaluate kernel publishes the weighted transition reward to `ctx.reward` before command
+`advance` hooks. It aliases `state.reward`. Nested kernel-data metrics are initialized to zero
+and collected recursively so motion curricula can own their statistics.
