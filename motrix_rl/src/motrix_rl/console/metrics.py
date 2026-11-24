@@ -1,11 +1,11 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
-"""Host scalars FastSAC adds to its live metrics (see ``wiki/design/live-metrics.md``)."""
+"""Host scalars trainers add to their live metrics (see ``wiki/design/live-metrics.md``)."""
 
 from __future__ import annotations
 
-from motrix_rl.console import TrainingPanelStats
+from motrix_rl.console.panel import TrainingPanelStats
 
 _GIB = 1024**3
 
