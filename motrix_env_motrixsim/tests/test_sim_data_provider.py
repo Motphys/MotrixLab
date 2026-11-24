@@ -63,6 +63,14 @@ class _Data:
             self.values[:, None] if actuator_ctrls is None else np.asarray(actuator_ctrls, dtype=np.float32)
         )
 
+    def __getitem__(self, mask):
+        return _Data(
+            self.values[mask],
+            dof_pos=self.dof_pos[mask],
+            dof_vel=self.dof_vel[mask],
+            actuator_ctrls=self.actuator_ctrls[mask],
+        )
+
 
 class _Link:
     def __init__(self, index: int, name: str) -> None:
@@ -264,6 +272,9 @@ class _Model:
             _PoseObject(5, "hand", 60.0, self.calls, "geom"),
         )
         self._geoms = {geom.name: geom for geom in self.geoms}
+
+    def forward_kinematic(self, data):
+        pass
 
     def get_body(self, name: str) -> _Body:
         if name != "robot":

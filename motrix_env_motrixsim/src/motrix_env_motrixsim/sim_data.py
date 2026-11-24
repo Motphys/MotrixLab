@@ -96,6 +96,7 @@ class _MotrixSimDataQueryCompiler(SimDataQueryCompiler):
         return _MotrixSimReadProgram(
             read,
             self._source,
+            model=self._model,
             declared=self._declared,
             canonical_keys=self._canonical_keys,
             image_views=self._image_views,
@@ -355,12 +356,29 @@ class _MotrixSimReadProgram(PhysicsReadProgram):
         self,
         read: _BatchQueryRead,
         source: mtx.SceneData,
+        model: mtx.SceneModel,
         declared: Mapping[str, SimDataQuery],
         canonical_keys: Mapping[str, str],
         image_views: Mapping[str, tuple[str, int, int, int, int, int]],
     ) -> None:
         self._read = read
         self._source = source
+        self._model = model
+        # Native query execution gathers cached link data. Integration advances
+        # q/qd after the last FK pass, so these reads need a fresh FK evaluation.
+        kinematic_sources = (
+            mtx.query.LinkPosition,
+            mtx.query.LinkRotation,
+            mtx.query.LinkLinearVelocity,
+            mtx.query.LinkAngularVelocity,
+            mtx.query.GeomPosition,
+            mtx.query.GeomRotation,
+            mtx.query.GeomLinearVelocity,
+            mtx.query.SitePosition,
+            mtx.query.SiteRotation,
+        )
+        self._requires_kinematics = any(isinstance(q.source, kinematic_sources) for q in read.resolved.values())
+        self._fk_mask = np.zeros(int(source.shape[0]), dtype=bool)
         self._declared = dict(declared)
         num_envs = int(source.shape[0])
         arena = read.program.buffer.reshape(-1)
@@ -439,6 +457,15 @@ class _MotrixSimReadProgram(PhysicsReadProgram):
         # only the rows selected by env_ids. The perf scope nests under the
         # caller's stage (e.g. transition/reset in the console timing tree).
         with active_perf_scope("read"):
+            if self._requires_kinematics:
+                if ids is None:
+                    self._model.forward_kinematic(self._source)
+                elif len(ids):
+                    if np.any(ids < 0) or np.any(ids >= len(self._fk_mask)):
+                        raise ValueError("Simulator read environment index is out of range")
+                    self._fk_mask.fill(False)
+                    self._fk_mask[ids] = True
+                    self._model.forward_kinematic(self._source[self._fk_mask])
             self._read.program.execute(self._source, env_ids=ids)
 
 

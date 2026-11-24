@@ -127,3 +127,51 @@ def test_kinematic_tree_query_resolves_backend_neutral_tree(g1):
     assert tree.joint_idx[0] == -1
     # Same tree the loader produces: parity is already pinned by the test above.
     assert len(tree.joint_names) == 29
+
+
+@pytest.mark.integration
+def test_post_step_link_reads_match_current_generalized_state(g1):
+    """Querying after integration must not mix current q/qd with cached link FK."""
+    from motrix_env_core.sim import JointPositionQuery, JointVelocityQuery
+
+    backend, tree, root = g1
+    writes = backend.write_compiler.compile(
+        {
+            "position": BodyPositionWrite((root,)),
+            "rotation": BodyRotationWrite((root,)),
+            "q": BodyJointPositionWrite(root),
+            "qd": BodyJointVelocityWrite(root),
+        }
+    )
+    writes.buffer("position")[0, 0] = torch.tensor([0.0, 0.0, 2.0])
+    writes.buffer("rotation")[0, 0] = torch.tensor([0.0, 0.0, 0.0, 1.0])
+    writes.buffer("q").zero_()
+    writes.buffer("qd").fill_(0.5)
+    writes.execute(torch.tensor([0]))
+    declarations = {
+        "q": JointPositionQuery(joints=tuple(tree.joint_names)),
+        "qd": JointVelocityQuery(joints=tuple(tree.joint_names)),
+    }
+    for name in tree.link_names:
+        declarations[f"p/{name}"] = LinkPositionQuery(link=name)
+        declarations[f"r/{name}"] = LinkQuaternionQuery(link=name)
+        declarations[f"v/{name}"] = LinkLinearVelocityQuery(link=name)
+        declarations[f"w/{name}"] = LinkAngularVelocityQuery(link=name)
+    reads = backend.compile_reads(declarations)
+    for _ in range(5):
+        backend.step(4)
+        reads.execute()
+        expected = tree.forward(
+            reads.view(f"p/{root}"),
+            to_matrix(reads.view(f"r/{root}")),
+            reads.view(f"v/{root}"),
+            reads.view(f"w/{root}"),
+            reads.view("q"),
+            reads.view("qd"),
+        )
+        for i, name in enumerate(tree.link_names):
+            for key, tensor in zip(("p", "r", "v", "w"), expected, strict=True):
+                actual = reads.view(f"{key}/{name}")
+                if key == "r":
+                    actual = to_matrix(actual)
+                torch.testing.assert_close(actual, tensor[:, i], atol=1e-4, rtol=1e-4)
