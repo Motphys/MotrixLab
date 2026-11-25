@@ -68,12 +68,10 @@ def _compile_options() -> dict[str, Any]:
 
 
 def _apply_default_thread_cap(num_envs: int) -> None:
-    """Cap the process intra-op thread pool unless the caller chose a value.
+    """Cap the process intra-op thread pool unless OMP_NUM_THREADS is set.
 
-    ``OMP_NUM_THREADS`` is respected outright. A pool the caller already
-    narrowed below the machine's CPU count is also respected — e.g. async
-    collectors pin their worker CPUs and call ``torch.set_num_threads``
-    before ``build_env()``. Otherwise the pool is capped at
+    ``OMP_NUM_THREADS`` is respected outright. Otherwise an existing pool
+    below the cap is left unchanged, while a larger pool is capped at
     ``min(16, max(8, num_envs // 256))`` threads. Larger batches amortize a
     wider pool over longer loops, so the cap grows with the batch — measured
     optima on the 192-core EPYC host: 8 threads at 2048 envs (11.3ms vs 12.9
@@ -83,10 +81,11 @@ def _apply_default_thread_cap(num_envs: int) -> None:
     """
     if os.environ.get("OMP_NUM_THREADS"):
         return
-    if torch.get_num_threads() < (os.cpu_count() or 1):
-        return
-    capped = min(min(16, max(8, num_envs // 256)), torch.get_num_threads())
-    if capped < torch.get_num_threads():
+    # Torch may default to physical cores while os.cpu_count() reports
+    # logical CPUs. A smaller pool is not evidence of a caller override.
+    current = torch.get_num_threads()
+    capped = min(16, max(8, num_envs // 256), current)
+    if capped < current:
         torch.set_num_threads(capped)
 
 
