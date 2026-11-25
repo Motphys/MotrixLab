@@ -86,20 +86,20 @@ class LqrEnv(DirectEnv):
     def action_space(self):
         return self._action_space
 
-    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> None:
         actions = _normalize_actions(actions, self._num_envs, self._nu)
         ctrl = self._ctrl_writes.buffer("ctrl")
         ctrl.copy_(torch.clamp(actions, min=self._action_low, max=self._action_high))
         self._ctrl_writes.execute()
-        return state
+        return None
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         inputs = self.sim_data
         qpos = inputs["dof_pos"]
         qvel = inputs["dof_vel"]
-        return state.replace(obs=torch.cat([qpos, qvel], dim=-1))
+        state.obs.policy.copy_(torch.cat([qpos, qvel], dim=-1))
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         inputs = self.sim_data
         qpos = inputs["dof_pos"]
@@ -123,23 +123,27 @@ class LqrEnv(DirectEnv):
         terminated |= qpos.isnan().any(dim=-1) | qvel.isnan().any(dim=-1)
         terminated |= ctrl.isnan().any(dim=-1)
 
-        state.metrics = {
-            "position_norm": position_norm,
-            "velocity_norm": velocity_norm,
-            "success": success.float(),
-            "out_of_bounds": out_of_bounds.float(),
-        }
-        state.reward_terms = {
-            "state_cost": -state_cost,
-            "velocity_cost": -velocity_cost,
-            "control_cost": -control_cost,
-            "success_bonus": success_reward,
-            "out_of_bounds_penalty": -boundary_penalty,
-        }
+        state.metrics.update(
+            {
+                "position_norm": position_norm,
+                "velocity_norm": velocity_norm,
+                "success": success.float(),
+                "out_of_bounds": out_of_bounds.float(),
+            }
+        )
+        state.reward_terms.update(
+            {
+                "state_cost": -state_cost,
+                "velocity_cost": -velocity_cost,
+                "control_cost": -control_cost,
+                "success_bonus": success_reward,
+                "out_of_bounds_penalty": -boundary_penalty,
+            }
+        )
 
         state.reward[:] = reward
         state.terminated[:] = terminated
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         num_envs = env_ids.numel()

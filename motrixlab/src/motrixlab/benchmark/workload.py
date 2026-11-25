@@ -35,7 +35,7 @@ def prepare_case(config: EnvStepConfig, num_envs: int) -> tuple[object, Prepared
     name = config.env_name
     kwargs = {"mode": config.mode, "num_envs": num_envs}
     if config.sim_backend is not None:
-        kwargs["sim_backend"] = config.sim_backend
+        kwargs["sim"] = config.sim_backend
     env = registry.make(name, **kwargs)
     try:
         actual_num_envs = int(env.num_envs)

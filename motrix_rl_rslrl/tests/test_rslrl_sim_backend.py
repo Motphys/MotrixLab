@@ -52,7 +52,7 @@ def _make_env(history_length: int = 1, value_dim: int | None = None) -> Mock:
     env.action_space = action_space
     env.observation_spec = observation_spec
     env.state = state
-    env.init_state.return_value = state
+    env.initialize.return_value = state
     env.step.return_value = state
     return env
 

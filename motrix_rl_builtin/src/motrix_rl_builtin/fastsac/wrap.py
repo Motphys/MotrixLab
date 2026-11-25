@@ -69,7 +69,7 @@ class FastSacEnvWrap:
         return self._high_t.to(self.device)
 
     def reset(self) -> tuple[torch.Tensor, torch.Tensor]:
-        state = self._env.init_state()
+        state = self._env.initialize()
         return state.obs.policy.to(self.device), state.obs.value_or_policy.to(self.device)
 
     @property

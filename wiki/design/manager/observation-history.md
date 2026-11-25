@@ -2,7 +2,7 @@
 
 ## 摘要
 
-本文定义 ManagerEnv 的 group 级 observation history：常规 step 只返回 stacked obs。静态描述和固定布局允许 provider 从尾部提取实际单帧，但这只是可选优化，不新增环境单帧读取方法，也不要求改变现有传输或 replay。环境负责观测定义、真实轨迹的历史推进和 episode 边界；RL 层决定存储与采样方式。当前 FastSAC 仍按完整窗口传输和存储 observation，本次不实现单帧 ring/replay 重建。
+本文定义 ManagerEnv 的 group 级 observation history：常规 step 只返回 stacked obs。静态描述和固定布局允许 provider 从尾部提取实际单帧，不新增环境单帧读取方法。环境负责观测定义、真实轨迹的历史推进和 episode 边界；RL 层决定存储与采样方式。FastSAC 按实际尾帧传输和存储、在 replay 采样时重建窗口；SuperMimic 保留物理 transition，并在 learner 重建 observation。两者共享 core 的历史描述，不要求其他 provider 改变传输或 replay。
 
 本文定义 core 的 history 契约。`policy` 必须存在，`value` 可选，任务可声明其他命名 group；各组独立配置整帧 history，统一采用旧到新的时间顺序和 time-major flatten。provider 显式选择消费的组，不由 core 推断网络输入。
 
@@ -169,28 +169,90 @@ core 提供无 simulator 依赖的窗口组装张量操作，以及 Manager 的�
 
 ManagerEnv 负责这些入口的调用时机，不再持有第二份 spec、buffer、history 或 reset mask。group term 的解析与编译仍由既有 resolver/executor 执行，不另建数值调度器；内部 buffer 容器不扩展成通用框架。
 
-RL 负责 trajectory 顺序、存储与采样，不由 core 实现通用 replay；不预先添加通用 provider registry 或兼容抽象。
+RL 负责 trajectory 顺序、存储与采样，不由 core 实现通用 replay。只有 FastSAC/SuperMimic 接入时确认复用的轨迹窗口采样逻辑才进入 RL 公共层；不预先添加通用 provider registry 或兼容抽象。
 
-## 7. 可选的单帧传输边界
+## 7. Ring 与 replay 协议
 
-core 的固定 time-major 布局允许 provider 提取实际尾帧，但不规定 ring payload 或 replay 存储格式。当前 FastSAC 保留完整窗口传输和存储，不在本次迁移为单帧路径；环境 history 支持不等于单帧 replay 优化已经实现。
+### 7.1 通用单帧路径
 
-若 provider 后续选择单帧优化，传输组装、轨迹连续性、episode 首帧 repeat-fill、缺失前缀及 truncation endpoint 的窗口重建均由 RL 层负责。重建需保留实际采样的噪声与 reset 前终态语义，不能拿 reset 后观测替代终点，也不能为提取尾帧重新求值或推进环境 history。这些边界不构成本次对具体 replay 实现或存储节省的承诺。
+```text
+环境：frame → history → obs → 本地 actor
+        │
+        └→ 单帧 transition → ring → replay → gather history → learner
+```
 
-## 8. Provider 与部署边界
+RL collector/adapter 负责组装 training transition，不由 env 生成 ring payload。通用观测路径在 step 前按 spec 保存当前 stacked obs 的尾帧及起点 episode 步号，step 后关联本步 action、reward、terminated/truncated，再读取下一帧及稀疏 final frame。adapter 按 provider schema 选择字段；ring 只负责已组装记录的存储、同步与传输，不重复计算 observation，也不维护另一份在线 history。
 
-provider 可继续直接消费最终二维 obs，不必因环境启用 history 就改成序列训练。单帧 replay 是独立的 provider 优化，不是启用环境 history 的前提。无法支持的组合在组装边界明确拒绝。
+每步按需要传 policy/value 实际单帧、action、reward、terminated/truncated 和轨迹边界信息；稀疏 final payload 传终态单帧。是否显式传 next frame 或利用下一条记录去重由 transport/replay 决定，不改变 auto-reset 后 next frame 与 reset 前 final frame 的区别。H 不进入常规 observation payload 的宽度。配置/spec 在启动时传递并校验，不逐 transition 重复发送。
+
+这一分层服务当前 ring 路径，同步 replay 可复用相同采集逻辑，但不为假设性消费者新增完整环境 transition 协议。不同 provider 不强制使用相同 payload；共享的是 schema、发布/回收、背压与所有权基础设施。
+
+协议要求唯一轨迹流、连续步序和 episode 边界可确定。现有固定 collector/env lane 的 SPSC 无损顺序流可使用隐含流标识与消费者绝对索引，加 episode 步号/边界信息，不强制重复传所有 id。collector 重启或丢步必须形成显式断点；不得把到达顺序不同的 env 或进程拼成历史。
+
+有界 ring 满时背压，不通过静默丢帧维持吞吐。host 与 GPU IPC transport 使用相同的单帧语义；发布和回收 slot 仍遵循各 transport 的同步/所有权规则。
+
+### 7.2 Replay 重建
+
+每帧仅存一次；根据 spec 的 H 在采样时 gather 窗口，再组装最终网络输入。policy/value 可使用不同 H。没有独立 value 时复用 policy 数据，不复制相同张量作为独立 critic 记录。
+
+- 真实 episode 开头不足 H：重复实际保存的首帧，包括同一份首帧噪声。
+- replay 覆盖、collector 重启、传输断点导致前缀缺失：不是 episode 开头，不冒充 repeat-fill；排除无法完整重建的采样起点。
+- 为有效训练区保留至多 `H_max-1` 帧额外前缀，或缩小可采样区。环形物理索引相邻不等于逻辑时间连续。
+- 使用 n-step return 时，历史长度和 return horizon 独立；样本需要完整起点 history、有效 reward 区间、bootstrap endpoint history，并按算法规则在 episode 边界停止。
+- 普通非终止 next window 从后续单帧得到；truncation next window 从该步起点窗口追加 final frame，不能使用新 episode 的首帧。n-step endpoint 同理。
+- 不因简化终态处理而对所有 transition 存完整窗口。稀疏 final 单帧与必要前缀需在样本有效期内保留。
+
+低内存单帧路径是本设计要求；不把“缓存每步全窗”作为默认或静默降级。若某 provider 暂只支持全窗存储，应显式声明支持范围，不宣称已经完成增量接入。
+
+## 8. Provider 接入
+
+### FastSAC
+
+- actor 在线使用最终 `obs.policy`，critic 使用最终 `obs.value_or_policy`；两者网络宽度来自最终 space。
+- adapter 必须保留 frame、spec、episode 边界及 final frame，而不是只暴露原有 obs/critic_obs 二元组。
+- collector/ring/replay 的持久字段按单帧 space 分配。现有相邻 slot 复用 next observation 的方式可保留，但最新记录在 next frame 就绪前不可采样。
+- replay 在采样时组装当前和 bootstrap history；同步训练与异步训练复用相同语义。
+- actor、critic 是否需要历史由 group 配置决定；critic 多了 action 输入，不代表它自动获得缺失的时序信息。privileged 单帧 critic 是任务/算法选择，不由框架假定其必然 Markov。
+
+### SuperMimic
+
+- collector/play/evaluator 直接消费环境最终 obs，不另行维护真实轨迹窗口；stateless policy 若需要 `[B,H,D]`，按 spec reshape。
+- 以 observation spec 为 H 的唯一来源，checkpoint 重建维度与在线执行均使用同一描述，不重复配置历史长度。
+- 物理 recorder 与 state transition schema 用于 world-model 训练；policy observation 的单帧 D 从 observation spec 的 frame space 派生，不能乘 H。
+- ring 数据仍由 SuperMimic collector/adapter 在 `env.step(action)` 后调用 `env.snapshot_transition(result)` 组装，再附加已有任务全局 transport 字段并发布。recorder 提供 `s/s1/a/a_prev/xi/f/ep_step`，step 结果提供 reward/done；物理端点不从 stacked obs 反推，也不以 reset 后 obs 替代。
+- 该物理 transition 路径不调用单帧观测读取接口、不发送完整 history；仅在要求精确观测回放时按需附加实际单帧。FastSAC 的观测提取与 SuperMimic 的物理 recorder 是不同数据源，不抽象为一个强制统一内容的 env transition。
+- learner 从状态、上一动作、context 和 frame 重新计算单帧，再按 spec 组窗；imagined rollout 用函数式 append 保留梯度。
+- replay 缺失历史前缀时遵循可采样性约束，不把覆盖边界当 episode 开头。
+- learner 可重新抽 observation noise，不保证与 collector 实际 noisy history 逐值一致；但窗口内真实 episode 首帧的重复填充必须共享同一份 noisy 值。先对各逻辑历史帧重建并加噪，再按有效历史长度 repeat-fill；不能先重复首个 state 再为各 padding 位置独立抽噪。需要精确回放时额外存实际单帧，而不是强制传完整窗口。
+- 当前 SuperMimic critic 保持单帧 privileged 输入，在启动边界明确拒绝 value group 的 H>1，不静默忽略配置；core 和 FastSAC 仍支持独立 value history。将来扩展 SuperMimic critic 历史需单独设计其 imagined/critic 训练状态。world-model window、imagination horizon、未来 goal_frames 均不由 observation H 替代。
+
+### 当前传输边界
+
+FastSAC ring 暂保持固定的 obs/critic_obs 双字段：没有独立 value 时仍传两份相同单帧，但不会随 H 扩张。replay 及 final 稀疏表共享 policy/value storage，避免重复持久存储；ring 字段去重不作为本次 schema 改造范围。
+
+### 其他 provider 与部署
+
+SKRL/RSLRL 等 provider 可继续直接消费最终二维 obs，不必因环境启用 history 就改成序列训练。若使用单帧 replay 优化，则接入同一协议。无法支持的组合在组装边界明确拒绝。
 
 导出/部署必须记录单帧特征顺序、H、time-major 布局、repeat-fill、预处理和 reset 时机。环境不提前应用 provider 的 running normalization；在线和 learner 对最终输入应用同一模型预处理。normalizer 统计应明确按新单帧更新还是按窗口采样更新，不能在迁移中无意把重叠 H 帧重复计权或二次归一化。具体策略由 provider 决定，不能混入 history core。
 
 ## 9. 验收不变量
 
-core 契约以低成本张量/假后端测试验证；可选 provider 存储优化不属于本次验收范围：
+core 契约以低成本张量/假后端测试验证，provider 的传输与采样契约由各自测试覆盖：
 
 1. H=1 输出和原单帧行为等价，允许 alias；policy/value 不同 H 的 space、shape、内容正确。
 2. 多 term 使用整帧 time-major 顺序；实际 frame 等于最终窗口最后一帧，同一次噪声计算。
 3. 生命周期每 control step 只调用一次普通 compute；读取 state.obs、warmup、终态 preview 不推进窗口，额外显式 compute 按发布契约推进。
 4. 局部 episode reset repeat-fill，其他行不变；sim-reset-only 保留前缀。
 5. final stacked obs 是 reset 前结果且 owned；正常 stacked obs 对应 reset 后结果；终态窗口内容正确。
-6. 函数式 append 的梯度能够回传至前序 observation，不被环境 buffer/detach 切断。
-7. 消费者在 borrowed buffer 失效前完成保留或传输；final 快照可跨 step 保留。
+6. 单帧 replay 重建结果与 collector 在线窗口逐值相同，包括 episode 首帧重复噪声；SuperMimic 的重加噪路径单独验证其声明的分布语义。
+7. replay wrap、episode 边界、n-step endpoint、最新未完成样本和缺失前缀均正确处理，不串轨迹。
+8. FastSAC 同步/异步语义一致，ring observation slot 与 replay 每步持久字段维度不随 H 放大；learner 的 H 倍 observation 数据仅在网络 batch 组装时出现，环境在线窗口的存储开销另计。
+9. 函数式 imagined append 的梯度能够回传至前序预测 observation，不被环境 buffer/detach 切断。
+10. collector 在 borrowed buffer 失效前完成保留/传输；稀疏 final payload 和跨设备异步生命周期不回归。
+
+## 10. 支持与验证边界
+
+core、DirectEnv 静态描述、FastSAC 单帧传输/replay、SuperMimic 真实执行与 imagined/replay 以本文为契约。导出/部署的完整历史预处理协议仍需独立评估；SuperMimic 不宣称已支持 ONNX/deploy。
+
+真实 GPU 训练性能、GPU 异步 stream、多 learner DDP 与完整部署需要专门运行验收；低成本行为测试不替代这些运行证据。

@@ -208,7 +208,7 @@ class Go1WalkStairsTask(DirectEnv):
         ctrl = self._ctrl_writes.buffer("ctrl")
         ctrl.copy_(self._compute_torques(actions))
         self._ctrl_writes.execute()
-        return state
+        return None
 
     def _compute_torques(self, actions):
         # Compute torques from actions.
@@ -252,7 +252,7 @@ class Go1WalkStairsTask(DirectEnv):
             ],
             dim=1,
         )
-        return state.replace(obs=obs)
+        state.obs.policy.copy_(obs)
 
     def compute_transition(self, state):
         self.sim_data.execute()
@@ -260,9 +260,9 @@ class Go1WalkStairsTask(DirectEnv):
         self._contacts.copy_(self.sim_data["foot_colliding"])
         self.update_feet_air_time()
         self.update_contact_force()
-        state = self.update_terminated(state)
-        state = self.update_reward(state)
-        return state
+        self.update_terminated(state)
+        self.update_reward(state)
+        return None
 
     def update_terminated(self, state: ArrayEnvState) -> ArrayEnvState:
         termination_check = self.sim_data["termination_colliding"]
@@ -270,9 +270,7 @@ class Go1WalkStairsTask(DirectEnv):
 
         over_speed = torch.sum(torch.square(self.get_local_linvel()[:, :2]), dim=1) > 1e8
         terminated = terminated | over_speed
-        return state.replace(
-            terminated=terminated,
-        )
+        state.terminated.copy_(terminated)
 
     def update_feet_air_time(self):
         self._feet_air_time += self.cfg.ctrl_dt
@@ -307,7 +305,7 @@ class Go1WalkStairsTask(DirectEnv):
 
         rwd = torch.where(terminated, torch.zeros((), dtype=torch.float32), rwd)
 
-        return state.replace(reward=rwd)
+        state.reward.copy_(rwd)
 
     def reset(self, env_ids: torch.Tensor) -> None:
         num_reset = env_ids.numel()

@@ -245,7 +245,7 @@ class AnymalCEnv(DirectEnv):
         ctrl = self._ctrl_writes.buffer("ctrl")
         ctrl.copy_(self.default_angles + actions_scaled)
         self._ctrl_writes.execute()
-        return state
+        return None
 
     def _navigation_state(self, pose_commands: torch.Tensor):
         """Derive navigation commands from cached sim reads and pose commands.
@@ -285,7 +285,7 @@ class AnymalCEnv(DirectEnv):
         velocity_commands = torch.cat([desired_vel_xy, desired_yaw_rate[:, None]], dim=-1)
         return position_error, heading_diff, distance_to_target, reached_all, desired_vel_xy, velocity_commands
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         """Build the full observation from cached sim reads and episode state."""
         inputs = self.sim_data
         gyro = inputs["base_gyro"]
@@ -333,7 +333,7 @@ class AnymalCEnv(DirectEnv):
             dim=-1,
         )
         assert obs.shape == (self._num_envs, 54)
-        return state.replace(obs=obs)
+        state.obs.policy.copy_(obs)
 
     def compute_transition(self, state: ArrayEnvState):
         self.sim_data.execute()
@@ -355,12 +355,12 @@ class AnymalCEnv(DirectEnv):
         )
 
         # Calculate reward
-        state.reward = self._compute_reward(velocity_commands)
+        state.reward.copy_(self._compute_reward(velocity_commands))
 
         # Calculate termination conditions
-        state = self._compute_terminated(state)
+        self._compute_terminated(state)
 
-        return state
+        return None
 
     def _update_heading_arrows(
         self,
@@ -557,7 +557,7 @@ class AnymalCEnv(DirectEnv):
         side_flip_mask = tilt_angle > math.radians(75)
         terminated = terminated | side_flip_mask
 
-        return state.replace(terminated=terminated)
+        state.terminated.copy_(terminated)
 
     def reset(self, env_ids: torch.Tensor) -> None:
         cfg: AnymalCEnvCfg = self._cfg

@@ -25,7 +25,7 @@
 ### 专题设计
 
 - [History Observation 与单帧传输契约](./observation-history.md)
-  定义 group 级历史配置、step 返回 stacked obs、reset/final 生命周期，以及按静态描述可选提取尾帧的边界；单帧传输与 replay 优化不属于当前实现承诺。
+  定义 group 级历史配置、step 返回 stacked obs 与按静态描述提取尾帧、reset/final 生命周期，以及 RL 侧 ring payload 组装、FastSAC 和 SuperMimic 的接入边界。
 - [Term 自声明 Sim Query 设计](./term-required-queries.md)
   定义 term 通过 `SimDataQuery` 参数自声明 sim 数据需求、与任务声明合并的 key 单一属主规则，以及 resolver 到批量 sim 视图的映射。
 - [IsaacLab ManagerCfg Adapter 设计](./isaaclab-manager-cfg-adapter.md)
@@ -33,7 +33,7 @@
 - [Torch Manager 执行器设计](./torch-executor.md)
   定义 Torch 执行器（唯一数值执行器）的调度语义、批量 term ctx 约定与 resolver 分工。
 - [训练随机性与 Seed 所有权](../randomness-and-seeding.md)
-  `ctx.rand` 的默认 Torch 随机流入口、根 seed 职责、preview 共享随机消耗与编译/异步可复现性限制。
+  `ctx.rand` 的默认 Torch 流、训练入口的 seed 职责、SuperMimic 模型初始化/探索隔离、preview 共享随机消耗与恢复语义。
 
 ## 使用说明
 

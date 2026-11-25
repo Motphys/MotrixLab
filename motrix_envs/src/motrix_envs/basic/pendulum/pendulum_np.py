@@ -72,14 +72,14 @@ class PendulumEnv(DirectEnv):
         scaled = self._action_low + (actions + 1.0) * 0.5 * (self._action_high - self._action_low)
         self._ctrl_writes.buffer("ctrl").copy_(scaled)
         self._ctrl_writes.execute()
-        return state
+        return None
 
     def compute_observation(self, state: ArrayEnvState):
         angle = self.sim_data["dof_pos"][:, 0]
         ang_vel = self.sim_data["dof_vel"][:, 0]
         obs = torch.stack([torch.cos(angle), torch.sin(angle), ang_vel], dim=-1)
         assert obs.shape == (self._num_envs, 3)
-        return state.replace(obs=obs)
+        state.obs.policy.copy_(obs)
 
     def compute_transition(self, state: ArrayEnvState):
         self.sim_data.execute()
@@ -118,7 +118,7 @@ class PendulumEnv(DirectEnv):
         state.reward[:] = reward
         state.terminated[:] = terminated
         self._prev_ctrl[:] = ctrl
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         cfg: PendulumEnvCfg = self._cfg

@@ -6,7 +6,7 @@
 The runtime consumes the metadata produced by the manager resolver (read
 plan, layout, the live :class:`ManagerContext` host instance, and per-term
 typed call records) and executes the manager term schedule — command
-``update`` hooks, rewards, terminations, command ``advance`` hooks for
+``update`` hooks, terminations, rewards, command ``advance`` hooks for
 evaluate; per-group observation terms for observe; command ``reset``
 hooks plus simulator reset terms for reset — with one batched tensor call
 per term. Terms receive the real host objects: Dynamo traces dataclass
@@ -143,9 +143,11 @@ class TorchManagerRuntime:
 
         # Typed call sequences encode the execution contract structurally:
         # evaluate follows the fixed phase order command update hooks ->
-        # rewards -> terminations -> command advance hooks (rewards and
-        # terminations read pre-advance command state); each phase keeps its
-        # declaration order and reward/termination indices match
+        # terminations -> rewards -> command advance hooks. Terminations write
+        # the union back before rewards run, so reward terms read the current
+        # transition's ctx.terminated; rewards and terminations both read
+        # pre-advance command state; each phase keeps its declaration order
+        # and reward/termination indices match
         # ``layout.rewards``/``layout.terminations``.
         self.command_updates: tuple[CommandUpdateHook, ...] = program.command_updates
         self.rewards: tuple[RewardTermCall, ...] = program.rewards
@@ -228,6 +230,14 @@ class TorchManagerRuntime:
             for hook in update_hooks:
                 receiver = ctx.commands[hook.receiver_key]
                 hook.function(receiver, ctx)
+            terminated = None
+            for term in termination_plan:
+                mask = term.invoke(ctx).to(torch.bool)
+                termination_masks[:, term.index] = mask
+                terminated = mask if terminated is None else terminated | mask
+            # Write the union back before rewards run: reward terms read the
+            # current transition's ctx.terminated through the shared buffer.
+            terminated_view.copy_(terminated if terminated is not None else torch.zeros_like(terminated_view))
             total = None
             for term in reward_plan:
                 value = term.invoke(ctx).to(torch.float32)
@@ -235,16 +245,10 @@ class TorchManagerRuntime:
                 raw_terms[:, term.index] = value
                 weighted_terms[:, term.index] = weighted
                 total = weighted if total is None else total + weighted
-            terminated = None
-            for term in termination_plan:
-                mask = term.invoke(ctx).to(torch.bool)
-                termination_masks[:, term.index] = mask
-                terminated = mask if terminated is None else terminated | mask
             reward_view.copy_(total if total is not None else torch.zeros_like(reward_view))
             for hook in advance_hooks:
                 receiver = ctx.commands[hook.receiver_key]
                 hook.function(receiver, ctx)
-            terminated_view.copy_(terminated if terminated is not None else torch.zeros_like(terminated_view))
 
         if self.compile_enabled:
             return torch.compile(kernel, dynamic=False, options=_compile_options())

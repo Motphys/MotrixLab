@@ -10,6 +10,8 @@ import torch
 
 import motrix_env_core.manager.context as context
 from motrix_env_core.config import configclass
+from motrix_env_core.manager.kernel_data import validate_kernel_data
+from motrix_env_core.manager.metrics import collect_metrics, materialize_metrics
 
 
 # Keep inherited fields out of base-class slots: Torch 2.7 Dynamo only resolves
@@ -93,3 +95,35 @@ class ManagerCommandsCfg:
                 )
             term_cfgs[term_field.name] = term_cfg
         return term_cfgs
+
+
+class CommandManager:
+    """Build and own the configured command terms and their metrics."""
+
+    def __init__(
+        self,
+        cfgs: dict[str, CommandCfg],
+        build_context: context.BuildContext,
+        num_envs: int,
+    ) -> None:
+        # Command factories must be independent: the context they receive
+        # carries an empty commands mapping (and no actions) by contract.
+        self.cfgs = cfgs
+        self.terms: dict[str, CommandTerm] = {}
+        self.metrics: dict[str, torch.Tensor] = {}
+        for name, cfg in cfgs.items():
+            term = cfg(build_context)
+            term = validate_kernel_data(
+                materialize_metrics(term, num_envs, context=f"Manager command {name!r}"),
+                context=f"Manager command {name!r}",
+            )
+            self.terms[name] = term
+            for metric_name, value in collect_metrics(
+                term, num_envs, context=f"Manager command {name!r}", context_path=("commands", name)
+            ):
+                if metric_name in self.metrics:
+                    raise ValueError(f"Duplicate per-environment metric name: {metric_name!r}")
+                self.metrics[metric_name] = value
+
+
+__all__ = ["CommandCfg", "CommandManager", "CommandTerm", "ManagerCommandsCfg"]

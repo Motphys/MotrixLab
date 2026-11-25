@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from motrix_env_core import registry
-from motrix_env_core.array.env import ArrayEnvState, EnvObs
+from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.math import quaternion
 from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
@@ -228,7 +228,7 @@ class ShadowHandReposeEnv(DirectEnv):
         self._ctrl_writes.execute()
         self._prev_actions.copy_(targets)
 
-        return state
+        return None
 
     def compute_observation(self, state: ArrayEnvState):
         """Build the full 157-dim observation batch from cached simulator data.
@@ -293,8 +293,8 @@ class ShadowHandReposeEnv(DirectEnv):
         # name is applied via setattr so static audits can tell this
         # sanctioned observation-stage write apart from the forbidden
         # transition-time writes.
-        setattr(state, "obs", EnvObs({"policy": obs}))
-        return state
+        state.obs.policy.copy_(obs)
+        return None
 
     def compute_transition(self, state: ArrayEnvState):
         """Update reward, termination, and goal bookkeeping from refreshed sim data.
@@ -313,10 +313,10 @@ class ShadowHandReposeEnv(DirectEnv):
         # (a write program, not an observation read).
         self._update_target_visualization()
 
-        state.reward = reward
-        state.terminated = terminated
+        state.reward.copy_(reward)
+        state.terminated.copy_(terminated)
 
-        return state
+        return None
 
     def _compute_reward(self):
         """

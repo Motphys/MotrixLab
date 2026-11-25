@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from motrix_env_core import registry
-from motrix_env_core.array.env import ArrayEnvState, EnvObs
+from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import (
@@ -173,7 +173,7 @@ class FrankaOpenCabinetEnv(DirectEnv):
         ctrl.copy_(cliped_new_pos)
         self._ctrl_writes.execute()
 
-        return state
+        return None
 
     def compute_observation(self, state: ArrayEnvState):
         """Build the full observation batch from cached simulator data.
@@ -214,8 +214,8 @@ class FrankaOpenCabinetEnv(DirectEnv):
         # name is applied via setattr so static audits can tell this
         # sanctioned observation-stage write apart from the forbidden
         # transition-time writes.
-        setattr(state, "obs", EnvObs({"policy": obs.clamp(-5, 5)}))
-        return state
+        state.obs.policy.copy_(obs.clamp(-5, 5))
+        return None
 
     def compute_transition(self, state: ArrayEnvState):
         """Update reward and termination from the refreshed simulator cache.
@@ -229,12 +229,12 @@ class FrankaOpenCabinetEnv(DirectEnv):
         # compute reward
         reward = self._compute_reward(state, truncated)
 
-        state.reward = reward
-        state.terminated = truncated
+        state.reward.copy_(reward)
+        state.terminated.copy_(truncated)
 
         self.count += 1
 
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         num_reset = env_ids.numel()

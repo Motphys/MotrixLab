@@ -272,9 +272,9 @@ class StewartEnv(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> None:
         self._policy_action[:] = _normalize_actions(actions, self._num_envs, self._action_dim)
-        return state
+        return None
 
     def _smooth_actions(self, raw_actions: torch.Tensor) -> None:
         alpha = float(self._cfg.action_smooth)
@@ -578,7 +578,7 @@ class StewartEnv(DirectEnv):
 
         return still_steps
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         inputs = self.sim_data
         top_quat = _normalize_quat(inputs["top_quat"])
 
@@ -603,9 +603,9 @@ class StewartEnv(DirectEnv):
         disturb_obs = self._get_disturbance_obs()
         if disturb_obs is not None:
             obs_parts.append(disturb_obs)
-        return state.replace(obs=torch.cat(obs_parts, dim=-1))
+        state.obs.policy.copy_(torch.cat(obs_parts, dim=-1))
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         state_cache = self._update_ball_kinematics()
 
@@ -658,30 +658,34 @@ class StewartEnv(DirectEnv):
 
         terminated = fallen | success
 
-        state.metrics = {
-            "rel_xy": rel_xy,
-            "vel_xy": vel_xy,
-            "tilt_deg": tilt_deg,
-            "top_ang_mag": top_ang_mag,
-            "still_steps": still_steps.to(torch.float32),
-            "success": success.to(torch.float32),
-            "fallen": fallen.to(torch.float32),
-            "timeout": timeout.to(torch.float32),
-            "disturb_pos_norm": torch.norm(self._disturb_pos, dim=-1),
-            "disturb_rot_norm_deg": torch.norm(self._disturb_rot_deg, dim=-1),
-        }
-        state.reward_terms = {
-            "center": term_center,
-            "zero_vel_reference": zero_reference,
-            "zero_vel_improve": zero_improve,
-            "zero_vel_closer": term_zero_vel_closer,
-            "still_bonus": term_still_bonus,
-            "terminal": term_terminal,
-        }
+        state.metrics.update(
+            {
+                "rel_xy": rel_xy,
+                "vel_xy": vel_xy,
+                "tilt_deg": tilt_deg,
+                "top_ang_mag": top_ang_mag,
+                "still_steps": still_steps.to(torch.float32),
+                "success": success.to(torch.float32),
+                "fallen": fallen.to(torch.float32),
+                "timeout": timeout.to(torch.float32),
+                "disturb_pos_norm": torch.norm(self._disturb_pos, dim=-1),
+                "disturb_rot_norm_deg": torch.norm(self._disturb_rot_deg, dim=-1),
+            }
+        )
+        state.reward_terms.update(
+            {
+                "center": term_center,
+                "zero_vel_reference": zero_reference,
+                "zero_vel_improve": zero_improve,
+                "zero_vel_closer": term_zero_vel_closer,
+                "still_bonus": term_still_bonus,
+                "terminal": term_terminal,
+            }
+        )
 
         state.reward[:] = reward
         state.terminated[:] = terminated
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         num = env_ids.numel()

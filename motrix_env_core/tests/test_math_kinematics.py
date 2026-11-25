@@ -150,6 +150,29 @@ def test_positions_matches_forward():
     torch.testing.assert_close(tree.positions(p, R, q), P)
 
 
+def test_compiled_forward_preserves_values_and_gradients():
+    """Compiled tiny-product fusion must preserve FK and BPTT derivatives."""
+    torch.manual_seed(7)
+    tree = planar_arm()
+    p, rotation, velocity, angular = root_pose(torch.randn(4))
+    inputs = (
+        p.requires_grad_(),
+        rotation.requires_grad_(),
+        velocity.requires_grad_(),
+        angular.requires_grad_(),
+        torch.randn(4, 2, requires_grad=True),
+        torch.randn(4, 2, requires_grad=True),
+    )
+    eager = tree.forward(*inputs)
+    compiled = torch.compile(tree.forward, backend="eager", fullgraph=True)(*inputs)
+    for actual, expected in zip(compiled, eager, strict=True):
+        torch.testing.assert_close(actual, expected)
+    expected_grads = torch.autograd.grad(sum(value.square().sum() for value in eager), inputs)
+    actual_grads = torch.autograd.grad(sum(value.square().sum() for value in compiled), inputs)
+    for actual, expected in zip(actual_grads, expected_grads, strict=True):
+        torch.testing.assert_close(actual, expected)
+
+
 def test_gradients_flow_to_q_and_root():
     tree = planar_arm()
     q = torch.rand(6, 2, requires_grad=True)

@@ -12,8 +12,7 @@ import pytest
 import torch
 
 from motrix_env_core.manager import ManagerEnv
-from motrix_env_core.manager.observation_manager import ObservationManager
-from motrix_env_core.manager.observations import ObservationGroupEntry
+from motrix_env_core.manager.observations import ObservationGroupEntry, ObservationManager
 from motrix_env_core.mdp.action import JointPositionActionCfg, JointPositionActionState, JointPositionActionTerm
 from motrix_envs.locomotion.humanoid.g1 import make_g129dof_walk_flat_cfg
 from motrix_envs.locomotion.humanoid.walk_manager_mdp.randomization import WalkRandomizationCfg
@@ -50,22 +49,28 @@ def _tiny_delay_manager(num_envs: int = 2, num_actuators: int = 3, lo: int = 0, 
     # and unrelated command resets. No history algorithm is duplicated here.
     env = ManagerEnv.__new__(ManagerEnv)
     env._num_envs = num_envs
-    env._action_space = term.action_space
-    env._action_terms = {"joint_position": term}
-    env._action_slices = {"joint_position": slice(0, num_actuators)}
-    env._action_actuators = {"joint_position": ()}
     controls = torch.empty((num_envs, num_actuators), dtype=torch.float32)
-    env._action_writes = SimpleNamespace(buffer=lambda name: controls, execute=lambda: None)
-    env._command_terms = {}
-    env._state = SimpleNamespace(
-        terminated=torch.zeros(num_envs, dtype=torch.bool),
-        episode_steps=torch.zeros(num_envs, dtype=torch.long),
-        final_obs=None,
+    env._action_manager = SimpleNamespace(
+        cfgs={},
+        terms={"joint_position": term},
+        space=term.action_space,
+        slices={"joint_position": slice(0, num_actuators)},
+        actuators={"joint_position": ()},
+        writes=SimpleNamespace(buffer=lambda name: controls, execute=lambda: None),
+        apply=lambda actions: (controls.copy_(term.process(actions)),),
+        reset=lambda env_ids: term.reset(env_ids),
+        clear_targets=lambda env_ids: controls.__setitem__(env_ids, 0),
     )
+    env._command_terms = {}
+    env._reward_manager = SimpleNamespace(output=torch.zeros(num_envs), reward_terms={})
+    env.termination_manager = SimpleNamespace(terminated=torch.zeros(num_envs, dtype=torch.bool))
+    env._truncated = torch.zeros(num_envs, dtype=torch.bool)
+    env._episode_steps = torch.zeros(num_envs, dtype=torch.long)
+    env._final_obs = None
     env.observation_manager = ObservationManager({"policy": ObservationGroupEntry("policy", (), 1)}, num_envs)
     env._compiled_manager_program = SimpleNamespace(
         context=SimpleNamespace(
-            terminated=env._state.terminated,
+            terminated=env.termination_manager.terminated,
         )
     )
     env.perf = SimpleNamespace(scope=lambda name: nullcontext())
@@ -77,12 +82,12 @@ def test_action_delay_applies_delayed_action():
     env, action_state, controls = _tiny_delay_manager(lo=1, hi=2)
     action_state.delay_steps[:] = 2
     actions = torch.full(controls.shape, 1.0, dtype=torch.float32)
-    env.apply_action(actions, env._state)
+    env.apply_action(actions, None)
     # Only the raw action exists so far; unwritten history remains zero.
     assert bool((controls == 0.0).all())
     assert bool((action_state.action_queue[:, int(action_state.action_ptr[0])] == 1.0).all())
     for value in (2.0, 3.0, 4.0):
-        env.apply_action(torch.full_like(actions, value), env._state)
+        env.apply_action(torch.full_like(actions, value), None)
     # Two-step delay: the applied action is the one from two steps ago.
     assert bool((controls == 2.0).all())
 
@@ -90,7 +95,7 @@ def test_action_delay_applies_delayed_action():
 def test_action_delay_disabled_passes_actions_through_and_keeps_history():
     env, action_state, controls = _tiny_delay_manager(lo=0, hi=0)
     actions = torch.full(controls.shape, 0.5, dtype=torch.float32)
-    env.apply_action(actions, env._state)
+    env.apply_action(actions, None)
     assert bool((controls == 0.5).all())
     ptr = int(action_state.action_ptr[0])
     assert bool((action_state.action_queue[:, ptr] == 0.5).all())
@@ -103,7 +108,7 @@ def test_action_queue_wraps_and_selects_delay_per_lane():
     width = action_state.action_queue.shape[1]
     for value in range(1, width + 2):
         actions = torch.full(controls.shape, value, dtype=torch.float32)
-        env.apply_action(actions, env._state)
+        env.apply_action(actions, None)
         assert int(action_state.action_ptr[0]) == value % width
         assert controls[0, 0] == value
         expected_lane_1 = 0.0 if value <= 2 else value - 2
@@ -113,7 +118,7 @@ def test_action_queue_wraps_and_selects_delay_per_lane():
 def test_action_reset_clears_only_selected_lane_history_and_keeps_pointer():
     env, action_state, controls = _tiny_delay_manager(num_envs=2, lo=0, hi=2)
     for value in (1.0, 2.0, 3.0):
-        env.apply_action(torch.full(controls.shape, value, dtype=torch.float32), env._state)
+        env.apply_action(torch.full(controls.shape, value, dtype=torch.float32), None)
     ptr_before_reset = action_state.action_ptr.clone()
     other_lane_history = action_state.action_queue[1].clone()
     env.reset(torch.tensor([0], dtype=torch.long))
@@ -130,9 +135,9 @@ def test_action_delay_reset_resamples_within_range():
 
 def test_joint_position_term_methods_manage_history_and_specific_state():
     env, action_state, controls = _tiny_delay_manager(lo=0, hi=2)
-    term = env._action_terms["joint_position"]
+    term = env.action_terms["joint_position"]
     for value in (1.0, 2.0, 3.0):
-        env.apply_action(torch.full(controls.shape, value, dtype=torch.float32), env._state)
+        env.apply_action(torch.full(controls.shape, value, dtype=torch.float32), None)
     pointer = int(action_state.action_ptr[0])
     term.process(torch.full(controls.shape, 4.0, dtype=torch.float32))
     assert int(action_state.action_ptr[0]) == (pointer + 1) % action_state.action_queue.shape[1]

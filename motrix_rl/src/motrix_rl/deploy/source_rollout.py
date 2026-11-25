@@ -34,7 +34,7 @@ def validate_motrixsim_source_rollout(
     env = registry.make(env_name, num_envs=1)
     env.cfg.noise_config.level = 0.0
     env.cfg.spawn_xy_range = 0.0
-    state = env.init_state()
+    state = env.initialize()
     # Walk-flavor tasks keep their velocity commands in the episode-scoped
     # ``_commands`` buffer; pin row 0 so the rollout drives a fixed command.
     env._commands[0] = command

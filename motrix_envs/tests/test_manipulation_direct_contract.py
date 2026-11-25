@@ -91,7 +91,8 @@ def test_compute_transition_executes_once_and_never_touches_obs(env_name: str) -
     }
 
     calls = _spy_execute(env)
-    transitioned = env.compute_transition(state)
+    env.compute_transition(state)
+    transitioned = state
 
     # Exactly one read-program execution, at the top of compute_transition.
     assert len(calls) == 1
@@ -123,7 +124,8 @@ def test_compute_observation_reads_cache_without_executing(env_name: str) -> Non
     }
 
     calls = _spy_execute(env)
-    observed = env.compute_observation(state)
+    env.compute_observation(state)
+    observed = state
 
     # Observation must be served purely from cache.
     assert calls == []
@@ -171,7 +173,7 @@ def test_rm65_open_cabinet_arm_randomization_fallbacks_use_scalar_config() -> No
     # copies to exercise the scalar-fallback branches.
     env._arm_delay_lag_randomization_enabled = False
     env._arm_speed_acc_randomization_enabled = False
-    env.init_state()
+    env.initialize()
     env.reset(torch.arange(3, dtype=torch.long))
     np.testing.assert_array_equal(env._arm_action_delay_steps_per_env, env._arm_action_delay_steps)
     np.testing.assert_allclose(env._arm_actuator_lag_alpha_per_env, env._arm_actuator_lag_alpha)

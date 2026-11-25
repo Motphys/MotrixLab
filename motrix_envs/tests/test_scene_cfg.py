@@ -1175,11 +1175,11 @@ class SceneBackedCartPoleEnv(DirectEnv[SceneBackedCartPoleCfg]):
     def action_space(self) -> gym.spaces.Box:
         return gym.spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
 
-    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
-        return state
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> None:
+        return None
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
-        return state
+    def compute_transition(self, state: ArrayEnvState) -> None:
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         return None

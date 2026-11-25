@@ -78,9 +78,9 @@ class PointMassEnv(DirectEnv):
         actions = torch.clamp(actions, -1.0, 1.0)
         self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
-        return state
+        return None
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         inputs = self.sim_data
         dof_pos = inputs["dof_pos"][:, :2]  # Only x and y positions
         dof_vel = inputs["dof_vel"][:, :2]  # Only x and y velocities
@@ -93,9 +93,9 @@ class PointMassEnv(DirectEnv):
         distance = torch.linalg.norm(delta, dim=-1, keepdim=True)
 
         obs = torch.cat([dof_pos, dof_vel, target_pos, delta, distance], dim=-1)
-        return state.replace(obs=obs)
+        state.obs.policy.copy_(obs)
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         inputs = self.sim_data
         # Get positions of point mass and target
@@ -157,7 +157,7 @@ class PointMassEnv(DirectEnv):
 
         state.reward[:] = rwd
         state.terminated[:] = terminated
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         num_reset = env_ids.numel()

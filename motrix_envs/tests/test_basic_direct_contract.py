@@ -102,7 +102,8 @@ def test_compute_transition_executes_once_and_never_touches_obs(env_name: str) -
     obs_before = state.obs.policy.clone()
 
     calls = _spy_execute(env)
-    transitioned = env.compute_transition(state)
+    env.compute_transition(state)
+    transitioned = state
 
     # Exactly one read-program execution, at the top of compute_transition.
     assert len(calls) == 1
@@ -131,7 +132,8 @@ def test_compute_observation_reads_cache_without_executing(env_name: str) -> Non
     }
 
     calls = _spy_execute(env)
-    observed = env.compute_observation(state)
+    env.compute_observation(state)
+    observed = state
 
     # Observation must be served purely from cache.
     assert calls == []
@@ -147,6 +149,24 @@ def test_compute_observation_reads_cache_without_executing(env_name: str) -> Non
         assert key in observed.reward_terms
         if isinstance(value, np.ndarray):
             np.testing.assert_array_equal(observed.reward_terms[key], value)
+
+
+def test_acrobot_reset_restarts_only_selected_episode_counters() -> None:
+    env = registry.make("acrobot", num_envs=2)
+    actions = torch.zeros((2, *env.action_space.shape))
+    for _ in range(3):
+        env.step(actions)
+
+    before = env._step_count.clone()
+    assert bool((before > 0).all())
+    env.reset(torch.tensor([0]))
+    assert env._step_count[0] == 0
+    assert env._step_count[1] == before[1]
+
+    env.initialize()
+    assert bool((env._step_count == 0).all())
+    assert bool((env.state.episode_steps == 0).all())
+    assert not bool(env.step(actions).terminated.any())
 
 
 @pytest.mark.parametrize("env_name", _BASIC_ENVS)

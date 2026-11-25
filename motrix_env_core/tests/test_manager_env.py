@@ -340,7 +340,8 @@ def test_history_frames_time_major_and_partial_episode_reset(policy_h: int, valu
     )
     env = ManagerEnv(cfg, num_envs=2)
     env.physics_step = lambda: None
-    state = env.init_state()
+    env.initialize()
+    state = env.state
     assert env.observation_spec.policy.space.shape == (4 * policy_h,)
     assert env.observation_spec.value.space.shape == (value_h,)
     assert env.observation_spec.policy.frame_space.shape == (4,)
@@ -366,7 +367,7 @@ def test_explicit_sim_only_reset_waits_for_next_control_step(history_length: int
     cfg = _ManagerEnvCfg(observations={"policy": _ManagerPolicyObsCfg(history_length=history_length)})
     env = ManagerEnv(cfg, num_envs=2)
     env.physics_step = lambda: None
-    env.init_state()
+    env.initialize()
     state = env.step(torch.full((2, 1), 0.1))
     published = state.obs.policy.clone()
     steps = state.episode_steps.clone()
@@ -395,7 +396,8 @@ def test_history_final_preview_owned_frames_and_sim_only_reset() -> None:
     )
     env = ManagerEnv(cfg, num_envs=2)
     env.physics_step = lambda: None
-    state = env.init_state()
+    env.initialize()
+    state = env.state
     state = env.step(torch.full((2, 1), 0.1))
     prefix = state.obs.policy.reshape(2, 3, 4).clone()
     # Request a simulator-only reset during the real control step. It changes
@@ -439,7 +441,8 @@ def test_named_goal_group_history_reset_and_final_observations(history_length: i
     cfg = _ManagerEnvCfg(max_episode_seconds=0.03, observations=_NamedObservationsCfg())
     env = ManagerEnv(cfg, num_envs=2)
     env.physics_step = lambda: None
-    initial = env.init_state()
+    env.initialize()
+    initial = env.state
     assert set(initial.obs.groups) == {"policy", "goal"}
     assert env.observation_spec["goal"].space.shape == (4 * history_length,)
     assert initial.obs.value is None
@@ -473,7 +476,7 @@ def test_action_and_command_terms_are_environment_owned() -> None:
     env = _ManagerEnv(num_envs=3)
 
     assert isinstance(env.action_terms["test"], ActionTerm)
-    assert env.action_terms is env._action_terms
+    assert env.action_terms is env._action_manager.terms
     assert env.action_terms["test"].state.reset_flags.shape == (3, 1)
     assert _counter_command(env) is env.command_terms["counter"]
     build = env.build_context()
@@ -493,8 +496,8 @@ def test_same_cfg_class_instances_keep_independent_runtime_state() -> None:
     """
     first = _ManagerEnv(num_envs=3)
     second = _ManagerEnv(num_envs=3)
-    first.init_state()
-    second.init_state()
+    first.initialize()
+    second.initialize()
 
     first_queue = first.action_terms["test"].state.action_queue
     second_queue = second.action_terms["test"].state.action_queue
@@ -520,7 +523,7 @@ def test_same_cfg_class_instances_keep_independent_runtime_state() -> None:
 def test_reset_rejects_numpy_ids_and_non_integer_dtype() -> None:
     """The manager frontend's public reset currency is uniformly torch."""
     env = _ManagerEnv(num_envs=3)
-    env.init_state()
+    env.initialize()
 
     with pytest.raises(TypeError, match="torch.tensor"):
         env.reset(np.asarray([0]))
@@ -532,7 +535,8 @@ def test_reset_rejects_numpy_ids_and_non_integer_dtype() -> None:
 
 def test_command_rematerialization_reuses_transition_kernel_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
     env = _ManagerEnv(num_envs=3)
-    state = env.init_state()
+    env.initialize()
+    state = env.state
     read_count = 0
     refresh_sim_reads = env._refresh_sim_reads
 
@@ -550,7 +554,7 @@ def test_command_rematerialization_reuses_transition_kernel_inputs(monkeypatch: 
 
 def test_episode_reset_reuses_transition_kernel_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
     env = _ManagerEnv(num_envs=3)
-    env.init_state()
+    env.initialize()
     read_count = 0
     refresh_sim_reads = env._refresh_sim_reads
 
@@ -576,13 +580,36 @@ def test_manager_cfg_accepts_dict_groups_and_empty_commands() -> None:
     )
     env = ManagerEnv(cfg, num_envs=2)
 
-    state = env.init_state()
+    env.initialize()
+
+    state = env.state
 
     assert env.command_cfgs == {}
     assert env.command_terms == {}
     assert tuple(env.action_cfgs) == ("test",)
     assert tuple(env.observation_groups["policy"].terms)[0].name == "lane"
     np.testing.assert_array_equal(state.obs.policy[:, 0], [0.0, 1.0])
+
+
+def test_action_factories_receive_complete_commands_without_partial_actions() -> None:
+    contexts: list[BuildContext] = []
+
+    @configclass(kw_only=True)
+    class IndependentActionCfg(_TestActionCfg):
+        def __call__(self, ctx: BuildContext, actuators) -> ActionTerm:
+            assert not ctx.actions
+            assert set(ctx.commands) == {"counter"}
+            contexts.append(ctx)
+            return super().__call__(ctx, actuators)
+
+    env = ManagerEnv(
+        _ManagerEnvCfg(actions={"first": IndependentActionCfg(), "second": IndependentActionCfg()}), num_envs=2
+    )
+    assert tuple(env.action_terms) == ("first", "second")
+    assert len(contexts) == 2
+    for ctx in contexts:
+        assert not ctx.actions
+        assert ctx.commands["counter"] is env.command_terms["counter"]
 
 
 def test_multiple_action_terms_concatenate_spaces_and_receive_ordered_slices() -> None:
@@ -617,7 +644,8 @@ def test_multiple_action_terms_concatenate_spaces_and_receive_ordered_slices() -
 
     cfg = _ManagerEnvCfg(actions=_MultipleActionsCfg(), observations=_MultipleActionObservationsCfg())
     env = ManagerEnv(cfg, num_envs=2)
-    state = env.init_state()
+    env.initialize()
+    state = env.state
     actions = torch.tensor([[0.25, 1.0, 2.0], [0.5, -1.0, -2.0]], dtype=torch.float32)
 
     env.apply_action(actions, state)
@@ -645,7 +673,8 @@ def test_multiple_action_terms_concatenate_spaces_and_receive_ordered_slices() -
 
 def test_multiple_action_terms_validate_total_action_shape() -> None:
     env = _ManagerEnv(num_envs=2)
-    state = env.init_state()
+    env.initialize()
+    state = env.state
 
     with pytest.raises(ValueError, match=r"Expected action shape \(2, 1\), got \(2, 2\)"):
         env.apply_action(torch.zeros((2, 2), dtype=torch.float32), state)
@@ -672,9 +701,60 @@ def test_managers_share_training_seeded_default_stream() -> None:
         torch.testing.assert_close(actual, torch.rand(shape), rtol=0, atol=0)
 
 
+def test_transition_phase_hooks_fire_in_mdp_order() -> None:
+    env = _ManagerEnv()
+    env.physics_step = lambda: None
+    order: list[str] = []
+    env._pre_action = lambda actions, state: order.append("pre_action")
+    env._post_action = lambda actions, state: order.append("post_action")
+    env._post_physics = lambda state: order.append("post_physics")
+    original_evaluate = env._execute_evaluate_kernel
+    env._execute_evaluate_kernel = lambda: order.append("evaluate")
+
+    env.initialize()
+    order.clear()
+    env.step(torch.zeros(env.num_envs, 1))
+
+    # The three phase hooks bracket the MDP timeline: action application is
+    # surrounded by pre/post action, and post physics fires after the sim
+    # reads refresh but before the evaluate kernel runs.
+    assert order == ["pre_action", "post_action", "post_physics", "evaluate"]
+    original_evaluate()
+
+
+@pytest.mark.parametrize("history_length", [1, 3])
+@pytest.mark.parametrize("ending", ["termination", "truncation"])
+def test_phase_hooks_read_published_starting_observation(history_length: int, ending: str) -> None:
+    cfg = _ManagerEnvCfg(
+        observations={"policy": _ManagerPolicyObsCfg(history_length=history_length)},
+        max_episode_seconds=0.02 if ending == "truncation" else None,
+    )
+    env = ManagerEnv(cfg, num_envs=2)
+    env.physics_step = lambda: None
+    observed: list[torch.Tensor] = []
+    env._pre_action = lambda actions, state: observed.append(state.obs.policy.clone())
+    env._post_action = lambda actions, state: observed.append(state.obs.policy.clone())
+    env._post_physics = lambda state: observed.append(state.obs.policy.clone())
+    previous = env.initialize().obs.policy
+    assert bool(previous.any())
+
+    for index, value in enumerate((0.2, 0.9 if ending == "termination" else 0.3, 0.1)):
+        snapshot = previous.clone()
+        observed.clear()
+        result = env.step(torch.full((2, 1), value))
+        assert len(observed) == 3
+        for hook_obs in observed:
+            torch.testing.assert_close(hook_obs, snapshot)
+        torch.testing.assert_close(previous, snapshot)
+        if index == 1:
+            assert bool(result.done.all())
+        previous = result.obs.policy
+
+
 def test_step_perf_records_standard_and_manager_phases() -> None:
     env = _ManagerEnv()
-    state = env.init_state()
+    env.initialize()
+    state = env.state
     assert state.episode_steps.shape == (env.num_envs,)
     assert set(state.reward_terms) == {"source"}
     actions = torch.zeros((env.num_envs, 1), dtype=torch.float32)
@@ -704,7 +784,8 @@ def test_step_perf_records_standard_and_manager_phases() -> None:
 
 def test_step_preserves_previous_observation_with_alternating_preallocated_buffers() -> None:
     env = _ManagerEnv()
-    initial = env.init_state()
+    env.initialize()
+    initial = env.state
     initial_policy = initial.obs.policy
     initial_snapshot = initial_policy.clone()
 
@@ -724,7 +805,8 @@ def test_step_preserves_previous_observation_with_alternating_preallocated_buffe
 
 def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> None:
     env = _ManagerEnv()
-    state = env.init_state()
+    env.initialize()
+    state = env.state
 
     action = env.action_terms["test"]
     assert isinstance(action, ActionTerm)
@@ -764,7 +846,8 @@ def test_manager_context_is_injected_once_and_reused_across_all_term_kinds() -> 
 
 def test_reset_keeps_command_metric_alias_for_direct_context() -> None:
     env = _ManagerEnv(num_envs=2)
-    state = env.init_state()
+    env.initialize()
+    state = env.state
     command = _counter_command(env)
     command.command[:] = 3.0
     state.terminated[:] = torch.tensor([True, False])
@@ -776,16 +859,16 @@ def test_reset_keeps_command_metric_alias_for_direct_context() -> None:
     np.testing.assert_allclose(state.metrics["double"], [0.0, 0.0])
 
 
-def test_read_plan_refreshes_sim_views_in_place_without_rebuilding_context() -> None:
+def test_sim_data_refreshes_sim_views_in_place_without_rebuilding_context() -> None:
     env = _ManagerEnv(num_envs=3)
-    env.init_state()
+    env.initialize()
     assert env._compiled_manager_program is not None
     program = env._compiled_manager_program
     context = program.context
     sim_views = {key: value for key, value in context.sim.items()}
 
-    program.read_plan.read(env)
-    program.read_plan.read(env, torch.tensor([0, 2], dtype=torch.int64))
+    env.sim_data.execute()
+    env.sim_data.execute(torch.tensor([0, 2], dtype=torch.int64))
 
     assert program.context is context
     assert all(context.sim[key] is view for key, view in sim_views.items())
@@ -793,7 +876,8 @@ def test_read_plan_refreshes_sim_views_in_place_without_rebuilding_context() -> 
 
 def test_command_evaluation_updates_state_only_in_evaluate_kernel() -> None:
     env = _ManagerEnv()
-    state = env.init_state()
+    env.initialize()
+    state = env.state
     assert env._compiled_manager_program is not None
     action = env.action_terms["test"]
     assert isinstance(action, ActionTerm)
@@ -814,7 +898,8 @@ def test_command_evaluation_updates_state_only_in_evaluate_kernel() -> None:
 
 def test_command_term_updates_lifecycle_and_selected_reset_ids() -> None:
     env = _ManagerEnv(num_envs=3)
-    state = env.init_state()
+    env.initialize()
+    state = env.state
     command = _counter_command(env).command
     np.testing.assert_array_equal(command, -1.0)
 
@@ -860,7 +945,7 @@ def test_reset_passes_compact_episode_reset_in_selected_lane_order(
 
     cfg = _ManagerEnvCfg(commands={"counter": EpisodeCommandCfg()})
     env = ManagerEnv(cfg, num_envs=4)
-    env.init_state()
+    env.initialize()
     command = env.command_terms["counter"].command
     command[:, 0] = torch.tensor([10.0, 20.0, 30.0, 40.0])
     env.state.episode_steps[:] = torch.tensor([3, 4, 5, 6])
@@ -880,7 +965,8 @@ def test_reset_passes_compact_episode_reset_in_selected_lane_order(
 
 def test_done_envs_reset_before_observation_and_preserve_transition_outputs() -> None:
     env = _ManagerEnv(num_envs=3)
-    state = env.init_state()
+    env.initialize()
+    state = env.state
     state = env.step(torch.tensor([[0.25], [0.75], [0.25]], dtype=torch.float32))
 
     np.testing.assert_allclose(state.obs.policy[[0, 2], 0], 1.75)
@@ -909,7 +995,8 @@ def test_final_observations_capture_command_before_reset_and_survive_steps(with_
     env = ManagerEnv(cfg, num_envs=3)
     # No physics is needed: action/command terms encode observable state.
     env.physics_step = lambda: None
-    initial = env.init_state()
+    env.initialize()
+    initial = env.state
     assert initial.final_obs is None
     initial.episode_steps[:] = torch.tensor([2, 0, 2])
     env.command_terms["counter"].command[:] = 2.0
@@ -964,7 +1051,7 @@ def test_final_observation_preview_consumes_shared_default_stream(monkeypatch: p
     first, second = ManagerEnv(cfg, num_envs=2, seed=31), ManagerEnv(cfg, num_envs=2, seed=31)
     for env in (first, second):
         env.physics_step = lambda: None
-        env.init_state()
+        env.initialize()
     torch.testing.assert_close(first.state.obs.policy, expected_frames[0])
     torch.testing.assert_close(second.state.obs.policy, expected_frames[1])
     published = first.state.obs.policy.clone()
@@ -986,7 +1073,8 @@ def test_final_observation_preview_consumes_shared_default_stream(monkeypatch: p
 
 def test_post_reset_observation_does_not_run_command_evaluation() -> None:
     env = _ManagerEnv(num_envs=3)
-    state = env.init_state()
+    env.initialize()
+    state = env.state
     assert env._compiled_manager_program is not None
     action = env.action_terms["test"]
     assert isinstance(action, ActionTerm)
@@ -1093,7 +1181,8 @@ def test_dispatch_term_parameter_names_are_not_constrained() -> None:
         renamed: _RenamedRewardCfg = _RenamedRewardCfg(weight=1.0)
 
     env = ManagerEnv(_ManagerEnvCfg(rewards=_RenamedRewardsCfg()), num_envs=2)
-    state = env.init_state()
+    env.initialize()
+    state = env.state
     actions = torch.full((env.num_envs, 1), 0.5, dtype=torch.float32)
     env.apply_action(actions, state)
     env.compute_transition(state)
@@ -1132,3 +1221,45 @@ def test_context_reward_mirrors_state_reward_in_advance_hook() -> None:
     second = env.step(torch.full((2, 1), 0.2, dtype=torch.float32))
     assert context.reward is second.reward
     np.testing.assert_allclose(command.reward_sum[:, 0], first_reward + second.reward)
+
+
+def _termination_penalty(ctx: ManagerContext) -> torch.Tensor:
+    return -ctx.terminated.float()
+
+
+@configclass(kw_only=True)
+class _TerminationPenaltyCfg(RewardTermCfg):
+    def __call__(self, env: ManagerEnv) -> RewardTerm:
+        del env
+        return RewardTerm(_termination_penalty)
+
+
+@configclass
+class _OrderRewardsCfg(ManagerRewardsCfg):
+    source: _InjectedRewardCfg = _InjectedRewardCfg(weight=2.0)
+    # ctrl_dt is 0.01, so weight 100.0 makes the weighted penalty exactly
+    # -1.0 on terminated lanes.
+    penalty: _TerminationPenaltyCfg = _TerminationPenaltyCfg(weight=100.0)
+
+
+class _OrderEnv(_ManagerEnv):
+    def __init__(self) -> None:
+        ManagerEnv.__init__(self, _ManagerEnvCfg(rewards=_OrderRewardsCfg()), 2, seed=1)
+
+
+def test_reward_terms_read_the_current_transition_termination() -> None:
+    """Terminations run before rewards, so ctx.terminated is current, not stale.
+
+    A termination-penalty reward must see this step's termination union:
+    zero while neither this nor the previous transition terminated, and the
+    full penalty on the terminating step itself.
+    """
+    env = _OrderEnv()
+    env.initialize()
+    env.step(torch.zeros((2, 1), dtype=torch.float32))
+    assert not env.state.terminated.any()
+    torch.testing.assert_close(env.state.reward_terms["penalty"], torch.zeros(2))
+
+    env.step(torch.full((2, 1), 0.9, dtype=torch.float32))
+    assert env.state.terminated.all()
+    torch.testing.assert_close(env.state.reward_terms["penalty"], torch.full((2,), -1.0))

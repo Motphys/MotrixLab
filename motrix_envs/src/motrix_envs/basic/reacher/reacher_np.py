@@ -85,17 +85,17 @@ class Reacher2DEnv(DirectEnv):
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
         self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
-        return state
+        return None
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         inputs = self.sim_data
         qpos = inputs["dof_pos"]
         qvel = inputs["dof_vel"]
         finger_xy = inputs["finger_pos"][:, :2]
         to_target = self._target_xyz[:, :2] - finger_xy
-        return state.replace(obs=torch.cat([qpos, to_target, qvel], dim=-1))
+        state.obs.policy.copy_(torch.cat([qpos, to_target, qvel], dim=-1))
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         finger_xy = self.sim_data["finger_pos"][:, :2]
         dist = torch.linalg.norm(self._target_xyz[:, :2] - finger_xy, dim=-1)
@@ -113,11 +113,11 @@ class Reacher2DEnv(DirectEnv):
         )
         rwd[terminated] = 0.0
 
-        state.reward_terms = {"distance": dist, "tolerance": rwd.clone()}
+        state.reward_terms.update({"distance": dist, "tolerance": rwd.clone()})
 
         state.reward[:] = rwd
         state.terminated[:] = terminated
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         """Reset environment with randomized target position in xy plane (z=0)."""

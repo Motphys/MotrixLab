@@ -330,7 +330,12 @@ using `env_ids`, and gate episode-specific statistics on `episode_reset`.
 episode-level reset, including initialization and explicit restarts; `False` means
 only the simulator is reset and the current episode continues. It is not `terminated`
 and does not necessarily mean a previous episode has ended.
-`ctx.terminated[env_ids]` gives the selected rows of the latest termination union.
+`ctx.terminated[env_ids]` gives the selected rows of the current transition's
+termination union (the evaluate kernel writes it before reward terms run, so
+reward terms may read the current-step termination directly; command `update`
+hooks run earlier and, during an ordinary `step()`, see the buffer already
+cleared to `False`, not the previous transition's union). Preserve any required
+previous-transition flags explicitly in command-owned state.
 Sim-only resets do not restart episode bookkeeping or clear action history.
 
 ## Queries (queries)

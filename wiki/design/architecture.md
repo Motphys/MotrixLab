@@ -79,7 +79,7 @@ MotrixLab 需要同时应对以下挑战：
 
 - `observation_space` / `action_space`
 - `step(actions) -> State`
-- `init_state() -> State`
+- `initialize() -> None` (the live state is exposed via `state`)
 
 RL 框架集成层通过 Wrapper 把这些通用接口适配到具体框架：
 
