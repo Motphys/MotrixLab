@@ -62,6 +62,74 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 开发工具、文档工具、RSL-RL 和 SKRL JAX 不会在默认运行环境中全部启用，需要时使用下面的参数追加。
 
+### 在 AMD ROCm 上安装
+
+MotrixLab 通过 PyTorch ROCm 后端支持 Linux x86_64 上的 AMD GPU。仓库配置当前选择 PyTorch ROCm 7.2 wheel 索引和 `triton-rocm`；主机仍需具备兼容的 AMD GPU、已加载的 `amdgpu` 内核驱动，以及计算设备和渲染设备的访问权限。安装前先检查主机：
+
+```bash
+lsmod | grep amdgpu
+ls -l /dev/kfd /dev/dri/renderD*
+```
+
+安装脚本通常通过 `amdgpu` 内核模块自动识别 AMD GPU。为了得到可复现的 ROCm 环境，尤其是在无法自动探测的容器或主机上，请显式选择 ROCm 配置：
+
+```bash
+sh install.sh --gpu rocm
+source .venv/bin/activate
+```
+
+除了检查 `mxlab` 命令，还应验证真实加速器运行时：
+
+```bash
+python - <<'PY'
+import torch
+
+print("torch:", torch.__version__)
+print("HIP:", torch.version.hip)
+print("available:", torch.cuda.is_available())
+print("device count:", torch.cuda.device_count())
+if torch.cuda.is_available():
+    print("device:", torch.cuda.get_device_name(0))
+
+assert torch.version.hip is not None, "当前安装的 PyTorch 不是 ROCm 构建"
+assert torch.cuda.is_available(), "PyTorch 无法访问 AMD GPU"
+PY
+```
+
+PyTorch 在 ROCm 上会保留 `torch.cuda` API 和 `cuda` 设备命名空间，这是预期行为；不要把任务设备改成 `rocm`。当任务可能自动选择 JAX 时，请显式使用 Torch 训练后端：
+
+```bash
+mxlab train \
+  task=cartpole/skrl.ppo \
+  task.train_backend=torch \
+  num_envs=64 \
+  algo.trainer.timesteps=256
+```
+
+该命令会完成一次有界 PPO 运行，并在 `runs/cartpole/` 下写入 metadata、日志和 checkpoint。它会实际覆盖任务加载、MotrixSim stepping、Torch provider、HIP 策略执行、优化和 checkpoint 写入，而不只是检查 import。
+
+ROCm 支持边界：
+
+| 组件 | ROCm 支持状态 | 说明 |
+| ---- | ------------- | ---- |
+| SKRL Torch | 支持 | 默认运行环境会安装；使用 `task.train_backend=torch` 显式选择 |
+| 内置 FastSAC | 支持 | 使用 PyTorch ROCm 后端及同一套 `torch.cuda` 命名空间 |
+| RSL-RL | 可用 | 使用 `sh install.sh --gpu rocm --rslrl` 追加 |
+| SKRL JAX | 不属于 ROCm 配置 | ROCm 下的 `--all` 会跳过这个面向 CUDA 的可选 extra |
+| MotrixSim | 支持配合 ROCm 训练 | 仿真器运行位置取决于环境 backend；GPU learner 支持不代表所有物理路径都运行在 GPU 上 |
+
+容器化 ROCm 训练和 AMD 设备透传参见[容器部署](container_deployment.md)。主机驱动安装与受支持硬件参见 [AMD ROCm 安装文档](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/)。
+
+常见故障：
+
+| 现象 | 可能原因 | 处理方式 |
+| ---- | -------- | -------- |
+| AMD 主机上安装脚本选择了 CUDA | 自动探测时没有看到 `amdgpu` 模块 | 重新执行 `sh install.sh --gpu rocm` |
+| `torch.version.hip` 为 `None` | 安装了非 ROCm PyTorch wheel | 重新执行显式 ROCm 安装命令 |
+| 能看到 HIP，但 `torch.cuda.is_available()` 为 `False` | 主机驱动、设备权限或 GPU/runtime 组合不可用 | 检查 `lsmod`、`rocminfo`、`/dev/kfd` 和 render node 权限 |
+| 后续命令替换了 ROCm 环境 | 裸 `uv sync` 或 `uv run` 选择了另一个互斥依赖配置 | 激活 `.venv` 后直接运行命令，或使用 `uv run --no-sync` |
+| JAX/provider discovery 失败 | 选择了面向 CUDA 的 SKRL JAX provider | 使用 `task.train_backend=torch`；ROCm 配置不要添加 `--skrl-jax` |
+
 ### 激活环境并检查安装
 
 Linux：

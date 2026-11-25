@@ -6,6 +6,8 @@ This tutorial uses the repository's built-in cartpole task. First complete {ref}
 
 After installation, use the unified `mxlab` command to train and evaluate policies. Use `mxlab --help` to list commands and `mxlab --version` to check the version.
 
+On an AMD ROCm host, first complete the [ROCm runtime verification](installation.md#install-on-amd-rocm). Use `task.train_backend=torch` in training commands; PyTorch uses its `cuda` device namespace for both CUDA and ROCm.
+
 ## Environment Preview
 
 Use `mxlab view` to visualize an environment without executing any training. This helps you verify that system dependencies are correctly configured:
@@ -22,6 +24,9 @@ Start training the cartpole balancing task:
 
 ```bash
 mxlab train task=cartpole/skrl.ppo
+
+# AMD ROCm: select the supported Torch backend explicitly
+mxlab train task=cartpole/skrl.ppo task.train_backend=torch
 ```
 
 The training process will automatically:

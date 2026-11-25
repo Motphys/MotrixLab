@@ -62,6 +62,74 @@ The default runtime environment includes `motrixlab`, repository tasks and the r
 
 Development tools, documentation tools, RSL-RL, and SKRL JAX are not all enabled in the default runtime environment; add them using the options below when needed.
 
+### Install on AMD ROCm
+
+MotrixLab supports AMD GPUs through the PyTorch ROCm backend on Linux x86_64. The repository profile currently selects the PyTorch ROCm 7.2 wheel index together with `triton-rocm`; the host still needs a compatible AMD GPU, a loaded `amdgpu` kernel driver, and permission to access the compute and render devices. Check the host before installing:
+
+```bash
+lsmod | grep amdgpu
+ls -l /dev/kfd /dev/dri/renderD*
+```
+
+The installer normally detects the `amdgpu` kernel module. Use the explicit profile below for a reproducible ROCm installation, especially on containers or hosts where automatic detection is unavailable:
+
+```bash
+sh install.sh --gpu rocm
+source .venv/bin/activate
+```
+
+Verify the accelerator runtime, not only the `mxlab` command:
+
+```bash
+python - <<'PY'
+import torch
+
+print("torch:", torch.__version__)
+print("HIP:", torch.version.hip)
+print("available:", torch.cuda.is_available())
+print("device count:", torch.cuda.device_count())
+if torch.cuda.is_available():
+    print("device:", torch.cuda.get_device_name(0))
+
+assert torch.version.hip is not None, "the installed PyTorch build is not a ROCm build"
+assert torch.cuda.is_available(), "PyTorch cannot access an AMD GPU"
+PY
+```
+
+PyTorch intentionally keeps the `torch.cuda` API and `cuda` device namespace when running on ROCm. Do not replace a task's device with `rocm`. Use the Torch training backend explicitly when a task can otherwise select JAX:
+
+```bash
+mxlab train \
+  task=cartpole/skrl.ppo \
+  task.train_backend=torch \
+  num_envs=64 \
+  algo.trainer.timesteps=256
+```
+
+The command completes a bounded PPO run and writes metadata, logs, and checkpoints below `runs/cartpole/`. It exercises task loading, MotrixSim stepping, the Torch provider, HIP policy execution, optimization, and checkpoint writing rather than only checking imports.
+
+ROCm support boundaries:
+
+| Component | ROCm support | Notes |
+| --------- | ------------ | ----- |
+| SKRL Torch | Supported | Installed by the default runtime profile; select `task.train_backend=torch` |
+| Built-in FastSAC | Supported | Uses the PyTorch ROCm backend and the same `torch.cuda` namespace |
+| RSL-RL | Available | Add it with `sh install.sh --gpu rocm --rslrl` |
+| SKRL JAX | Not part of the ROCm profile | `--all` skips this CUDA-oriented optional extra on ROCm |
+| MotrixSim | Supported with ROCm training | Simulator placement depends on the environment backend; GPU learner support does not imply that every physics path is GPU-resident |
+
+For containerized ROCm training and AMD device passthrough, see [Container Deployment](container_deployment.md). For host driver installation and supported hardware, consult the [AMD ROCm installation documentation](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/).
+
+Common failures:
+
+| Symptom | Likely cause | Recovery |
+| ------- | ------------ | -------- |
+| The installer selected CUDA on an AMD host | The `amdgpu` module was not visible during automatic detection | Rerun `sh install.sh --gpu rocm` |
+| `torch.version.hip` is `None` | A non-ROCm PyTorch wheel is installed | Rerun the explicit ROCm installation command |
+| HIP is reported but `torch.cuda.is_available()` is `False` | Host driver, device permissions, or the GPU/runtime pairing is unavailable | Check `lsmod`, `rocminfo`, `/dev/kfd`, and render-node permissions |
+| A later command replaces the ROCm environment | Bare `uv sync` or `uv run` selected another mutually exclusive dependency profile | Activate `.venv` and run commands directly, or use `uv run --no-sync` |
+| JAX/provider discovery fails | The CUDA-oriented SKRL JAX provider was selected | Use `task.train_backend=torch`; do not add `--skrl-jax` to the ROCm profile |
+
 ### Activate the environment and check the installation
 
 Linux:
