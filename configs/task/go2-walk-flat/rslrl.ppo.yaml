@@ -8,13 +8,13 @@ task:
   rllib: rslrl
   algo: ppo
   train_backend: null
-num_envs: 1024
+num_envs: 4096
 play_num_envs: 16
 seed: 1
 checkpoint:
   interval: 100
 algo:
-  max_iterations: 1000
+  max_iterations: 3000
   obs_groups:
     actor:
       - policy
@@ -32,5 +32,6 @@ algo:
       - 256
       - 128
   algorithm:
+    num_mini_batches: 16
     desired_kl: 0.01
     entropy_coef: 0.001
