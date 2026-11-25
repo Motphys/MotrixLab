@@ -60,6 +60,8 @@ mxlab train task=cartpole/skrl.ppo seed=null
 Hydra 可以直接覆盖已经声明的算法字段，例如 `algo.agent.learning_rate=5e-4`。字段路径取决于所选 Task，完整默认值位于 `motrix_rl/src/motrix_rl/configs/algo_base/`。
 ```
 
+固定随机种子只保证同一运行时内的训练可重复，不能让不同运行时得到数值完全一致的结果。PyTorch 与 CUDA/ROCm 版本可能改变随机数调度、kernel 选择、规约和浮点累加方式。比较或复现训练结果前，请使用 `python -c "import torch; print(torch.__version__, torch.version.cuda or torch.version.hip)"` 记录环境版本，并保持 MotrixLab commit 与已安装依赖版本一致。
+
 ### 训练后自动回放与续训
 
 ```bash

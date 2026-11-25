@@ -60,6 +60,8 @@ mxlab train task=cartpole/skrl.ppo seed=null
 Hydra can override typed algorithm fields directly. For example: `algo.agent.learning_rate=5e-4`. Field paths depend on the selected Task; the complete defaults are in `motrix_rl/src/motrix_rl/configs/algo_base/`.
 ```
 
+A fixed seed makes a training run repeatable within the same runtime, but it does not make different runtimes numerically identical. PyTorch and CUDA/ROCm versions can change random-number scheduling, kernel selection, reductions, and floating-point accumulation. Before comparing or reproducing training results, record the environment versions with `python -c "import torch; print(torch.__version__, torch.version.cuda or torch.version.hip)"`, and keep the same MotrixLab commit and installed dependency versions.
+
 ### Auto-play and Resume
 
 ```bash
