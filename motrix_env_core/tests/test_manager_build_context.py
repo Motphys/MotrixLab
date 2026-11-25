@@ -12,6 +12,7 @@ from motrix_env_core.manager.actions import ActionState, ActionTerm
 from motrix_env_core.manager.commands import CommandTerm
 from motrix_env_core.manager.context import BuildContext, ManagerContext
 from motrix_env_core.manager.env import ManagerBasedEnvCfg
+from motrix_env_core.manager.terminations import TerminationManager, TerminationTerm, TerminationTermCfg
 from motrix_env_core.mdp.observations import ActionsObsCfg, CommandObsCfg
 from motrix_env_core.sim.model import SimModel
 
@@ -82,3 +83,21 @@ def test_explicit_model_is_borrowed() -> None:
         model=model,
     )
     assert resolved.model is model
+
+
+def test_termination_manager_builds_from_explicit_context_without_environment() -> None:
+    ctx = BuildContext(cfg=ManagerBasedEnvCfg(), num_envs=3, seed=17, actions={}, commands={})
+
+    def terminate(context: ManagerContext) -> torch.Tensor:
+        return context.env_id == 0
+
+    class LimitCfg(TerminationTermCfg):
+        def __call__(self, context: BuildContext) -> TerminationTerm:
+            assert context is ctx
+            return TerminationTerm(terminate, metric_names=("limit_value",))
+
+    manager = TerminationManager({"limit": LimitCfg()}, ctx)
+    assert tuple(manager.terms) == ("limit",)
+    assert manager.terminated.shape == (3,)
+    assert not bool(manager.terminated.any())
+    assert manager.metrics["limit_value"].shape == (3, 1)

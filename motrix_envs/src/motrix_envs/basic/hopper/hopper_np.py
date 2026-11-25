@@ -94,9 +94,9 @@ class HopperEnv(DirectEnv):
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
         self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
-        return state
+        return None
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         inputs = self.sim_data
         qpos = inputs["dof_pos"][:, 1:]
         qvel = inputs["dof_vel"]
@@ -107,9 +107,9 @@ class HopperEnv(DirectEnv):
 
         touch = torch.stack([toe, heel], dim=-1)  # shape -> (num_env, 2)
         obs = torch.cat([qpos, qvel, touch], dim=-1)
-        return state.replace(obs=obs)
+        state.obs.policy.copy_(obs)
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         inputs = self.sim_data
 
@@ -171,7 +171,7 @@ class HopperEnv(DirectEnv):
             contact_reward = torch.clamp(contact_strength, 0.0, 1.0) * 0.1 * standing
 
             rwd = standing * 0.8 + effective_hop_reward * 0.8 + leg_bonus * 0.5 + extend_reward + contact_reward
-            state.reward_terms = {"stand": standing, "hop": effective_hop_reward, "total": rwd}
+            state.reward_terms.update({"stand": standing, "hop": effective_hop_reward, "total": rwd})
             if rwd.mean() > 1000:
                 print(
                     "standing",
@@ -201,13 +201,13 @@ class HopperEnv(DirectEnv):
             small_control = (small_control + 4) / 5
 
             rwd = standing * small_control
-            state.reward_terms = {"stand": standing, "control": small_control, "total": rwd}
+            state.reward_terms.update({"stand": standing, "control": small_control, "total": rwd})
 
         rwd[terminated] = 0.0
 
         state.reward[:] = rwd
         state.terminated[:] = terminated
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         num_reset = env_ids.numel()

@@ -74,9 +74,9 @@ class AcrobotEnv(DirectEnv):
         actions = torch.clamp(actions, -1.0, 1.0)
         self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
-        return state
+        return None
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         dof_pos = self.sim_data["dof_pos"]
         dof_vel = self.sim_data["dof_vel"]
         shoulder_angle = dof_pos[:, 0]
@@ -99,9 +99,9 @@ class AcrobotEnv(DirectEnv):
             ],
             dim=-1,
         )
-        return state.replace(obs=obs)
+        state.obs.policy.copy_(obs)
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         inputs = self.sim_data
         dof_pos = inputs["dof_pos"]
@@ -142,10 +142,11 @@ class AcrobotEnv(DirectEnv):
 
         state.reward[:] = rwd
         state.terminated[:] = terminated
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         num_reset = env_ids.numel()
+        self._step_count[env_ids] = 0
 
         shoulder_angle = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * np.pi
         elbow_angle = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * np.pi
@@ -157,12 +158,3 @@ class AcrobotEnv(DirectEnv):
         self._reset_velocity[env_ids] = dof_vel
         self._reset_program.execute(env_ids)
         self.sim_data.execute(env_ids)
-
-    def _reset_done_envs(self):
-        """
-        Reset the environments that are done
-        """
-        super()._reset_done_envs()
-        done = self._state.done
-        if bool(done.any()):
-            self._step_count[done] = 0

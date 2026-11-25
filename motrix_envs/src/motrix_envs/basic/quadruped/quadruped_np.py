@@ -269,7 +269,7 @@ class QuadrupedEnv(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> None:
         if self._cfg.clip_env_actions:
             actions = torch.clamp(actions, self._act_low, self._act_high)
         actions = actions.to(torch.float32)
@@ -278,7 +278,7 @@ class QuadrupedEnv(DirectEnv):
         ctrl = self._ctrl_writes.buffer("ctrl")
         ctrl.copy_(actions)
         self._ctrl_writes.execute()
-        return state
+        return None
 
     def _torso_frame(self, rows) -> torch.Tensor:
         return _quat_to_rotation_mats(self.sim_data["torso_quat"][rows])
@@ -603,7 +603,7 @@ class QuadrupedEnv(DirectEnv):
         rewards = {name: value * reward_scales[name] for name, value in reward_terms.items()}
         return sum(rewards.values())
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         parts = [
             self._egocentric_state(slice(None)),
             self._torso_velocity(slice(None)),
@@ -620,7 +620,7 @@ class QuadrupedEnv(DirectEnv):
         if self._cfg.include_target:
             parts.append(self._target_position(slice(None)))
 
-        return state.replace(obs=torch.cat(parts, dim=-1))
+        state.obs.policy.copy_(torch.cat(parts, dim=-1))
 
     def _base_locomotion_components(self, state: ArrayEnvState) -> dict[str, torch.Tensor]:
         torso_vel = self._torso_velocity(slice(None))
@@ -703,7 +703,7 @@ class QuadrupedEnv(DirectEnv):
 @registry.env("dm-quadruped-walk")
 @registry.env("dm-quadruped-run")
 class QuadrupedLocomotionEnv(QuadrupedEnv):
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         inputs = self.sim_data
         torso_upright = self._torso_upright(slice(None))
@@ -717,11 +717,11 @@ class QuadrupedLocomotionEnv(QuadrupedEnv):
 
         terminated = inputs["dof_pos"].isnan().any(dim=-1) | inputs["dof_vel"].isnan().any(dim=-1)
         rwd = torch.where(terminated, torch.zeros_like(rwd), rwd)
-        state.reward_terms = reward_components
+        state.reward_terms.update(reward_components)
 
         state.reward[:] = rwd
         state.terminated[:] = terminated
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         num = env_ids.numel()
@@ -738,7 +738,7 @@ class QuadrupedLocomotionEnv(QuadrupedEnv):
 
 @registry.env("dm-quadruped-escape")
 class QuadrupedEscapeEnv(QuadrupedLocomotionEnv):
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         inputs = self.sim_data
         torso_upright = self._torso_upright(slice(None))
@@ -776,16 +776,16 @@ class QuadrupedEscapeEnv(QuadrupedLocomotionEnv):
 
         terminated = inputs["dof_pos"].isnan().any(dim=-1) | inputs["dof_vel"].isnan().any(dim=-1)
         rwd = torch.where(terminated, torch.zeros_like(rwd), rwd)
-        state.reward_terms = reward_components
+        state.reward_terms.update(reward_components)
 
         state.reward[:] = rwd
         state.terminated[:] = terminated
-        return state
+        return None
 
 
 @registry.env("dm-quadruped-fetch")
 class QuadrupedFetchEnv(QuadrupedEnv):
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         inputs = self.sim_data
         torso_upright = self._torso_upright(slice(None))
@@ -944,11 +944,11 @@ class QuadrupedFetchEnv(QuadrupedEnv):
         rwd = torch.where(terminated, torch.zeros_like(rwd), rwd)
         for key, value in reward_components.items():
             reward_components[key] = torch.where(terminated, torch.zeros_like(value), value)
-        state.reward_terms = reward_components
+        state.reward_terms.update(reward_components)
 
         state.reward[:] = rwd
         state.terminated[:] = terminated
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         num = env_ids.numel()

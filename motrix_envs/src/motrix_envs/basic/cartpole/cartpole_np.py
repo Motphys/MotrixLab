@@ -65,7 +65,7 @@ class CartPoleEnv(DirectEnv):
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
         self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
-        return state
+        return None
 
     def compute_transition(self, state: ArrayEnvState):
         self.sim_data.execute()
@@ -80,12 +80,12 @@ class CartPoleEnv(DirectEnv):
 
         state.reward[:] = 1.0
         state.terminated[:] = terminated
-        return state
+        return None
 
     def compute_observation(self, state: ArrayEnvState):
         obs = torch.cat([self.sim_data["dof_pos"], self.sim_data["dof_vel"]], dim=-1)
         assert obs.shape == (self._num_envs, 4)
-        return state.replace(obs=obs)
+        state.obs.policy.copy_(obs)
 
     def reset(self, env_ids: torch.Tensor) -> None:
         cfg: CartPoleEnvCfg = self._cfg

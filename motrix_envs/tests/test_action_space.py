@@ -61,7 +61,9 @@ def test_quadruped_action_space_maps_to_actuator_control_limits(env_name):
     control_ranges = np.asarray([spec.ctrl_range for spec in env.model.actuators], dtype=np.float32)
     action_scale = env.cfg.control_config.action_scale
 
-    state = env.init_state()
+    env.initialize()
+
+    state = env.state
     state = env.apply_action(np.zeros((2, env._num_action), dtype=np.float32), state)
     env.sim_data.execute()
     np.testing.assert_allclose(

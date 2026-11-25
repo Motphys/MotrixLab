@@ -68,7 +68,8 @@ def test_walk_command_resamples_and_resets_only_selected_rows():
 )
 def test_walk_presets_use_shared_manager_env(env_name, action_dim, policy_dim, value_dim):
     env = registry.make(env_name, num_envs=2)
-    state = env.init_state()
+    env.initialize()
+    state = env.state
 
     assert type(env) is ManagerEnv
     assert isinstance(env.cfg, HumanoidVelocityTrackingManagerEnvCfg)

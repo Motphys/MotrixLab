@@ -166,19 +166,19 @@ class Humanoid3DEnv(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> None:
         ctrl = self._ctrl_writes.buffer("ctrl")
         ctrl.copy_(actions)
         self._ctrl_writes.execute()
-        return state
+        return None
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
-        state = self.update_terminated(state)
-        state = self.update_reward(state)
-        return state
+        self.update_terminated(state)
+        self.update_reward(state)
+        return None
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         inputs = self.sim_data
         joint_angles = inputs["dof_pos"][:, 7:]
         head_height = self._get_head_height(slice(None))[:, None]
@@ -210,16 +210,14 @@ class Humanoid3DEnv(DirectEnv):
         obs = torch.cat(
             [joint_angles, head_height, extremities, torso_vertical, com_vel, qvel, target_direction_local], dim=-1
         )
-        return state.replace(obs=obs)
+        state.obs.policy.copy_(obs)
 
     def update_terminated(self, state: ArrayEnvState) -> ArrayEnvState:
         head_height = self._get_head_height(slice(None))
         torso_upright = self._get_torso_upright(slice(None))
         terminated = self._compute_terminated(head_height, torso_upright)
 
-        return state.replace(
-            terminated=terminated,
-        )
+        state.terminated.copy_(terminated)
 
     def update_reward(self, state: ArrayEnvState) -> ArrayEnvState:
         terminated = state.terminated
@@ -228,8 +226,10 @@ class Humanoid3DEnv(DirectEnv):
         torso_upright = self._get_torso_upright(slice(None))
         rwd, reward_components = self._compute_reward(head_height, torso_upright, pelvis_height)
         rwd, reward_components = self._apply_termination_mask(terminated, rwd, reward_components)
-        state.reward_terms = reward_components
-        return state.replace(reward=rwd)
+        terms = state.reward_terms
+        terms.clear()
+        terms.update(reward_components)
+        state.reward.copy_(rwd)
 
     def _apply_termination_mask(
         self,

@@ -37,7 +37,7 @@ class SkrlTorchEnvWrap(SkrlWrapper):
         self._renderer = create_renderer(env, render)
 
     def reset(self) -> tuple[torch.Tensor, Any]:
-        state = self._env.init_state()
+        state = self._env.initialize()
         return state.obs.policy.to(device=self.device, dtype=torch.float32), env_infos(state)
 
     def step(

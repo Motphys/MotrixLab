@@ -8,6 +8,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, fields
 from typing import Any
 
+import torch
+
 from motrix_env_core.config import configclass
 from motrix_env_core.manager.context import BuildContext
 from motrix_env_core.manager.terms import BaseTerm, canonicalize_term_args
@@ -60,9 +62,27 @@ def create_reward_terms(cfg: dict[str, RewardTermCfg], ctx: BuildContext) -> dic
     return terms
 
 
+class RewardManager:
+    """Build reward terms and own their evaluate-kernel output buffers.
+
+    Per-term columns are allocated here in declaration order; the manager
+    program resolver assigns ``term.index`` by the same order, so the
+    evaluate kernel's column writes and the ``reward_terms`` views stay
+    aligned by contract rather than by coincidence.
+    """
+
+    def __init__(self, cfgs: dict[str, RewardTermCfg], context: BuildContext, num_envs: int) -> None:
+        self.terms = create_reward_terms(cfgs, context)
+        self.total_reward = torch.zeros(num_envs, dtype=torch.float32)
+        self.term_rewards = torch.empty((num_envs, len(self.terms)), dtype=torch.float32)
+        self.weighted_term_rewards = torch.empty_like(self.term_rewards)
+        self.reward_terms = {name: self.weighted_term_rewards[:, index] for index, name in enumerate(self.terms)}
+
+
 __all__ = [
     "ManagerRewardsCfg",
     "RewardTerm",
     "RewardTermCfg",
+    "RewardManager",
     "create_reward_terms",
 ]

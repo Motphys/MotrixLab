@@ -77,7 +77,7 @@ def generate_snapshot(
     env = registry.make(env_name, num_envs=num_envs, headless=True, record=record)
     if not isinstance(env, ArrayEnv):
         raise TypeError(f"Snapshot rendering only supports ArrayEnv environments, got {type(env).__name__}")
-    env.init_state()
+    env.initialize()
 
     return _save_snapshot(
         env,

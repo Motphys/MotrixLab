@@ -94,7 +94,7 @@ def test_generate_snapshot_initializes_registered_env(monkeypatch, tmp_path):
         pass
 
     env = FakeArrayEnv()
-    env.init_state = lambda: setattr(env, "initialized", True)
+    env.initialize = lambda: setattr(env, "initialized", True)
     monkeypatch.setattr(generate_env_snapshot, "ArrayEnv", FakeArrayEnv)
     make_calls = []
     snapshot_calls = []
@@ -138,7 +138,7 @@ def test_generate_snapshot_requires_force_to_overwrite_existing_image(monkeypatc
     assert make_calls == []
 
     class FakeArrayEnv:
-        def init_state(self):
+        def initialize(self):
             pass
 
     env = FakeArrayEnv()

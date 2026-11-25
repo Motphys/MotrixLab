@@ -298,7 +298,10 @@ plain frozen dataclass 的 `CommandTerm` 子类，实现三个实例方法回调
 按 `env_ids` 对常驻命令状态 gather/scatter，用 `episode_reset` 限定回合级统计。
 `episode_reset` 是与 `env_ids` 对齐的 bool `(K,)` 张量：`True` 表示回合级重置（含初始化与显式重开），
 `False` 表示仅重置仿真器、当前回合继续。它不等于 `terminated`，也不必然表示上一回合已经结束。
-`ctx.terminated[env_ids]` 给出最近一次转移的终止并集在选中行上的值。
+`ctx.terminated[env_ids]` 给出本转移的终止并集在选中行上的值（evaluate kernel
+在 reward 求值前写回该并集，因此 reward term 可以直接读取本步终止；command
+`update` hook 执行更早，在普通 `step()` 中读到的是已清零为 `False` 的缓冲区，
+而不是上一转移的并集）。若需要上一转移的标记，应显式保存在 command 自有状态中。
 sim-only reset 不重启回合 bookkeeping，也不清空动作历史。
 
 ## 查询（queries）

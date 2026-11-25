@@ -112,9 +112,9 @@ class Walker2DEnv(DirectEnv):
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
         self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
-        return state
+        return None
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         inputs = self.sim_data
         num_env = self._num_envs
         link_rotations = _quat_to_rotation_mats(inputs["link_quats"])
@@ -122,9 +122,9 @@ class Walker2DEnv(DirectEnv):
         up_right = link_rotations[:, 0, 2, 2].reshape(num_env, 1)  # 1
         orientations = link_rotations[:, 1:, [0, 0], [2, 0]].reshape(num_env, -1)  # (num_links - 1) * 2
         obs = torch.cat([orientations, up_right, dof_vel], dim=-1)
-        return state.replace(obs=obs)
+        state.obs.policy.copy_(obs)
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         inputs = self.sim_data
         # === compute termination inputs ===
@@ -172,12 +172,12 @@ class Walker2DEnv(DirectEnv):
             reward_terms["move"] = rwd_move
             rwd = rwd_stand * (5 * rwd_move + 1) / 6
 
-        state.reward_terms = reward_terms
+        state.reward_terms.update(reward_terms)
         rwd[terminated] = 0.0
 
         state.reward[:] = rwd
         state.terminated[:] = terminated
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         num_reset = env_ids.numel()

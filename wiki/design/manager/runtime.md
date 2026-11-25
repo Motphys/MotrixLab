@@ -72,7 +72,8 @@ Manager group 的顺序是行为契约的一部分：action slice、observation 
 3. backend 推进 `sim_substeps`；
 4. command term 在 host 侧更新 persistent state；
 5. read program 刷新 simulator snapshot；
-6. Torch 执行器执行 command evaluation、observation、reward 和 termination（一次整批调用/term）；
+6. Torch 执行器执行 command evaluation、observation、termination 和 reward（一次整批调用/term；
+   termination 先于 reward 求值，reward 可读 `ctx.terminated` 本转移终止）；
 7. `ArrayEnv` 处理 truncation 和 done reset；`state.metrics` 是常驻活视图（kernel 原地写），跨步持有走 `process_metrics()` 归约快照。
 
 ### Partial reset
@@ -94,8 +95,14 @@ reset kernel 对 episode-reset lanes 与 mid-episode sim-reset lanes 的并集�
 - `episode_reset: torch.Tensor`：与 `env_ids` 对齐的 bool `(K,)`，True 表示回合级重置（含初始化与显式重开），
   False 表示仅 sim reset、当前回合继续；它不等于 `terminated`，也不必然表示上一回合已经结束。
 
-`ManagerContext` 始终保持全批 N 行，不承载 reset 选择字段；`ctx.terminated` 是最近一次
-transition 的全批 termination 并集镜像，按 `env_ids` 读取本次目标行。
+`ManagerContext` 始终保持全批 N 行，不承载 reset 选择字段；`ctx.terminated` 是
+本 transition 的全批 termination 并集：evaluate kernel 的阶段序为
+command update hooks → **terminations → rewards** → command advance hooks，
+终止并集在 reward 求值前写回，reward term 因此读到本转移的终止；
+command update hooks 先于 terminations 执行；普通 `step()` 在进入这些 hook 前
+已将共享终止缓冲区清零为 `False`，因此不能从中读取上一转移的并集。
+需要跨转移保留的标记应显式存入 command 自有状态。
+reset 钩子在 evaluate 完成后运行、读到终值，按 `env_ids` 读取本次目标行。
 reset 以 dynamic gather-compact 形式编译，钩子按 `env_ids` 在常驻全批状态上 gather/scatter，
 episode 边界统计（自适应采样、课程 EMA）以 `episode_reset` 限定，
 以 compact 张量表达（`scatter_add` 直方图、`torch.where` 分支），

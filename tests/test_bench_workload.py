@@ -28,9 +28,14 @@ def test_prepare_case_builds_standard_case_and_closes_environment(monkeypatch):
         shape=(2,), dtype=np.dtype("float32"), low=np.array([-1.0, -1.0]), high=np.array([1.0, 1.0])
     )
     reference = SimpleNamespace(action_space=space, num_envs=3, step=Mock(), close=Mock())
-    registry = SimpleNamespace(make=lambda *args, **kwargs: reference)
+
+    def make(name, *, mode, num_envs, sim=None):
+        assert (name, mode, num_envs, sim) == ("reference", "train", 3, "test-backend")
+        return reference
+
+    registry = SimpleNamespace(make=make)
     monkeypatch.setattr(workload, "load_runtime", lambda: (np, registry, dict))
-    config = EnvStepConfig(steps=2, warmup=0, env_name="reference", num_envs=(3,), seed=123)
+    config = EnvStepConfig(steps=2, warmup=0, env_name="reference", num_envs=(3,), seed=123, sim_backend="test-backend")
     env, case = workload.prepare_case(config, 3)
     assert env is reference
     assert case.items_per_step == 3

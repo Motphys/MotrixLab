@@ -26,7 +26,7 @@ import numpy as np
 import torch
 
 from motrix_env_core.manager.context import ManagerContext
-from motrix_env_core.manager.env import ManagerEnv, ReadPlan
+from motrix_env_core.manager.env import ManagerEnv
 from motrix_env_core.manager.kernel_data import (
     is_kernel_data,
     iter_leaves,
@@ -231,7 +231,7 @@ class ResolvedManagerProgram:
     persistent state, so it is built once and never rebuilt.
     """
 
-    read_plan: ReadPlan
+    sim_data: PhysicsReadProgram
     layout: ManagerLayout
     context: ManagerContext
     command_updates: tuple[CommandUpdateHook, ...]
@@ -389,7 +389,7 @@ class ManagerProgramResolver:
     def build(self) -> ResolvedManagerProgram:
         build_started = perf_counter()
         observation_groups = self._env.observation_groups
-        reward_terms = self._env._reward_terms
+        reward_terms = self._env._reward_manager.terms
         termination_terms = self._env.termination_manager.terms
         context = self._resolve_manager_context()
         command_updates = tuple(
@@ -452,7 +452,7 @@ class ManagerProgramResolver:
             call_count,
         )
         return ResolvedManagerProgram(
-            read_plan=ReadPlan(self._env.sim_data),
+            sim_data=self._env.sim_data,
             layout=layout,
             context=context,
             command_updates=command_updates,
@@ -541,8 +541,8 @@ class ManagerProgramResolver:
             dt=float(self._env.cfg.ctrl_dt),
             rand=self._env._random,
             sim_reset_requested=self._env._sim_reset_requested,
-            terminated=torch.zeros(self._env.num_envs, dtype=torch.bool),
-            reward=torch.zeros(self._env.num_envs, dtype=torch.float32),
+            terminated=self._env.termination_manager.terminated,
+            reward=self._env._reward_manager.total_reward,
         )
         self._validate_context_leaves(value)
         return value
@@ -625,6 +625,8 @@ class ManagerProgramResolver:
         cfg: Any,
         reward_terms: dict[str, RewardTerm],
     ) -> tuple[tuple[RewardTermCall, ...], tuple[ScalarTermLayout, ...], tuple[float, ...]]:
+        # Contract: indices follow the reward_terms declaration order, which
+        # is also the column order of RewardManager's per-term buffers.
         term_cfgs = cfg.reward_cfgs()
         terms = []
         layout = []
@@ -642,6 +644,8 @@ class ManagerProgramResolver:
         self,
         termination_terms: dict[str, TerminationTerm],
     ) -> tuple[tuple[TerminationTermCall, ...], tuple[ScalarTermLayout, ...]]:
+        # Contract: indices follow the termination_terms declaration order,
+        # which is also the column order of TerminationManager's term_masks buffer.
         terms = []
         layout = []
         for index, (name, term) in enumerate(termination_terms.items()):

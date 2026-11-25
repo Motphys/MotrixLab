@@ -58,7 +58,7 @@ def _make_env():
     env.action_space = action_space
     env.observation_spec = ObservationSpec({"policy": ObservationGroupSpec(policy_space)})
     env.state = state
-    env.init_state.return_value = state
+    env.initialize.return_value = state
     env.step.return_value = state
     return env
 
@@ -134,7 +134,11 @@ class _AsyncEnv:
     def update_state(self, state):
         return state
 
-    def init_state(self):
+    @property
+    def state(self):
+        return self._state
+
+    def initialize(self):
         self._state = self._make_state(0.0)
         return self._state
 

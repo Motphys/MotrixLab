@@ -288,10 +288,10 @@ def test_custom_environment_can_be_registered_and_created_without_builtins():
         def action_space(self) -> gym.spaces.Box:
             return gym.spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32)
 
-        def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+        def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> None:
             return state
 
-        def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+        def compute_transition(self, state: ArrayEnvState) -> None:
             return state
 
         def reset(self, env_ids: torch.Tensor) -> None:
@@ -349,10 +349,10 @@ def test_direct_env_resolves_sim_backend_through_registry():
         def action_space(self) -> gym.spaces.Box:
             return gym.spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32)
 
-        def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+        def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> None:
             return state
 
-        def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+        def compute_transition(self, state: ArrayEnvState) -> None:
             return state
 
         def reset(self, env_ids: torch.Tensor) -> None:

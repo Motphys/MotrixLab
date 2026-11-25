@@ -140,13 +140,13 @@ class FingerEnv(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> None:
         # Keep track of actions for reward shaping (e.g., smoothness penalties)
         self._last_actions.copy_(self._actions)
         self._actions.copy_(actions)
         self._ctrl_writes.buffer("ctrl").copy_(actions)
         self._ctrl_writes.execute()
-        return state
+        return None
 
     def _dist_to_target(self, rows) -> torch.Tensor:
         # Signed distance to the target surface. Negative means inside.
@@ -154,7 +154,7 @@ class FingerEnv(DirectEnv):
         dist = torch.linalg.norm((self._target_xyz[rows] - tip_xyz)[:, [0, 2]], dim=-1)
         return dist - self._target_radius
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         raise NotImplementedError
 
     def _reset_target(self, env_ids: torch.Tensor, positions: torch.Tensor) -> None:
@@ -210,7 +210,7 @@ class FingerSpinEnv(FingerEnv):
             {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (9,), dtype=np.float32))}
         )
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         inputs = self.sim_data
         joint_pos = inputs["joint_pos"]
         tip_xz = (inputs["tip_pos"] - inputs["spinner_pos"])[:, [0, 2]]
@@ -218,9 +218,9 @@ class FingerSpinEnv(FingerEnv):
         velocity = inputs["joint_vel"]
         touch = torch.log1p(inputs["touch"])
         obs = torch.cat([position, velocity, touch], dim=-1)
-        return state.replace(obs=obs)
+        state.obs.policy.copy_(obs)
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         inputs = self.sim_data
         terminated = inputs["joint_pos"].isnan().any(dim=-1) | inputs["joint_vel"].isnan().any(dim=-1)
@@ -263,20 +263,22 @@ class FingerSpinEnv(FingerEnv):
             spin = torch.clamp(spin + touch_bonus + approach_reward, 0.0, 1.0)
 
         rwd = spin
-        state.reward_terms = {
-            "hinge_velocity": hinge_velocity.clone(),
-            "spin": spin.clone(),
-            "spin_sparse": spin_sparse.clone(),
-            "touch_raw": touch_raw.clone(),
-            "touch_bonus": touch_bonus.clone(),
-            "approach_dist": approach_dist.clone(),
-            "approach_reward": approach_reward.clone(),
-        }
+        state.reward_terms.update(
+            {
+                "hinge_velocity": hinge_velocity.clone(),
+                "spin": spin.clone(),
+                "spin_sparse": spin_sparse.clone(),
+                "touch_raw": touch_raw.clone(),
+                "touch_bonus": touch_bonus.clone(),
+                "approach_dist": approach_dist.clone(),
+                "approach_reward": approach_reward.clone(),
+            }
+        )
 
         rwd[terminated] = 0.0
         state.reward[:] = rwd
         state.terminated[:] = terminated
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         self._reset_collision_free_joint_angles(env_ids)
@@ -296,7 +298,7 @@ class FingerTurnEnv(FingerEnv):
             {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (12,), dtype=np.float32))}
         )
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         inputs = self.sim_data
         joint_pos = inputs["joint_pos"]
         tip_xz = (inputs["tip_pos"] - inputs["spinner_pos"])[:, [0, 2]]
@@ -306,9 +308,9 @@ class FingerTurnEnv(FingerEnv):
         target_position = (self._target_xyz - inputs["spinner_pos"])[:, [0, 2]]
         dist_to_target = self._dist_to_target(slice(None)).reshape(-1, 1)
         obs = torch.cat([position, velocity, touch, target_position, dist_to_target], dim=-1)
-        return state.replace(obs=obs)
+        state.obs.policy.copy_(obs)
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         inputs = self.sim_data
         terminated = inputs["joint_pos"].isnan().any(dim=-1) | inputs["joint_vel"].isnan().any(dim=-1)
@@ -376,22 +378,24 @@ class FingerTurnEnv(FingerEnv):
             turn = turn_sparse
 
         rwd = turn
-        state.reward_terms = {
-            "dist_to_target": dist_to_target.clone(),
-            "turn": turn.clone(),
-            "turn_sparse": turn_sparse.clone(),
-            "touch_raw": touch_raw.clone(),
-            "touch_bonus": touch_bonus.clone(),
-            "approach_dist": approach_dist.clone(),
-            "approach_reward": approach_reward.clone(),
-            "action_l2": action_l2.clone(),
-            "action_delta_l2": action_delta_l2.clone(),
-        }
+        state.reward_terms.update(
+            {
+                "dist_to_target": dist_to_target.clone(),
+                "turn": turn.clone(),
+                "turn_sparse": turn_sparse.clone(),
+                "touch_raw": touch_raw.clone(),
+                "touch_bonus": touch_bonus.clone(),
+                "approach_dist": approach_dist.clone(),
+                "approach_reward": approach_reward.clone(),
+                "action_l2": action_l2.clone(),
+                "action_delta_l2": action_delta_l2.clone(),
+            }
+        )
 
         rwd[terminated] = 0.0
         state.reward[:] = rwd
         state.terminated[:] = terminated
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         num = env_ids.numel()

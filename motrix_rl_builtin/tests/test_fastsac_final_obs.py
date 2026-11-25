@@ -47,7 +47,8 @@ def test_numpy_adapter_reads_final_result_without_consuming_environment_state():
         num_envs=1,
         observation_spec=ObservationSpec({"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (1,)))}),
         action_space=gym.spaces.Box(-1.0, 1.0, (1,), dtype=np.float32),
-        init_state=lambda: initial,
+        initialize=lambda: initial,
+        state=initial,
         step=lambda actions: state,
     )
     wrapped = FastSacEnvWrap(env, torch.device("cpu"))

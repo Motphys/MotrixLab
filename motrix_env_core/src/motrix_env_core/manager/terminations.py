@@ -6,16 +6,13 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from dataclasses import dataclass, fields
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import torch
 
 from motrix_env_core.config import configclass
 from motrix_env_core.manager.context import BuildContext
 from motrix_env_core.manager.terms import BaseTerm, canonicalize_term_args
-
-if TYPE_CHECKING:
-    from motrix_env_core.manager.env import ManagerEnv
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -71,12 +68,17 @@ class ManagerTerminationsCfg:
 class TerminationManager:
     """Create and own configured termination terms."""
 
-    def __init__(self, cfg: dict[str, TerminationTermCfg], env: ManagerEnv) -> None:
-        self._env = env
+    def __init__(self, cfg: dict[str, TerminationTermCfg], context: BuildContext) -> None:
         self._terms: dict[str, TerminationTerm] = {}
-        self._initialize(cfg)
+        self.terminated = torch.zeros(context.num_envs, dtype=torch.bool)
+        self.metrics: dict[str, torch.Tensor] = {}
+        self._initialize(cfg, context)
+        # Per-term columns follow declaration order; the manager program
+        # resolver assigns ``term.index`` by the same order (contract, not
+        # coincidence), keeping kernel column writes aligned with views.
+        self._term_masks = torch.empty((context.num_envs, len(self._terms)), dtype=torch.bool)
 
-    def _initialize(self, cfg: dict[str, TerminationTermCfg]) -> None:
+    def _initialize(self, cfg: dict[str, TerminationTermCfg], context: BuildContext) -> None:
         termination_types: dict[type[TerminationTermCfg], str] = {}
         for name, term_cfg in cfg.items():
             existing_name = termination_types.get(type(term_cfg))
@@ -86,16 +88,16 @@ class TerminationManager:
                     f"{existing_name!r} and {name!r}; each configured termination type must be unique."
                 )
             termination_types[type(term_cfg)] = name
-            created = term_cfg(self._env.build_context())
+            created = term_cfg(context)
             if not isinstance(created, TerminationTerm):
                 raise TypeError(
                     f"Manager termination {name} __call__() must return TerminationTerm, got {type(created).__name__}."
                 )
             canonical_args = canonicalize_term_args(created.args, context=f"Manager term termination.{name}")
             for metric_name in created.metric_names:
-                if metric_name in self._env.metrics:
+                if metric_name in self.metrics:
                     raise ValueError(f"Duplicate per-environment metric name: {metric_name!r}")
-                self._env.metrics[metric_name] = torch.empty((self._env.num_envs, 1), dtype=torch.float32)
+                self.metrics[metric_name] = torch.empty((context.num_envs, 1), dtype=torch.float32)
             self._terms[name] = TerminationTerm(
                 created.dispatch,
                 *canonical_args,

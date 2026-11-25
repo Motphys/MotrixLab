@@ -47,8 +47,13 @@ class ManagerContext:
     # transition. It is not an episode reset: episode bookkeeping and
     # action-term state are untouched (see CommandTerm.advance).
     sim_reset_requested: torch.Tensor
-    # Read-only mirror of the latest transition's termination union, backing
-    # episode-boundary statistics inside reset hooks.
+    # Termination union of the transition being evaluated. The evaluate
+    # kernel writes it before reward terms run, so reward terms read the
+    # current transition. During ordinary step(), command ``update`` hooks
+    # run before termination evaluation and see the buffer cleared to False
+    # by the step lifecycle, not the previous transition's union.
+    # Reset hooks run after the full evaluate and read the final value,
+    # backing episode-boundary statistics.
     terminated: torch.Tensor
     # Stateless capability, not tensor kernel data. All consumers on a device
     # share Torch's default stream; separate contexts do not imply RNG isolation.
@@ -65,15 +70,14 @@ class ManagerContext:
 class BuildContext:
     """Explicit construction inputs and independently owned terms, without an environment.
 
-    ManagerEnv constructs terms in this order: commands (declaration order),
-    command metric materialization/validation, simulator resets, actions,
-    rewards, terminations, then observations.
+    ManagerEnv constructs terms in this order: commands, command metric
+    materialization/validation, simulator resets, actions, rewards,
+    terminations, then observations.
 
     Availability during each factory call:
 
-    * Command: ``actions`` is empty; ``commands`` contains only preceding
-      commands, whose metrics have not yet been materialized. Later commands
-      and the command currently being constructed are unavailable.
+    * Command: ``actions`` and ``commands`` are empty. Command factories must
+      be independent; runtime hooks receive the complete command mapping later.
     * Simulator reset and action: ``commands`` is complete and validated;
       ``actions`` is empty throughout all action factories. Action construction
       publishes the collection only after every action factory returns.
@@ -89,6 +93,8 @@ class BuildContext:
     batch size of a later rollout. ``seed`` initializes that owner's
     construction/reset generators; numerical terms access the process-default
     Torch RNG through the explicit ``ManagerContext.rand`` capability.
+    Tensor factories follow Torch's default device unless a dependency requires
+    an explicit device; device selection belongs to the assembly caller.
     """
 
     cfg: EnvCfg

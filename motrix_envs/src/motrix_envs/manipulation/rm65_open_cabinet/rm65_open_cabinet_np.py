@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from motrix_env_core import registry
-from motrix_env_core.array.env import ArrayEnvState, EnvObs
+from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.math import quaternion
 from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
@@ -485,7 +485,7 @@ class RM65OpenCabinetEnv(DirectEnv):
         ctrl.copy_(cliped_new_pos)
         self._ctrl_writes.execute()
 
-        return state
+        return None
 
     def compute_observation(self, state: ArrayEnvState):
         """Build the full observation batch from cached simulator data.
@@ -553,8 +553,8 @@ class RM65OpenCabinetEnv(DirectEnv):
         # name is applied via setattr so static audits can tell this
         # sanctioned observation-stage write apart from the forbidden
         # transition-time writes.
-        setattr(state, "obs", EnvObs({"policy": obs.clamp(-5, 5)}))
-        return state
+        state.obs.policy.copy_(obs.clamp(-5, 5))
+        return None
 
     def compute_transition(self, state: ArrayEnvState):
         """Update reward and termination from the refreshed simulator cache.
@@ -569,12 +569,12 @@ class RM65OpenCabinetEnv(DirectEnv):
         # compute reward
         reward = self._compute_reward(state, truncated)
 
-        state.reward = reward
-        state.terminated = truncated
+        state.reward.copy_(reward)
+        state.terminated.copy_(truncated)
 
         self.count += 1
 
-        return state
+        return None
 
     def _enforce_drawer_grasp_constraint(self):
         reward_cfg = self._cfg.reward
@@ -957,37 +957,43 @@ class RM65OpenCabinetEnv(DirectEnv):
         truncation_penalty: torch.Tensor,
     ) -> None:
         grasped = open_terms["grasped"]
-        state.reward_terms = {
-            "dist": alignment_terms["dist_reward"],
-            "quat": alignment_terms["quat_reward"],
-            "close_gripper": alignment_terms["close_gripper"],
-            "open_reward": open_terms["open_reward"],
-            "open_delta_reward": open_terms["open_delta_reward"],
-            "grasp_hold_reward": progress_terms["grasp_hold_reward"],
-            "open_bonus_reward": progress_terms["open_bonus_reward"],
-            "slip_penalty": progress_terms["slip_penalty"],
-            "finger_penalty": penalty_terms["finger_penalty"],
-            "finger_align_reward": penalty_terms["finger_align_reward"],
-            "gripper_switch_penalty": penalty_terms["gripper_switch_penalty"],
-            "grasped_rate": grasped.to(torch.float32),
-            "action_penalty": penalty_terms["action_penalty_term"],
-            "joint_vel_penalty": penalty_terms["joint_vel_penalty_term"],
-            "truncation_penalty": truncation_penalty,
-        }
-        state.metrics = {
-            "open_dist": open_terms["open_dist"],
-            "gripper_drawer_dist": gripper_drawer_dist,
-            "gripper_close_rate": (gripper_drawer_dist < reward_cfg.gripper_close_dist).to(torch.float32),
-            "grasp_dist_hit_rate": (gripper_drawer_dist < reward_cfg.grasp_dist).to(torch.float32),
-            "grasp_close_hit_rate": (alignment_terms["close_ratio"] > reward_cfg.grasp_close_ratio).to(torch.float32),
-            "grasp_align_hit_rate": alignment_terms["align_mask"].to(torch.float32),
-            "close_amount": alignment_terms["close_amount"],
-            "wrong_open": open_terms["wrong_open"].to(torch.float32),
-            "gripper_switch": penalty_terms["switch_mask"].to(torch.float32),
-            "grasped_rate": grasped.to(torch.float32),
-            "action_penalty_rate": penalty_terms["action_penalty_rate"],
-            "joint_vel_penalty_rate": penalty_terms["joint_vel_penalty_rate"],
-        }
+        state.reward_terms.update(
+            {
+                "dist": alignment_terms["dist_reward"],
+                "quat": alignment_terms["quat_reward"],
+                "close_gripper": alignment_terms["close_gripper"],
+                "open_reward": open_terms["open_reward"],
+                "open_delta_reward": open_terms["open_delta_reward"],
+                "grasp_hold_reward": progress_terms["grasp_hold_reward"],
+                "open_bonus_reward": progress_terms["open_bonus_reward"],
+                "slip_penalty": progress_terms["slip_penalty"],
+                "finger_penalty": penalty_terms["finger_penalty"],
+                "finger_align_reward": penalty_terms["finger_align_reward"],
+                "gripper_switch_penalty": penalty_terms["gripper_switch_penalty"],
+                "grasped_rate": grasped.to(torch.float32),
+                "action_penalty": penalty_terms["action_penalty_term"],
+                "joint_vel_penalty": penalty_terms["joint_vel_penalty_term"],
+                "truncation_penalty": truncation_penalty,
+            }
+        )
+        state.metrics.update(
+            {
+                "open_dist": open_terms["open_dist"],
+                "gripper_drawer_dist": gripper_drawer_dist,
+                "gripper_close_rate": (gripper_drawer_dist < reward_cfg.gripper_close_dist).to(torch.float32),
+                "grasp_dist_hit_rate": (gripper_drawer_dist < reward_cfg.grasp_dist).to(torch.float32),
+                "grasp_close_hit_rate": (alignment_terms["close_ratio"] > reward_cfg.grasp_close_ratio).to(
+                    torch.float32
+                ),
+                "grasp_align_hit_rate": alignment_terms["align_mask"].to(torch.float32),
+                "close_amount": alignment_terms["close_amount"],
+                "wrong_open": open_terms["wrong_open"].to(torch.float32),
+                "gripper_switch": penalty_terms["switch_mask"].to(torch.float32),
+                "grasped_rate": grasped.to(torch.float32),
+                "action_penalty_rate": penalty_terms["action_penalty_rate"],
+                "joint_vel_penalty_rate": penalty_terms["joint_vel_penalty_rate"],
+            }
+        )
 
     def _compute_reward(self, state: ArrayEnvState, truncated: torch.Tensor):
         robot_grasp_pose = self._grasp_pose(slice(None))

@@ -180,7 +180,7 @@ class ManipulatorBase(DirectEnv):
     def action_space(self) -> gym.spaces.Box:
         return self._action_space
 
-    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> None:
         # Enforce actuator control limits to avoid out-of-range impulses.
         actions = torch.clamp(actions, self._act_low, self._act_high).to(torch.float32)
         self._last_actions.copy_(self._actions)
@@ -188,7 +188,7 @@ class ManipulatorBase(DirectEnv):
         ctrl = self._ctrl_writes.buffer("ctrl")
         ctrl.copy_(actions)
         self._ctrl_writes.execute()
-        return state
+        return None
 
     def _touch_raw(self, rows) -> torch.Tensor:
         # Columns follow the declared sensors order in the cfg.
@@ -210,7 +210,7 @@ class ManipulatorBase(DirectEnv):
         colliding = self.sim_data["hand_object_colliding"][rows]
         return colliding.any(dim=-1)
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         inputs = self.sim_data
         qpos = inputs["arm_pos"]
         arm_pos = torch.stack([torch.sin(qpos), torch.cos(qpos)], dim=-1).reshape(-1, 16)
@@ -224,7 +224,7 @@ class ManipulatorBase(DirectEnv):
 
         obs = torch.cat([arm_pos, arm_vel, touch, hand_pos, object_pos, target_pos, rel], dim=-1)
         assert obs.shape[1] == self._observation_spec.policy.space.shape[0]
-        return state.replace(obs=obs)
+        state.obs.policy.copy_(obs)
 
     def _sample_arm_joint_angles(self, num: int) -> torch.Tensor:
         low = self._joint_limit_low[: len(_ARM_JOINTS)]
@@ -403,7 +403,7 @@ class BringBall(ManipulatorBase):
         object_contact_ok = self._contact_with_object(rows)
         return height_ok & touch_ok & object_contact_ok
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         cfg = self._cfg
 
@@ -538,27 +538,31 @@ class BringBall(ManipulatorBase):
 
         reward = torch.where(terminated, torch.zeros_like(reward), reward)
 
-        state.reward_terms = {
-            "reach": r_reach,
-            "orient": r_orient,
-            "close": r_close,
-            "lift": r_lift,
-            "transport": r_transport,
-            "precision": r_precision,
-            "progress": r_progress,
-            "total": reward,
-        }
+        state.reward_terms.update(
+            {
+                "reach": r_reach,
+                "orient": r_orient,
+                "close": r_close,
+                "lift": r_lift,
+                "transport": r_transport,
+                "precision": r_precision,
+                "progress": r_progress,
+                "total": reward,
+            }
+        )
 
-        state.metrics = {
-            "pointing_dot": pointing_dot,
-            "is_grasped": is_grasped.to(torch.float32),
-            "avg_tip_dist": avg_tip_dist,
-            "move_dist": move_dist,
-            "transport_reward": r_transport,
-            "precision_reward": r_precision,
-            "progress_reward": r_progress,
-        }
+        state.metrics.update(
+            {
+                "pointing_dot": pointing_dot,
+                "is_grasped": is_grasped.to(torch.float32),
+                "avg_tip_dist": avg_tip_dist,
+                "move_dist": move_dist,
+                "transport_reward": r_transport,
+                "precision_reward": r_precision,
+                "progress_reward": r_progress,
+            }
+        )
 
         state.reward[:] = reward
         state.terminated[:] = terminated
-        return state
+        return None

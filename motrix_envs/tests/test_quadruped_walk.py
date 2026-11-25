@@ -93,7 +93,7 @@ def test_quadruped_reward_scales_are_structured_and_not_shared():
 def test_go2_velocity_commands_remain_constant_before_resampling_interval():
     torch.manual_seed(7)
     env = registry.make("go2-walk-flat", num_envs=64, mode="train")
-    env.init_state()
+    env.initialize()
     commands = env._commands.clone()
     velocity_cfg = env.cfg.commands.velocity
 
@@ -133,7 +133,7 @@ def test_go2_uses_position_actuators_for_pd_randomization(env_name: str):
 @pytest.mark.parametrize("env_name", ["go2-walk-flat", "go2-walk-rough"])
 def test_go2_reset_randomization_stays_within_configured_ranges(env_name: str):
     env = registry.make(env_name, num_envs=32, mode="train")
-    env.init_state()
+    env.initialize()
     randomization = env.cfg.randomization
     joint_pos_diff = env.get_dof_pos() - env.default_angles
     dof_vel = env.sim_data["dof_vel"]
@@ -159,7 +159,7 @@ def test_go2_reset_randomization_stays_within_configured_ranges(env_name: str):
 
 def test_go2_pd_and_friction_randomization_is_per_env_and_episode_constant():
     env = registry.make("go2-walk-flat", num_envs=16, mode="train")
-    env.init_state()
+    env.initialize()
     randomization = env.cfg.randomization
     _, kp, damping, friction = _read_param_overrides(env)
     nominal_kp, nominal_damping = _nominal_params(env)
@@ -186,7 +186,7 @@ def test_go2_pd_and_friction_randomization_is_per_env_and_episode_constant():
 
 def test_go2_base_mass_and_com_randomization_is_per_env_and_episode_constant():
     env = registry.make("go2-walk-flat", num_envs=16, mode="train")
-    env.init_state()
+    env.initialize()
     randomization = env.cfg.randomization
 
     mass, center_of_mass = _read_mass_overrides(env)
@@ -210,7 +210,8 @@ def test_go2_base_mass_and_com_randomization_is_per_env_and_episode_constant():
 
 def test_go2_action_delay_selects_current_or_previous_action_per_env():
     env = registry.make("go2-walk-flat", num_envs=2, mode="train")
-    state = env.init_state()
+    env.initialize()
+    state = env.state
     previous = np.full((2, env._num_action), -0.2, dtype=np.float32)
     current = np.full((2, env._num_action), 0.3, dtype=np.float32)
     env._current_actions.copy_(torch.as_tensor(previous))
@@ -226,7 +227,7 @@ def test_go2_action_delay_selects_current_or_previous_action_per_env():
 
 def test_go2_command_resampling_only_updates_due_environments(monkeypatch: pytest.MonkeyPatch):
     env = registry.make("go2-walk-flat", num_envs=3, mode="train")
-    env.init_state()
+    env.initialize()
     commands = np.array([[0.1, 0.0, 0.0], [0.2, 0.1, 0.0], [0.3, 0.0, -0.1]], dtype=np.float32)
     replacement = np.array([[0.4, -0.2, 0.3], [0.5, 0.2, -0.3]], dtype=np.float32)
     env._commands.copy_(torch.as_tensor(commands))
@@ -275,7 +276,8 @@ def test_random_planar_velocity_binding_can_sample_a_standing_batch():
 
 def test_go2_partial_reset_only_resamples_finished_environments(monkeypatch: pytest.MonkeyPatch):
     env = registry.make("go2-walk-flat", num_envs=3, mode="train")
-    state = env.init_state()
+    env.initialize()
+    state = env.state
     commands = np.array(
         [
             [0.1, 0.0, 0.0],
@@ -308,7 +310,7 @@ def test_go2_partial_reset_only_resamples_finished_environments(monkeypatch: pyt
 
 def test_go2_play_reset_preserves_nominal_joint_state_and_runtime_parameters():
     env = registry.make("go2-walk-flat", num_envs=4, mode="play")
-    env.init_state()
+    env.initialize()
 
     np.testing.assert_array_equal(
         env.get_dof_pos(),
@@ -359,7 +361,7 @@ def test_quadruped_randomization_config_rejects_invalid_ranges(update, message):
 
 def test_zero_velocity_command_freezes_gait_phase():
     env = registry.make("go2-walk-flat", num_envs=2, mode="train")
-    env.init_state()
+    env.initialize()
     env._commands[:] = 0.0
     env._phase[:] = 0.5
     env._feet_phase[:] = 0.5
@@ -392,7 +394,7 @@ def test_quadruped_rough_walk_uses_procedural_hfield_and_shared_runtime_config(f
 @pytest.mark.parametrize("env_name", ["anymalc-walk-rough", "go1-walk-rough", "go2-walk-rough"])
 def test_quadruped_rough_walk_reset_and_base_height_are_terrain_relative(env_name):
     env = registry.make(env_name, num_envs=8, mode="train")
-    env.init_state()
+    env.initialize()
     base_pos = env.sim_data["base_pos"]
     env_ids = torch.arange(env.num_envs, dtype=torch.int64)
     ground_height = env.sim.sample_terrain_height(env.cfg.ground_geom_name, env_ids, base_pos[:, None, :2])[:, 0]

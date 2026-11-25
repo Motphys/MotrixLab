@@ -477,7 +477,7 @@ class BounceBallEnv(DirectEnv):
 
         return terminated
 
-    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> None:
         """Apply action to control paddle position"""
         # Save last actions for penalty calculation
         self._last_actions.copy_(self._current_actions)
@@ -496,18 +496,18 @@ class BounceBallEnv(DirectEnv):
         ctrl = self._ctrl_writes.buffer("ctrl")
         ctrl.copy_(target_positions)
         self._ctrl_writes.execute()
-        return state
+        return None
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         inputs = self.sim_data
         # Observation: joint states + paddle position + target height (29D)
         # Concatenate: DOF pos (13) + DOF vel (12) + paddle xyz (3) + target height (1)
         obs = torch.cat(
             [inputs["dof_pos"], inputs["dof_vel"], inputs["paddle_pos"], self._target_heights[:, None]], dim=-1
         )
-        return state.replace(obs=obs)
+        state.obs.policy.copy_(obs)
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         """Update state with rewards and termination flags"""
         self.sim_data.execute()
         inputs = self.sim_data
@@ -556,9 +556,9 @@ class BounceBallEnv(DirectEnv):
 
         # Store reward details for debugging
         if self._cfg.store_reward_details:
-            state.reward_terms = reward_details
+            state.reward_terms.update(reward_details)
 
-        return state
+        return None
 
     def reset(self, env_ids: torch.Tensor) -> None:
         """Reset environment to initial state with randomized target heights"""

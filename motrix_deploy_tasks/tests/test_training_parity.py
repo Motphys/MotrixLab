@@ -25,7 +25,7 @@ def test_go2_training_and_deployment_task_golden_probe(env_name: str) -> None:
     profile = build_deployment_profile(env_name)
     env = registry.make(env_name, num_envs=1, mode="play")
     env.cfg.spawn_xy_range = 0.0
-    env_state = env.init_state()
+    env_state = env.initialize()
     probe = _make_env_probe(env)
     robot_state = _robot_state_from_env(env, env_state, probe)
     context = ControlContext(step=0, elapsed_time_s=0.0, command=PlanarVelocityCommand(env._commands), dt_s=0.02)
@@ -76,7 +76,7 @@ def test_go2_gait_phase_matches_training_across_standing_and_restart(env_name: s
     profile = build_deployment_profile(env_name)
     env = registry.make(env_name, num_envs=1, mode="play")
     env.cfg.spawn_xy_range = 0.0
-    env.init_state()
+    env.initialize()
     probe = _make_env_probe(env)
     task = Go2WalkPolicyProcessor(profile.task, profile.robot)
     moving = np.array([[0.2, 0.0, 0.0]], dtype=np.float32)

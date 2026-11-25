@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from motrix_robots.quadruped import QuadrupedRobotCfg
 
-from motrix_env_core.array.env import ArrayEnvState, EnvObs
+from motrix_env_core.array.env import ArrayEnvState
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.mdp.action_space import asymmetric_residual_action_space
 from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
@@ -353,7 +353,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
 
     # ---- env loop ---------------------------------------------------------
 
-    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> ArrayEnvState:
+    def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> None:
         actions = torch.as_tensor(actions, dtype=torch.float32)
         self._last_actions.copy_(self._current_actions)
         self._current_actions.copy_(actions)
@@ -365,9 +365,9 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         targets = exec_actions * self.cfg.control_config.action_scale + self.default_angles
         self._ctrl_writes.buffer("ctrl").copy_(targets)
         self._ctrl_writes.execute()
-        return state
+        return None
 
-    def compute_observation(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_observation(self, state: ArrayEnvState) -> None:
         noise_cfg = self.cfg.noise_config
         diff = self.get_dof_pos() - self.default_angles
         noisy_gyro = self._obs_noise(self.get_gyro(), noise_cfg.scale_gyro)
@@ -400,9 +400,10 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
                 f"expected policy[{expected_policy}]; value={tuple(value.shape)}, "
                 f"expected value[{expected_value}]"
             )
-        return state.replace(obs=EnvObs({"policy": policy, "value": value}))
+        state.obs.policy.copy_(policy)
+        state.obs.value.copy_(value)
 
-    def compute_transition(self, state: ArrayEnvState) -> ArrayEnvState:
+    def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()
         self._update_commands()
         self._advance_phase()
@@ -410,7 +411,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
 
         terminated = self.get_gravity()[:, 2] <= self.cfg.termination_min_up_z
         reward = self._compute_reward(state, self.get_local_linvel(), self.get_gyro(), self.get_dof_pos())
-        return state.replace(reward=reward, terminated=terminated)
+        state.reward.copy_(reward)
+        state.terminated.copy_(terminated)
 
     def _compute_reward(
         self, state: ArrayEnvState, linvel: torch.Tensor, gyro: torch.Tensor, dof_pos: torch.Tensor
@@ -439,7 +441,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             reward += weighted
             reward_items[name] = weighted
 
-        state.reward_terms = reward_items
+        state.reward_terms.update(reward_items)
         return reward * self.cfg.ctrl_dt
 
     def reset(self, env_ids: torch.Tensor) -> None:
