@@ -4,7 +4,7 @@ defaults:
   - /unitree_control@runtime.control: go2
   - _self_
 
-artifact: artifacts/go2-walk-flat.deploy
+artifact: artifacts/go2-walk-flat-v2.deploy
 
 runtime:
   backend: unitree
@@ -14,6 +14,10 @@ runtime:
     network_interface: ???
 
 task_settings:
+  command_filter:
+    max_acceleration: [1.0, 1.0, 1.0]
+    startup_acceleration: [1.0, 1.0, 1.0]
+    stop_acceleration: [1.0, 1.0, 1.0]
   preparation:
     kp: 50
     kd: 1

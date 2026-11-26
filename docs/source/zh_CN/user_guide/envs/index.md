@@ -63,8 +63,7 @@ mxlab view env=<env-id>
 | <img src="../../_static/images/poster/go1-stairs-terrain-walk.jpg" alt="go1-stairs-terrain-walk" width="240"> | `go1-stairs-terrain-walk` | 控制 Unitree Go1 在台阶地形上行走。 | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/go1-walk-flat.jpg" alt="go1-walk-flat" width="240"> | `go1-walk-flat` | 控制 Unitree Go1 在平地上跟踪行走指令。 | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/go1-walk-rough.jpg" alt="go1-walk-rough" width="240"> | `go1-walk-rough` | 控制 Unitree Go1 在程序化粗糙高度场上跟踪行走指令。 | `rslrl.ppo`, `skrl.ppo` |
-| <img src="../../_static/images/poster/go2-walk-flat.jpg" alt="go2-walk-flat" width="240"> | `go2-walk-flat` | 控制 Unitree Go2 在平地上跟踪行走指令。 | `motrix.fastsac`, `rslrl.ppo`, `skrl.ppo` |
-| <img src="../../_static/images/poster/go2-walk-rough.jpg" alt="go2-walk-rough" width="240"> | `go2-walk-rough` | 控制 Unitree Go2 在程序化粗糙高度场上跟踪行走指令。 | `motrix.fastsac`, `rslrl.ppo`, `skrl.ppo` |
+| <img src="../../_static/images/poster/go2-walk-flat-v2.jpg" alt="go2-walk-flat-v2" width="240"> | `go2-walk-flat-v2` | 使用快速收敛且聚焦 yaw 能力的 v2 配方控制 Unitree Go2 行走。 | `rslrl.ppo` |
 | <img src="../../_static/images/poster/k1-walk-flat.jpg" alt="k1-walk-flat" width="240"> | `k1-walk-flat` | 控制 Booster K1 在平地上跟踪行走指令。 | `motrix.fastsac` |
 | <img src="../../_static/images/poster/k1-walk-rough.jpg" alt="k1-walk-rough" width="240"> | `k1-walk-rough` | 控制 Booster K1 在起伏地形上跟踪行走指令。 | `motrix.fastsac` |
 | <img src="../../_static/images/poster/k1-wbt-freekick.jpg" alt="k1-wbt-freekick" width="240"> | `k1-wbt-freekick` | 让 Booster K1 跟踪任意球射门参考动作。 | `motrix.fastsac` |

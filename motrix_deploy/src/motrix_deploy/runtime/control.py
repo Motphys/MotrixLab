@@ -150,6 +150,8 @@ class ControlSession(Generic[CommandT]):
         self._stop_ns: int | None = None
         self._reason = "completed"
         self._message: str | None = None
+        self.last_state: RobotState | None = None
+        self.last_command: CommandT | None = None
 
     @property
     def active(self) -> bool:
@@ -222,11 +224,13 @@ class ControlSession(Generic[CommandT]):
             state = self._read_state(self._previous)
             self._previous = state.sample_time_ns
             self._latency.add("read", time.monotonic_ns() - phase)
+            self.last_state = state
             phase = time.monotonic_ns()
             try:
                 command = self.command_binding.read_command(batch_size=1) if self.command_binding is not None else None
             except Exception as error:
                 raise ControlFailure("input_error", str(error)) from error
+            self.last_command = command
             context = ControlContext(self._interval_step, elapsed_time_s, command, self.period_s)
             self._latency.add("input", time.monotonic_ns() - phase)
             decision = self.controller.step(state, context)

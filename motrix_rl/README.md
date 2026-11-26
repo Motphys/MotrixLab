@@ -85,7 +85,7 @@ mxlab play env=cartpole
 mxlab play env=cartpole policy=/path/to/run
 mxlab export-onnx run_dir=/path/to/run output=artifacts/policy.onnx
 mxlab export-deploy run_dir=/path/to/run output=artifacts/policy.deploy
-mxlab export-deploy env=go2-walk-flat output=artifacts/go2-walk-flat.deploy
+mxlab export-deploy env=go2-walk-flat-v2 output=artifacts/go2-walk-flat-v2.deploy
 ```
 
 `mxlab export-onnx` exports a saved run's best policy without selecting a `task` or creating an environment. Install the provider used by

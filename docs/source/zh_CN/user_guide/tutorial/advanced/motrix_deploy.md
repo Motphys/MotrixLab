@@ -3,7 +3,7 @@
 使用同一份 deployment artifact，先在仿真中检查 Go2 策略，再尝试真机部署。已有 artifact 并安装任务与 MuJoCo 插件后，可先做有界无窗口检查：
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
+mxlab deploy task=go2-walk-flat-v2/sim artifact=artifacts/go2-walk-flat-v2.deploy runtime.viewer=false duration_s=2.0
 ```
 
 下面按训练、导出、仿真、人工确认真机部署和基础诊断的顺序操作。仿真成功不代表真机安全。
@@ -15,20 +15,20 @@ mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runt
 ```bash
 sh install.sh --all
 source .venv/bin/activate
-mxlab train task=go2-walk-flat/rslrl.ppo
+mxlab train task=go2-walk-flat-v2/rslrl.ppo
 ```
 
-训练结果保存在 `runs/go2-walk-flat/`。已有包含 metadata 的 run 时可跳过训练。
+训练结果保存在 `runs/go2-walk-flat-v2/`。已有包含 metadata 的 run 时可跳过训练。
 导出需要该 run 使用的训练 provider 和环境包；部署需要任务包及目标对应的后端插件。
 
 ## 2. 导出与检查
 
 ```bash
-mxlab export-deploy env=go2-walk-flat
-mxlab deploy inspect artifact=artifacts/go2-walk-flat.deploy
+mxlab export-deploy env=go2-walk-flat-v2
+mxlab deploy inspect artifact=artifacts/go2-walk-flat-v2.deploy
 ```
 
-`env=go2-walk-flat` 选择最近一次包含 metadata 的 run。用 `run_dir=<run-dir>` 替代可选择指定 run；两者必须且只能设置一个。
+`env=go2-walk-flat-v2` 选择最近一次包含 metadata 的 run。用 `run_dir=<run-dir>` 替代可选择指定 run；两者必须且只能设置一个。
 已有 artifact 目录不会被覆盖，再次导出时应选择新的输出路径。确认检查结果为 `valid: true`。
 
 artifact 包含策略及解释策略所需的机器人和任务设置。迁移时复制完整目录，不要只复制 ONNX 文件。
@@ -39,7 +39,7 @@ artifact 包含策略及解释策略所需的机器人和任务设置。迁移�
 打开 MuJoCo viewer：
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
+mxlab deploy task=go2-walk-flat-v2/sim artifact=artifacts/go2-walk-flat-v2.deploy
 ```
 
 按住 `W/S` 前后移动，`A/D` 横移，`Q/E` 转向。关闭窗口、按 Esc 或 Ctrl+C 退出。
@@ -48,11 +48,11 @@ mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
 安装原生 MotrixSim 部署插件后，可复用同一 artifact 和配方：
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat-v2/sim artifact=artifacts/go2-walk-flat-v2.deploy \
   runtime.backend=motrixsim
 ```
 
-使用 `task=go2-walk-rough/sim` 可选择随包提供的粗糙地形场景。更换场景不代表平地策略适合粗糙地形，测试前需确认策略适用范围。
+`task=go2-walk-flat-v2/sim` 选择随包提供的 Go2 平地部署场景。部署前仍需确认策略适用范围。
 
 ## 4. 运行 Go2 真机
 
@@ -70,8 +70,8 @@ ip -br addr
 将下面的 `enp5s0` 替换为实际网卡名。先执行第 5 节的只读检查，再启动部署：
 
 ```bash
-mxlab deploy task=go2-walk-flat/hardware \
-  artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat-v2/hardware \
+  artifact=artifacts/go2-walk-flat-v2.deploy \
   runtime.transport.network_interface=enp5s0
 ```
 
@@ -118,7 +118,7 @@ motrix-deploy-unitree read-lowstate enp5s0 --robot go2 --duration-s 10
 在选定任务后附加覆写参数，例如：
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat-v2/sim artifact=artifacts/go2-walk-flat-v2.deploy \
   runtime.viewer=false runtime.realtime=true duration_s=5.0
 ```
 
@@ -141,7 +141,7 @@ mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
 | 站立准备超时 | 检查报错中的关节、速度和倾角；调参前排除干涉与异常承重。 |
 | 执行期间 `state_timeout` | 按故障停机处理，保留结果与错误，确保支撑，排查接收后再重试。 |
 
-## 7. 其他任务与 Python 示例
+## 7. 其他任务
 
 G1 WBT 舞蹈使用自身的 artifact 与任务配方，仿真检查示例：
 
@@ -151,19 +151,3 @@ mxlab deploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy runtim
 
 artifact 提供 motion 片段，无需速度指令，执行时长不能超过片段长度。播放结束进入阻尼，不保证恢复站立。
 不要把 Go2 按键或交接流程套用于 G1。
-
-在仓库根目录运行程序化 Python 示例，不读取 artifact，也不调用部署 CLI：
-
-```bash
-python examples/deploy.py --headless --steps 100
-python examples/deploy.py --backend motrixsim --headless --steps 100
-```
-
-完成第 4 节的真机安全准备后，可显式选择真机：
-
-```bash
-python examples/deploy.py --real --network-interface enp5s0
-```
-
-示例使用原始 ONNX 和代码中明确声明的机器人与任务参数。替换模型时必须同步核对训练契约，不能仅凭输入输出维度匹配就上真机。
-真机路径保留控制权交接和遥控器确认；CLI 部署仍使用前述 artifact 工作流。

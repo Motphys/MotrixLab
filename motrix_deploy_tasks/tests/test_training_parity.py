@@ -7,6 +7,7 @@ import io
 
 import numpy as np
 import pytest
+import torch
 
 import motrix_deploy_tasks
 from motrix_deploy.contracts import RobotState
@@ -19,7 +20,7 @@ from motrix_env_core.input import PlanarVelocityCommand
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("env_name", ["go2-walk-flat", "go2-walk-rough"])
+@pytest.mark.parametrize("env_name", ["go2-walk-flat-v2"])
 def test_go2_training_and_deployment_task_golden_probe(env_name: str) -> None:
     assert motrix_deploy_tasks.__name__
     profile = build_deployment_profile(env_name)
@@ -71,7 +72,7 @@ def test_go2_training_and_deployment_task_golden_probe(env_name: str) -> None:
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("env_name", ["go2-walk-flat", "go2-walk-rough"])
+@pytest.mark.parametrize("env_name", ["go2-walk-flat-v2"])
 def test_go2_gait_phase_matches_training_across_standing_and_restart(env_name: str) -> None:
     profile = build_deployment_profile(env_name)
     env = registry.make(env_name, num_envs=1, mode="play")
@@ -79,8 +80,8 @@ def test_go2_gait_phase_matches_training_across_standing_and_restart(env_name: s
     env.initialize()
     probe = _make_env_probe(env)
     task = Go2WalkPolicyProcessor(profile.task, profile.robot)
-    moving = np.array([[0.2, 0.0, 0.0]], dtype=np.float32)
-    standing = np.zeros((1, 3), dtype=np.float32)
+    moving = torch.tensor([[0.2, 0.0, 0.0]], dtype=torch.float32)
+    standing = torch.zeros((1, 3), dtype=torch.float32)
     env._commands[:] = moving
     task.reset(
         _robot_state_from_env(env, env.state, probe),
@@ -150,9 +151,9 @@ def _robot_state_from_env(env, state, probe) -> RobotState:
     return RobotState(
         sample_time_ns=int(state.episode_steps[0]) * 20_000_000,
         receive_time_ns=0,
-        joint_position=env.get_dof_pos()[0],
-        joint_velocity=env.get_dof_vel()[0],
-        base_orientation_xyzw=imu_quat,
-        base_angular_velocity=env.get_gyro()[0],
+        joint_position=env.get_dof_pos()[0].numpy(),
+        joint_velocity=env.get_dof_vel()[0].numpy(),
+        base_orientation_xyzw=imu_quat.numpy(),
+        base_angular_velocity=env.get_gyro()[0].numpy(),
         base_linear_acceleration=np.zeros(3, dtype=np.float32),
     )

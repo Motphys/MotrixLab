@@ -145,6 +145,8 @@ class _FakeMujoco:
     mjtFontScale = SimpleNamespace(mjFONTSCALE_150=150)
     mjtCatBit = SimpleNamespace(mjCAT_ALL=7)
     mjtLightType = SimpleNamespace(mjLIGHT_DIRECTIONAL=1)
+    mjtFont = SimpleNamespace(mjFONT_SHADOW=2)
+    mjtGridPos = SimpleNamespace(mjGRID_TOPLEFT=7)
     mjtMouse = SimpleNamespace(
         mjMOUSE_ROTATE_V=1,
         mjMOUSE_ROTATE_H=2,
@@ -158,6 +160,7 @@ class _FakeMujoco:
         self.update_count = 0
         self.render_count = 0
         self.camera_moves: list[tuple[Any, float, float]] = []
+        self.overlay_calls: list[tuple[Any, ...]] = []
 
     def MjvCamera(self) -> object:
         return SimpleNamespace(lookat=np.zeros(3), distance=0.0, elevation=0.0, azimuth=0.0)
@@ -189,6 +192,9 @@ class _FakeMujoco:
     def mjr_render(self, viewport: Any, scene: Any, context: Any) -> None:
         del viewport, scene, context
         self.render_count += 1
+
+    def mjr_overlay(self, *args: Any) -> None:
+        self.overlay_calls.append(args)
 
     def mjv_moveCamera(
         self,
@@ -302,6 +308,31 @@ def test_render_event_pump_retains_keyboard_edges_for_command_input() -> None:
         viewer.sync()
         device.poll()
         assert device.is_key_up("a") and not device.is_pressing("a")
+    finally:
+        viewer.close()
+
+
+def test_viewer_renders_top_left_overlay_on_each_frame() -> None:
+    viewer, _, mujoco = _viewer()
+    try:
+        viewer.set_overlay("speed 50%\nvx=+0.500", "W/S/A/D/Q/E")
+        viewer.sync()
+        viewer.set_overlay("speed 60%\nvx=+0.600")
+        viewer.sync()
+
+        assert len(mujoco.overlay_calls) == 2
+        assert mujoco.overlay_calls[0][:4] == (
+            mujoco.mjtFont.mjFONT_SHADOW,
+            mujoco.mjtGridPos.mjGRID_TOPLEFT,
+            (0, 0, 1200, 900),
+            "speed 50%\nvx=+0.500",
+        )
+        assert mujoco.overlay_calls[0][4:] == ("W/S/A/D/Q/E", mujoco.context)
+        assert mujoco.overlay_calls[1][4] == ""
+        with pytest.raises(ValueError, match="overlay text"):
+            viewer.set_overlay(1)
+        with pytest.raises(ValueError, match="overlay secondary text"):
+            viewer.set_overlay("valid", 1)
     finally:
         viewer.close()
 

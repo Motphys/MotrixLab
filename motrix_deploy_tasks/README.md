@@ -1,17 +1,17 @@
 # Motrix Deploy Tasks
 
 `motrix-deploy-tasks` supplies the versioned deployment tasks and installed Hydra recipes
-for `motrix-deploy`: the Go2 walking task with flat/rough worlds, and the G1 WBT dance
+for `motrix-deploy`: the Go2 flat-walking task, and the G1 WBT dance
 task. It does not provide a simulation or hardware backend.
 
 Install a backend plugin and use an artifact exported for the matching task:
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
+mxlab deploy task=go2-walk-flat-v2/sim artifact=artifacts/go2-walk-flat-v2.deploy
 ```
 
-Use `go2-walk-rough/sim` for the rough scene, `runtime.backend=motrixsim` for native
-MotrixSim, or `go2-walk-flat/hardware` for Unitree hardware. Recipes are packaged with the
+Use `runtime.backend=motrixsim` for native MotrixSim, or `go2-walk-flat-v2/hardware` for
+Unitree hardware. Recipes are packaged with the
 plugin; no workspace config path is required.
 
 See the [deployment tutorial](../docs/source/en/user_guide/tutorial/advanced/motrix_deploy.md)

@@ -146,12 +146,12 @@ MotrixLab 内置 50+ 个仿真环境，覆盖基础控制、四足、人形、�
 
 | 预览图 | 类别 | 示例环境 |
 | --- | --- | --- |
-| <img src="docs/source/_static/images/poster/go2-walk-rough.jpg" alt="go2-walk-rough" width="240"> | 四足速度跟踪 | `go2-walk-flat` · `go2-walk-rough` · `go1-walk-rough` · `anymalc-walk-flat` |
+| <img src="docs/source/_static/images/poster/go1-walk-rough.jpg" alt="go1-walk-rough" width="240"> | 四足速度跟踪 | `go2-walk-flat-v2` · `go1-walk-rough` · `anymalc-walk-flat` |
 | <img src="docs/source/_static/images/poster/g1-walk-flat.jpg" alt="g1-walk-flat" width="240"> | 人形速度跟踪 | `g1-walk-flat` · `k1-walk-rough` · `dex-evt-walk-flat` · `microduck-walk-flat` |
 | <img src="docs/source/_static/images/poster/g1-wbt-dance.jpg" alt="g1-wbt-dance" width="240"> | 全身动作跟踪（WBT） | `g1-wbt-dance` · `k1-wbt-freekick` · `g1-29dof-wbt-largebox` |
 
 ```bash
-mxlab view env=go2-walk-rough
+mxlab view env=go1-walk-rough
 ```
 
 完整环境列表与各环境支持的训练算法见[环境总览](https://motrixlab.readthedocs.io/zh-cn/latest/user_guide/envs/index.html)。

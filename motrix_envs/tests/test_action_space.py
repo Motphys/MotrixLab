@@ -52,8 +52,7 @@ def test_joint_position_action_space_subset_indices_keep_their_own_bounds():
         "anymalc-walk-rough",
         "go1-walk-flat",
         "go1-walk-rough",
-        "go2-walk-flat",
-        "go2-walk-rough",
+        "go2-walk-flat-v2",
     ],
 )
 def test_quadruped_action_space_maps_to_actuator_control_limits(env_name):

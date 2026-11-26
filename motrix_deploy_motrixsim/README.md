@@ -5,28 +5,17 @@ as `motrixsim` in the `motrix_deploy.backends` entry-point group. It uses
 `MotrixSimSceneCompiler`, the native MSD world/model/data APIs, query/write programs,
 and the SDK `RenderApp`; it does not run physics through MuJoCo or a training environment.
 
-## Run the shared example
+## Deploy a Go2 artifact
 
-From an installed workspace environment:
-
-```bash
-python examples/deploy.py --backend motrixsim --headless --steps 50
-python examples/deploy.py --backend motrixsim
-```
-
-See [the shared simulation example](../examples/deploy.py) for the complete
-raw ONNX walking controller with explicit task preprocessing and control settings.
-The example uses the bundled Go2 policy. Use `--policy` for another policy matching the
-explicit task settings; this programmatic path does not read a `.deploy` manifest. MuJoCo remains that script's default backend.
-Artifact deployment reuses the installed simulation recipes rather than introducing
-backend-specific task copies:
+From an installed workspace environment, use the MotrixSim simulation recipe with an exported
+artifact. Its manifest carries the policy, robot contract, and task control settings:
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat-v2/sim artifact=artifacts/go2-walk-flat-v2.deploy \
   runtime.backend=motrixsim runtime.viewer=false runtime.realtime=false duration_s=1
 ```
 
-The same override applies to `task=go2-walk-rough/sim`. Install this backend package
+Install this backend package
 explicitly for standalone use, alongside `motrix-deploy-tasks` and the robot models.
 MotrixSim is supplied by `motrix-env-motrixsim`, using the workspace's pinned SDK version.
 

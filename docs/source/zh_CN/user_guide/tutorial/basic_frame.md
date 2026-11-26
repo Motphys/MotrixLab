@@ -99,7 +99,7 @@ mxlab train task=cartpole/rslrl.ppo
 部署使用 artifact，而不是训练环境：
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
+mxlab deploy task=go2-walk-flat-v2/sim artifact=artifacts/go2-walk-flat-v2.deploy runtime.viewer=false duration_s=2.0
 ```
 
 上例在 MuJoCo 中无窗口运行导出的策略。导出、交互控制及真机操作见 [Go2 部署](advanced/motrix_deploy.md)。

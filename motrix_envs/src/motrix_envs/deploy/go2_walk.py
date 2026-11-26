@@ -14,8 +14,7 @@ from motrix_envs.deploy.robot import build_robot_model, build_robot_spec, read_p
 from motrix_envs.locomotion.quadruped.cfg import QuadrupedWalkEnvCfg
 
 GO2_COMMAND_SCALES = {
-    "go2-walk-flat": np.ones(3, dtype=np.float32),
-    "go2-walk-rough": np.full(3, 0.5, dtype=np.float32),
+    "go2-walk-flat-v2": np.ones(3, dtype=np.float32),
 }
 
 
@@ -58,6 +57,16 @@ def build_go2_walk_profile(env_name: str) -> DeploymentProfile:
         command_scale=GO2_COMMAND_SCALES[env_name].tolist(),
         feet_phase_offsets=feet_offsets.tolist(),
         gait_frequency_hz=env_cfg.gait_frequency,
+        gait_schedule_enabled=env_cfg.gait_schedule_enabled,
+        gait_schedule_speed_low=env_cfg.gait_schedule_speed_low,
+        gait_schedule_speed_high=env_cfg.gait_schedule_speed_high,
+        gait_schedule_frequency_low=env_cfg.gait_schedule_frequency_low,
+        gait_schedule_frequency_high=env_cfg.gait_schedule_frequency_high,
+        gait_schedule_swing_fraction_low=env_cfg.gait_schedule_swing_fraction_low,
+        gait_schedule_swing_fraction_high=env_cfg.gait_schedule_swing_fraction_high,
+        gait_schedule_smoothing_time_s=env_cfg.gait_schedule_smoothing_time_s,
+        gait_schedule_yaw_weight=env_cfg.gait_schedule_yaw_weight,
+        gait_schedule_lateral_weight=env_cfg.gait_schedule_lateral_weight,
         standing_threshold=env_cfg.commands.velocity.standing_threshold,
         # Match training's orientation-only fall termination.
         termination_min_up_z=env_cfg.termination_min_up_z,

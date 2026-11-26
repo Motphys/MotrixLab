@@ -296,9 +296,9 @@ mxlab train \
 如果同一个 Task 在不同后端上需要不同的超参数，可以创建后端差异文件：
 
 ```text
-configs/task/go2-walk-flat/skrl.ppo.yaml
-configs/task/go2-walk-flat/skrl.ppo.jax.yaml
-configs/task/go2-walk-flat/skrl.ppo.torch.yaml
+configs/task/go1-walk-flat/skrl.ppo.yaml
+configs/task/go1-walk-flat/skrl.ppo.jax.yaml
+configs/task/go1-walk-flat/skrl.ppo.torch.yaml
 ```
 
 后端差异文件继承共享 Task，只保存必要的增量：
@@ -306,7 +306,7 @@ configs/task/go2-walk-flat/skrl.ppo.torch.yaml
 ```yaml
 # @package _global_
 defaults:
-    - /task/go2-walk-flat/skrl.ppo@_global_
+    - /task/go1-walk-flat/skrl.ppo@_global_
     - _self_
 
 task:
@@ -321,13 +321,13 @@ algo:
 使用 JAX 差异配置训练：
 
 ```bash
-mxlab train task=go2-walk-flat/skrl.ppo.jax
+mxlab train task=go1-walk-flat/skrl.ppo.jax
 ```
 
 直接覆盖后端也可以选择 JAX 训练器：
 
 ```bash
-mxlab train task=go2-walk-flat/skrl.ppo task.train_backend=jax
+mxlab train task=go1-walk-flat/skrl.ppo task.train_backend=jax
 ```
 
 这种写法不会加载 `skrl.ppo.jax.yaml` 中的后端专用参数。当后端差异文件存在时，应直接选择带 `.jax` 或 `.torch` 后缀的 Task。

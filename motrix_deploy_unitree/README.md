@@ -82,7 +82,7 @@ for safeguards and timing options.
 With `motrix-deploy-tasks` and a matching artifact installed:
 
 ```bash
-mxlab deploy task=go2-walk-flat/hardware artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat-v2/hardware artifact=artifacts/go2-walk-flat-v2.deploy \
   runtime.transport.network_interface=<network-interface>
 
 # Install the native transport before selecting a G1 hardware recipe.

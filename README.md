@@ -146,12 +146,12 @@ MotrixLab ships 50+ built-in simulation environments spanning basic control, qua
 
 | Preview | Category | Example environments |
 | --- | --- | --- |
-| <img src="docs/source/_static/images/poster/go2-walk-rough.jpg" alt="go2-walk-rough" width="240"> | Quadruped velocity tracking | `go2-walk-flat` · `go2-walk-rough` · `go1-walk-rough` · `anymalc-walk-flat` |
+| <img src="docs/source/_static/images/poster/go1-walk-rough.jpg" alt="go1-walk-rough" width="240"> | Quadruped velocity tracking | `go2-walk-flat-v2` · `go1-walk-rough` · `anymalc-walk-flat` |
 | <img src="docs/source/_static/images/poster/g1-walk-flat.jpg" alt="g1-walk-flat" width="240"> | Humanoid velocity tracking | `g1-walk-flat` · `k1-walk-rough` · `dex-evt-walk-flat` · `microduck-walk-flat` |
 | <img src="docs/source/_static/images/poster/g1-wbt-dance.jpg" alt="g1-wbt-dance" width="240"> | Whole-body tracking (WBT) | `g1-wbt-dance` · `k1-wbt-freekick` · `g1-29dof-wbt-largebox` |
 
 ```bash
-mxlab view env=go2-walk-rough
+mxlab view env=go1-walk-rough
 ```
 
 See the [full environment gallery](https://motrixlab.readthedocs.io/en/latest/user_guide/envs/index.html) for all registered environments and their supported training algorithms.

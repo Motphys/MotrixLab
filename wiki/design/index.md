@@ -38,6 +38,8 @@
 - [用户文档 Envs 栏目设计](./user-docs-envs-part.md)
   在现有双语用户指南的 Tutorials 之后建立独立 `Envs` 一级栏目：明确 Environment、Robot、Training Task 与 Tutorial Workflow 的边界，基于 registry、双语 metadata 和 Hydra Task 配置自动生成 Env ID、description 与支持训练算法的 overview 表格，以 Whole Body Tracking、Humanoid Locomotion、Quadruped Locomotion 等任务主题组织环境，并通过先建导航、再统一页面、最后迁移文件的方式渐进落地。
 
+- [Go2 FlatWalk v2 快速训练设计](./go2-flatwalk-v2.md)
+  基于 v1 冻结配方的 Go2 平地速度跟踪 v2 任务：1024 env / 2000 iterations / 4 minibatches，补充 pure-yaw hard cases 与提前的 hard-case 课程，仅调整 yaw 跟踪权重；要求完整训练、曲线平台期、完整仿真审计和稳定真机部署共同作为验收。
 - [ArrayEnv 终态观测结果契约](./array-env-final-observation.md)
   NumPy 前端的稀疏终态观测结果、捕获时机、快照所有权与 Manager/FastSAC 边界。
 

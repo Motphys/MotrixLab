@@ -166,7 +166,7 @@ def test_scene_init_pose_preserves_artifact_default_and_clips_servo_limits() -> 
 def test_environment_scene_is_resolved_by_application_before_backend() -> None:
     from motrix_env_core import registry
 
-    source = registry.make_env_config("go2-walk-rough", mode="play").scene
+    source = registry.make_env_config("go1-walk-rough", mode="play").scene
     backend = create_runtime(_config(source), control_period_s=0.02)
     backend.open()
     try:

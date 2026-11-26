@@ -4,7 +4,7 @@ Use the same deployment artifact to check a Go2 policy in simulation before atte
 artifact and the task/MuJoCo plugins installed, a bounded headless check is:
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy runtime.viewer=false duration_s=2.0
+mxlab deploy task=go2-walk-flat-v2/sim artifact=artifacts/go2-walk-flat-v2.deploy runtime.viewer=false duration_s=2.0
 ```
 
 The workflow below covers training, export, simulation, operator-confirmed hardware deployment, and basic diagnostics.
@@ -17,21 +17,21 @@ From the repository root:
 ```bash
 sh install.sh --all
 source .venv/bin/activate
-mxlab train task=go2-walk-flat/rslrl.ppo
+mxlab train task=go2-walk-flat-v2/rslrl.ppo
 ```
 
-Training results are saved under `runs/go2-walk-flat/`. Skip training if you already have a run with its metadata.
+Training results are saved under `runs/go2-walk-flat-v2/`. Skip training if you already have a run with its metadata.
 Export needs the run's training provider and environment package; deployment needs the task package and the backend
 plugin for the target.
 
 ## 2. Export and inspect
 
 ```bash
-mxlab export-deploy env=go2-walk-flat
-mxlab deploy inspect artifact=artifacts/go2-walk-flat.deploy
+mxlab export-deploy env=go2-walk-flat-v2
+mxlab deploy inspect artifact=artifacts/go2-walk-flat-v2.deploy
 ```
 
-`env=go2-walk-flat` selects the latest run with metadata. Use `run_dir=<run-dir>` instead to select a specific run;
+`env=go2-walk-flat-v2` selects the latest run with metadata. Use `run_dir=<run-dir>` instead to select a specific run;
 exactly one of `env` and `run_dir` is required. Existing artifact directories are not overwritten: choose a new output
 path when exporting again. Confirm that inspection reports `valid: true`.
 
@@ -43,7 +43,7 @@ just its ONNX file. `mxlab export-onnx` exports a standalone model and is not a 
 Open the MuJoCo viewer:
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy
+mxlab deploy task=go2-walk-flat-v2/sim artifact=artifacts/go2-walk-flat-v2.deploy
 ```
 
 Hold `W/S` to move forward/backward, `A/D` sideways, and `Q/E` to turn. Close the window, press Esc, or press Ctrl+C to
@@ -53,12 +53,12 @@ startup and shutdown can take additional time.
 With the native MotrixSim deployment plugin installed, reuse the same artifact and recipe:
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat-v2/sim artifact=artifacts/go2-walk-flat-v2.deploy \
   runtime.backend=motrixsim
 ```
 
-Use `task=go2-walk-rough/sim` for the supplied rough-terrain scene. Changing the scene does not make a flat-terrain policy
-suitable for rough terrain; check that the policy is appropriate for the test.
+Use `task=go2-walk-flat-v2/sim` for the supplied Go2 flat-ground deployment scene. Check that the policy is appropriate
+for the test before deployment.
 
 ## 4. Run on Go2 hardware
 
@@ -77,8 +77,8 @@ ip -br addr
 Replace `enp5s0` below with that interface. First perform the read-only check in section 5. Then start deployment:
 
 ```bash
-mxlab deploy task=go2-walk-flat/hardware \
-  artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat-v2/hardware \
+  artifact=artifacts/go2-walk-flat-v2.deploy \
   runtime.transport.network_interface=enp5s0
 ```
 
@@ -130,7 +130,7 @@ side-effect-free.
 Pass overrides after the selected task, for example:
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat-v2/sim artifact=artifacts/go2-walk-flat-v2.deploy \
   runtime.viewer=false runtime.realtime=true duration_s=5.0
 ```
 
@@ -153,7 +153,7 @@ plausible pose does not establish safe policy takeover. Do not relax communicati
 | Standing preparation timed out | Inspect the reported joints, speed, and tilt; check interference and load before tuning. |
 | `state_timeout` during execution | Treat it as a fault stop. Preserve the result/error, ensure support, and investigate reception before retrying. |
 
-## 7. Other tasks and Python examples
+## 7. Other tasks
 
 G1 WBT dance uses its own artifact and task recipe. For a simulation check:
 
@@ -163,20 +163,3 @@ mxlab deploy task=g1-wbt-dance/sim artifact=artifacts/g1-wbt-dance.deploy runtim
 
 The artifact supplies the motion clip; no velocity commands are needed. Its duration cannot exceed that clip. Playback
 ends with damping, not a guaranteed standing recovery. Do not apply Go2 controls or its handoff procedure to G1.
-
-Run the programmatic Python example from the repository root; it neither reads an artifact nor invokes the deployment CLI:
-
-```bash
-python examples/deploy.py --headless --steps 100
-python examples/deploy.py --backend motrixsim --headless --steps 100
-```
-
-After completing the hardware safety preparations in section 4, explicitly select the real robot:
-
-```bash
-python examples/deploy.py --real --network-interface enp5s0
-```
-
-The example uses raw ONNX with robot and task parameters declared in code. When replacing the model, verify its training
-contract; matching input/output dimensions alone is not sufficient for hardware use. The real path retains control handoff
-and remote confirmations. CLI deployment still uses the artifact workflow above.

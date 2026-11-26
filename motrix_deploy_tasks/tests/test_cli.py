@@ -28,6 +28,7 @@ from motrix_deploy.artifact import (
     write_artifact,
 )
 from motrix_deploy.artifact.schema import PayloadSpec
+from motrix_deploy.config import SimRuntimeCfg
 from motrix_deploy.contracts import RobotSpec, TensorSpec
 from motrix_deploy.env import assemble_deploy_scene, create_deploy_env
 from motrix_deploy_tasks.tasks.go2_walk import Go2WalkTaskSpec
@@ -62,7 +63,7 @@ def test_cli_help() -> None:
             "-m",
             "motrixlab.cli",
             "deploy",
-            "task=go2-walk-rough/sim",
+            "task=go2-walk-flat-v2/sim",
             "--help",
         ],
         check=False,
@@ -71,8 +72,8 @@ def test_cli_help() -> None:
     )
 
     assert result.returncode == 0
-    assert "artifact: ???" in result.stdout
-    assert "deploy_env_id: rough" in result.stdout
+    assert "artifact: artifacts/go2-walk-flat-v2.deploy" in result.stdout
+    assert "deploy_env_id: flat" in result.stdout
 
 
 def test_hardware_cli_help_selects_hardware_recipe() -> None:
@@ -83,7 +84,7 @@ def test_hardware_cli_help_selects_hardware_recipe() -> None:
             "-m",
             "motrixlab.cli",
             "deploy",
-            "task=go2-walk-flat/hardware",
+            "task=go2-walk-flat-v2/hardware",
             "--help",
         ],
         check=False,
@@ -119,9 +120,8 @@ def test_g1_hardware_recipe_composes_named_gains_and_operator_profile() -> None:
 @pytest.mark.parametrize(
     ("task", "runtime_kind", "backend"),
     [
-        ("go2-walk-flat/sim", "simulation", "mujoco"),
-        ("go2-walk-rough/sim", "simulation", "mujoco"),
-        ("go2-walk-flat/hardware", "hardware", "unitree"),
+        ("go2-walk-flat-v2/sim", "simulation", "mujoco"),
+        ("go2-walk-flat-v2/hardware", "hardware", "unitree"),
     ],
 )
 def test_installed_recipes_compose_outside_workspace(tmp_path, task, runtime_kind, backend) -> None:
@@ -138,6 +138,7 @@ def test_installed_recipes_compose_outside_workspace(tmp_path, task, runtime_kin
     assert f"backend: {backend}" in result.stdout
     if runtime_kind == "simulation":
         assert "sensor_bindings:" in result.stdout
+        assert "deploy_env_id: flat" in result.stdout
 
 
 def test_deployment_plugin_preserves_other_app_task_discovery(tmp_path: Path) -> None:
@@ -162,28 +163,17 @@ def test_installed_go2_task_is_available_without_preimport() -> None:
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize(
-    ("task", "deploy_env_id", "terrain_type"),
-    [
-        ("go2-walk-rough/sim", "rough", HFieldTerrainCfg),
-        ("go2-walk-flat/sim", "flat", FlatTerrainCfg),
-    ],
-)
-def test_mujoco_hydra_recipes_assemble_robot_and_selected_world(
-    task: str,
-    deploy_env_id: str,
-    terrain_type: type,
-) -> None:
+def test_mujoco_hydra_recipe_assembles_robot_and_flat_world() -> None:
     with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
-        cfg = compose(config_name="deploy", overrides=[f"task={task}", "artifact=artifact.deploy"])
+        cfg = compose(config_name="deploy", overrides=["task=go2-walk-flat-v2/sim", "artifact=artifact.deploy"])
 
     assert isinstance(OmegaConf.to_container(cfg.runtime), dict)  # schema-typed node
 
     scene = assemble_deploy_scene(cfg.runtime.deploy_env_id, cfg.runtime.robot_id)
     assert isinstance(scene, SceneCfg)
     assert isinstance(scene.objs.robot, UnitreeGo2Robot)
-    assert isinstance(scene.objs.floor, terrain_type)
-    assert cfg.runtime.deploy_env_id == deploy_env_id
+    assert isinstance(scene.objs.floor, FlatTerrainCfg)
+    assert cfg.runtime.deploy_env_id == "flat"
     assert cfg.runtime.robot_id == "go2"
     assert cfg.artifact == "artifact.deploy"
     assert cfg.runtime.backend == "mujoco"
@@ -191,6 +181,24 @@ def test_mujoco_hydra_recipes_assemble_robot_and_selected_world(
     assert cfg.runtime.physics.solver_iterations > 0
     assert len(cfg.runtime.robot_translation) == 3
     assert np.linalg.norm(cfg.runtime.robot_rotation) == pytest.approx(1.0)
+
+
+def test_go2_flat_sim_recipe_overrides_floor_sliding_friction() -> None:
+    with initialize_config_module(version_base=None, config_module="motrix_deploy.config"):
+        cfg = compose(
+            config_name="deploy",
+            overrides=[
+                "task=go2-walk-flat-v2/sim",
+                "artifact=artifact.deploy",
+                "runtime.floor_sliding_friction=0.4",
+            ],
+        )
+
+    runtime_cfg = OmegaConf.to_object(cfg.runtime)
+    assert isinstance(runtime_cfg, SimRuntimeCfg)
+    runtime = runtime_cfg.build_runtime_config()
+
+    assert runtime.scene.objs.floor.friction == pytest.approx((0.4, 0.005, 0.0001))
 
 
 @pytest.mark.parametrize("deploy_env_id", ["flat", "rough"])
@@ -230,7 +238,7 @@ def test_installed_go2_task_can_be_created_without_preimport(tmp_path: Path) -> 
         "spec = TaskSpec.from_dict(specs['task']); "
         "assert type(spec).__name__ == 'Go2WalkTaskSpec'; "
         "assert type(spec).__module__ == 'motrix_deploy_tasks.tasks.go2_walk'; "
-        "assert not any(name in sys.modules for name in ('motrix_envs', 'motrixsim', 'mujoco', 'torch')); "
+        "assert not any(name in sys.modules for name in ('motrix_envs', 'motrixsim', 'mujoco')); "
         "task = create_task(spec, RobotSpec(**specs['robot']), NoOpPolicy(12)); "
         "assert type(task).__module__ == 'motrix_deploy_tasks.tasks.go2_walk'; "
         "assert type(task).__name__ == 'Go2WalkDeployTask'"
@@ -250,7 +258,7 @@ def test_hardware_hydra_config_selects_runtime_defaults() -> None:
         cfg = compose(
             config_name="deploy",
             overrides=[
-                "task=go2-walk-flat/hardware",
+                "task=go2-walk-flat-v2/hardware",
                 "artifact=artifact.deploy",
                 "runtime.transport.network_interface=enp3s0",
             ],
@@ -296,7 +304,7 @@ def test_hardware_hydra_config_accepts_explicit_preparation_overrides() -> None:
         cfg = compose(
             config_name="deploy",
             overrides=[
-                "task=go2-walk-flat/hardware",
+                "task=go2-walk-flat-v2/hardware",
                 "artifact=artifact.deploy",
                 "task_settings.preparation.kp=25.0",
                 "task_settings.preparation.kd=[0.4,0.4,0.4,0.5,0.5,0.5,0.6,0.6,0.6,0.7,0.7,0.7]",
@@ -320,7 +328,7 @@ def test_hardware_hydra_config_accepts_explicit_preparation_overrides() -> None:
 
 
 @pytest.mark.parametrize("backend", ["mujoco", "motrixsim"])
-@pytest.mark.parametrize("task", ["go2-walk-flat", "go2-walk-rough"])
+@pytest.mark.parametrize("task", ["go2-walk-flat-v2"])
 def test_headless_simulation_cli_runs_deterministic_onnx_fixture(tmp_path: Path, task: str, backend: str) -> None:
     policy_path = tmp_path / "fixture.onnx"
     weight = numpy_helper.from_array(np.zeros((49, 12), dtype=np.float32), name="weight")
@@ -369,14 +377,11 @@ def test_headless_simulation_cli_runs_deterministic_onnx_fixture(tmp_path: Path,
     assert first_result["success"] is True
     assert first_result["completed_steps"] == 5
 
-    if task == "go2-walk-flat":
-        assert first_result["policy_simulation_time_s"] == pytest.approx(0.1)
+    assert first_result["policy_simulation_time_s"] == pytest.approx(0.1)
 
-    # Both worlds smoke-test each backend; repeat only one world per backend.
-    if task == "go2-walk-flat":
-        second = subprocess.run(command, check=False, capture_output=True, text=True)
-        assert second.returncode == 0, second.stderr
-        assert first_result["trace_sha256"] == _rollout_result(second.stdout)["trace_sha256"]
+    second = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert second.returncode == 0, second.stderr
+    assert first_result["trace_sha256"] == _rollout_result(second.stdout)["trace_sha256"]
 
 
 @pytest.mark.parametrize("backend,solver_iterations", [("mujoco", 100), ("motrixsim", 3)])
@@ -456,7 +461,7 @@ def _robot_spec() -> RobotSpec:
             "RR_calf_joint",
         ),
         default_joint_position=np.array(
-            [0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 1.0, -1.5, 0.0, 1.0, -1.5],
+            [0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 0.8, -1.5],
             dtype=np.float32,
         ),
         position_lower=np.tile(np.array([-0.9472, -1.4, -2.6227], dtype=np.float32), 4),

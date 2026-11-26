@@ -197,7 +197,7 @@ def test_geom_specs_include_only_declared_names_in_order():
 def test_actuator_params_support_declared_names_or_full_model_order():
     from motrix_env_core import registry
 
-    cfg = registry.make_env_config("go2-walk-flat", mode="play")
+    cfg = registry.make_env_config("go2-walk-flat-v2", mode="play")
     backend = MotrixSimBackend(cfg.scene, cfg.sim, 1)
     all_names = tuple(actuator.name for actuator in backend._model.actuators)
     selected_names = (all_names[-1], all_names[0])
@@ -413,7 +413,7 @@ def test_sim_cfg_preserves_unspecified_solver_options():
 def test_ctrl_targets_write_routes_named_actuators_through_native_plan():
     from motrix_env_core import registry
 
-    cfg = registry.make_env_config("go2-walk-flat", mode="play")
+    cfg = registry.make_env_config("go2-walk-flat-v2", mode="play")
     backend = MotrixSimBackend(cfg.scene, cfg.sim, 3)
     actuator_names = tuple(actuator.name for actuator in backend._model.actuators)
     reordered = (actuator_names[-1], actuator_names[0])
@@ -460,7 +460,7 @@ def test_partial_env_ids_leave_other_rows_untouched_with_native_writes():
 def test_ctrl_targets_reject_duplicated_actuators_with_stable_message():
     from motrix_env_core import registry
 
-    cfg = registry.make_env_config("go2-walk-flat", mode="play")
+    cfg = registry.make_env_config("go2-walk-flat-v2", mode="play")
     backend = MotrixSimBackend(cfg.scene, cfg.sim, 1)
     name = backend._model.actuators[0].name
     with pytest.raises(ValueError, match="both target actuator"):

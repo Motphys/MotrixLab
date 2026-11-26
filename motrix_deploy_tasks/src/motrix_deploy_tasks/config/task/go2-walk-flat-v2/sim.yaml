@@ -1,11 +1,11 @@
 # @package _global_
-# Go2 flat sim spawns crouched, which enables the stand-up preparation lifecycle
+# Go2 v2 flat sim spawns crouched, which enables the stand-up preparation lifecycle
 # (R then P in the viewer), and requires the clipped crouch translation below.
 defaults:
   - /runtime: sim
   - _self_
 
-artifact: artifacts/go2-walk-flat.deploy
+artifact: artifacts/go2-walk-flat-v2.deploy
 
 runtime:
   backend: mujoco
@@ -22,4 +22,11 @@ runtime:
   robot_rotation: [0.0, 0.0, 0.0, 1.0]
   physics:
     dt: 0.002
+    # Match the SimRuntimeCfg default used by previous Go2 deployments.
     solver_iterations: 100
+
+task_settings:
+  command_filter:
+    max_acceleration: [1.0, 1.0, 1.0]
+    startup_acceleration: [1.0, 1.0, 1.0]
+    stop_acceleration: [1.0, 1.0, 1.0]

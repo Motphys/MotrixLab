@@ -18,7 +18,7 @@ training and playback commands remain unchanged.
 Install the `deploy` extra to use the built-in deployment profile compilers with `mxlab export-deploy`:
 
 ```bash
-mxlab export-deploy env=go2-walk-rough output=artifacts/go2-walk-rough.deploy
+mxlab export-deploy env=go2-walk-flat-v2 output=artifacts/go2-walk-flat-v2.deploy
 ```
 
 The installed package publishes one provider for its built-in profile compilers:
@@ -28,7 +28,7 @@ The installed package publishes one provider for its built-in profile compilers:
 builtin = "motrix_envs.deploy:register"
 ```
 
-Its callback registers profiles for `go2-walk-flat`, `go2-walk-rough`, and `g1-wbt-dance`.
+Its callback registers profiles for `go2-walk-flat-v2` and `g1-wbt-dance`.
 No registration import is needed for profile discovery. See the
 [deployment tutorial](../docs/source/en/user_guide/tutorial/advanced/motrix_deploy.md#add-a-deployment-profile-compiler)
 for the plugin contract and an external-package example.

@@ -83,16 +83,147 @@ def _swing_reward(quadruped_env, contacts: np.ndarray) -> np.ndarray:
 
 def test_quadruped_reward_scales_are_structured_and_not_shared():
     go1 = registry.make_env_config("go1-walk-flat").reward_config.scales
-    go2 = registry.make_env_config("go2-walk-flat").reward_config.scales
+    go2 = registry.make_env_config("go2-walk-flat-v2").reward_config.scales
 
     assert isinstance(go1, RewardScales)
     assert isinstance(go2, RewardScales)
     assert go1 is not go2
 
 
+def test_go2_uses_locomotion_first_reward_set():
+    env = registry.make("go2-walk-flat-v2", num_envs=1, mode="train")
+    env.initialize()
+    env.step(np.zeros((env.num_envs, *env.action_space.shape), dtype=np.float32))
+
+    assert "similar_to_default" in env.state.reward_terms
+    assert "dof_acc" in env.state.reward_terms
+    assert "hip_position" in env.state.reward_terms
+    assert "base_com_position" in env.state.reward_terms
+
+    baseline = registry.make("go1-walk-flat", num_envs=1, mode="train")
+    baseline.initialize()
+    baseline.step(np.zeros((baseline.num_envs, *baseline.action_space.shape), dtype=np.float32))
+
+    assert "similar_to_default" in baseline.state.reward_terms
+    assert "dof_acc" not in baseline.state.reward_terms
+    assert "hip_position" not in baseline.state.reward_terms
+
+
+def test_go2_velocity_command_range_matches_supported_envelope():
+    velocity_cfg = registry.make_env_config("go2-walk-flat-v2").commands.velocity
+
+    np.testing.assert_allclose(velocity_cfg.lower, np.array([-1.0, -0.5, -1.0], dtype=np.float32))
+    np.testing.assert_allclose(velocity_cfg.upper, np.array([1.0, 0.5, 1.0], dtype=np.float32))
+
+
+def test_go2_posture_constraints_use_tighter_tolerances_and_more_standing():
+    env_cfg = registry.make_env_config("go2-walk-flat-v2")
+
+    assert env_cfg.commands.velocity.standing_probability == pytest.approx(0.50)
+    assert env_cfg.commands.velocity.hard_case_probability == pytest.approx(0.20)
+    assert len(env_cfg.commands.velocity.hard_cases) == 28
+    hard_cases = {tuple(case) for case in env_cfg.commands.velocity.hard_cases}
+    assert all((-case[0], case[1], case[2]) in hard_cases for case in hard_cases)
+    assert all((0.0, 0.0, yaw) in hard_cases for yaw in (-0.8, -0.5, 0.5, 0.8))
+    # The RNG selects hard cases by array index. Preserve the validated order:
+    # the original 24 cases first, then the four mid-speed pure-yaw cases.
+    assert env_cfg.commands.velocity.hard_cases[-4:] == (
+        (0.0, 0.0, 0.5),
+        (0.0, 0.0, -0.5),
+        (0.0, 0.0, 0.8),
+        (0.0, 0.0, -0.8),
+    )
+    assert env_cfg.reward_config.feet_spacing_tolerance == pytest.approx(0.03)
+    assert env_cfg.reward_config.scales.flat_orientation == pytest.approx(-4.0)
+    # Raised from -0.3 to damp rapid roll/pitch oscillation without changing
+    # the flat-body target or any tracking/gait reward.
+    assert env_cfg.reward_config.scales.ang_vel_xy == pytest.approx(-0.5)
+    assert env_cfg.reward_config.scales.dof_acc == pytest.approx(-2e-5)
+    assert env_cfg.reward_config.scales.base_com_position == pytest.approx(-0.5)
+    assert env_cfg.reward_config.base_com_position_tolerance == pytest.approx(0.02)
+    assert env_cfg.reward_config.hip_position_tolerance == pytest.approx(0.08)
+    assert env_cfg.reward_config.base_height_target == pytest.approx(0.305)
+    # Raised from -100 to reduce base-height oscillation without changing the
+    # target or any gait/tracking reward.
+    assert env_cfg.reward_config.scales.base_height == pytest.approx(-300.0)
+    assert env_cfg.reward_config.swing_fraction == pytest.approx(0.45)
+    assert env_cfg.reward_config.swing_feet_height_sigma == pytest.approx(0.05)
+    assert env_cfg.randomization.sliding_friction_range == (0.6, 1.4)
+    # Raised from 5.0 in the low-speed dragging intervention while keeping
+    # target height and all other gait rewards unchanged.
+    assert env_cfg.reward_config.scales.swing_feet_z == pytest.approx(6.0)
+    assert env_cfg.reward_config.scales.swing_contact == pytest.approx(-1.5)
+    assert env_cfg.reward_config.scales.touchdown_velocity == pytest.approx(-0.8)
+    assert env_cfg.reward_config.touchdown_speed_sigma == pytest.approx(0.35)
+    assert env_cfg.reward_config.tracking_lin_vel_sigma == pytest.approx(0.35)
+    assert env_cfg.reward_config.tracking_lin_vel_forward_sigma == pytest.approx(0.16)
+    assert env_cfg.reward_config.tracking_lin_vel_lateral_sigma == pytest.approx(0.25)
+    assert env_cfg.reward_config.swing_contact_forward_scale == pytest.approx(1.5)
+
+
+def test_tracking_lin_vel_reward_applies_directional_tracking_sigmas():
+    env = registry.make("go2-walk-flat-v2", num_envs=3, mode="train")
+    env.initialize()
+    env._commands.copy_(
+        torch.tensor(
+            [
+                [1.0, 0.0, 0.0],
+                [-1.0, 0.0, 0.0],
+                [0.0, 0.5, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+    )
+    linvel = torch.zeros((env.num_envs, 3), dtype=torch.float32)
+
+    reward = env._reward_tracking_lin_vel(linvel, None, None)
+
+    np.testing.assert_allclose(
+        reward,
+        np.array(
+            [
+                np.exp(-1.0 / 0.16),
+                np.exp(-1.0 / 0.35),
+                np.exp(-0.25 / 0.25),
+            ],
+            dtype=np.float32,
+        ),
+    )
+
+
+def test_go2_hip_position_reward_only_penalizes_excess_abduction():
+    env = registry.make("go2-walk-flat-v2", num_envs=1, mode="train")
+    env.initialize()
+
+    assert env._hip_indices.numel() == 4
+    dof_pos = env.default_angles.repeat(1, 1).clone()
+    within_tolerance = env._reward_hip_position(None, None, dof_pos)
+    dof_pos[0, env._hip_indices[0]] += env.cfg.reward_config.hip_position_tolerance
+    at_tolerance = env._reward_hip_position(None, None, dof_pos)
+    dof_pos[0, env._hip_indices[0]] += env.cfg.reward_config.hip_position_sigma
+    excessive = env._reward_hip_position(None, None, dof_pos)
+
+    np.testing.assert_allclose(within_tolerance, 0.0)
+    np.testing.assert_allclose(at_tolerance, 0.0)
+    assert excessive[0] > 0.0
+
+
+def test_go2_dof_acc_reward_uses_worst_joint_acceleration(quadruped_env):
+    env = quadruped_env
+    env._last_joint_vel[:] = 0.0
+    joint_vel = torch.zeros_like(env._last_joint_vel)
+    joint_vel[0, 0] = float(env.cfg.ctrl_dt)
+    joint_vel[0, 1] = 2.0 * float(env.cfg.ctrl_dt)
+    env.get_dof_vel = lambda: joint_vel
+
+    penalty = env._reward_dof_acc(None, None, None)
+
+    np.testing.assert_allclose(penalty, [4.0])
+
+
 def test_go2_velocity_commands_remain_constant_before_resampling_interval():
     torch.manual_seed(7)
-    env = registry.make("go2-walk-flat", num_envs=64, mode="train")
+    env = registry.make("go2-walk-flat-v2", num_envs=64, mode="train")
     env.initialize()
     commands = env._commands.clone()
     velocity_cfg = env.cfg.commands.velocity
@@ -107,30 +238,44 @@ def test_go2_velocity_commands_remain_constant_before_resampling_interval():
     np.testing.assert_array_equal(env._commands, commands)
 
 
+def test_go2_hard_case_curriculum_interpolates_by_training_iteration():
+    env = registry.make("go2-walk-flat-v2", num_envs=1, mode="train")
+    binding = env._velocity_command_binding
+    assert binding.hard_case_probability == pytest.approx(0.0)
+    env._set_hard_case_probability(600)
+    assert binding.hard_case_probability == pytest.approx(0.152)
+    env._set_hard_case_probability(1000)
+    assert binding.hard_case_probability == pytest.approx(0.20)
+    env._set_hard_case_probability(1500)
+    assert binding.hard_case_probability == pytest.approx(0.20)
+
+
+def test_go2_play_disables_hard_case_curriculum():
+    env = registry.make("go2-walk-flat-v2", num_envs=1, mode="play")
+    assert env.cfg.commands.velocity.hard_case_curriculum == ()
+    assert env._velocity_command_binding.hard_case_probability == pytest.approx(0.0)
+
+
 def test_go2_randomization_is_enabled_for_training_and_disabled_for_play():
-    flat_cfg = registry.make_env_config("go2-walk-flat")
-    rough_cfg = registry.make_env_config("go2-walk-rough")
-    flat_play = registry.make("go2-walk-flat", num_envs=2, mode="play")
-    rough_play = registry.make("go2-walk-rough", num_envs=2, mode="play")
+    flat_cfg = registry.make_env_config("go2-walk-flat-v2")
+    play = registry.make("go2-walk-flat-v2", num_envs=2, mode="play")
 
     assert flat_cfg.randomization.enabled
-    assert rough_cfg.randomization.enabled
     assert flat_cfg.commands.velocity.resampling_seconds_range is not None
-    assert rough_cfg.commands.velocity.resampling_seconds_range is None
-    for play in (flat_play, rough_play):
-        assert not play.cfg.randomization.enabled
-        assert play.cfg.commands.velocity.resampling_seconds_range is None
-        assert play.cfg.noise_config.level == 0.0
+
+    assert not play.cfg.randomization.enabled
+    assert play.cfg.commands.velocity.resampling_seconds_range is None
+    assert play.cfg.noise_config.level == 0.0
 
 
-@pytest.mark.parametrize("env_name", ["go2-walk-flat", "go2-walk-rough"])
+@pytest.mark.parametrize("env_name", ["go2-walk-flat-v2"])
 def test_go2_uses_position_actuators_for_pd_randomization(env_name: str):
     env = registry.make(env_name, num_envs=1, mode="train")
 
     assert all(spec.actuator_type is ActuatorType.POSITION for spec in env.model.actuators)
 
 
-@pytest.mark.parametrize("env_name", ["go2-walk-flat", "go2-walk-rough"])
+@pytest.mark.parametrize("env_name", ["go2-walk-flat-v2"])
 def test_go2_reset_randomization_stays_within_configured_ranges(env_name: str):
     env = registry.make(env_name, num_envs=32, mode="train")
     env.initialize()
@@ -158,7 +303,7 @@ def test_go2_reset_randomization_stays_within_configured_ranges(env_name: str):
 
 
 def test_go2_pd_and_friction_randomization_is_per_env_and_episode_constant():
-    env = registry.make("go2-walk-flat", num_envs=16, mode="train")
+    env = registry.make("go2-walk-flat-v2", num_envs=16, mode="train")
     env.initialize()
     randomization = env.cfg.randomization
     _, kp, damping, friction = _read_param_overrides(env)
@@ -185,7 +330,7 @@ def test_go2_pd_and_friction_randomization_is_per_env_and_episode_constant():
 
 
 def test_go2_base_mass_and_com_randomization_is_per_env_and_episode_constant():
-    env = registry.make("go2-walk-flat", num_envs=16, mode="train")
+    env = registry.make("go2-walk-flat-v2", num_envs=16, mode="train")
     env.initialize()
     randomization = env.cfg.randomization
 
@@ -209,7 +354,7 @@ def test_go2_base_mass_and_com_randomization_is_per_env_and_episode_constant():
 
 
 def test_go2_action_delay_selects_current_or_previous_action_per_env():
-    env = registry.make("go2-walk-flat", num_envs=2, mode="train")
+    env = registry.make("go2-walk-flat-v2", num_envs=2, mode="train")
     env.initialize()
     state = env.state
     previous = np.full((2, env._num_action), -0.2, dtype=np.float32)
@@ -226,7 +371,7 @@ def test_go2_action_delay_selects_current_or_previous_action_per_env():
 
 
 def test_go2_command_resampling_only_updates_due_environments(monkeypatch: pytest.MonkeyPatch):
-    env = registry.make("go2-walk-flat", num_envs=3, mode="train")
+    env = registry.make("go2-walk-flat-v2", num_envs=3, mode="train")
     env.initialize()
     commands = np.array([[0.1, 0.0, 0.0], [0.2, 0.1, 0.0], [0.3, 0.0, -0.1]], dtype=np.float32)
     replacement = np.array([[0.4, -0.2, 0.3], [0.5, 0.2, -0.3]], dtype=np.float32)
@@ -275,7 +420,7 @@ def test_random_planar_velocity_binding_can_sample_a_standing_batch():
 
 
 def test_go2_partial_reset_only_resamples_finished_environments(monkeypatch: pytest.MonkeyPatch):
-    env = registry.make("go2-walk-flat", num_envs=3, mode="train")
+    env = registry.make("go2-walk-flat-v2", num_envs=3, mode="train")
     env.initialize()
     state = env.state
     commands = np.array(
@@ -309,7 +454,7 @@ def test_go2_partial_reset_only_resamples_finished_environments(monkeypatch: pyt
 
 
 def test_go2_play_reset_preserves_nominal_joint_state_and_runtime_parameters():
-    env = registry.make("go2-walk-flat", num_envs=4, mode="play")
+    env = registry.make("go2-walk-flat-v2", num_envs=4, mode="play")
     env.initialize()
 
     np.testing.assert_array_equal(
@@ -352,24 +497,44 @@ def test_go2_play_reset_preserves_nominal_joint_state_and_runtime_parameters():
     ],
 )
 def test_quadruped_randomization_config_rejects_invalid_ranges(update, message):
-    cfg = registry.make_env_config("go2-walk-flat")
+    cfg = registry.make_env_config("go2-walk-flat-v2")
     update(cfg)
 
     with pytest.raises(ValueError, match=message):
         cfg.validate()
 
 
-def test_zero_velocity_command_freezes_gait_phase():
-    env = registry.make("go2-walk-flat", num_envs=2, mode="train")
+def test_gait_schedule_and_stand_transition_are_continuous():
+    env = registry.make("go2-walk-flat-v2", num_envs=2, mode="train")
     env.initialize()
-    env._commands[:] = 0.0
-    env._phase[:] = 0.5
-    env._feet_phase[:] = 0.5
+    cfg = env.cfg
+    env._commands[:] = torch.tensor([0.8, 0.0, 0.0], dtype=torch.float32)
+    env._gait_schedule_alpha[:] = 0.0
 
     env._advance_phase()
 
-    np.testing.assert_array_equal(env._phase, np.zeros(2, dtype=np.float32))
+    max_alpha_step = cfg.ctrl_dt / cfg.gait_schedule_smoothing_time_s
+    assert env._gait_schedule_alpha[0] == pytest.approx(max_alpha_step)
+    assert env._gait_frequency[0] < cfg.gait_schedule_frequency_high
+    assert env._swing_fraction[0] < cfg.gait_schedule_swing_fraction_high
+
+    env._commands[:] = 0.0
+    env._phase[:] = 0.5
+    env._feet_phase[:] = 0.5
+    env._advance_phase()
+
+    # Stand and walk share phase zero.  Advancing a hidden clock while the
+    # observed phase is masked would make startup jump to an arbitrary swing.
     np.testing.assert_array_equal(env._feet_phase, np.zeros((2, env._num_feet), dtype=np.float32))
+    np.testing.assert_array_equal(env._phase, np.zeros(2, dtype=np.float32))
+
+    env._commands.copy_(torch.tensor([0.0, 0.0, 1.0], dtype=torch.float32))
+    env._advance_phase()
+    assert env._gait_frequency[0] > cfg.gait_schedule_frequency_low
+
+    env._commands.copy_(torch.tensor([0.0, 0.5, 0.0], dtype=torch.float32))
+    env._advance_phase()
+    assert env._gait_frequency[0] > cfg.gait_schedule_frequency_low
 
 
 @pytest.mark.parametrize(
@@ -377,7 +542,6 @@ def test_zero_velocity_command_freezes_gait_phase():
     [
         ("anymalc-walk-flat", "anymalc-walk-rough"),
         ("go1-walk-flat", "go1-walk-rough"),
-        ("go2-walk-flat", "go2-walk-rough"),
     ],
 )
 def test_quadruped_rough_walk_uses_procedural_hfield_and_shared_runtime_config(flat_env, rough_env):
@@ -391,7 +555,7 @@ def test_quadruped_rough_walk_uses_procedural_hfield_and_shared_runtime_config(f
     assert rough_cfg.render_spacing == flat_cfg.render_spacing == 0.0
 
 
-@pytest.mark.parametrize("env_name", ["anymalc-walk-rough", "go1-walk-rough", "go2-walk-rough"])
+@pytest.mark.parametrize("env_name", ["anymalc-walk-rough", "go1-walk-rough"])
 def test_quadruped_rough_walk_reset_and_base_height_are_terrain_relative(env_name):
     env = registry.make(env_name, num_envs=8, mode="train")
     env.initialize()
@@ -423,10 +587,8 @@ def test_foot_position_sensor_names_belong_to_walk_task_config():
 
 @pytest.mark.parametrize("robot_name", ["go1", "go2", "anymalc"])
 def test_walk_task_gyro_config_compiles_for_each_robot(robot_name):
-    cfg = registry.make_env_config(f"{robot_name}-walk-flat")
-    rough_cfg = registry.make_env_config(f"{robot_name}-walk-rough")
-    # Terrain variants use the same model-local gyro wiring; compile each robot only once.
-    assert _sim_data_queries(rough_cfg)["gyro"] == _sim_data_queries(cfg)["gyro"]
+    env_name = "go2-walk-flat-v2" if robot_name == "go2" else f"{robot_name}-walk-flat"
+    cfg = registry.make_env_config(env_name)
     robot = cfg.scene.objs.robot
     backend = MotrixSimBackend(cfg.scene, cfg.sim, 1)
     reads = backend.compile_reads({"gyro": _sim_data_queries(cfg)["gyro"]})
@@ -443,7 +605,7 @@ def test_walk_task_gyro_config_compiles_for_each_robot(robot_name):
 def test_walk_task_gyro_config_is_instance_local():
     first = registry.make_env_config("anymalc-walk-flat")
     second = registry.make_env_config("anymalc-walk-flat")
-    unitree = registry.make_env_config("go2-walk-flat")
+    unitree = registry.make_env_config("go2-walk-flat-v2")
     second_sensor = second.sensor.gyro
     unitree_sensor = unitree.sensor.gyro
     first.sensor.gyro = "custom_gyro"
@@ -469,7 +631,7 @@ def test_walk_gyro_query_reads_renamed_model_sensor_with_scene_affixes(tmp_path,
     class RobotObjsCfg(SceneObjsCfg):
         robot: RobotCfg
 
-    cfg = registry.make_env_config("go2-walk-flat")
+    cfg = registry.make_env_config("go2-walk-flat-v2")
     cfg.scene = SceneCfg(objs=RobotObjsCfg(robot=robot))
     cfg.sensor.gyro = "custom_gyro"
     queries = _sim_data_queries(cfg)
@@ -498,7 +660,9 @@ def test_walk_task_selects_named_robot_key_pose():
 
 def test_swing_height_reward_requires_feet_to_leave_ground(quadruped_env):
     reward_cfg = quadruped_env.cfg.reward_config
-    quadruped_env.feet_pos[:, :, 2] = reward_cfg.target_foot_height - reward_cfg.base_height_target
+    quadruped_env.feet_pos[:, :, 2] = (
+        reward_cfg.target_foot_height - reward_cfg.base_height_target - reward_cfg.foot_height_reference_offset
+    )
 
     reward = _swing_reward(
         quadruped_env,
@@ -510,7 +674,7 @@ def test_swing_height_reward_requires_feet_to_leave_ground(quadruped_env):
 
 def test_swing_height_reward_prefers_target_height(quadruped_env):
     reward_cfg = quadruped_env.cfg.reward_config
-    target_z = reward_cfg.target_foot_height - reward_cfg.base_height_target
+    target_z = reward_cfg.target_foot_height - reward_cfg.base_height_target - reward_cfg.foot_height_reference_offset
     no_contacts = np.zeros((1, quadruped_env._num_feet), dtype=bool)
 
     quadruped_env.feet_pos[:, :, 2] = target_z
@@ -524,24 +688,260 @@ def test_swing_height_reward_prefers_target_height(quadruped_env):
     assert bool((off_target_reward > 0.0).all())
 
 
+def test_go2_swing_height_reward_uses_lift_plateau_and_slow_place_profile():
+    env = registry.make("go2-walk-flat-v2", num_envs=1, mode="train")
+    env.initialize()
+    env.cfg.reward_config.swing_feet_z_sinusoidal = True
+    env._swing_fraction[:] = env.cfg.reward_config.swing_fraction
+    no_contacts = np.zeros((1, env._num_feet), dtype=bool)
+    ground_z = -env.cfg.reward_config.base_height_target - env.cfg.reward_config.foot_height_reference_offset
+    peak_z = ground_z + env.cfg.reward_config.target_foot_height
+    rewards = {}
+
+    rise_fraction = env.cfg.reward_config.swing_rise_fraction
+    plateau_fraction = env.cfg.reward_config.swing_plateau_fraction
+    swing_start = 1.0 - env.cfg.reward_config.swing_fraction
+    swing_duration = env.cfg.reward_config.swing_fraction
+    plateau_phase = swing_start + swing_duration * (rise_fraction + 0.5 * plateau_fraction)
+    for phase, foot_z in ((swing_start, ground_z), (plateau_phase, peak_z), (1.0, ground_z)):
+        env._feet_phase[:] = phase
+        env.feet_contact.copy_(torch.as_tensor(no_contacts))
+        env.feet_pos[:, :, 2] = foot_z
+        rewards[phase] = env._reward_swing_feet_z(None, None, None)[0]
+
+    assert env.cfg.reward_config.swing_feet_z_sinusoidal is True
+    np.testing.assert_allclose(rewards[swing_start], 1.0)
+    np.testing.assert_allclose(rewards[plateau_phase], 1.0)
+    np.testing.assert_allclose(rewards[1.0], 1.0)
+
+    env.feet_pos[:, :, 2] = peak_z
+    end_off_profile = env._reward_swing_feet_z(None, None, None)[0]
+    assert end_off_profile < rewards[1.0]
+
+
+def test_go2_touchdown_velocity_penalty_only_applies_to_low_descending_feet():
+    env = registry.make("go2-walk-flat-v2", num_envs=1, mode="train")
+    env.initialize()
+    reward_cfg = env.cfg.reward_config
+    sensor_ground_z = -reward_cfg.base_height_target - reward_cfg.foot_height_reference_offset
+
+    env._last_feet_pos[:, :, 2] = sensor_ground_z
+    env.feet_pos[:, :, 2] = sensor_ground_z - 0.01
+    low_fast_touchdown = env._reward_touchdown_velocity(None, None, None)
+
+    env.feet_pos[:, :, 2] = sensor_ground_z - 0.001
+    low_slow_touchdown = env._reward_touchdown_velocity(None, None, None)
+
+    env._last_feet_pos[:, :, 2] = sensor_ground_z + reward_cfg.target_foot_height
+    env.feet_pos[:, :, 2] = sensor_ground_z + reward_cfg.target_foot_height - 0.01
+    high_start_touchdown = env._reward_touchdown_velocity(None, None, None)
+
+    env._last_feet_pos[:, :, 2] = sensor_ground_z
+    env.feet_pos[:, :, 2] = sensor_ground_z + 0.01
+    low_liftoff = env._reward_touchdown_velocity(None, None, None)
+
+    assert low_slow_touchdown[0] > 0.0
+    assert low_fast_touchdown[0] > low_slow_touchdown[0]
+    np.testing.assert_allclose(high_start_touchdown, np.zeros((1,), dtype=np.float32))
+    np.testing.assert_allclose(low_liftoff, np.zeros((1,), dtype=np.float32))
+
+
 def test_swing_contact_penalty_detects_dragging_feet(quadruped_env):
     feet_phase = np.full((1, quadruped_env._num_feet), 0.75, dtype=np.float32)
     no_contacts = np.zeros((1, quadruped_env._num_feet), dtype=bool)
     all_contacts = np.ones((1, quadruped_env._num_feet), dtype=bool)
 
     quadruped_env._feet_phase.copy_(torch.as_tensor(feet_phase))
+    quadruped_env._last_feet_contact.copy_(torch.as_tensor(no_contacts))
     quadruped_env.feet_contact.copy_(torch.as_tensor(no_contacts))
     no_drag = quadruped_env._reward_swing_contact(None, None, None)
     quadruped_env.feet_contact.copy_(torch.as_tensor(all_contacts))
     all_drag = quadruped_env._reward_swing_contact(None, None, None)
 
     np.testing.assert_array_equal(no_drag, np.zeros((1,), dtype=np.float32))
-    np.testing.assert_array_equal(all_drag, np.ones((1,), dtype=np.float32))
+    progress = (
+        0.75 - (1.0 - quadruped_env.cfg.reward_config.swing_fraction)
+    ) / quadruped_env.cfg.reward_config.swing_fraction
+    expected = 2.0 * np.square(np.sin(np.pi * progress))
+    np.testing.assert_allclose(all_drag, np.asarray([expected], dtype=np.float32))
+
+    quadruped_env._feet_phase[:] = 1.0 - quadruped_env.cfg.reward_config.swing_fraction
+    np.testing.assert_allclose(
+        quadruped_env._reward_swing_contact(None, None, None),
+        np.zeros((1,), dtype=np.float32),
+    )
+
+    # Consecutive stance contact is penalized by horizontal foot motion, while
+    # a first contact tick is excluded as a touchdown transition.
+    quadruped_env._commands.copy_(torch.tensor([[0.5, 0.0, 0.0]], dtype=torch.float32))
+    quadruped_env._feet_phase[:] = 0.0
+    quadruped_env._last_feet_contact.copy_(torch.as_tensor(all_contacts))
+    quadruped_env.feet_contact.copy_(torch.as_tensor(all_contacts))
+    quadruped_env._last_feet_world_pos[:] = quadruped_env.feet_world_pos
+    quadruped_env.feet_world_pos[:, :, 0] += 0.001
+    stance_motion = quadruped_env._reward_swing_contact(None, None, None)
+    np.testing.assert_allclose(stance_motion, np.asarray([0.3], dtype=np.float32), rtol=1e-5)
+
+    quadruped_env._last_feet_contact.copy_(torch.as_tensor(no_contacts))
+    np.testing.assert_allclose(
+        quadruped_env._reward_swing_contact(None, None, None),
+        np.zeros((1,), dtype=np.float32),
+    )
+
+
+def test_swing_contact_penalty_scales_with_forward_command(quadruped_env):
+    quadruped_env.cfg.reward_config.swing_contact_forward_scale = 1.5
+    quadruped_env._feet_phase[:] = 0.75
+    quadruped_env.feet_contact[:] = True
+    quadruped_env._last_feet_contact[:] = False
+
+    commands = (
+        (-0.5, 0.0, 0.0),
+        (0.5, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 0.5, 0.0),
+        (0.0, 0.0, -1.0),
+    )
+    penalties = []
+    for command in commands:
+        quadruped_env._commands.copy_(torch.tensor([command], dtype=torch.float32))
+        penalties.append(quadruped_env._reward_swing_contact(None, None, None)[0])
+
+    reverse, half_forward, full_forward, lateral, yaw = penalties
+    nominal = full_forward / 1.5
+    np.testing.assert_allclose(reverse, nominal)
+    np.testing.assert_allclose(half_forward, 1.25 * nominal)
+    np.testing.assert_allclose(lateral, nominal)
+    np.testing.assert_allclose(yaw, nominal)
+    assert full_forward > half_forward > nominal
+
+
+def test_static_stance_anchors_contact_points_without_affecting_motion(quadruped_env):
+    all_contacts = np.ones((1, quadruped_env._num_feet), dtype=bool)
+    quadruped_env._commands[:] = 0.0
+    quadruped_env._feet_phase[:] = 0.0
+    quadruped_env._last_feet_contact.copy_(torch.as_tensor(all_contacts))
+    quadruped_env.feet_contact.copy_(torch.as_tensor(all_contacts))
+    quadruped_env._static_anchor_valid[:] = False
+    quadruped_env._last_feet_world_pos[:] = quadruped_env.feet_world_pos
+
+    first = quadruped_env._reward_swing_contact(None, None, None)
+    np.testing.assert_allclose(first, np.zeros((1,), dtype=np.float32))
+    assert bool(quadruped_env._static_anchor_valid.all())
+
+    # Move all feet by 6 mm without a one-step velocity contribution.  The
+    # static anchor still sees the accumulated position error and penalizes it.
+    quadruped_env.feet_world_pos[:, :, 0] += 0.006
+    quadruped_env._last_feet_world_pos[:] = quadruped_env.feet_world_pos
+    anchored = quadruped_env._reward_swing_contact(None, None, None)
+    np.testing.assert_allclose(anchored, np.asarray([0.8], dtype=np.float32), rtol=1e-5)
+
+    # The bounded barrier keeps increasing for large accumulated drift rather
+    # than becoming exactly flat after a finite clipping threshold.
+    quadruped_env.feet_world_pos[:, :, 0] += 0.054
+    quadruped_env._last_feet_world_pos[:] = quadruped_env.feet_world_pos
+    larger_drift = quadruped_env._reward_swing_contact(None, None, None)
+    assert larger_drift[0] > anchored[0]
+    assert larger_drift[0] < 4.0
+
+    # A moving command releases the anchor and leaves the walking penalty path
+    # active, so the position latch cannot constrain normal gait motion.
+    quadruped_env._commands.copy_(torch.tensor([[0.5, 0.0, 0.0]], dtype=torch.float32))
+    quadruped_env._reward_swing_contact(None, None, None)
+    assert not bool(quadruped_env._static_anchor_valid.any())
+
+
+def test_feet_spacing_reward_is_symmetric_for_splay_and_pigeon_toes(quadruped_env):
+    quadruped_env._default_feet_width = torch.tensor([0.3, 0.3], dtype=torch.float32)
+    quadruped_env.feet_pos[:, :, :] = 0.0
+    quadruped_env.feet_pos[:, 0, 1] = 0.15
+    quadruped_env.feet_pos[:, 1, 1] = -0.15
+    quadruped_env.feet_pos[:, 2, 1] = 0.15
+    quadruped_env.feet_pos[:, 3, 1] = -0.15
+    nominal = quadruped_env._reward_feet_spacing(None, None, None)
+
+    quadruped_env.feet_pos[:, :, :] = 0.0
+    quadruped_env.feet_pos[:, 0, 1] = 0.20
+    quadruped_env.feet_pos[:, 1, 1] = -0.20
+    quadruped_env.feet_pos[:, 2, 1] = 0.20
+    quadruped_env.feet_pos[:, 3, 1] = -0.20
+    splay = quadruped_env._reward_feet_spacing(None, None, None)
+
+    quadruped_env.feet_pos[:, :, :] = 0.0
+    quadruped_env.feet_pos[:, 0, 1] = 0.10
+    quadruped_env.feet_pos[:, 1, 1] = -0.10
+    quadruped_env.feet_pos[:, 2, 1] = 0.10
+    quadruped_env.feet_pos[:, 3, 1] = -0.10
+    pigeon = quadruped_env._reward_feet_spacing(None, None, None)
+
+    np.testing.assert_allclose(nominal, np.ones((1,), dtype=np.float32))
+    np.testing.assert_allclose(splay, pigeon, rtol=0.0, atol=1e-8)
+    assert bool((splay < nominal).all())
+
+
+def test_feet_spacing_reward_covers_front_and_rear_pairs(quadruped_env):
+    quadruped_env._default_feet_width = torch.tensor([0.3, 0.3], dtype=torch.float32)
+    quadruped_env.feet_pos[:, :, :] = 0.0
+    quadruped_env.feet_pos[:, 0, 1] = 0.20
+    quadruped_env.feet_pos[:, 1, 1] = -0.20
+    quadruped_env.feet_pos[:, 2, 1] = 0.15
+    quadruped_env.feet_pos[:, 3, 1] = -0.15
+    front_bad = quadruped_env._reward_feet_spacing(None, None, None)
+
+    quadruped_env.feet_pos[:, 0, 1] = 0.15
+    quadruped_env.feet_pos[:, 1, 1] = -0.15
+    quadruped_env.feet_pos[:, 2, 1] = 0.20
+    quadruped_env.feet_pos[:, 3, 1] = -0.20
+    rear_bad = quadruped_env._reward_feet_spacing(None, None, None)
+
+    np.testing.assert_allclose(front_bad, rear_bad)
+    assert bool((front_bad < 1.0).all())
+
+
+def test_feet_spacing_reward_does_not_cancel_front_and_rear_errors(quadruped_env):
+    quadruped_env._default_feet_width = torch.tensor([0.3, 0.3], dtype=torch.float32)
+    quadruped_env.feet_pos[:, :, :] = 0.0
+    quadruped_env.feet_pos[:, 0, 1] = 0.20
+    quadruped_env.feet_pos[:, 1, 1] = -0.20
+    quadruped_env.feet_pos[:, 2, 1] = 0.15
+    quadruped_env.feet_pos[:, 3, 1] = -0.15
+    one_pair_bad = quadruped_env._reward_feet_spacing(None, None, None)
+
+    # The signed front/rear errors have opposite directions, but both pairs are
+    # outside tolerance. Their penalties must not cancel before shaping.
+    quadruped_env.feet_pos[:, 0, 1] = 0.20
+    quadruped_env.feet_pos[:, 1, 1] = -0.20
+    quadruped_env.feet_pos[:, 2, 1] = 0.10
+    quadruped_env.feet_pos[:, 3, 1] = -0.10
+    opposite_signed_bad = quadruped_env._reward_feet_spacing(None, None, None)
+
+    assert bool((one_pair_bad < 1.0).all())
+    assert bool((opposite_signed_bad < one_pair_bad).all())
+
+
+def test_posture_constraints_are_full_for_sagittal_and_soft_for_lateral_yaw(quadruped_env):
+    commands = (
+        (0.0, 0.0, 0.0),
+        (0.8, 0.0, 0.0),
+        (-0.8, 0.0, 0.0),
+        (0.0, 0.3, 0.0),
+        (0.0, 0.0, 0.3),
+        (0.0, 0.8, 0.8),
+    )
+    scales = []
+    for command in commands:
+        quadruped_env._commands.copy_(torch.tensor([command], dtype=torch.float32))
+        scales.append(quadruped_env._posture_constraint_scale()[0])
+
+    np.testing.assert_allclose(scales[:3], 1.0)
+    np.testing.assert_allclose(scales[3:5], 0.70, rtol=1e-6)
+    np.testing.assert_allclose(scales[5], quadruped_env._POSTURE_GATE_FLOOR)
 
 
 @pytest.mark.parametrize("robot_name", ["go1", "go2", "anymalc"])
 def test_walk_state_sensor_queries_resolve_model_and_scene_names(robot_name):
-    cfg = registry.make_env_config(f"{robot_name}-walk-flat")
+    env_name = "go2-walk-flat-v2" if robot_name == "go2" else f"{robot_name}-walk-flat"
+    cfg = registry.make_env_config(env_name)
     robot = cfg.scene.objs.robot
     robot.prefix = "robot_"
     robot.suffix = "_instance"

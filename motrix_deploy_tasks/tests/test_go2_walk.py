@@ -23,12 +23,13 @@ from motrix_deploy_tasks.tasks.go2_walk import (
     Go2WalkTaskSpec,
 )
 from motrix_env_core.input import (
-    BoundedGamePadPlanarVelocityBinding,
-    ConstantPlanarVelocityBinding,
     GamePadDevice,
     KeyboardDevice,
-    KeyboardPlanarVelocityBinding,
     PlanarVelocityCommand,
+)
+from motrix_env_core.input.bindings import (
+    RateLimitedPlanarVelocityBinding,
+    ScalableKeyboardPlanarVelocityBinding,
 )
 
 
@@ -43,6 +44,31 @@ class FakeKeyboardDevice(KeyboardDevice):
 
     def is_pressing(self, key: str) -> bool:
         return False
+
+
+class EventFakeKeyboardDevice(KeyboardDevice):
+    def __init__(self) -> None:
+        self.pending_down: set[str] = set()
+        self.pressing: set[str] = set()
+        self._frame_down = frozenset()
+        self._frame_pressing = frozenset()
+
+    def poll(self) -> None:
+        # Match the GLFW viewer contract: pending edges survive exactly one
+        # poll, while held keys remain visible through is_pressing.
+        self._frame_down = frozenset(self.pending_down)
+        self._frame_pressing = frozenset(self.pressing)
+        self.pending_down.clear()
+
+    def is_key_down(self, key: str) -> bool:
+        return key in self._frame_down
+
+    def is_key_up(self, key: str) -> bool:
+        del key
+        return False
+
+    def is_pressing(self, key: str) -> bool:
+        return key in self._frame_pressing
 
 
 class FakeGamePadDevice(GamePadDevice):
@@ -333,6 +359,17 @@ def test_shared_keyboard_velocity_binding_does_not_consume_operator_key_edges() 
     assert keyboard.poll_count == 0
 
 
+def test_scalable_velocity_binding_preserves_viewer_stand_key_edge() -> None:
+    keyboard = EventFakeKeyboardDevice()
+    keyboard.pending_down.add("r")
+    task = Go2WalkDeployTask(_task_spec(), _robot(), NoOpPolicy(_robot().joint_count), steps=1)
+    binding = task.prepare(simulation=True, device=keyboard)
+
+    binding.read_command()
+
+    assert keyboard.is_key_down("r")
+
+
 def test_go2_missing_command_is_rejected_before_policy_and_action(monkeypatch):
     robot = _robot()
     task = Go2WalkPolicyProcessor(_task_spec(), robot)
@@ -599,7 +636,7 @@ def test_previous_action_and_trot_phase_advance_after_first_tick() -> None:
     np.testing.assert_allclose(observation[45:49], [0.04, 0.54, 0.54, 0.04])
 
 
-def test_gait_phase_restarts_after_standing_and_reset() -> None:
+def test_gait_phase_starts_from_full_support_after_standing_and_reset() -> None:
     robot = _robot()
     state = _state(robot)
     task = Go2WalkPolicyProcessor(_task_spec(), robot)
@@ -607,18 +644,19 @@ def test_gait_phase_restarts_after_standing_and_reset() -> None:
     standing = [0.0, 0.0, 0.0]
     task.reset(state, _context(0, 0.0, moving))
 
-    phases = [
-        task.build_observation(state, _context(step, step * 0.02, command))[45:49]
-        for step, command in enumerate((moving, moving, standing, standing, moving, moving))
-    ]
-    np.testing.assert_allclose(phases[0], 0.0)
-    np.testing.assert_allclose(phases[1], [0.04, 0.54, 0.54, 0.04])
-    np.testing.assert_allclose(phases[2:4], 0.0)
-    np.testing.assert_allclose(phases[4], phases[1])
-    np.testing.assert_allclose(phases[5], [0.08, 0.58, 0.58, 0.08])
+    first = task.build_observation(state, _context(0, 0.0, moving))[45:49]
+    second = task.build_observation(state, _context(1, 0.02, moving))[45:49]
+    stand = task.build_observation(state, _context(2, 0.04, standing))[45:49]
+    resumed = task.build_observation(state, _context(3, 0.06, moving))[45:49]
+
+    np.testing.assert_allclose(first, 0.0)
+    np.testing.assert_allclose(second, [0.04, 0.54, 0.54, 0.04])
+    np.testing.assert_allclose(stand, 0.0)
+    # Stand and walk share phase zero so startup begins from full support.
+    np.testing.assert_allclose(resumed, [0.04, 0.54, 0.54, 0.04])
 
     task.reset(state, _context(0, 0.0, moving))
-    np.testing.assert_allclose(task.build_observation(state, _context(1, 0.02, moving))[45:49], phases[1])
+    np.testing.assert_allclose(task.build_observation(state, _context(1, 0.02, moving))[45:49], second)
 
 
 def test_standing_command_freezes_deployment_gait_phase() -> None:
@@ -684,13 +722,73 @@ def test_go2_prepare_builds_binding_for_each_device_kind() -> None:
     task = Go2WalkDeployTask(_task_spec(), robot, NoOpPolicy(robot.joint_count), steps=1)
 
     keyboard_binding = task.prepare(simulation=True, device=FakeKeyboardDevice())
-    assert isinstance(keyboard_binding, KeyboardPlanarVelocityBinding)
+    assert isinstance(keyboard_binding, RateLimitedPlanarVelocityBinding)
 
     gamepad_binding = task.prepare(simulation=True, device=FakeGamePadDevice())
-    assert isinstance(gamepad_binding, BoundedGamePadPlanarVelocityBinding)
+    assert isinstance(gamepad_binding, RateLimitedPlanarVelocityBinding)
 
     constant_binding = task.prepare(simulation=True)
-    assert isinstance(constant_binding, ConstantPlanarVelocityBinding)
+    assert isinstance(constant_binding, RateLimitedPlanarVelocityBinding)
+
+
+def test_go2_prepare_applies_configurable_command_acceleration_limit() -> None:
+    robot = _robot()
+    task = Go2WalkDeployTask(
+        _task_spec(),
+        robot,
+        NoOpPolicy(robot.joint_count),
+        settings={"command_filter": {"max_acceleration": [2.0, 1.0, 0.5]}},
+    )
+
+    keyboard = FakeKeyboardDevice()
+    keyboard.is_pressing = lambda key: key == "w"
+    binding = task.prepare(simulation=True, device=keyboard)
+
+    assert isinstance(binding, RateLimitedPlanarVelocityBinding)
+    np.testing.assert_allclose(binding.read_command().values, [[0.04, 0.0, 0.0]], atol=1e-7)
+    np.testing.assert_allclose(binding.read_command().values, [[0.08, 0.0, 0.0]], atol=1e-7)
+
+
+def test_go2_prepare_applies_separate_startup_and_stop_accelerations() -> None:
+    robot = _robot()
+    task = Go2WalkDeployTask(
+        _task_spec(),
+        robot,
+        NoOpPolicy(robot.joint_count),
+        settings={
+            "command_filter": {
+                "max_acceleration": [1.2, 1.2, 1.2],
+                "startup_acceleration": [1.2, 1.2, 1.2],
+                "stop_acceleration": [2.0, 2.0, 2.0],
+            }
+        },
+    )
+
+    keyboard = FakeKeyboardDevice()
+    keyboard.is_pressing = lambda key: key == "w"
+    binding = task.prepare(simulation=True, device=keyboard)
+
+    assert isinstance(binding, RateLimitedPlanarVelocityBinding)
+    np.testing.assert_allclose(binding.read_command().values, [[0.024, 0.0, 0.0]], atol=1e-7)
+    keyboard.is_pressing = lambda key: False
+    np.testing.assert_allclose(binding.read_command().values, [[0.0, 0.0, 0.0]], atol=1e-7)
+
+
+def test_go2_prepare_builds_scalable_keyboard_binding_with_speed_levels() -> None:
+    robot = _robot()
+    task = Go2WalkDeployTask(
+        _task_spec(),
+        robot,
+        NoOpPolicy(robot.joint_count),
+        settings={"speed_control": {"levels": [0.25, 0.5, 1.0]}},
+    )
+
+    binding = task.prepare(simulation=True, device=FakeKeyboardDevice())
+
+    assert isinstance(binding, RateLimitedPlanarVelocityBinding)
+    assert isinstance(binding._binding, ScalableKeyboardPlanarVelocityBinding)
+    assert binding._binding.speed_levels == (0.25, 0.5, 1.0)
+    assert binding._binding.speed_scale == 1.0
 
 
 def test_go2_prepare_attaches_shared_keyboard_and_exposes_operator_hint() -> None:

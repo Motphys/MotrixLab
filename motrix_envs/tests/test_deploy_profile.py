@@ -27,7 +27,7 @@ class _ActuatorStub:
 
 @pytest.mark.parametrize(
     ("env_name", "command_scale"),
-    [("go2-walk-flat", [1.0, 1.0, 1.0]), ("go2-walk-rough", [0.5, 0.5, 0.5])],
+    [("go2-walk-flat-v2", [1.0, 1.0, 1.0])],
 )
 def test_go2_walk_environments_compile_shared_deployment_profiles(
     env_name: str,
@@ -36,7 +36,7 @@ def test_go2_walk_environments_compile_shared_deployment_profiles(
     profile = build_deployment_profile(env_name)
     env_cfg = registry.make_env_config(env_name)
 
-    assert {"go2-walk-flat", "go2-walk-rough"} <= set(registered_profile_compilers())
+    assert {"go2-walk-flat-v2"} <= set(registered_profile_compilers())
     assert isinstance(profile.task, Go2WalkTaskSpec)
     assert profile.task.name == "go2_walk/v1"
     env = registry.make(env_name, num_envs=1, mode="train")

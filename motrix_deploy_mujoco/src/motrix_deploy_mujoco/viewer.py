@@ -143,6 +143,8 @@ class MujocoGlfwViewer:
         self._perturb: mujoco.MjvPerturb | None = None
         self._glfw_initialized = False
         self._cursor_position = (0.0, 0.0)
+        self._hud_text: str | None = None
+        self._hud_secondary_text: str | None = None
         self.keyboard_device = MujocoKeyboardDevice(self)
 
     def open(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
@@ -194,6 +196,15 @@ class MujocoGlfwViewer:
             self.close()
             raise
 
+    def set_overlay(self, text: str | None, secondary_text: str | None = None) -> None:
+        """Set the top-left deployment overlay rendered by the next frame."""
+        if text is not None and not isinstance(text, str):
+            raise ValueError("overlay text must be a string or None")
+        if secondary_text is not None and not isinstance(secondary_text, str):
+            raise ValueError("overlay secondary text must be a string or None")
+        self._hud_text = text
+        self._hud_secondary_text = secondary_text
+
     def sync(self) -> None:
         """Pump window events and render without consuming keyboard input or stepping."""
         window = self._require_window()
@@ -232,6 +243,15 @@ class MujocoGlfwViewer:
         if width > 0 and height > 0:
             viewport = self._mj.MjrRect(0, 0, width, height)
             self._mj.mjr_render(viewport, self._scene, self._context)
+            if self._hud_text is not None:
+                self._mj.mjr_overlay(
+                    self._mj.mjtFont.mjFONT_SHADOW,
+                    self._mj.mjtGridPos.mjGRID_TOPLEFT,
+                    viewport,
+                    self._hud_text,
+                    self._hud_secondary_text or "",
+                    self._context,
+                )
             self._glfw.swap_buffers(window)
 
     def is_running(self) -> bool:

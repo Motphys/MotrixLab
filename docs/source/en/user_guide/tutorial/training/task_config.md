@@ -297,9 +297,9 @@ Shared SKRL Tasks normally set `task.train_backend` to `null`. MotrixLab selects
 If a Task needs different hyperparameters on different backends, add backend delta files:
 
 ```text
-configs/task/go2-walk-flat/skrl.ppo.yaml
-configs/task/go2-walk-flat/skrl.ppo.jax.yaml
-configs/task/go2-walk-flat/skrl.ppo.torch.yaml
+configs/task/go1-walk-flat/skrl.ppo.yaml
+configs/task/go1-walk-flat/skrl.ppo.jax.yaml
+configs/task/go1-walk-flat/skrl.ppo.torch.yaml
 ```
 
 A backend delta inherits the shared Task and contains only necessary differences:
@@ -307,7 +307,7 @@ A backend delta inherits the shared Task and contains only necessary differences
 ```yaml
 # @package _global_
 defaults:
-    - /task/go2-walk-flat/skrl.ppo@_global_
+    - /task/go1-walk-flat/skrl.ppo@_global_
     - _self_
 
 task:
@@ -322,13 +322,13 @@ algo:
 Train with the JAX delta:
 
 ```bash
-mxlab train task=go2-walk-flat/skrl.ppo.jax
+mxlab train task=go1-walk-flat/skrl.ppo.jax
 ```
 
 Overriding the backend directly also selects the JAX trainer:
 
 ```bash
-mxlab train task=go2-walk-flat/skrl.ppo task.train_backend=jax
+mxlab train task=go1-walk-flat/skrl.ppo task.train_backend=jax
 ```
 
 This form does not load backend-specific values from `skrl.ppo.jax.yaml`. Select the `.jax` or `.torch` Task directly when a backend delta exists.

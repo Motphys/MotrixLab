@@ -160,10 +160,43 @@ class VelocityCommandCfg:
     lower: NDArray[np.float32] = np.array([0.5, 0.0, 0.0], dtype=np.float32)
     upper: NDArray[np.float32] = np.array([0.5, 0.0, 0.0], dtype=np.float32)
     standing_probability: float = 0.0
+    hard_case_probability: float = 0.0
+    hard_cases: tuple[tuple[float, float, float], ...] = ()
+    # Optional linear curriculum for hard-case command sampling.  Each point
+    # is ``(training_iteration, probability)``; probabilities are linearly
+    # interpolated between points and held at the nearest endpoint outside
+    # the specified range.
+    hard_case_curriculum: tuple[tuple[int, float], ...] = ()
+    hard_case_curriculum_steps_per_iteration: int = 24
     standing_threshold: float = 0.05
     resampling_seconds_range: tuple[float, float] | None = None
 
     def validate(self) -> None:
+        for name in ("standing_probability", "hard_case_probability"):
+            probability = getattr(self, name)
+            if not np.isfinite(probability) or not 0.0 <= probability <= 1.0:
+                raise ValueError(f"{name} must be finite and inside [0, 1], got {probability}")
+        if self.hard_case_probability > 0.0 and not self.hard_cases:
+            raise ValueError("hard_case_probability requires at least one hard case")
+        for hard_case in self.hard_cases:
+            if len(hard_case) != 3 or not np.all(np.isfinite(hard_case)):
+                raise ValueError(f"hard case must contain three finite values, got {hard_case}")
+        if self.hard_case_curriculum_steps_per_iteration <= 0:
+            raise ValueError("hard_case_curriculum_steps_per_iteration must be positive")
+        previous_iteration = -1
+        for point in self.hard_case_curriculum:
+            if len(point) != 2:
+                raise ValueError(f"hard-case curriculum point must be (iteration, probability), got {point}")
+            iteration, probability = point
+            if isinstance(iteration, bool) or not isinstance(iteration, int) or iteration < 0:
+                raise ValueError(f"hard-case curriculum iteration must be a non-negative integer, got {iteration}")
+            if iteration <= previous_iteration:
+                raise ValueError("hard-case curriculum iterations must be strictly increasing")
+            if not np.isfinite(probability) or not 0.0 <= probability <= 1.0:
+                raise ValueError(f"hard-case curriculum probability must be inside [0, 1], got {probability}")
+            previous_iteration = iteration
+        if self.hard_case_curriculum and not self.hard_cases:
+            raise ValueError("hard_case_curriculum requires at least one hard case")
         if self.resampling_seconds_range is not None:
             low, high = self.resampling_seconds_range
             if not np.isfinite(low) or not np.isfinite(high) or low <= 0.0 or low > high:
@@ -196,18 +229,44 @@ class RewardScales:
     base_height: float = -100.0
     action_rate: float = -0.1
     similar_to_default: float = -0.1
+    feet_spacing: float = 0.0
     contact: float = 0.24
     swing_feet_z: float = 2.0
     swing_contact: float = -1.0
+    touchdown_velocity: float = 0.0
+    # Optional posture/smoothness terms.  They remain disabled for the
+    # existing quadruped baselines unless a robot config opts in explicitly.
+    flat_orientation: float = 0.0
+    dof_acc: float = 0.0
+    hip_position: float = 0.0
+    base_com_position: float = 0.0
 
 
 @configclass
 class RewardConfig:
     scales: RewardScales = RewardScales()
+    excluded_rewards: tuple[str, ...] = ()
     tracking_lin_vel_sigma: float = 0.25
+    tracking_lin_vel_forward_sigma: float | None = None
+    tracking_lin_vel_lateral_sigma: float | None = None
+    swing_contact_forward_scale: float | None = None
     tracking_ang_vel_sigma: float = 0.25
     target_foot_height: float = 0.1
     swing_feet_height_sigma: float = 0.05
+    swing_fraction: float = 0.4
+    swing_feet_z_sinusoidal: bool = False
+    swing_rise_fraction: float = 0.2
+    swing_plateau_fraction: float = 0.2
+    foot_height_reference_offset: float = 0.0
+    touchdown_height_threshold: float = 0.03
+    touchdown_speed_sigma: float = 0.5
+    touchdown_speed_clip: float = 3.0
+    feet_spacing_tolerance: float = 0.01
+    feet_spacing_sigma: float = 0.03
+    hip_position_tolerance: float = 0.05
+    hip_position_sigma: float = 0.05
+    base_com_position_tolerance: float = 0.02
+    base_com_position_sigma: float = 0.05
     base_height_target: float = 0.3
 
 
@@ -229,6 +288,19 @@ class QuadrupedWalkEnvCfg(DirectEnvCfg):
     spawn_xy_range: float = 0.0
     trot_pairs: tuple[tuple[int, int], ...] = ((0, 3), (1, 2))
     gait_frequency: float = 2.0
+    # Measured Go2 gait anchors.  The runtime interpolates between these
+    # points as planar command speed changes; ``gait_frequency`` remains the
+    # legacy fallback/default for callers that do not opt into scheduling.
+    gait_schedule_enabled: bool = True
+    gait_schedule_speed_low: float = 0.2
+    gait_schedule_speed_high: float = 0.8
+    gait_schedule_frequency_low: float = 1.05
+    gait_schedule_frequency_high: float = 2.14
+    gait_schedule_swing_fraction_low: float = 0.368
+    gait_schedule_swing_fraction_high: float = 0.500
+    gait_schedule_smoothing_time_s: float = 0.60
+    gait_schedule_yaw_weight: float = 0.80
+    gait_schedule_lateral_weight: float = 1.00
     # Shared by training and the compiled deployment task, not backend recipes.
     termination_min_up_z: float = 0.5
     sim: SimCfg = SimCfg(dt=0.01, solver_iterations=1)
@@ -240,6 +312,12 @@ class QuadrupedWalkEnvCfg(DirectEnvCfg):
         self.commands.velocity.validate()
         if not np.isfinite(self.termination_min_up_z) or not -1.0 <= self.termination_min_up_z <= 1.0:
             raise ValueError("termination_min_up_z must be finite and inside [-1, 1]")
+        if not np.isfinite(self.gait_schedule_smoothing_time_s) or self.gait_schedule_smoothing_time_s <= 0.0:
+            raise ValueError("gait_schedule_smoothing_time_s must be finite and positive")
+        if not np.isfinite(self.gait_schedule_yaw_weight) or self.gait_schedule_yaw_weight < 0.0:
+            raise ValueError("gait_schedule_yaw_weight must be finite and non-negative")
+        if not np.isfinite(self.gait_schedule_lateral_weight) or self.gait_schedule_lateral_weight < 0.0:
+            raise ValueError("gait_schedule_lateral_weight must be finite and non-negative")
         if (
             self.randomization.enabled
             and any(self.randomization.action_delay_steps)
@@ -255,7 +333,12 @@ class QuadrupedWalkEnvCfg(DirectEnvCfg):
             randomization=replace(self.randomization, enabled=False),
             commands=replace(
                 self.commands,
-                velocity=replace(self.commands.velocity, resampling_seconds_range=None),
+                velocity=replace(
+                    self.commands.velocity,
+                    resampling_seconds_range=None,
+                    hard_case_probability=0.0,
+                    hard_case_curriculum=(),
+                ),
             ),
         )
 

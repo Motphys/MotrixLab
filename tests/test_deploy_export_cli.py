@@ -28,7 +28,7 @@ def test_export_config_composes_hydra_overrides() -> None:
         cfg = compose(
             config_name="export_deploy",
             overrides=[
-                "env=go2-walk-rough",
+                "env=go2-walk-flat-v2",
                 "validation.samples=8",
             ],
         )
@@ -36,7 +36,7 @@ def test_export_config_composes_hydra_overrides() -> None:
     typed = to_typed_config(cfg, DeploymentExportConfig)
 
     assert typed == DeploymentExportConfig(
-        env="go2-walk-rough",
+        env="go2-walk-flat-v2",
         run_dir=None,
         output=None,
         validation=OnnxParityConfig(seed=1, samples=8, atol=1e-5, rtol=1e-5),
@@ -64,7 +64,7 @@ def test_export_cli_forwards_typed_validation_config(
     monkeypatch.setattr(
         export_deploy,
         "open_run_context",
-        lambda path: SimpleNamespace(run_dir=run_dir, metadata=SimpleNamespace(env_name="go2-walk-rough")),
+        lambda path: SimpleNamespace(run_dir=run_dir, metadata=SimpleNamespace(env_name="go2-walk-flat-v2")),
     )
     cfg = DeploymentExportConfig(
         run_dir=str(run_dir),
@@ -97,7 +97,7 @@ def test_export_cli_forwards_typed_validation_config(
 def test_export_cli_selects_latest_environment_run_and_default_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    run_dir = Path("runs/go2-walk-rough/latest")
+    run_dir = Path("runs/go2-walk-flat-v2/latest")
     calls: list[tuple[object, object]] = []
     monkeypatch.setattr(
         export_deploy,
@@ -117,16 +117,16 @@ def test_export_cli_selects_latest_environment_run_and_default_output(
         ),
     )
 
-    export_deploy.run(DeploymentExportConfig(env="go2-walk-rough"))
+    export_deploy.run(DeploymentExportConfig(env="go2-walk-flat-v2"))
 
-    assert calls == [(run_dir, Path("artifacts/go2-walk-rough.deploy"))]
+    assert calls == [(run_dir, Path("artifacts/go2-walk-flat-v2.deploy"))]
 
 
 @pytest.mark.parametrize(
     "cfg",
     [
         DeploymentExportConfig(),
-        DeploymentExportConfig(env="go2-walk-rough", run_dir="runs/example"),
+        DeploymentExportConfig(env="go2-walk-flat-v2", run_dir="runs/example"),
     ],
 )
 def test_export_cli_requires_exactly_one_run_selector(cfg: DeploymentExportConfig) -> None:

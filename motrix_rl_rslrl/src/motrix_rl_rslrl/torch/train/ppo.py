@@ -43,8 +43,6 @@ class Trainer(TrainerBase):
         Args:
             context: Trainer runtime context.
         """
-        if context.resume_from is not None:
-            raise ValueError("Resume is not implemented for RSLRL PPO Trainer yet.")
         env_name = context.env_name
         self._rlcfg = context.rl_cfg
         self._env_name = env_name
@@ -90,15 +88,26 @@ class Trainer(TrainerBase):
             device=device,
         )
 
+        # Get max_iterations from config
+        total_iterations = rslrl_cfg["max_iterations"]
+
         # Start training
         logger.info(f"Starting training for {self._env_name}")
         logger.info(f"Number of environments: {self._context.num_envs}")
-
-        # Get max_iterations from config
-        total_iterations = rslrl_cfg["max_iterations"]
         logger.info(f"Number of learning iterations: {total_iterations}")
 
-        runner.learn(num_learning_iterations=total_iterations)
+        resume_from = self._context.resume_from
+        if resume_from is not None:
+            runner.load(resume_from)
+            remaining_iterations = max(total_iterations - runner.current_learning_iteration, 0)
+            logger.info(
+                "Resuming RSLRL PPO from iteration %d; %d iterations remain",
+                runner.current_learning_iteration,
+                remaining_iterations,
+            )
+        else:
+            remaining_iterations = total_iterations
+        runner.learn(num_learning_iterations=remaining_iterations)
         checkpoint_path = checkpoints.final_checkpoint_path(self._context.checkpoint_format, run_dir)
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         runner.save(str(checkpoint_path))

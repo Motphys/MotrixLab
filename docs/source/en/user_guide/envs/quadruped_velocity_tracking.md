@@ -79,7 +79,7 @@ open the full-size SVG.
 | --- | --- | --- | --- | --- |
 | `go1-walk-flat` | Unitree Go1 | Flat ground | `rslrl.ppo`, `skrl.ppo` | — |
 | `go1-walk-rough` | Unitree Go1 | Procedural rough height field | `rslrl.ppo`, `skrl.ppo` | <button type="button" class="training-curve-thumbnail" data-training-curve-dialog="go1-walk-rough-curve" aria-label="Enlarge the Unitree Go1 rough-terrain training curve"><img src="../../_static/images/performance/go1-walk-rough.svg" alt="Unitree Go1 rough-terrain RSL-RL PPO training curve" width="180"></button> |
-| `go2-walk-flat` | Unitree Go2 | Flat ground | `motrix.fastsac`, `rslrl.ppo`, `skrl.ppo` | — |
+| `go2-walk-flat-v2` | Unitree Go2 | Flat ground | `rslrl.ppo` | — |
 | `go2-walk-rough` | Unitree Go2 | Procedural rough height field | `motrix.fastsac`, `rslrl.ppo`, `skrl.ppo` | <button type="button" class="training-curve-thumbnail" data-training-curve-dialog="go2-walk-rough-curve" aria-label="Enlarge the Unitree Go2 rough-terrain training curve"><img src="../../_static/images/performance/go2-walk-rough.svg" alt="Unitree Go2 rough-terrain RSL-RL PPO training curve" width="180"></button> |
 | `anymalc-walk-flat` | ANYmal-C | Flat ground | `rslrl.ppo`, `skrl.ppo` | — |
 | `anymalc-walk-rough` | ANYmal-C | Procedural rough height field | `rslrl.ppo`, `skrl.ppo` | <button type="button" class="training-curve-thumbnail" data-training-curve-dialog="anymalc-walk-rough-curve" aria-label="Enlarge the ANYmal-C rough-terrain training curve"><img src="../../_static/images/performance/anymalc-walk-rough.svg" alt="ANYmal-C rough-terrain RSL-RL PPO training curve" width="180"></button> |

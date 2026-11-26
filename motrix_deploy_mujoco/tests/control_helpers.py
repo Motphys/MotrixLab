@@ -39,5 +39,5 @@ class DummyServoPolicyProcessor(PolicyProcessor[PlanarVelocityCommand]):
         return None
 
     def validate_command(self, command: PlanarVelocityCommand) -> None:
-        if command.batch_size != 1 or np.any(command.values != 0.0):
+        if command.batch_size != 1 or bool((command.values != 0.0).any()):
             raise ValueError("DummyServoPolicyProcessor accepts one zero velocity command")

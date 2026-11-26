@@ -63,8 +63,7 @@ mxlab view env=<env-id>
 | <img src="../../_static/images/poster/go1-stairs-terrain-walk.jpg" alt="go1-stairs-terrain-walk" width="240"> | `go1-stairs-terrain-walk` | Control Unitree Go1 to walk over stair terrain. | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/go1-walk-flat.jpg" alt="go1-walk-flat" width="240"> | `go1-walk-flat` | Track walking commands with Unitree Go1 on flat ground. | `rslrl.ppo`, `skrl.ppo` |
 | <img src="../../_static/images/poster/go1-walk-rough.jpg" alt="go1-walk-rough" width="240"> | `go1-walk-rough` | Track walking commands with Unitree Go1 on a procedural rough height field. | `rslrl.ppo`, `skrl.ppo` |
-| <img src="../../_static/images/poster/go2-walk-flat.jpg" alt="go2-walk-flat" width="240"> | `go2-walk-flat` | Track walking commands with Unitree Go2 on flat ground. | `motrix.fastsac`, `rslrl.ppo`, `skrl.ppo` |
-| <img src="../../_static/images/poster/go2-walk-rough.jpg" alt="go2-walk-rough" width="240"> | `go2-walk-rough` | Track walking commands with Unitree Go2 on a procedural rough height field. | `motrix.fastsac`, `rslrl.ppo`, `skrl.ppo` |
+| <img src="../../_static/images/poster/go2-walk-flat-v2.jpg" alt="go2-walk-flat-v2" width="240"> | `go2-walk-flat-v2` | Track walking commands with a fast-converging yaw-focused v2 recipe. | `rslrl.ppo` |
 | <img src="../../_static/images/poster/k1-walk-flat.jpg" alt="k1-walk-flat" width="240"> | `k1-walk-flat` | Track walking commands with Booster K1 on flat ground. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/k1-walk-rough.jpg" alt="k1-walk-rough" width="240"> | `k1-walk-rough` | Track walking commands with Booster K1 over uneven terrain. | `motrix.fastsac` |
 | <img src="../../_static/images/poster/k1-wbt-freekick.jpg" alt="k1-wbt-freekick" width="240"> | `k1-wbt-freekick` | Track a free-kick reference motion with Booster K1. | `motrix.fastsac` |

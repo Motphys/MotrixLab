@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import torch
 
-from motrix_env_core.input import (
+from motrix_env_core.input.bindings import (
     BoundedGamePadPlanarVelocityBinding,
     ConstantPlanarVelocityBinding,
     GamePadDevice,
@@ -15,27 +15,35 @@ from motrix_env_core.input import (
     KeyboardDevice,
     KeyboardPlanarVelocityBinding,
     PlanarVelocityCommand,
+    RateLimitedPlanarVelocityBinding,
+    ScalableKeyboardPlanarVelocityBinding,
 )
 
 
 class _Keyboard(KeyboardDevice):
-    def __init__(self, pressing: set[str]) -> None:
+    def __init__(self, pressing: set[str], down: set[str] | None = None) -> None:
         self.pressing = pressing
+        self.down = down if down is not None else frozenset()
         self.poll_count = 0
+        self.frame_down = frozenset()
+        self.frame_pressing = frozenset()
 
     def poll(self) -> None:
         self.poll_count += 1
+        # Match focused viewer devices: an edge is visible only during the
+        # frame in which it is frozen.
+        self.frame_down = self.down
+        self.frame_pressing = self.pressing
 
     def is_key_down(self, key: str) -> bool:
-        del key
-        return False
+        return key in self.frame_down
 
     def is_key_up(self, key: str) -> bool:
         del key
         return False
 
     def is_pressing(self, key: str) -> bool:
-        return key in self.pressing
+        return key in self.frame_pressing
 
 
 class _GamePad(GamePadDevice):
@@ -128,6 +136,99 @@ def test_keyboard_binding_opposite_keys_cancel() -> None:
     np.testing.assert_array_equal(binding.read_command().values, np.zeros((1, 3), dtype=np.float32))
 
 
+def test_scalable_keyboard_binding_scales_all_planar_axes() -> None:
+    device = _Keyboard({"w", "a", "q"})
+    binding = ScalableKeyboardPlanarVelocityBinding(
+        device,
+        command_lower=[-1.0, -0.5, -0.5],
+        command_upper=[1.0, 0.5, 0.5],
+        levels=(0.2, 0.4, 0.8),
+    )
+
+    np.testing.assert_array_equal(binding.speed_levels, (0.2, 0.4, 0.8))
+    np.testing.assert_array_equal(binding.axis_speed_level_indexes, (2, 2, 2))
+    np.testing.assert_allclose(binding.read_command(batch_size=2).values, [[0.8, 0.4, 0.4]] * 2)
+
+    device.down = {"down"}
+    binding.read_command()
+    device.down = set()
+    device.pressing = {"w"}
+    np.testing.assert_array_equal(binding.axis_speed_level_indexes, (1, 1, 1))
+    np.testing.assert_allclose(binding.read_command().values, [[0.4, 0.0, 0.0]])
+
+    device.down = {"up"}
+    binding.read_command()
+    device.down = set()
+    binding.read_command()
+    np.testing.assert_array_equal(binding.axis_speed_level_indexes, (2, 2, 2))
+
+    device.down = {"down", "down"}
+    binding.read_command()
+    device.down = set()
+    binding.read_command()
+    device.down = {"down"}
+    binding.read_command()
+    np.testing.assert_array_equal(binding.axis_speed_level_indexes, (0, 0, 0))
+
+
+def test_scalable_keyboard_binding_adjusts_each_axis_independently() -> None:
+    device = _Keyboard({"w", "a", "q"})
+    binding = ScalableKeyboardPlanarVelocityBinding(
+        device,
+        command_lower=[-1.0, -0.5, -0.5],
+        command_upper=[1.0, 0.5, 0.5],
+        levels=(0.2, 0.4, 0.8),
+    )
+
+    device.down = {"2"}
+    binding.read_command()
+    device.down = {"4"}
+    binding.read_command()
+    device.down = {"6"}
+    binding.read_command()
+    device.down = set()
+
+    np.testing.assert_array_equal(binding.axis_speed_scales, (0.4, 0.4, 0.4))
+    device.pressing = {"w", "a", "q"}
+    np.testing.assert_allclose(binding.read_command().values, [[0.4, 0.2, 0.2]])
+
+    device.down = {"3"}
+    binding.read_command()
+    device.down = {"5"}
+    binding.read_command()
+    device.down = set()
+    np.testing.assert_allclose(binding.read_command().values, [[0.4, 0.4, 0.4]])
+
+    device.down = {"1"}
+    binding.read_command()
+    device.down = {"3"}
+    binding.read_command()
+    device.down = {"5"}
+    binding.read_command()
+    device.down = set()
+    np.testing.assert_array_equal(binding.axis_speed_scales, (0.8, 0.8, 0.8))
+
+
+@pytest.mark.parametrize(
+    "levels",
+    [
+        (),
+        (0.0, 0.5),
+        (0.5, 1.5),
+        (0.4, 0.4),
+        (0.4, float("nan")),
+    ],
+)
+def test_scalable_keyboard_binding_rejects_invalid_levels(levels: tuple[float, ...]) -> None:
+    with pytest.raises(ValueError):
+        ScalableKeyboardPlanarVelocityBinding(
+            _Keyboard(set()),
+            command_lower=[-1.0, -0.5, -0.5],
+            command_upper=[1.0, 0.5, 0.5],
+            levels=levels,
+        )
+
+
 def test_gamepad_binding_applies_deadzone_inversion_scale_and_batch() -> None:
     device = _GamePad({"left_y": 0.5, "left_x": 0.05, "right_x": -0.25})
     binding = GamePadPlanarVelocityBinding(
@@ -193,6 +294,82 @@ def test_constant_binding_matches_keyboard_command_without_a_device_contract() -
         constant.read_command(batch_size=4).values,
         keyboard.read_command(batch_size=4).values,
     )
+
+
+def test_rate_limited_binding_ramps_each_axis_toward_target() -> None:
+    keyboard = _Keyboard({"w"})
+    binding = RateLimitedPlanarVelocityBinding(
+        KeyboardPlanarVelocityBinding(
+            keyboard,
+            command_lower=[-1.0, -0.5, -0.5],
+            command_upper=[1.0, 0.5, 0.5],
+        ),
+        max_acceleration=[1.0, 0.25, 0.5],
+        dt_s=0.02,
+    )
+
+    first = binding.read_command()
+    keyboard.pressing.clear()
+    second = binding.read_command()
+    keyboard.pressing = {"w", "a"}
+    third = binding.read_command()
+
+    np.testing.assert_allclose(first.values, [[0.02, 0.0, 0.0]], atol=1e-7)
+    np.testing.assert_allclose(second.values, [[0.0, 0.0, 0.0]], atol=1e-7)
+    np.testing.assert_allclose(third.values, [[0.02, 0.005, 0.0]], atol=1e-7)
+
+
+def test_rate_limited_binding_uses_separate_startup_and_stop_accelerations() -> None:
+    binding = RateLimitedPlanarVelocityBinding(
+        ConstantPlanarVelocityBinding([1.0, 0.0, 0.0]),
+        max_acceleration=[1.2, 1.2, 1.2],
+        startup_acceleration=[1.2, 1.2, 1.2],
+        stop_acceleration=[2.0, 2.0, 2.0],
+        dt_s=0.02,
+    )
+
+    startup = binding.read_command()
+    binding._binding._value = np.asarray([0.0, 0.0, 0.0], dtype=np.float32)
+    stop = binding.read_command()
+
+    np.testing.assert_allclose(startup.values, [[0.024, 0.0, 0.0]], atol=1e-7)
+    np.testing.assert_allclose(stop.values, [[0.0, 0.0, 0.0]], atol=1e-7)
+
+
+def test_rate_limited_binding_brakes_through_zero_on_reversal() -> None:
+    binding = RateLimitedPlanarVelocityBinding(
+        ConstantPlanarVelocityBinding([-1.0, 0.0, 0.0]),
+        max_acceleration=[1.2, 1.2, 1.2],
+        startup_acceleration=[1.2, 1.2, 1.2],
+        stop_acceleration=[2.0, 2.0, 2.0],
+        dt_s=0.02,
+    )
+
+    first = binding.read_command()
+    binding._binding._value = np.asarray([1.0, 0.0, 0.0], dtype=np.float32)
+    reversal = binding.read_command()
+
+    np.testing.assert_allclose(first.values, [[-0.024, 0.0, 0.0]], atol=1e-7)
+    np.testing.assert_allclose(reversal.values, [[0.016, 0.0, 0.0]], atol=1e-7)
+
+
+@pytest.mark.parametrize(
+    ("max_acceleration", "dt_s"),
+    [
+        ([1.0, 1.0], 0.02),
+        ([1.0, 1.0, float("nan")], 0.02),
+        ([1.0, 0.0, 1.0], 0.02),
+        ([1.0, 1.0, 1.0], 0.0),
+        ([1.0, 1.0, 1.0], float("nan")),
+    ],
+)
+def test_rate_limited_binding_rejects_invalid_limits(max_acceleration: object, dt_s: object) -> None:
+    with pytest.raises(ValueError):
+        RateLimitedPlanarVelocityBinding(
+            ConstantPlanarVelocityBinding([0.0, 0.0, 0.0]),
+            max_acceleration=max_acceleration,
+            dt_s=dt_s,
+        )
 
 
 @pytest.mark.parametrize("batch_size", [0, -1, True, 1.5])

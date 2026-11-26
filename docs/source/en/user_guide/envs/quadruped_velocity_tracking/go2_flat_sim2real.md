@@ -1,6 +1,6 @@
 # Physical deployment
 
-This page explains how to deploy the `go2-walk-flat` policy to a Unitree Go2: export and inspect a deployment artifact, check the policy in MuJoCo or MotrixSim, and then connect the real robot using the safety procedure. Simulation success does not establish hardware safety. For the first run, prepare load-bearing support, an independent emergency stop, and an on-site operator.
+This page explains how to deploy the `go2-walk-flat-v2` policy to a Unitree Go2: export and inspect a deployment artifact, check the policy in MuJoCo or MotrixSim, and then connect the real robot using the safety procedure. Simulation success does not establish hardware safety. For the first run, prepare load-bearing support, an independent emergency stop, and an on-site operator.
 
 ```{video} /_static/videos/go2_hardware_deployment.mp4
 :nocontrols:
@@ -18,17 +18,17 @@ If you do not already have a training run, execute this from the repository root
 
 ```bash
 source .venv/bin/activate
-mxlab train task=go2-walk-flat/rslrl.ppo
+mxlab train task=go2-walk-flat-v2/rslrl.ppo
 ```
 
-Training results are stored under `runs/go2-walk-flat/`. Export the latest run with metadata, or select a specific run with `run_dir`; exactly one of them may be set. When `output` is omitted, the artifact is saved to `artifacts/<env>.deploy` by default:
+Training results are stored under `runs/go2-walk-flat-v2/`. Export the latest run with metadata, or select a specific run with `run_dir`; exactly one of them may be set. When `output` is omitted, the artifact is saved to `artifacts/<env>.deploy` by default:
 
 ```bash
-mxlab export-deploy env=go2-walk-flat
+mxlab export-deploy env=go2-walk-flat-v2
 # or:
 mxlab export-deploy run_dir=/path/to/run
 
-mxlab deploy inspect artifact=artifacts/go2-walk-flat.deploy
+mxlab deploy inspect artifact=artifacts/go2-walk-flat-v2.deploy
 ```
 
 Inspection must report `valid: true`. Add `output=<artifact-path>` only when a custom output location is needed.
@@ -40,8 +40,8 @@ Deployment requires `motrix_deploy_tasks` and the backend plugin for the selecte
 Open the MuJoCo viewer:
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim \
-  artifact=artifacts/go2-walk-flat.deploy
+mxlab deploy task=go2-walk-flat-v2/sim \
+  artifact=artifacts/go2-walk-flat-v2.deploy
 ```
 
 Use `W/S` for forward/backward motion, `A/D` for lateral motion, and `Q/E` for yaw. Close the window, press Esc, or press Ctrl-C to exit.
@@ -49,12 +49,12 @@ Use `W/S` for forward/backward motion, `A/D` for lateral motion, and `Q/E` for y
 After installing `motrix-deploy-motrixsim`, the same artifact can be reused:
 
 ```bash
-mxlab deploy task=go2-walk-flat/sim \
-  artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat-v2/sim \
+  artifact=artifacts/go2-walk-flat-v2.deploy \
   runtime.backend=motrixsim
 ```
 
-`task=go2-walk-rough/sim` selects the rough-terrain scene, but a flat-ground policy is not automatically suitable for rough terrain. Go2 flat-ground training uses approximately `kp=35, kd=0.5` by default, while the hardware recipe uses `kp=50, kd=1`; confirm such differences before hardware execution.
+The v2 simulation deployment recipe uses a Go2 flat-ground scene. Go2 flat-ground training uses approximately `kp=35, kd=0.5` by default, while the hardware recipe uses `kp=50, kd=1`; confirm such differences before hardware execution.
 
 ## 3. Connect the robot and prepare safely
 
@@ -100,8 +100,8 @@ Confirm that valid state samples continue to arrive and that there are no CRC or
 Keep `kp=50` and `kd=1` for the first run; do not increase gains before the suspended check. Maintain load-bearing protection when stopping. Communication loss, state timeout, Ctrl-C, and other faults do not execute the normal lie-down trajectory.
 
 ```bash
-mxlab deploy task=go2-walk-flat/hardware \
-  artifact=artifacts/go2-walk-flat.deploy \
+mxlab deploy task=go2-walk-flat-v2/hardware \
+  artifact=artifacts/go2-walk-flat-v2.deploy \
   runtime.transport.network_interface=enp5s0
 ```
 

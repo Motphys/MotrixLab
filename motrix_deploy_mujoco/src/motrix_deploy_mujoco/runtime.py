@@ -26,6 +26,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from motrix_deploy.errors import ValidationError
+from motrix_deploy.runtime.control import ControlSession
 from motrix_deploy.runtime.result import SimulationRolloutResult
 from motrix_deploy.runtime.scheduler import FixedStepScheduler, RealtimeScheduler
 from motrix_deploy_mujoco.robot import Robot
@@ -67,6 +68,7 @@ class MujocoRuntime(SimulationRuntime):
         self.realtime = config.realtime
         self._closed = False
         self._source_spec: mujoco.MjSpec | None = None
+        self._speed_binding: object | None = None
         robot_spec = self._derive_robot_spec()
         self._robot = Robot(self, robot_spec)
 
@@ -80,6 +82,19 @@ class MujocoRuntime(SimulationRuntime):
             raise ValidationError("session.period_s", "an integer multiple of physics.dt", period_s)
         self.control_period_s = period_s
         self.physics_substeps = round(ratio)
+
+    def bind_session(self, session: ControlSession) -> None:
+        super().bind_session(session)
+        self._speed_binding = self._find_speed_binding(session.command_binding)
+
+    def _find_speed_binding(self, binding: object | None) -> object | None:
+        visited: set[int] = set()
+        while binding is not None and id(binding) not in visited:
+            visited.add(id(binding))
+            if hasattr(binding, "axis_speed_scales"):
+                return binding
+            binding = getattr(binding, "_binding", None)
+        return None
 
     def _derive_robot_spec(self) -> RobotSpec:
         """Inspect physical limits, never controller gains, before binding robot I/O."""
@@ -200,7 +215,53 @@ class MujocoRuntime(SimulationRuntime):
     def sync_viewer(self) -> None:
         if self.viewer is not None:
             self.check_viewer_running()
+            self._update_viewer_overlay()
             self.viewer.sync()
+
+    def _update_viewer_overlay(self) -> None:
+        session = self.session
+        if session is None:
+            return
+        state = session.last_state
+        command = session.last_command
+        if state is None or command is None or not hasattr(command, "values"):
+            return
+
+        target = np.asarray(command.values[0, :3], dtype=np.float32)
+        actual = np.zeros(3, dtype=np.float32)
+        if state.base_linear_velocity is not None:
+            world_velocity = np.asarray(state.base_linear_velocity, dtype=np.float64)
+            x, y, z, w = np.asarray(state.base_orientation_xyzw, dtype=np.float64)
+            body_to_world = np.array(
+                [
+                    [1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w)],
+                    [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                    [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+                ],
+                dtype=np.float64,
+            )
+            actual[:2] = (body_to_world.T @ world_velocity)[:2]
+        actual[2] = float(np.asarray(state.base_angular_velocity, dtype=np.float64)[2])
+        binding = self._speed_binding
+        axis_scales = getattr(binding, "axis_speed_scales", None) if binding is not None else None
+        levels = getattr(self._speed_binding, "speed_levels", None) if self._speed_binding is not None else None
+        if axis_scales is not None and levels is not None:
+            scale_text = (
+                f"all {axis_scales[0]:.0%}  |  W/S {axis_scales[0]:.0%}  "
+                f"A/D {axis_scales[1]:.0%}  Q/E {axis_scales[2]:.0%}"
+            )
+            level_text = "levels " + "/".join(f"{value:g}" for value in levels)
+        else:
+            scale_text = "speed N/A"
+            level_text = "levels N/A"
+        primary = (
+            "Go2 speed control  "
+            f"{scale_text}\n{level_text}\n"
+            f"target  vx={target[0]:+.3f} m/s  vy={target[1]:+.3f} m/s  yaw={target[2]:+.3f} rad/s\n"
+            f"measured vx={actual[0]:+.3f} m/s  vy={actual[1]:+.3f} m/s  yaw={actual[2]:+.3f} rad/s"
+        )
+        secondary = "UP/DOWN all  1/2 W/S speed  3/4 A/D speed  5/6 Q/E speed"
+        self.viewer.set_overlay(primary, secondary)
 
     def close(self) -> None:
         if self._closed:

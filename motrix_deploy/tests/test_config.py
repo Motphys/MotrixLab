@@ -38,6 +38,28 @@ def test_deploy_run_config_decodes_typed_simulation_runtime() -> None:
     assert config.duration_s == pytest.approx(0.1)
 
 
+def test_sim_runtime_accepts_floor_sliding_friction_override() -> None:
+    config = _typed_config(
+        {
+            "artifact": "artifact.deploy",
+            "runtime": _sim_runtime({"floor_sliding_friction": 0.4}),
+        }
+    )
+
+    assert config.runtime.floor_sliding_friction == pytest.approx(0.4)
+
+
+@pytest.mark.parametrize("friction", [0, -0.1, float("nan"), float("inf")])
+def test_sim_runtime_rejects_invalid_floor_sliding_friction(friction: float) -> None:
+    with pytest.raises(ValueError, match="floor_sliding_friction"):
+        _typed_config(
+            {
+                "artifact": "artifact.deploy",
+                "runtime": _sim_runtime({"floor_sliding_friction": friction}),
+            }
+        )
+
+
 def test_deploy_run_config_preserves_nested_task_settings_as_plain_dicts() -> None:
     settings = {"preparation": {"kp": [12.0, 15.0], "start_button": "X"}, "enabled": True}
     config = _typed_config({"artifact": "artifact.deploy", "runtime": _sim_runtime(), "task_settings": settings})

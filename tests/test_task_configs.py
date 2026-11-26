@@ -128,10 +128,9 @@ def test_task_composes_to_typed_config(spec, tmp_path):
         ("dex-evt-walk-flat", "motrix", "fastsac"),
         ("dex-evt-walk-rough", "motrix", "fastsac"),
         ("g1-walk-flat", "motrix", "fastsac"),
-        ("go2-walk-flat", "motrix", "fastsac"),
         ("k1-walk-flat", "motrix", "fastsac"),
         ("k1-walk-rough", "motrix", "fastsac"),
-        ("go2-walk-flat", "rslrl", "ppo"),
+        ("go2-walk-flat-v2", "rslrl", "ppo"),
     ],
 )
 def test_task_checkpoint_policy_composes_at_root(env, rllib, algo):

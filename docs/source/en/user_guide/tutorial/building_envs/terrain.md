@@ -44,8 +44,8 @@ class MyTaskEnvCfg(EnvCfg):
     scene: SceneCfg = SceneCfg(assets=TerrainAssetsCfg(), objs=TerrainObjsCfg())
 ```
 
-Among the built-in environments, the rough-terrain tasks `go1-walk-rough`, `go2-walk-rough`,
-and `anymalc-walk-rough` all generate terrain through the same
+Among the built-in environments, the rough-terrain tasks `go1-walk-rough` and
+`anymalc-walk-rough` all generate terrain through the same
 `NoiseTerrainGeneratorCfg(seed=0, height_scale=0.1, flip_y=True)`; preview it directly:
 
 ```bash

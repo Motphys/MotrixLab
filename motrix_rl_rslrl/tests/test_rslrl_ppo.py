@@ -91,3 +91,61 @@ def test_trainer_seed_covers_python_numpy_and_torch(monkeypatch, seed):
 
     expected = set() if seed is None else {("python", seed), ("numpy", seed), ("torch", seed), ("cuda", seed)}
     assert set(calls) == expected
+
+
+@pytest.mark.parametrize(
+    ("resume_from", "loaded_iteration", "expected_learning_iterations"),
+    (
+        (None, None, 3000),
+        ("checkpoint.pt", 2000, 1000),
+        ("checkpoint.pt", 3000, 0),
+    ),
+)
+def test_trainer_resumes_rslrl_training_state(
+    monkeypatch, tmp_path, resume_from, loaded_iteration, expected_learning_iterations
+):
+    trainer = object.__new__(Trainer)
+    trainer._context = SimpleNamespace(
+        seed=17,
+        num_envs=2,
+        checkpoint_format="pt",
+        run_dir=tmp_path,
+        resume_from=resume_from,
+    )
+    trainer._env_name = "demo"
+    trainer._sim = None
+    trainer._render = None
+    trainer._set_seed = lambda seed: None
+    trainer._create_rslrl_config = lambda: {"max_iterations": 3000}
+
+    calls = []
+
+    class FakeRunner:
+        current_learning_iteration = 0 if loaded_iteration is None else loaded_iteration
+
+        def load(self, path):
+            calls.append(("load", path))
+            self.current_learning_iteration = loaded_iteration
+
+        def learn(self, num_learning_iterations):
+            calls.append(("learn", num_learning_iterations))
+
+        def save(self, path):
+            calls.append(("save", path))
+
+    fake_runner = FakeRunner()
+    monkeypatch.setattr(ppo, "resolve_default_device", lambda: "cpu")
+    monkeypatch.setattr(ppo.env_registry, "make", lambda *args, **kwargs: object())
+    monkeypatch.setattr(ppo, "wrap_env", lambda env, device, render: object())
+    monkeypatch.setattr(ppo, "OnPolicyRunner", lambda *args, **kwargs: fake_runner)
+    monkeypatch.setattr(
+        ppo.checkpoints, "final_checkpoint_path", lambda *args, **kwargs: tmp_path / "checkpoints" / "latest.pt"
+    )
+    monkeypatch.setattr(ppo.checkpoints, "record_checkpoint_artifact", lambda *args, **kwargs: None)
+
+    trainer.train()
+
+    expected = [("learn", expected_learning_iterations), ("save", str(tmp_path / "checkpoints" / "latest.pt"))]
+    if resume_from is not None:
+        expected.insert(0, ("load", resume_from))
+    assert calls == expected

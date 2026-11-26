@@ -1,10 +1,11 @@
 # @package _global_
-# Task go2-walk-rough: rslrl.ppo shared training recipe.
+# Task go2-walk-flat-v2: RSL-RL PPO fast flat-ground training recipe.
+# 1024 environments, 2000 iterations, and 4 minibatches.
 defaults:
   - /algo_base@algo: rslrl.ppo
   - _self_
 task:
-  env: go2-walk-rough
+  env: go2-walk-flat-v2
   rllib: rslrl
   algo: ppo
   train_backend: null
@@ -14,7 +15,7 @@ seed: 1
 checkpoint:
   interval: 100
 algo:
-  max_iterations: 1500
+  max_iterations: 2000
   obs_groups:
     actor:
       - policy
@@ -32,5 +33,6 @@ algo:
       - 256
       - 128
   algorithm:
+    num_mini_batches: 4
     desired_kl: 0.01
     entropy_coef: 0.001

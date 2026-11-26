@@ -28,8 +28,11 @@ from motrix_env_core.input import (
     GamePadDevice,
     InputDevice,
     KeyboardDevice,
-    KeyboardPlanarVelocityBinding,
     PlanarVelocityCommand,
+)
+from motrix_env_core.input.bindings import (
+    RateLimitedPlanarVelocityBinding,
+    ScalableKeyboardPlanarVelocityBinding,
 )
 
 FLOAT32_MAX = float(np.finfo(np.float32).max)
@@ -43,8 +46,10 @@ CommandVector = Annotated[list[Float32Float], Field(min_length=3, max_length=3)]
 CommandScale = Annotated[list[Annotated[Float32Float, Field(ge=0, le=1)]], Field(min_length=3, max_length=3)]
 FeetPhaseOffsets = Annotated[list[Float32Float], Field(min_length=4, max_length=4)]
 
-# Unitree remote wiring: the left stick drives planar motion, the right stick turns,
-# and L1 must be held (deadman) for stick input to reach the policy.
+# Unitree remote wiring: the left stick drives planar motion and the right stick
+# turns.  The optional deadman is disabled because the operator has already
+# verified the robot's independent emergency-stop and supervised deployment
+# procedure; the software Select stop remains available.
 _REMOTE_WIRING = {
     "linear_x_axis": "ly",
     "linear_y_axis": "lx",
@@ -53,7 +58,7 @@ _REMOTE_WIRING = {
     "invert_linear_x": False,
     "invert_linear_y": True,
     "invert_yaw": True,
-    "deadman_button": "L1",
+    "deadman_button": None,
 }
 
 
@@ -73,6 +78,21 @@ class Go2WalkTaskSpec(TaskSpec):
     command_scale: CommandScale
     feet_phase_offsets: FeetPhaseOffsets
     gait_frequency_hz: PositiveFloat
+    # Older hand-built specs remain fixed-frequency unless the compiled
+    # environment profile explicitly opts into the measured schedule.
+    gait_schedule_enabled: bool = False
+    gait_schedule_speed_low: NonNegativeFloat = 0.2
+    gait_schedule_speed_high: PositiveFloat = 0.8
+    gait_schedule_frequency_low: PositiveFloat = 1.05
+    gait_schedule_frequency_high: PositiveFloat = 2.14
+    gait_schedule_swing_fraction_low: Annotated[FiniteFloat, Field(gt=0, lt=1)] = 0.368
+    gait_schedule_swing_fraction_high: Annotated[FiniteFloat, Field(gt=0, lt=1)] = 0.536
+    gait_schedule_smoothing_time_s: PositiveFloat = 0.35
+    # Legacy artifacts did not serialize this field and were trained with 0.5.
+    gait_schedule_yaw_weight: NonNegativeFloat = 0.5
+    # Legacy artifacts did not serialize this field and omit lateral speed
+    # from the schedule, matching their original fixed behavior.
+    gait_schedule_lateral_weight: NonNegativeFloat = 0.0
     standing_threshold: NonNegativeFloat
     termination_min_up_z: Annotated[FiniteFloat, Field(ge=-1, le=1)]
 
@@ -112,10 +132,21 @@ class Go2WalkPolicyProcessor(PolicyProcessor[PlanarVelocityCommand]):
         self._command_scale = np.asarray(spec.command_scale, dtype=np.float32)
         self._feet_phase_offsets = np.asarray(spec.feet_phase_offsets, dtype=np.float32)
         self._gait_frequency_hz = spec.gait_frequency_hz
+        self._gait_schedule_enabled = spec.gait_schedule_enabled
+        self._gait_schedule_speed_low = spec.gait_schedule_speed_low
+        self._gait_schedule_speed_high = spec.gait_schedule_speed_high
+        self._gait_schedule_frequency_low = spec.gait_schedule_frequency_low
+        self._gait_schedule_frequency_high = spec.gait_schedule_frequency_high
+        self._gait_schedule_swing_fraction_low = spec.gait_schedule_swing_fraction_low
+        self._gait_schedule_swing_fraction_high = spec.gait_schedule_swing_fraction_high
+        self._gait_schedule_smoothing_time_s = spec.gait_schedule_smoothing_time_s
+        self._gait_schedule_yaw_weight = spec.gait_schedule_yaw_weight
+        self._gait_schedule_lateral_weight = spec.gait_schedule_lateral_weight
         self._standing_threshold = spec.standing_threshold
         self._termination_min_up_z = spec.termination_min_up_z
         self._previous_action: FloatArray = np.zeros(self.robot.joint_count, dtype=np.float32)
         self._phase = np.float32(0.0)
+        self._gait_schedule_alpha = np.float32(0.0)
 
     @property
     def command_lower(self) -> FloatArray:
@@ -136,16 +167,46 @@ class Go2WalkPolicyProcessor(PolicyProcessor[PlanarVelocityCommand]):
         """Reset action and gait history; callers provide validated state and command."""
         self._previous_action.fill(0)
         self._phase = np.float32(0.0)
+        self._gait_schedule_alpha = np.float32(0.0)
 
     def build_observation(self, state: RobotState, context: ControlContext[PlanarVelocityCommand]) -> FloatArray:
         """Consume runtime-validated state and PolicyController-validated input commands."""
         velocity = context.command.values[0, :].numpy()
         phase = np.zeros(4, dtype=np.float32)
-        if np.linalg.norm(velocity) < self._standing_threshold:
-            self._phase = np.float32(0.0)
-        elif context.step > 0:
-            self._phase = np.float32((self._phase + context.dt_s * self._gait_frequency_hz) % 1.0)
+        if context.step > 0:
+            if self._gait_schedule_enabled:
+                # Match training: forward speed anchors the measured gait;
+                # lateral and yaw use artifact-specified equivalent speeds.
+                speed = max(
+                    abs(float(velocity[0])),
+                    self._gait_schedule_lateral_weight * abs(float(velocity[1])),
+                    self._gait_schedule_yaw_weight * abs(float(velocity[2])),
+                )
+                target_alpha = float(
+                    np.clip(
+                        (speed - self._gait_schedule_speed_low)
+                        / (self._gait_schedule_speed_high - self._gait_schedule_speed_low),
+                        0.0,
+                        1.0,
+                    )
+                )
+                alpha_rate = context.dt_s / self._gait_schedule_smoothing_time_s
+                delta = target_alpha - self._gait_schedule_alpha
+                self._gait_schedule_alpha = np.float32(
+                    self._gait_schedule_alpha + np.sign(delta) * min(abs(delta), alpha_rate)
+                )
+                frequency = self._gait_schedule_frequency_low + self._gait_schedule_alpha * (
+                    self._gait_schedule_frequency_high - self._gait_schedule_frequency_low
+                )
+            else:
+                frequency = self._gait_frequency_hz
+            if np.linalg.norm(velocity) < self._standing_threshold:
+                self._phase = np.float32(0.0)
+            else:
+                self._phase = np.float32((self._phase + context.dt_s * frequency) % 1.0)
             phase = np.mod(self._phase + self._feet_phase_offsets, 1.0).astype(np.float32)
+            if np.linalg.norm(velocity) < self._standing_threshold:
+                phase[:] = 0.0
         observation = np.concatenate(
             (
                 state.base_angular_velocity,
@@ -241,6 +302,59 @@ class Go2WalkPreparationSettings:
                 raise ValueError(f"preparation.{field.name} must be finite and positive (float32 representable)")
 
 
+@dataclass(frozen=True)
+class Go2WalkCommandFilterSettings:
+    """Per-axis planar command acceleration limits in m/s^2 and rad/s^2."""
+
+    max_acceleration: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    startup_acceleration: tuple[float, float, float] | None = None
+    stop_acceleration: tuple[float, float, float] | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in ("max_acceleration", "startup_acceleration", "stop_acceleration"):
+            values = getattr(self, field_name)
+            if values is None:
+                continue
+            for value in values:
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not isfinite(value)
+                    or not 0 < value <= FLOAT32_MAX
+                ):
+                    raise ValueError(f"command_filter.{field_name} values must be finite and positive")
+
+
+@dataclass(frozen=True)
+class Go2WalkSpeedControlSettings:
+    """Discrete keyboard speed levels shared by all planar command axes."""
+
+    levels: tuple[float, float, float, float, float, float, float, float, float, float] = (
+        0.1,
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.6,
+        0.7,
+        0.8,
+        0.9,
+        1.0,
+    )
+
+    def __post_init__(self) -> None:
+        for value in self.levels:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                or not 0 < value <= 1
+            ):
+                raise ValueError("speed_control.levels must contain values inside (0, 1]")
+        if len(set(self.levels)) != len(self.levels):
+            raise ValueError("speed_control.levels must be unique")
+
+
 class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
     """Go2 walking policy with task-owned measured preparation and operator shutdown."""
 
@@ -252,10 +366,11 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
         robot: RobotSpec,
         policy: Policy,
         steps: int | None = None,
-        artifact=None,
+        artifact: Any = None,
         *,
         settings: dict[str, Any] | None = None,
     ):
+        self._artifact = artifact
         self.spec = spec
         self.robot = robot
         self.policy_io = Go2WalkPolicyProcessor(spec, robot)
@@ -263,7 +378,7 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
         settings = {} if settings is None else settings
         if not isinstance(settings, dict):
             raise ValueError("task_settings must be a dict")
-        unknown = settings.keys() - {"preparation"}
+        unknown = settings.keys() - {"preparation", "command_filter", "speed_control"}
         if unknown:
             raise ValueError(f"Unknown Go2 task settings: {sorted(unknown)}")
         preparation = Go2WalkPreparationSettings()
@@ -273,6 +388,20 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
                 raise ValueError("task_settings.preparation must be a dict")
             preparation = Go2WalkPreparationSettings(**values)
         self._preparation = preparation
+        command_filter = Go2WalkCommandFilterSettings()
+        if "command_filter" in settings:
+            values = settings["command_filter"]
+            if not isinstance(values, dict):
+                raise ValueError("task_settings.command_filter must be a dict")
+            command_filter = Go2WalkCommandFilterSettings(**values)
+        self._command_filter = command_filter
+        speed_control = Go2WalkSpeedControlSettings()
+        if "speed_control" in settings:
+            values = settings["speed_control"]
+            if not isinstance(values, dict):
+                raise ValueError("task_settings.speed_control must be a dict")
+            speed_control = Go2WalkSpeedControlSettings(**values)
+        self._speed_control = speed_control
 
         self._stage = "wait_stand"
         self._stage_start_s = 0.0
@@ -327,8 +456,11 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
         self._return_to_spawn_pose = simulation
         command_lower, command_upper = self.command_bounds
         if isinstance(device, KeyboardDevice):
-            binding: CommandBinding[PlanarVelocityCommand] = KeyboardPlanarVelocityBinding(
-                device, command_lower=command_lower, command_upper=command_upper
+            binding: CommandBinding[PlanarVelocityCommand] = ScalableKeyboardPlanarVelocityBinding(
+                device,
+                command_lower=command_lower,
+                command_upper=command_upper,
+                levels=self._speed_control.levels,
             )
         elif isinstance(device, GamePadDevice):
             binding = BoundedGamePadPlanarVelocityBinding(
@@ -350,12 +482,18 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
             self.validate_command(binding.read_command())
         if isinstance(device, KeyboardDevice):
             # Share the device with the velocity binding; let it poll first when present.
-            self.attach_keyboard(device, poll=not isinstance(binding, KeyboardPlanarVelocityBinding))
+            self.attach_keyboard(device, poll=not isinstance(binding, ScalableKeyboardPlanarVelocityBinding))
         if isinstance(device, GamePadDevice):
             # The command binding polls this shared device before each controller step.
             self._gamepad = device
             self._automatic_start = False
-        return binding
+        return RateLimitedPlanarVelocityBinding(
+            binding,
+            max_acceleration=self._command_filter.max_acceleration,
+            startup_acceleration=self._command_filter.startup_acceleration,
+            stop_acceleration=self._command_filter.stop_acceleration,
+            dt_s=self._artifact.manifest.control.period_s if self._artifact is not None else 1.0 / 50.0,
+        )
 
     def attach_keyboard(self, keyboard, *, poll: bool = True) -> None:
         """Require Start and A analogues; a shared velocity binding polls the device first."""
@@ -384,9 +522,13 @@ class Go2WalkDeployTask(DeployTask[PlanarVelocityCommand]):
             )
         if self._keyboard is None:
             return None
+        movement_hint = (
+            "  up/down all speed  1/2 W/S speed  3/4 A/D speed  5/6 Q/E speed"
+            "  W/S forward/reverse  A/D left/right  Q/E turn"
+        )
         if self._shutdown_position is not None or self._return_to_spawn_pose:
-            return "r stand up (Start)  p enable policy (A)  o lie down then close"
-        return "r stand up (Start)  p enable policy (A)  o damp for 10s then close"
+            return "r stand up (Start)  p enable policy (A)  o lie down then close" + movement_hint
+        return "r stand up (Start)  p enable policy (A)  o damp for 10s then close" + movement_hint
 
     def _process_operator_input(self) -> None:
         if self._gamepad is not None:

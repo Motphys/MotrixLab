@@ -43,7 +43,7 @@ class MyTaskEnvCfg(EnvCfg):
     scene: SceneCfg = SceneCfg(assets=TerrainAssetsCfg(), objs=TerrainObjsCfg())
 ```
 
-内置环境中，`go1-walk-rough`、`go2-walk-rough`、`anymalc-walk-rough` 等粗糙地形任务
+内置环境中，`go1-walk-rough`、`anymalc-walk-rough` 等粗糙地形任务
 都通过同一个 `NoiseTerrainGeneratorCfg(seed=0, height_scale=0.1, flip_y=True)` 生成地形，
 可以直接预览效果：
 
