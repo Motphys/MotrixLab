@@ -6,6 +6,8 @@
 
 安装后通过统一的 `mxlab` 命令训练和评估策略；使用 `mxlab --help` 查看命令，`mxlab --version` 查看版本。
 
+在 AMD ROCm 主机上，请先完成 [ROCm 运行时验证](installation.md#在-amd-rocm-上安装)。训练命令应使用 `task.train_backend=torch`；PyTorch 在 CUDA 和 ROCm 上都使用 `cuda` 设备命名空间。
+
 ## 环境预览
 
 使用 `mxlab view` 可视化环境，而不执行任何训练，这可以帮助您检测系统的环境依赖是否配置正确：
@@ -22,6 +24,9 @@ mxlab view env=cartpole
 
 ```bash
 mxlab train task=cartpole/skrl.ppo
+
+# AMD ROCm：显式选择受支持的 Torch 后端
+mxlab train task=cartpole/skrl.ppo task.train_backend=torch
 ```
 
 训练过程会自动：
