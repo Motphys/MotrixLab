@@ -4,10 +4,11 @@
 from typing import Any
 
 import flax.linen as nn
+import jax
 import jax.numpy as jnp
-import numpy as np
 from motrix_rl_skrl.config import SkrlCfg, SkrlMemoryCfg
 from motrix_rl_skrl.jax import wrap_env
+from motrix_rl_skrl.jax.wrap import _as_jnp
 from motrix_rl_skrl.ppo import SkrlPpoTrainerBase, ppo_memory_size
 from skrl.agents.jax.ppo import PPO as BasePPO
 from skrl.envs.wrappers.jax import Wrapper
@@ -52,7 +53,9 @@ def _instantiate_memory(memory_cfg: SkrlMemoryCfg, memory_size: int, num_envs: i
 
 
 class PPO(BasePPO):
-    _total_custom_rewards: dict[str, np.ndarray] = {}
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._total_custom_rewards: dict[str, jax.Array] = {}
 
     def record_transition(
         self,
@@ -84,9 +87,7 @@ class PPO(BasePPO):
 
         if "Reward" in infos:
             for key, value in infos["Reward"].items():
-                # Manager environments hand out torch tensors; take the
-                # zero-copy numpy view for the JAX statistics path.
-                value = np.asarray(value)
+                value = _as_jnp(value, jnp.float32, self.device)
                 self.tracking_data[f"Reward Instant / {key} (max)"].append(jnp.max(value))
                 self.tracking_data[f"Reward Instant / {key} (min)"].append(jnp.min(value))
                 self.tracking_data[f"Reward Instant / {key} (mean)"].append(jnp.mean(value))
@@ -111,6 +112,7 @@ class PPO(BasePPO):
 
         if "metrics" in infos:
             for key, value in infos["metrics"].items():
+                value = _as_jnp(value, jnp.float32, self.device).mean()
                 self.tracking_data[f"metrics / {key} (max)"].append(jnp.max(value))
                 self.tracking_data[f"metrics / {key} (min)"].append(jnp.min(value))
                 self.tracking_data[f"metrics / {key} (mean)"].append(jnp.mean(value))
@@ -132,6 +134,7 @@ class Trainer(SkrlPpoTrainerBase):
             num_envs=num_envs,
             mode=mode,
             sim=self._sim,
+            **({"sim_device": self._context.sim_device} if self._context.sim_device is not None else {}),
             seed=self._context.seed,
             headless=self._render.headless if self._render else False,
             record=self._render.record if self._render else None,

@@ -22,6 +22,6 @@ class FrankaOpenCabinetEnvCfg(DirectEnvCfg):
 
     scene: SceneCfg = SceneCfg(file=model_file)
     max_episode_seconds: float = 7.0
-    sim: SimCfg = SimCfg(dt=0.01)
+    sim: SimCfg = SimCfg(dt=0.01, max_contacts=256, max_contact_constraints=768)
     ctrl_dt: float = 0.01
     render_spacing: float = 2.0

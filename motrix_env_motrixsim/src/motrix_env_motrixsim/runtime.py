@@ -51,10 +51,10 @@ class MotrixSimModelCompiler(SimModelCompiler):
     def _build_model(self, scene: SceneCfg) -> SimModel:
         actuators = _actuator_specs(self._model.actuators)
         init_dof_pos = np.asarray(self._model.compute_init_dof_pos(), dtype=np.float32)
-        bodies = _build_body_models(self._model, scene, actuators, init_dof_pos)
+        bodies = _build_body_models(self._model, scene, actuators, init_dof_pos, self._device)
         return SimModel(
             actuators=actuators,
-            init_dof_pos=torch.from_numpy(init_dof_pos),
+            init_dof_pos=torch.as_tensor(init_dof_pos, device=self._device),
             others=self._others,
             bodies=bodies,
         )
@@ -64,57 +64,29 @@ class MotrixSimModelCompiler(SimModelCompiler):
 
     def compile_height_field_data(self, key: str, geom_name: str) -> None:
         geom = _named_geom(self._model, geom_name)
-        if not isinstance(geom, mtx.GeomHField) or geom.hfield is None:
-            raise ValueError(
-                f"HeightFieldDataQuery requires geom {geom_name!r} to carry a height field, got {type(geom).__name__}."
-            )
-        hfield = geom.hfield
-        pose = np.asarray(geom.local_pose, dtype=np.float32).reshape(-1)
-        quat_ijkw = pose[3:7]
-        if abs(float(quat_ijkw[3])) < 1.0 - 1e-5:
-            raise ValueError(
-                f"HeightFieldDataQuery requires geom {geom_name!r} to be world-aligned "
-                f"(identity rotation), got quaternion {tuple(quat_ijkw)}."
-            )
-        heights = np.ascontiguousarray(np.asarray(hfield.height_matrix, dtype=np.float32))
-        nrow, ncol = heights.shape
-        bound = np.asarray(hfield.bound, dtype=np.float32)
-        extent_x, extent_y = float(bound[3]), float(bound[4])
-        spacing = np.asarray(
-            [2.0 * extent_x / max(ncol - 1, 1), 2.0 * extent_y / max(nrow - 1, 1)],
-            dtype=np.float32,
-        )
-        origin = np.asarray([float(pose[0]) - extent_x, float(pose[1]) - extent_y], dtype=np.float32)
-        # Export one shared, immutable grid: the float64 conversion happens
-        # once here instead of in every consuming term.
-        self._others[key] = HeightFieldGrid(
-            heights=torch.from_numpy(heights).to(torch.float64).contiguous(),
-            origin=torch.from_numpy(origin).to(torch.float64).contiguous(),
-            spacing=torch.from_numpy(spacing).to(torch.float64).contiguous(),
-            z0=torch.as_tensor([pose[2]], dtype=torch.float64),
-            constant=0.0,
-            enabled=True,
-        )
+        self._others[key] = _heightfield_grid(geom, geom_name, self._device)
 
     def compile_body_joint_position_limits(self, key: str, body: str) -> None:
         lower, upper = _body_joint_position_limits(self._model, body)
-        self._others[key] = (torch.from_numpy(lower), torch.from_numpy(upper))
+        self._others[key] = (torch.as_tensor(lower, device=self._device), torch.as_tensor(upper, device=self._device))
 
-    def compile_kinematic_tree(self, key: str, body: str, device: str) -> None:
+    def compile_kinematic_tree(self, key: str, body: str, device: str | None) -> None:
         scene_body = self._model.get_body(body)
         if scene_body is None:
             raise KeyError(f"Unknown body {body!r}.")
-        self._others[key] = kinematic_tree(self._model, scene_body.base_link.name, device=device)
+        self._others[key] = kinematic_tree(
+            self._model, scene_body.base_link.name, device=self._device if device is None else device
+        )
 
     def compile_dof_position_limits(self, key: str) -> None:
         lower, upper = _dof_position_limits(self._model)
-        self._others[key] = (torch.from_numpy(lower), torch.from_numpy(upper))
+        self._others[key] = (torch.as_tensor(lower, device=self._device), torch.as_tensor(upper, device=self._device))
 
     def compile_actuator_kp(self, key: str, actuator_names: tuple[str, ...] | None) -> None:
-        self._others[key] = torch.from_numpy(_nominal_actuator_kp(self._model, actuator_names))
+        self._others[key] = torch.as_tensor(_nominal_actuator_kp(self._model, actuator_names), device=self._device)
 
     def compile_actuator_kd(self, key: str, actuator_names: tuple[str, ...] | None) -> None:
-        self._others[key] = torch.from_numpy(_nominal_actuator_kd(self._model, actuator_names))
+        self._others[key] = torch.as_tensor(_nominal_actuator_kd(self._model, actuator_names), device=self._device)
 
     def compile_link_mass(self, key: str, body: str) -> None:
         self._others[key] = float(_named_link(self._model, body).mass)
@@ -134,14 +106,50 @@ class MotrixSimModelCompiler(SimModelCompiler):
                 masses = [body_links[name].mass for name in links]
             except KeyError as exc:
                 raise KeyError(f"Link {exc.args[0]!r} is not part of body {body!r}.") from None
-        self._others[key] = torch.as_tensor(masses, dtype=torch.float32)
+        self._others[key] = torch.as_tensor(masses, dtype=torch.float32, device=self._device)
 
     def compile_link_center_of_mass(self, key: str, body: str) -> None:
         com = np.asarray(_named_link(self._model, body).center_of_mass, dtype=np.float32).reshape(3)
-        self._others[key] = torch.from_numpy(com)
+        self._others[key] = torch.as_tensor(com, device=self._device)
 
     def compile_geom_friction(self, key: str, geom: str) -> None:
-        self._others[key] = torch.as_tensor(_named_geom(self._model, geom).friction, dtype=torch.float32)
+        self._others[key] = torch.as_tensor(
+            _named_geom(self._model, geom).friction, dtype=torch.float32, device=self._device
+        )
+
+
+def _heightfield_grid(geom: mtx.Geom, geom_name: str, device: torch.device) -> HeightFieldGrid:
+    if not isinstance(geom, mtx.GeomHField) or geom.hfield is None:
+        raise ValueError(
+            f"HeightFieldDataQuery requires geom {geom_name!r} to carry a height field, got {type(geom).__name__}."
+        )
+    hfield = geom.hfield
+    pose = np.asarray(geom.local_pose, dtype=np.float32).reshape(-1)
+    quat_ijkw = pose[3:7]
+    if abs(float(quat_ijkw[3])) < 1.0 - 1e-5:
+        raise ValueError(
+            f"HeightFieldDataQuery requires geom {geom_name!r} to be world-aligned "
+            f"(identity rotation), got quaternion {tuple(quat_ijkw)}."
+        )
+    heights = np.ascontiguousarray(np.asarray(hfield.height_matrix, dtype=np.float32))
+    nrow, ncol = heights.shape
+    bound = np.asarray(hfield.bound, dtype=np.float32)
+    extent_x, extent_y = float(bound[3]), float(bound[4])
+    spacing = np.asarray(
+        [2.0 * extent_x / max(ncol - 1, 1), 2.0 * extent_y / max(nrow - 1, 1)],
+        dtype=np.float32,
+    )
+    origin = np.asarray([float(pose[0]) - extent_x, float(pose[1]) - extent_y], dtype=np.float32)
+    # Export one shared, immutable grid: the float64 conversion happens
+    # once here instead of in every consuming term.
+    return HeightFieldGrid(
+        heights=torch.as_tensor(heights, dtype=torch.float64, device=device).contiguous(),
+        origin=torch.as_tensor(origin, dtype=torch.float64, device=device).contiguous(),
+        spacing=torch.as_tensor(spacing, dtype=torch.float64, device=device).contiguous(),
+        z0=torch.as_tensor([pose[2]], dtype=torch.float64, device=device),
+        constant=0.0,
+        enabled=True,
+    )
 
 
 def _nominal_actuator_kp(model: mtx.SceneModel, actuator_names: tuple[str, ...] | None) -> FloatArray:
@@ -259,6 +267,7 @@ def _build_body_models(
     scene: SceneCfg,
     scene_actuators: tuple[ActuatorSpec, ...],
     default_dof: FloatArray,
+    device: torch.device,
 ) -> dict[str, BodyModel]:
     """Assemble one ``BodyModel`` per ``BodyCfg`` declared in the scene."""
     facts = [_body_facts(model, name, cfg) for name, cfg in scene.iter_objs() if isinstance(cfg, BodyCfg)]
@@ -298,6 +307,7 @@ def _build_body_models(
             init_link_positions=poses[:, :3],
             init_link_quats=poses[:, 3:7],
             robot_cfg=robot_cfg,
+            device=device,
         )
     return bodies
 

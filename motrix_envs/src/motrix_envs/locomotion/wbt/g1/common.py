@@ -43,7 +43,7 @@ class G1WbtEnvCfg(WbtEnvCfg):
 
     motion_files: InitVar[tuple[str, ...] | None] = None
     commands: CommandsCfg = CommandsCfg(motion=WbtMotionCommandCfg())
-    sim: SimCfg = SimCfg(dt=0.005, solver_iterations=3)
+    sim: SimCfg = SimCfg(dt=0.005, solver_iterations=3, max_contacts=128, max_contact_constraints=384)
     scene: StandardSceneCfg = StandardSceneCfg(
         system_camera=SystemCameraCfg(distance=6.0, elevation=-20.0, azimuth=180.0),
         objs=StandardSceneObjsCfg(robot=UnitreeG129Dof()),

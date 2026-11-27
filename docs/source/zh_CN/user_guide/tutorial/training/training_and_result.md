@@ -45,6 +45,8 @@ mxlab train task=cartpole/skrl.ppo task.train_backend=torch
 mxlab train task=g1-wbt-dance/motrix.fastsac sim=motrixsim
 ```
 
+用 `mxlab train task=cartpole/skrl.ppo sim_device=cuda:0` 在 GPU 上仿真。仿真默认使用 CPU，learner 设备由 provider 配置决定。回放默认使用训练记录中的仿真设备，可用 `mxlab play env=cartpole sim_device=cpu` 覆盖。用 `mxlab view env=cartpole sim_device=cuda:0` 查看 GPU 环境。
+
 ### 训练规模与随机种子
 
 ```bash

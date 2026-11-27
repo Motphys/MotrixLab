@@ -341,7 +341,13 @@ class Learner:
                 env_offset = 0
                 for ring, payload in zip(self.rings, generation):
                     if payload is not None:
-                        parts.append(FinalObsPayload(payload.env_ids + env_offset, payload.obs, payload.critic_obs))
+                        parts.append(
+                            FinalObsPayload(
+                                payload.env_ids.to(self.agent.device) + env_offset,
+                                payload.obs.to(self.agent.device),
+                                payload.critic_obs.to(self.agent.device),
+                            )
+                        )
                     env_offset += ring.num_envs
                 final_payloads.append(
                     FinalObsPayload(

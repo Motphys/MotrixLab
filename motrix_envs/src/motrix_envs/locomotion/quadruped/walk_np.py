@@ -49,9 +49,7 @@ from motrix_envs.locomotion.quadruped.velocity_command import RandomPlanarVeloci
 
 def _torch_uniform(rng: torch.Generator, low, high, size) -> torch.Tensor:
     """Sample float32 uniform values in ``[low, high)`` from one torch stream."""
-    low = torch.as_tensor(low, dtype=torch.float32)
-    high = torch.as_tensor(high, dtype=torch.float32)
-    return low + (high - low) * torch.rand(size, generator=rng)
+    return low + (high - low) * torch.rand(size, generator=rng, device=rng.device)
 
 
 def _sim_data_queries(cfg: QuadrupedWalkEnvCfg):
@@ -186,6 +184,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             raise ValueError("Quadruped walk foot position sensor names must be unique")
 
         super().__init__(cfg, num_envs, backend=backend, **kwargs)
+        self._footprint = _FOOTPRINT.to(self.device)
         self.model = self.sim.compile_model(_sim_model_queries(cfg))
         self.sim_data = self.sim.compile_reads(_sim_data_queries(cfg))
         self._ctrl_writes = self.sim.write_compiler.compile({"ctrl": CtrlTargetsWrite()})
@@ -220,14 +219,14 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         # Two independent torch streams derived from one root seed drawn from
         # the global torch RNG (training frameworks seed torch, so runs stay
         # reproducible under their seeding).
-        root_seed = int(torch.randint(0, 2**32 - 1, (1,)).item())
-        self._command_rng = torch.Generator()
+        root_seed = int(torch.randint(0, 2**32 - 1, (1,), device=self.device).item())
+        self._command_rng = torch.Generator(device=self.device)
         self._command_rng.manual_seed(root_seed)
-        self._randomization_rng = torch.Generator()
+        self._randomization_rng = torch.Generator(device=self.device)
         self._randomization_rng.manual_seed(root_seed + 1)
         self._velocity_command_binding = RandomPlanarVelocityBinding(
-            torch.as_tensor(velocity_cfg.lower, dtype=torch.float32),
-            torch.as_tensor(velocity_cfg.upper, dtype=torch.float32),
+            torch.as_tensor(velocity_cfg.lower, dtype=torch.float32, device=self.device),
+            torch.as_tensor(velocity_cfg.upper, dtype=torch.float32, device=self.device),
             rng=self._command_rng,
             standing_probability=velocity_cfg.standing_probability,
             hard_case_probability=velocity_cfg.hard_case_probability,
@@ -238,24 +237,27 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
                 f"standing_threshold must be finite and non-negative, got {velocity_cfg.standing_threshold}"
             )
 
-        self.default_angles = _resolve_key_pose(robot, self.model.actuators, cfg.key_pose_name)
+        self.default_angles = _resolve_key_pose(robot, self.model.actuators, cfg.key_pose_name).to(self.device)
         if self.default_angles.shape != (self._num_action,):
             raise ValueError(
                 "Quadruped default joint positions must match actuator count: "
                 f"got {tuple(self.default_angles.shape)}, expected {(self._num_action,)}"
             )
-        ctrl_ranges = torch.tensor([spec.ctrl_range for spec in self.model.actuators], dtype=torch.float32)
+        ctrl_ranges = torch.tensor(
+            [spec.ctrl_range for spec in self.model.actuators], dtype=torch.float32, device=self.device
+        )
         self._joint_position_lower = ctrl_ranges[:, 0]
         self._joint_position_upper = ctrl_ranges[:, 1]
         self._init_action_space()
         self._init_observation_spec()
 
         self._init_base_pose = self.model.init_dof_pos[:7].clone()
-        self._init_base_pose[:3] = torch.tensor(cfg.initial_base_position, dtype=torch.float32)
+        self._init_base_pose[:3] = torch.tensor(cfg.initial_base_position, dtype=torch.float32, device=self.device)
         self._init_joint_position = self.default_angles.clone()
         self._hip_indices = torch.tensor(
             [index for index, actuator in enumerate(self.model.actuators) if "hip" in actuator.target_name],
             dtype=torch.int64,
+            device=self.device,
         )
 
         has_non_position_actuator = any(
@@ -263,6 +265,15 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         )
         if cfg.randomization.enabled and has_non_position_actuator:
             raise TypeError("Quadruped PD randomization requires position actuators")
+        self._base_lin_vel_noise = torch.as_tensor(
+            cfg.randomization.base_lin_vel_noise, dtype=torch.float32, device=self.device
+        )
+        self._base_ang_vel_noise = torch.as_tensor(
+            cfg.randomization.base_ang_vel_noise, dtype=torch.float32, device=self.device
+        )
+        self._base_com_offset_noise = torch.as_tensor(
+            cfg.randomization.base_com_offset_noise, dtype=torch.float32, device=self.device
+        )
         self._randomize_action_delay = cfg.randomization.enabled and any(cfg.randomization.action_delay_steps)
         # Declare the enabled override writes once and batch every reset's
         # randomization into a single program execution.
@@ -285,31 +296,35 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             randomize_writes["com"] = LinkComWrite((self._base_link_name,))
         self._randomize_writes = self.sim.write_compiler.compile(randomize_writes) if randomize_writes else None
 
-        self.feet_contact = torch.zeros((num_envs, self._num_feet), dtype=torch.bool)
-        self._last_feet_contact = torch.zeros((num_envs, self._num_feet), dtype=torch.bool)
-        self.feet_pos = torch.zeros((num_envs, self._num_feet, 3), dtype=torch.float32)
+        self.feet_contact = torch.zeros((num_envs, self._num_feet), dtype=torch.bool, device=self.device)
+        self._last_feet_contact = torch.zeros((num_envs, self._num_feet), dtype=torch.bool, device=self.device)
+        self.feet_pos = torch.zeros((num_envs, self._num_feet, 3), dtype=torch.float32, device=self.device)
         self._last_feet_pos = torch.zeros_like(self.feet_pos)
         self.feet_world_pos = torch.zeros_like(self.feet_pos)
         self._last_feet_world_pos = torch.zeros_like(self.feet_world_pos)
-        self._static_anchor_pos = torch.zeros((num_envs, self._num_feet, 2), dtype=torch.float32)
-        self._static_anchor_valid = torch.zeros((num_envs, self._num_feet), dtype=torch.bool)
-        self._last_joint_vel = torch.zeros((num_envs, self._num_action), dtype=torch.float32)
+        self._static_anchor_pos = torch.zeros((num_envs, self._num_feet, 2), dtype=torch.float32, device=self.device)
+        self._static_anchor_valid = torch.zeros((num_envs, self._num_feet), dtype=torch.bool, device=self.device)
+        self._last_joint_vel = torch.zeros((num_envs, self._num_action), dtype=torch.float32, device=self.device)
         self._default_feet_width: torch.Tensor | None = None
         self._default_base_com_forward_offset: torch.Tensor | None = None
 
         # Episode-scoped task state: full-batch buffers, reset writes the done
         # rows in place.
-        self._commands = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._command_resampling_time = torch.full((num_envs,), torch.inf, dtype=torch.float32)
+        self._commands = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._command_resampling_time = torch.full((num_envs,), torch.inf, dtype=torch.float32, device=self.device)
         self._command_control_steps = 0
-        self._phase = torch.zeros(num_envs, dtype=torch.float32)
-        self._feet_phase = torch.zeros((num_envs, self._num_feet), dtype=torch.float32)
-        self._gait_schedule_alpha = torch.zeros(num_envs, dtype=torch.float32)
-        self._gait_frequency = torch.full((num_envs,), float(cfg.gait_frequency), dtype=torch.float32)
-        self._swing_fraction = torch.full((num_envs,), float(cfg.reward_config.swing_fraction), dtype=torch.float32)
-        self._current_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32)
-        self._last_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32)
-        self._action_delay_steps = torch.zeros(num_envs, dtype=torch.int64)
+        self._phase = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._feet_phase = torch.zeros((num_envs, self._num_feet), dtype=torch.float32, device=self.device)
+        self._gait_schedule_alpha = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._gait_frequency = torch.full(
+            (num_envs,), float(cfg.gait_frequency), dtype=torch.float32, device=self.device
+        )
+        self._swing_fraction = torch.full(
+            (num_envs,), float(cfg.reward_config.swing_fraction), dtype=torch.float32, device=self.device
+        )
+        self._current_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32, device=self.device)
+        self._last_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32, device=self.device)
+        self._action_delay_steps = torch.zeros(num_envs, dtype=torch.int64, device=self.device)
         self._set_hard_case_probability(0)
 
     # ---- obs/action space plumbing ----------------------------------------
@@ -372,13 +387,13 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         level = float(self.cfg.noise_config.level)
         if level <= 0.0:
             return data
-        noise = torch.rand(data.shape, dtype=torch.float32) * 2.0 - 1.0
+        noise = torch.rand(data.shape, dtype=torch.float32, device=self.device) * 2.0 - 1.0
         return data + level * scale * noise
 
     def _read_feet_contact(self, env_ids: torch.Tensor | None = None) -> torch.Tensor:
         rows = slice(None) if env_ids is None else env_ids
         inputs = self.sim_data
-        contacts = torch.zeros((self._num_envs, self._num_feet), dtype=torch.bool)
+        contacts = torch.zeros((self._num_envs, self._num_feet), dtype=torch.bool, device=self.device)
         for i, name in enumerate(self._feet_contact_sensors):
             contacts[rows, i] = inputs[name][rows, 0] > 0.0
         return contacts
@@ -444,7 +459,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
     # ---- env loop ---------------------------------------------------------
 
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState) -> None:
-        actions = torch.as_tensor(actions, dtype=torch.float32)
+        actions = torch.as_tensor(actions, dtype=torch.float32, device=self.device)
         self._last_actions.copy_(self._current_actions)
         self._current_actions.copy_(actions)
         if self._randomize_action_delay:
@@ -514,7 +529,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
     def _compute_reward(
         self, state: ArrayEnvState, linvel: torch.Tensor, gyro: torch.Tensor, dof_pos: torch.Tensor
     ) -> torch.Tensor:
-        reward = torch.zeros((self._num_envs,), dtype=torch.float32)
+        reward = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
         reward_cfg = self.cfg.reward_config
         reward_fns = {
             "tracking_lin_vel": self._reward_tracking_lin_vel,
@@ -555,17 +570,19 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             self._capture_default_feet_width(env_ids)
 
         base_pose = self._init_base_pose.repeat(num_reset, 1)
-        base_linear_velocity = torch.zeros((num_reset, 3), dtype=torch.float32)
-        base_angular_velocity = torch.zeros((num_reset, 3), dtype=torch.float32)
+        base_linear_velocity = torch.zeros((num_reset, 3), dtype=torch.float32, device=self.device)
+        base_angular_velocity = torch.zeros((num_reset, 3), dtype=torch.float32, device=self.device)
         joint_position = self._init_joint_position.repeat(num_reset, 1)
-        joint_velocity = torch.zeros((num_reset, self._reset_joint_velocity.shape[1]), dtype=torch.float32)
+        joint_velocity = torch.zeros(
+            (num_reset, self._reset_joint_velocity.shape[1]), dtype=torch.float32, device=self.device
+        )
         self._randomize_dof_noise(env_ids, base_linear_velocity, base_angular_velocity, joint_position, joint_velocity)
 
         spawn_range = self.cfg.spawn_xy_range
         if spawn_range > 0.0:
-            xy = (torch.rand(num_reset, 2, dtype=torch.float32) * 2.0 - 1.0) * spawn_range
+            xy = (torch.rand(num_reset, 2, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * spawn_range
             ground_height = (
-                self.sim.sample_terrain_height(self.cfg.ground_geom_name, env_ids, xy[:, None, :] + _FOOTPRINT)
+                self.sim.sample_terrain_height(self.cfg.ground_geom_name, env_ids, xy[:, None, :] + self._footprint)
                 .max(dim=1)
                 .values
             )
@@ -591,7 +608,9 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._last_feet_world_pos[env_ids] = self.feet_world_pos[env_ids]
         self._last_joint_vel[env_ids] = self.get_dof_vel()[env_ids]
 
-        self._commands[env_ids] = torch.as_tensor(self.resample_commands(num_reset), dtype=torch.float32)
+        self._commands[env_ids] = torch.as_tensor(
+            self.resample_commands(num_reset), dtype=torch.float32, device=self.device
+        )
         self._command_resampling_time[env_ids] = self._sample_command_resampling_time(num_reset)
         self._phase[env_ids] = 0.0
         self._feet_phase[env_ids] = 0.0
@@ -631,7 +650,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         num_reset = env_ids.numel()
         base_pose = self._init_base_pose.repeat(num_reset, 1)
         joint_position = self._init_joint_position.repeat(num_reset, 1)
-        joint_velocity = torch.zeros((num_reset, self._reset_joint_velocity.shape[1]), dtype=torch.float32)
+        joint_velocity = torch.zeros_like(self._reset_joint_velocity[env_ids])
 
         self._reset_position[env_ids] = base_pose[:, :3]
         self._reset_rotation[env_ids] = base_pose[:, 3:7]
@@ -661,7 +680,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
     def _sample_command_resampling_time(self, num_envs: int) -> torch.Tensor:
         interval = self.cfg.commands.velocity.resampling_seconds_range
         if interval is None:
-            return torch.full((num_envs,), torch.inf, dtype=torch.float32)
+            return torch.full((num_envs,), torch.inf, dtype=torch.float32, device=self.device)
         low, high = interval
         return _torch_uniform(self._command_rng, low, high, (num_envs,))
 
@@ -673,7 +692,9 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         due = remaining <= 0.0
         num_due = int(due.sum())
         if num_due:
-            self._commands[due] = torch.as_tensor(self.resample_commands(num_due), dtype=torch.float32)
+            self._commands[due] = torch.as_tensor(
+                self.resample_commands(num_due), dtype=torch.float32, device=self.device
+            )
             remaining[due] = self._sample_command_resampling_time(num_due)
 
     def _randomize_dof_noise(
@@ -706,10 +727,10 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             )
 
         if any(randomization.base_lin_vel_noise):
-            noise = torch.as_tensor(randomization.base_lin_vel_noise, dtype=torch.float32)
+            noise = self._base_lin_vel_noise
             base_linear_velocity += _torch_uniform(rng, -noise, noise, (num_reset, 3))
         if any(randomization.base_ang_vel_noise):
-            noise = torch.as_tensor(randomization.base_ang_vel_noise, dtype=torch.float32)
+            noise = self._base_ang_vel_noise
             base_angular_velocity += _torch_uniform(rng, -noise, noise, (num_reset, 3))
 
     def _randomize_params(self, env_ids: torch.Tensor) -> None:
@@ -723,10 +744,10 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         if self._randomize_action_delay:
             delay_low, delay_high = randomization.action_delay_steps
             if delay_low == delay_high:
-                self._action_delay_steps[env_ids] = delay_low
+                self._action_delay_steps.index_fill_(0, env_ids.long(), delay_low)
             else:
                 self._action_delay_steps[env_ids] = torch.randint(
-                    delay_low, delay_high + 1, (num_reset,), generator=rng
+                    delay_low, delay_high + 1, (num_reset,), generator=rng, device=self.device
                 )
 
         # All override writes for this reset batch into one program execution.
@@ -757,7 +778,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             base_mass_scale = _torch_uniform(rng, *self.cfg.randomization.base_mass_scale_range, (num_reset,))
             program.buffer("mass")[env_ids, 0] = self.model.others["base_mass"] * base_mass_scale
         if self._randomize_base_com:
-            noise = torch.as_tensor(self.cfg.randomization.base_com_offset_noise, dtype=torch.float32)
+            noise = self._base_com_offset_noise
             base_com_offset = _torch_uniform(rng, -noise, noise, (num_reset, 3))
             program.buffer("com")[env_ids, 0] = self.model.others["base_com"] + base_com_offset
         program.execute(env_ids)
@@ -773,6 +794,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
             (self._num_envs, 2),
             float(reward_cfg.tracking_lin_vel_sigma),
             dtype=torch.float32,
+            device=self.device,
         )
         forward_sigma = reward_cfg.tracking_lin_vel_forward_sigma
         if forward_sigma is not None:
@@ -803,7 +825,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
     def _reward_base_height(self, linvel, gyro, dof_pos) -> torch.Tensor:
         del linvel, gyro, dof_pos
         base_pos = self.sim_data["base_pos"]
-        env_ids = torch.arange(self._num_envs, dtype=torch.int64)
+        env_ids = torch.arange(self._num_envs, dtype=torch.int64, device=self.device)
         ground_height = self.sim.sample_terrain_height(self.cfg.ground_geom_name, env_ids, base_pos[:, None, :2])[:, 0]
         base_height = base_pos[:, 2].to(torch.float32) - ground_height
         return torch.square(base_height - self.cfg.reward_config.base_height_target)
@@ -842,7 +864,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
     def _reward_feet_spacing(self, linvel, gyro, dof_pos) -> torch.Tensor:
         del linvel, gyro, dof_pos
         if self._default_feet_width is None:
-            return torch.zeros((self._num_envs,), dtype=torch.float32)
+            return torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
 
         front_width = self.feet_pos[:, 0, 1] - self.feet_pos[:, 1, 1]
         rear_width = self.feet_pos[:, 2, 1] - self.feet_pos[:, 3, 1]
@@ -913,7 +935,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
 
     def _reward_contact(self, linvel, gyro, dof_pos) -> torch.Tensor:
         del linvel, gyro, dof_pos
-        res = torch.zeros((self._num_envs,), dtype=torch.float32)
+        res = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
         feet_phase = self._feet_phase
         contacts = self.feet_contact
         swing_start = 1.0 - self._swing_fraction
@@ -1004,8 +1026,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
 
     def _reward_hip_position(self, linvel, gyro, dof_pos) -> torch.Tensor:
         del linvel, gyro
-        if self._hip_indices.size == 0:
-            return torch.zeros((self._num_envs,), dtype=torch.float32)
+        if self._hip_indices.numel() == 0:
+            return torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
 
         reward_cfg = self.cfg.reward_config
         hip_error = torch.abs(dof_pos[:, self._hip_indices] - self.default_angles[self._hip_indices])
@@ -1023,7 +1045,7 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         del linvel, gyro, dof_pos
         reward_cfg = self.cfg.reward_config
         if self._default_base_com_forward_offset is None:
-            return torch.zeros((self._num_envs,), dtype=torch.float32)
+            return torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
 
         base_com_x = float(self.model.others["base_com"][0])
         # Keep the training reference identical to the audit metric:

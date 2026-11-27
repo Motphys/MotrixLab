@@ -67,7 +67,7 @@ class FrankaLiftCubeEnvCfg(DirectEnvCfg):
     render_spacing: float = 2.0
     scene: SceneCfg = SceneCfg(file=model_file)
     max_episode_seconds: float = 2.5
-    sim: SimCfg = SimCfg(dt=0.01)
+    sim: SimCfg = SimCfg(dt=0.01, max_contacts=128, max_contact_constraints=384)
     move_speed: float = 1.0
     ctrl_dt: float = 0.01
     reset_noise_scale = 0.05

@@ -60,6 +60,7 @@ class Go1WalkStairsTask(DirectEnv):
         **kwargs,
     ):
         super().__init__(cfg, num_envs, backend=backend, **kwargs)
+        self._gravity = _GRAVITY.to(self.device)
         self.model = self.sim.compile_model({})
         self.sim_data = self.sim.compile_reads(_sim_data_queries(cfg))
         self._ctrl_writes = self.sim.write_compiler.compile({"ctrl": CtrlTargetsWrite()})
@@ -91,7 +92,7 @@ class Go1WalkStairsTask(DirectEnv):
             for j in range(5):
                 h_index = offset_h[j][i]
                 offset.append([(i - 2) * 8.0, (j - 2) * 8.0, height_list[h_index]])
-        self.offset_list = torch.tensor(offset, dtype=torch.float32)
+        self.offset_list = torch.tensor(offset, dtype=torch.float32, device=self.device)
         self._init_base_pose = self.model.init_dof_pos[:7].clone()
         self._init_buffer()
         self.period_counter = 0
@@ -140,9 +141,11 @@ class Go1WalkStairsTask(DirectEnv):
         assert isinstance(cfg, Go1WalkDirectStairsEnvCfg)
         # init buffers
 
-        self.reset_buf = torch.ones(self._num_envs, dtype=torch.bool)
-        self.kps = torch.full((self._num_action,), cfg.control_config.stiffness, dtype=torch.float32)
-        self.kds = torch.full((self._num_action,), cfg.control_config.damping, dtype=torch.float32)
+        self.reset_buf = torch.ones(self._num_envs, dtype=torch.bool, device=self.device)
+        self.kps = torch.full(
+            (self._num_action,), cfg.control_config.stiffness, dtype=torch.float32, device=self.device
+        )
+        self.kds = torch.full((self._num_action,), cfg.control_config.damping, dtype=torch.float32, device=self.device)
         self.commands_scale = torch.tensor(
             (
                 [
@@ -152,9 +155,10 @@ class Go1WalkStairsTask(DirectEnv):
                 ]
             ),
             dtype=torch.float32,
+            device=self.device,
         )
 
-        self.default_angles = torch.zeros(self._num_action, dtype=torch.float32)
+        self.default_angles = torch.zeros(self._num_action, dtype=torch.float32, device=self.device)
         self.hip_indices = []
         self.calf_indices = []
         actuator_names = [spec.name for spec in self.model.actuators]
@@ -178,13 +182,13 @@ class Go1WalkStairsTask(DirectEnv):
         # Episode-scoped task state: full-batch buffers, reset writes the done
         # rows in place.
         num_envs = self._num_envs
-        self._commands = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._contacts = torch.zeros((num_envs, self.foot_check_num), dtype=torch.bool)
-        self._contact_force = torch.zeros((num_envs, 12), dtype=torch.float32)
-        self._feet_air_time = torch.zeros((num_envs, self.foot_check_num), dtype=torch.float32)
-        self._last_dof_vel = torch.zeros((num_envs, self._num_action), dtype=torch.float32)
-        self._current_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32)
-        self._last_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32)
+        self._commands = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._contacts = torch.zeros((num_envs, self.foot_check_num), dtype=torch.bool, device=self.device)
+        self._contact_force = torch.zeros((num_envs, 12), dtype=torch.float32, device=self.device)
+        self._feet_air_time = torch.zeros((num_envs, self.foot_check_num), dtype=torch.float32, device=self.device)
+        self._last_dof_vel = torch.zeros((num_envs, self._num_action), dtype=torch.float32, device=self.device)
+        self._current_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32, device=self.device)
+        self._last_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32, device=self.device)
 
         spacing = 2.0
         cols = int(np.ceil(np.sqrt(self._num_envs)))
@@ -196,10 +200,10 @@ class Go1WalkStairsTask(DirectEnv):
             y = row * spacing
             z = 0.0
             offsets.append([x, y, z])
-        self.offsets = torch.tensor(offsets, dtype=torch.float32)
+        self.offsets = torch.tensor(offsets, dtype=torch.float32, device=self.device)
 
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
-        actions = torch.as_tensor(actions, dtype=torch.float32)
+        actions = torch.as_tensor(actions, dtype=torch.float32, device=self.device)
         # Copy values: the read buffer is a view that the upcoming physics-step
         # read overwrites in place.
         self._last_dof_vel.copy_(self.get_dof_vel())
@@ -229,7 +233,7 @@ class Go1WalkStairsTask(DirectEnv):
         linear_vel = inputs["local_linvel"]
         gyro = inputs["gyro"]
         base_quat = inputs["root_quat"]
-        local_gravity = rotate_inverse(base_quat, _GRAVITY)
+        local_gravity = rotate_inverse(base_quat, self._gravity)
         diff = inputs["robot_joint_pos"] - self.default_angles
         noisy_linvel = linear_vel * self.cfg.normalization.lin_vel
         noisy_gyro = gyro * self.cfg.normalization.ang_vel
@@ -287,9 +291,9 @@ class Go1WalkStairsTask(DirectEnv):
         self._contact_force.copy_(torch.cat(force, dim=1))
 
     def resample_commands(self, num_envs: int):
-        low = torch.tensor(self.cfg.commands.vel_limit[0], dtype=torch.float32)
-        high = torch.tensor(self.cfg.commands.vel_limit[1], dtype=torch.float32)
-        return low + (high - low) * torch.rand((num_envs, 3), dtype=torch.float32)
+        low = torch.tensor(self.cfg.commands.vel_limit[0], dtype=torch.float32, device=self.device)
+        high = torch.tensor(self.cfg.commands.vel_limit[1], dtype=torch.float32, device=self.device)
+        return low + (high - low) * torch.rand((num_envs, 3), dtype=torch.float32, device=self.device)
 
     def update_reward(self, state: ArrayEnvState) -> ArrayEnvState:
         terminated = state.terminated
@@ -303,7 +307,7 @@ class Go1WalkStairsTask(DirectEnv):
             termination = self._reward_termination(terminated) * self.cfg.reward_config.scales["termination"]
             rwd = rwd + termination
 
-        rwd = torch.where(terminated, torch.zeros((), dtype=torch.float32), rwd)
+        rwd = torch.where(terminated, torch.zeros((), dtype=torch.float32, device=self.device), rwd)
 
         state.reward.copy_(rwd)
 
@@ -315,7 +319,7 @@ class Go1WalkStairsTask(DirectEnv):
         num_period = 25
         idx = generate_repeating_array(num_period, num_reset, self.period_counter)
         self.period_counter = (self.period_counter + num_reset) % num_period
-        base_pose[:, :3] = self.offset_list[torch.as_tensor(idx, dtype=torch.int64)]
+        base_pose[:, :3] = self.offset_list[torch.as_tensor(idx, dtype=torch.int64, device=self.device)]
 
         _reset_pose = base_pose
         self._reset_position[env_ids] = _reset_pose[:, :3]
@@ -366,7 +370,7 @@ class Go1WalkStairsTask(DirectEnv):
     def _reward_orientation(self):
         # Penalize non flat base orientation
         base_quat = self.sim_data["root_quat"]
-        gravity = rotate_inverse(base_quat, _GRAVITY)
+        gravity = rotate_inverse(base_quat, self._gravity)
         return torch.sum(torch.square(gravity[:, :2]), dim=1)
 
     def _reward_torques(self):
@@ -434,7 +438,7 @@ class Go1WalkStairsTask(DirectEnv):
     def _reward_feet_stumble(self):
         # Penalize feet hitting vertical surfaces
         foot_forces = self.sim_data["foot_contact_forces"]
-        is_stumble = torch.zeros((self._num_envs,), dtype=torch.float32)
+        is_stumble = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
         for k in range(len(self.cfg.sensor.feet)):
             contact_force = foot_forces[:, 3 * k : 3 * k + 3]
             is_stumble += (torch.linalg.vector_norm(contact_force, dim=1) > 5 * torch.abs(contact_force[:, 2])).to(

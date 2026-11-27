@@ -37,10 +37,12 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import asdict, dataclass, field, replace
+from functools import partial
 from pathlib import Path
 
 import motrixsim as mtx
 import numpy as np
+import torch
 
 from motrix_bench import (
     BenchmarkConfig,
@@ -51,7 +53,8 @@ from motrix_bench import (
     run_case,
 )
 from motrix_env_core import registry
-from motrix_env_core.base import SimCfg
+from motrix_env_core.config.sim import SimCfg
+from motrix_env_core.sim.registry import create_sim_backend
 from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler
 from motrix_envs.config.scene import StandardSceneCfg, StandardSceneObjsCfg
 
@@ -68,6 +71,7 @@ class PhysicsStepConfig(BenchmarkConfig):
     solver_iterations: int = 3
     nstep: int = 1
     out_json: str = ""
+    sim_device: str = "cpu"
 
     def __post_init__(self) -> None:
         # Direct call: zero-arg super() resolves to the pre-slots class.
@@ -86,6 +90,7 @@ class PhysicsStepConfig(BenchmarkConfig):
 
 def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--robot", required=True, help="Registered robot name.")
+    parser.add_argument("--sim-device", default="cpu", help="Simulation device, e.g. cpu or cuda:0.")
     parser.add_argument("--num-envs", type=int, nargs="+", default=[2048])
     parser.add_argument("--numa", choices=("single", "node", "shard", "_worker"), default="single")
     parser.add_argument("--node", type=int, default=0)
@@ -109,6 +114,7 @@ def build_config(args: argparse.Namespace) -> PhysicsStepConfig:
         solver_iterations=args.solver_iterations,
         nstep=args.nstep,
         out_json=args.out_json,
+        sim_device=args.sim_device,
     )
 
 
@@ -157,7 +163,20 @@ def _prepare_with_info(config: PhysicsStepConfig) -> tuple[PreparedCase, dict]:
     num_envs = config.num_envs[0]
     robot_cfg = registry.make_robot_config(config.robot)
     scene = StandardSceneCfg(objs=StandardSceneObjsCfg(robot=robot_cfg))
-    sim = SimCfg(dt=config.dt, solver_iterations=config.solver_iterations)
+    sim = SimCfg(dt=config.dt, solver_iterations=config.solver_iterations, device=config.sim_device)
+    sim.validate()
+    if torch.device(sim.device).type == "cuda":
+        backend = create_sim_backend("motrixsim", sim.device)(scene, sim, num_envs)
+        reset = backend.compile_writes({}, reset=True)
+        status = torch.empty(num_envs, dtype=torch.int32, device=backend.device)
+        case = PreparedCase(
+            step=partial(backend.step, config.nstep, result=status),
+            before_step=reset.execute,
+            synchronize=partial(torch.cuda.synchronize, backend.device),
+            items_per_step=float(num_envs * config.nstep),
+            unit="env steps",
+        )
+        return case, _metadata(config, backend.num_actuators, backend.model.num_links)
     model = MotrixSimSceneCompiler().compile(scene, sim)
 
     data = mtx.SceneData(model, batch=[num_envs])
@@ -182,7 +201,11 @@ def _prepare_with_info(config: PhysicsStepConfig) -> tuple[PreparedCase, dict]:
         items_per_step=float(num_envs * config.nstep),
         unit="env steps",
     )
-    metadata = {
+    return case, _metadata(config, num_actuators, num_links)
+
+
+def _metadata(config: PhysicsStepConfig, num_actuators: int, num_links: int) -> dict:
+    return {
         "robot": config.robot,
         "dt": config.dt,
         "solver_iterations": config.solver_iterations,
@@ -191,7 +214,6 @@ def _prepare_with_info(config: PhysicsStepConfig) -> tuple[PreparedCase, dict]:
         "links": num_links,
         "device": _device_context(),
     }
-    return case, metadata
 
 
 def prepare(config: PhysicsStepConfig) -> PreparedCase:
@@ -222,6 +244,8 @@ def _worker_command(config: PhysicsStepConfig, node: int, num_envs: int, out_jso
         str(num_envs),
         "--robot",
         config.robot,
+        "--sim-device",
+        config.sim_device,
         "--dt",
         str(config.dt),
         "--solver-iterations",

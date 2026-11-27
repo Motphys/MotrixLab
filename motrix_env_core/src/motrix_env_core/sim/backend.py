@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
@@ -23,7 +24,7 @@ from motrix_env_core.config import SimCfg
 from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.sim.model import ModelQuery, SimModel, SimModelCompiler
 from motrix_env_core.sim.read import PhysicsReadProgram
-from motrix_env_core.sim.write import SimWrite, SimWriteCompiler, WriteProgram
+from motrix_env_core.sim.write import CtrlTargetsWrite, SimWrite, SimWriteCompiler, WriteProgram
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,10 @@ class SimBackend(abc.ABC):
 
     name: str
     capabilities: ClassVar[SimBackendCapabilities] = SimBackendCapabilities()
+    supports_native_masked_reset = False
+
+    # Backends may order the complete control step on a device stream.
+    step_context = staticmethod(nullcontext)
 
     def __init__(self, scene: SceneCfg, sim: SimCfg, num_envs: int, *, render: RenderConfig | None = None) -> None:
         """Compile ``scene`` and allocate ``num_envs`` batched data rows.
@@ -199,6 +204,10 @@ class SimBackend(abc.ABC):
         """Lower the scene surface and model-query declarations into one model."""
         return self.model_compiler.compile(self._scene, queries)
 
+    def reset_masked(self, world_mask: torch.Tensor) -> None:
+        """Restore selected worlds to defaults and refresh derived state."""
+        self.compile_writes({}, reset=True).execute_masked(world_mask)
+
     def compile_writes(
         self,
         writes: Mapping[str, SimWrite],
@@ -214,6 +223,13 @@ class SimBackend(abc.ABC):
         is accessed.
         """
         return self.write_compiler.compile(writes, reset=reset, forward_kinematics=forward_kinematics)
+
+    def compile_action_writes(self, writes: Mapping[str, CtrlTargetsWrite]) -> WriteProgram:
+        """Compile full-batch action writes. Buffers may alias live controls.
+
+        Fill each buffer for all worlds and call ``execute()`` without row selection.
+        """
+        return self.compile_writes(writes)
 
     @property
     def write_compiler(self) -> SimWriteCompiler:

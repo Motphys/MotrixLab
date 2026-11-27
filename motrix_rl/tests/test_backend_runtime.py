@@ -166,3 +166,18 @@ class _RuntimeProvider(frameworks.AgentProvider[_RuntimeCfg]):
         context: frameworks.TrainerContext[_RuntimeCfg],
     ) -> frameworks.TrainerBase:
         raise NotImplementedError
+
+
+@pytest.mark.parametrize("jax_gpu, expected", [(False, "torch"), (True, "jax")])
+def test_auto_backend_prefers_the_cuda_capable_backend_for_cuda_sim(monkeypatch, jax_gpu, expected):
+    _register_method(monkeypatch, rllib="runtime", algo="ppo", backends=("jax", "torch"))
+    assert (
+        backend_runtime.resolve_train_backend(
+            "demo-env",
+            RlMethod(rllib="runtime", algo="ppo"),
+            None,
+            DeviceSupports(torch=True, jax=True, jax_gpu=jax_gpu),
+            sim_device="cuda:1",
+        )
+        == expected
+    )

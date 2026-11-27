@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import motrixsim as mtx
 import numpy as np
+import torch
 
 from motrix_env_core.math.kinematics import KinematicTree
 from motrix_env_core.math.quaternion import mul as quat_mul
 from motrix_env_core.math.quaternion import rotate_vector
 
 
-def kinematic_tree(model: mtx.SceneModel, base_link: str, *, device: str = "cpu") -> KinematicTree:
+def kinematic_tree(model: mtx.SceneModel, base_link: str, *, device: str | torch.device = "cpu") -> KinematicTree:
     """Extract the moving-link tree rooted at ``base_link`` from a compiled model.
 
     Fixed links are folded into the offsets of their nearest moving

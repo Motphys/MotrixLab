@@ -26,6 +26,7 @@ class RslrlEnvWrap(VecEnv):
     """
 
     def __init__(self, env: ArrayEnv, device: torch.device, render: RenderConfig | None = None):
+        self._sim_device = env.device
         """Initialize the VecEnv adapter.
 
         Args:
@@ -84,7 +85,7 @@ class RslrlEnvWrap(VecEnv):
         return self
 
     def step(self, actions: torch.Tensor) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict]:
-        state = self._env.step(actions.detach().cpu().to(torch.float32))
+        state = self._env.step(actions.detach().to(device=self._sim_device, dtype=torch.float32))
         self._state = state
 
         # Update episode length buffer

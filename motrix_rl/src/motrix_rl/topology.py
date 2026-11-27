@@ -67,6 +67,7 @@ class CollectorInfo:
         collector_id: Zero-based collector ID.
         num_envs: Number of environments assigned to the collector.
         infer_device: Device used for collector policy inference.
+        sim_device: Device used by the collector simulation and frontend.
         numa_node: NUMA node assigned to the collector, or ``None``.
         cpus: CPU IDs assigned to the collector.
     """
@@ -76,6 +77,7 @@ class CollectorInfo:
     infer_device: torch.device
     numa_node: int | None
     cpus: tuple[int, ...]
+    sim_device: torch.device = torch.device("cpu")
 
 
 @dataclass(frozen=True)
@@ -348,6 +350,7 @@ def resolve_async_trainer_topology(
     default_device: torch.device,
     *,
     cpus_per_collector: int | None = None,
+    sim_device: str = "cpu",
 ) -> AsyncTrainerTopology:
     """Resolve the generic worker layout for an asynchronous trainer.
 
@@ -359,6 +362,7 @@ def resolve_async_trainer_topology(
         collector_inference_device: Collector inference device specification.
         default_device: Device used by a single learner.
         cpus_per_collector: Optional number of CPUs per collector slice.
+        sim_device: Simulation placement. Unindexed CUDA follows the owning learner.
 
     Returns:
         A complete generic trainer topology.
@@ -371,6 +375,15 @@ def resolve_async_trainer_topology(
         raise ValueError(f"invalid worker counts: {num_collectors=} {num_learners=}")
     if num_collectors % num_learners != 0:
         raise ValueError(f"num_collectors={num_collectors} must divide evenly across num_learners={num_learners}")
+    if default_device.type == "cuda" and default_device.index is None:
+        default_device = torch.device("cuda", 0)
+    requested_sim = torch.device(sim_device)
+    if requested_sim.type not in ("cpu", "cuda"):
+        raise ValueError(f"sim_device must be CPU or CUDA, got {requested_sim}")
+    if requested_sim.type == "cuda":
+        available = torch.cuda.device_count()
+        if not available or (requested_sim.index is not None and requested_sim.index >= available):
+            raise ValueError(f"Requested simulation device {requested_sim} is unavailable")
     learner_devices = resolve_learner_devices(learner_device_specs, num_learners, default_device)
     collector_devices = resolve_collector_inference_devices(
         collector_inference_device, learner_devices, num_collectors, num_learners, default_device
@@ -395,7 +408,14 @@ def resolve_async_trainer_topology(
         if not multi_node or device.type != "cuda":
             return None
         index = device.index if device.index is not None else 0
-        return system_numa.gpu_numa_node(index, runtime="hip" if torch.version.hip else "cuda")
+        node = system_numa.gpu_numa_node(index, runtime="hip" if torch.version.hip else "cuda")
+        if node is None or inherited_cpus is None:
+            return node
+        try:
+            allowed = bool(set(system_numa.numa_node_cpus(node)) & inherited_cpus)
+        except ValueError:
+            return node
+        return node if allowed else None
 
     reserved_cpus: set[int] = set()
 
@@ -433,12 +453,19 @@ def resolve_async_trainer_topology(
         )
         assigned_counts[learner_rank] += 1
         collector_learner_ranks.append(learner_rank)
-        owner_node = learners[learner_rank].numa_node
+        owner = learners[learner_rank]
+        collector_sim = requested_sim
+        if requested_sim.type == "cuda" and requested_sim.index is None:
+            if owner.device.type != "cuda":
+                raise ValueError("Unindexed CUDA simulation requires a CUDA learner for each collector")
+            collector_sim = owner.device
+        owner_node = owner.numa_node
         collectors.append(
             CollectorInfo(
                 collector_id=collector_id,
                 num_envs=num_envs_i,
                 infer_device=collector_device,
+                sim_device=collector_sim,
                 numa_node=owner_node,
                 cpus=allocate_collector_cpus(owner_node),
             )

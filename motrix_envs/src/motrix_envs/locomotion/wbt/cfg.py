@@ -207,7 +207,7 @@ class WbtEnvCfg(ManagerBasedEnvCfg):
 
     max_episode_seconds: float = 10.0
     sim_reset: ManagerResetCfg = ResetCfg()
-    sim: SimCfg = SimCfg(dt=0.005)
+    sim: SimCfg = SimCfg(dt=0.005, max_contacts=256, max_contact_constraints=768)
     ctrl_dt: float = 0.02
     commands: CommandsCfg = CommandsCfg()
     actions: ActionsCfg = ActionsCfg()

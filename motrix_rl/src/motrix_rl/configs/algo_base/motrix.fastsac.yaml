@@ -87,7 +87,7 @@ trainer:
     max_ingest_per_iter: 8
     # Backoff sleep in seconds when a worker temporarily has no work or the ring is full.
     idle_sleep_s: 0.0005
-    # Actor-only collector inference device; the environment and transition path always remain on CPU.
+    # Collector policy device. Unindexed CUDA follows the learner. sim_device controls physics.
     collector_inference_device: cuda
     # Compile the fixed-shape CUDA collector policy with reduce-overhead mode.
     collector_compile: true
@@ -101,13 +101,10 @@ trainer:
     # machine's CPU/GPU balance (see issue #62's sweep table).
     learner_cpu_cores: null
     collector_cpu_cores: null
-    # Transition-ring transport: "auto" (default) puts the ring slots in
-    # CUDA-IPC device memory when learner and collector inference share one
-    # GPU (fused single H2D on the collector, D2D-only learner ingest) and
-    # falls back to host shared memory otherwise; "on"/"off" force the
-    # device/host path ("on" warns and falls back to the host ring when the
-    # two sides are not on one GPU). Keep the values quoted: unquoted on/off
-    # parse as booleans in YAML.
+    # Transition-ring transport: "auto" uses CUDA IPC when learner and
+    # collector inference share a GPU and CUDA simulation, if used, is on it
+    # too. "off" uses host memory. "on" warns if the placement requires the
+    # host ring. Quote these values in YAML so they stay strings.
     transition_ipc: "auto"
     # Weight-snapshot transport: "auto" (default) enables CUDA-IPC device slots
     # only when learner and collector share one GPU and the actor params reach

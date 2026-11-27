@@ -43,6 +43,7 @@ def _make_env(history_length: int = 1, value_dim: int | None = None) -> Mock:
         observations["value"] = torch.zeros((_NUM_ENVS, value_dim * history_length), dtype=torch.float32)
     observation_spec = ObservationSpec(groups)
     env = Mock(spec=DirectEnv)
+    env.device = torch.device("cpu")
     state = ArrayEnvState(
         obs=EnvObs(observations),
         reward=torch.ones(_NUM_ENVS, dtype=torch.float32),
@@ -118,7 +119,10 @@ def test_provider_passes_render_init_kwargs_to_registry(monkeypatch, trainer):
         record=RecordConfig(width=640, height=480, path=Path("video.mp4"), fps=30, num_frames=60),
     )
     instance = SimpleNamespace(
-        _env_name="cartpole", _sim="test-sim", _context=SimpleNamespace(seed=7), _render=recording
+        _env_name="cartpole",
+        _sim="test-sim",
+        _context=SimpleNamespace(run=None, sim_device=None, seed=7),
+        _render=recording,
     )
     make = Mock()
     monkeypatch.setattr(module.env_registry, "make", make)

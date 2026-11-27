@@ -32,6 +32,7 @@ import torch
 
 from motrix_env_core.array.env import EnvObs
 from motrix_env_core.manager.kernel import EvaluationOutputs
+from motrix_env_core.manager.kernel_data.data import iter_leaves
 from motrix_env_core.manager.resolver import (
     CommandAdvanceHook,
     CommandResetHook,
@@ -97,6 +98,9 @@ class TorchTaskProgram:
     observe_kernel: Callable[[EnvObs], None]
     reset_kernel: Callable[[torch.Tensor, torch.Tensor, tuple[torch.Tensor, ...]], None]
     reward_weights: torch.Tensor
+    reset_masked_kernel: (
+        Callable[[torch.Tensor, torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, ...]], None] | None
+    ) = None
 
 
 _K = TypeVar("_K")
@@ -139,7 +143,17 @@ class TorchManagerRuntime:
         self.layout = program.layout
         self.compile_enabled = compile
         self.ctx = program.context
-        _apply_default_thread_cap(env.num_envs)
+        if self.ctx.env_id.is_cuda:
+            self._static_options = {"triton.cudagraphs": True}
+            if compile:
+                # Terms mutate the persistent command, action and metric buffers in
+                # place. Dynamo guards their addresses when recording a CUDA graph.
+                for _, _, tensor in iter_leaves(self.ctx):
+                    if isinstance(tensor, torch.Tensor) and tensor.is_cuda:
+                        torch._dynamo.mark_static_address(tensor)
+        else:
+            _apply_default_thread_cap(env.num_envs)
+            self._static_options = _compile_options()
 
         # Typed call sequences encode the execution contract structurally:
         # evaluate follows the fixed phase order command update hooks ->
@@ -157,7 +171,9 @@ class TorchManagerRuntime:
         self.observations: dict[str, tuple[ObservationTermCall, ...]] = program.observations
         reward_cfgs = env.cfg.reward_cfgs()
         self.reward_weights = torch.tensor(
-            [float(reward_cfgs[term.name].weight) for term in self.layout.rewards], dtype=torch.float32
+            [float(reward_cfgs[term.name].weight) for term in self.layout.rewards],
+            dtype=torch.float32,
+            device=self.ctx.env_id.device,
         )
         # Reset-term compact-write layout mirrors SimResetRuntime.buffers:
         # one entry per declared write, ordered by term then output name.
@@ -178,6 +194,7 @@ class TorchManagerRuntime:
             observe_kernel=self.observe,
             reset_kernel=self.reset,
             reward_weights=self.reward_weights,
+            reset_masked_kernel=self.reset_masked,
         )
 
     def evaluate(
@@ -197,18 +214,63 @@ class TorchManagerRuntime:
         kernel(outputs)
 
     def reset(
-        self, env_ids: torch.Tensor, episode_reset: torch.Tensor, reset_buffers: tuple[torch.Tensor, ...]
+        self,
+        env_ids: torch.Tensor,
+        episode_reset: torch.Tensor,
+        reset_buffers: tuple[torch.Tensor, ...],
+        *,
+        reset_commands: bool = True,
     ) -> None:
-        if not self.command_reset_hooks and not self._reset_terms:
+        if not self._reset_terms and not (reset_commands and self.command_reset_hooks):
             return
-        # Normalize ids onto the kernel tensors' device (via the context
-        # anchor) so the cached static graph sees one form regardless of the
-        # caller's device, dtype, layout, or autograd history.
+        # Use a consistent ID tensor for the cached compact reset graph.
         ids = env_ids.detach().to(device=self.ctx.env_id.device, dtype=torch.int64).contiguous()
         kernel = self._compiled_kernels.get_or_build(
-            ("reset", id(reset_buffers)), lambda: self._build_compiled_reset(reset_buffers)
+            ("reset", id(reset_buffers), reset_commands),
+            lambda: self._build_compiled_reset(reset_buffers, reset_commands=reset_commands),
         )
         kernel(ids, episode_reset)
+
+    def reset_masked(
+        self,
+        world_mask: torch.Tensor,
+        episode_reset: torch.Tensor,
+        env_ids: torch.Tensor | None,
+        reset_buffers: tuple[torch.Tensor, ...],
+    ) -> None:
+        # Compact terms keep their row contract when a program contains any
+        # stateful term. Mask-aware commands still run before those terms.
+        buffers = reset_buffers if env_ids is None else ()
+        if self.command_reset_hooks or buffers:
+            kernel = self._compiled_kernels.get_or_build(
+                ("reset_masked", id(buffers)), lambda: self._build_masked_reset(buffers)
+            )
+            kernel(world_mask, episode_reset)
+        if env_ids is not None and self._reset_terms:
+            self.reset(env_ids, episode_reset[env_ids], reset_buffers, reset_commands=False)
+
+    def _build_masked_reset(self, reset_buffers: tuple[torch.Tensor, ...]) -> Callable:
+        ctx = self.ctx
+        receivers = tuple(ctx.commands[hook.receiver_key] for hook in self.command_reset_hooks)
+        writes = (
+            tuple(
+                (call, {name: reset_buffers[offset + index] for index, name in enumerate(names)})
+                for call, offset, names in self._reset_terms
+            )
+            if reset_buffers
+            else ()
+        )
+        if self.compile_enabled and ctx.env_id.is_cuda:
+            for buffer in reset_buffers:
+                torch._dynamo.mark_static_address(buffer)
+
+        def kernel(world_mask: torch.Tensor, episode_reset: torch.Tensor) -> None:
+            for receiver in receivers:
+                receiver.reset_masked(ctx, world_mask, episode_reset)
+            for call, sim_writes in writes:
+                call.invoke(ctx, ctx.env_id, sim_writes)
+
+        return torch.compile(kernel, dynamic=False, options=self._static_options) if self.compile_enabled else kernel
 
     def _build_compiled_evaluate(
         self,
@@ -225,6 +287,10 @@ class TorchManagerRuntime:
         advance_hooks = self.command_advances
         reward_plan = self.rewards
         termination_plan = self.terminations
+
+        if self.compile_enabled and ctx.env_id.is_cuda:
+            for buffer in buffers:
+                torch._dynamo.mark_static_address(buffer)
 
         def kernel(reward_view: torch.Tensor, terminated_view: torch.Tensor) -> None:
             for hook in update_hooks:
@@ -251,7 +317,7 @@ class TorchManagerRuntime:
                 hook.function(receiver, ctx)
 
         if self.compile_enabled:
-            return torch.compile(kernel, dynamic=False, options=_compile_options())
+            return torch.compile(kernel, dynamic=False, options=self._static_options)
         return kernel
 
     def _build_compiled_observe(self) -> Callable[[EnvObs], None]:
@@ -264,11 +330,21 @@ class TorchManagerRuntime:
         num_envs = ctx.env_id.shape[0]
         term_bufs = {
             group_name: tuple(
-                torch.empty(num_envs, term.output_slice.stop - term.output_slice.start, dtype=torch.float32)
+                torch.empty(
+                    num_envs,
+                    term.output_slice.stop - term.output_slice.start,
+                    dtype=torch.float32,
+                    device=ctx.env_id.device,
+                )
                 for term in group.terms
             )
             for group_name, group in self.layout.observations.items()
         }
+        if self.compile_enabled and ctx.env_id.is_cuda:
+            for group_buffers in term_bufs.values():
+                for buffer in group_buffers:
+                    torch._dynamo.mark_static_address(buffer)
+
         per_term_plan = tuple(
             (
                 group_name,
@@ -290,19 +366,22 @@ class TorchManagerRuntime:
                 target.copy_(torch.cat([buf for _call, buf in entries], dim=1))
 
             if self.compile_enabled:
-                return torch.compile(group_kernel, dynamic=False, options=_compile_options())
+                return torch.compile(group_kernel, dynamic=False, options=self._static_options)
             return group_kernel
 
         group_kernels = {group_name: make_group_kernel(entries) for group_name, entries in per_term_plan}
 
         def kernel(outputs: EnvObs) -> None:
             for name, group_kernel in group_kernels.items():
-                group_kernel(outputs[name])
+                target = outputs[name]
+                if self.compile_enabled and target.is_cuda:
+                    torch._dynamo.mark_static_address(target)
+                group_kernel(target)
 
         return kernel
 
     def _build_compiled_reset(
-        self, reset_buffers: tuple[torch.Tensor, ...]
+        self, reset_buffers: tuple[torch.Tensor, ...], *, reset_commands: bool = True
     ) -> Callable[[torch.Tensor, torch.Tensor], None]:
         """Compile the reset schedule as a dynamic gather-compact graph.
 
@@ -318,7 +397,7 @@ class TorchManagerRuntime:
         Terms use default Torch random draws through ``ctx.rand`` inside the numerical graph.
         """
         ctx = self.ctx
-        command_reset_hooks = self.command_reset_hooks
+        command_reset_hooks = self.command_reset_hooks if reset_commands else ()
         write_plan = tuple(
             (
                 call,
@@ -340,7 +419,7 @@ class TorchManagerRuntime:
                 call.invoke(ctx, env_ids, sim_writes)
 
         if self.compile_enabled:
-            kernel = torch.compile(kernel, dynamic=True, options=_compile_options())
+            kernel = torch.compile(kernel, dynamic=True, options={} if ctx.env_id.is_cuda else _compile_options())
 
         last_count: int | None = None
         writes_by_term: tuple[dict[str, torch.Tensor], ...] = ()

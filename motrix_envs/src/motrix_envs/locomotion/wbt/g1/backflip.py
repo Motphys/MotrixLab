@@ -6,7 +6,7 @@
 from motrix_robots.unitree import UnitreeG129Dof
 
 from motrix_env_core import registry
-from motrix_env_core.base import EnvCfg, SimCfg
+from motrix_env_core.base import EnvCfg
 from motrix_env_core.config import configclass
 from motrix_env_core.config.scene import SystemCameraCfg
 from motrix_env_core.manager import ManagerEnv
@@ -92,7 +92,8 @@ class G1BackflipWbtEnvCfg(G1WbtEnvCfg):
     the sole anchor-position check, backed by the tilt-only orientation
     check and body-z/NaN guards. Rewards and reset are the holosoma
     fastsac recipe unchanged (centered-noise reference-state teleport with
-    velocities, mixed frame sampling).
+    velocities, mixed frame sampling). The inherited 5 ms physics step resolves
+    the roughly 0.1 s ground-contact impulse at launch.
     """
 
     scene: StandardSceneCfg = StandardSceneCfg(
@@ -100,11 +101,6 @@ class G1BackflipWbtEnvCfg(G1WbtEnvCfg):
         objs=StandardSceneObjsCfg(robot=UnitreeG129Dof()),
     )
 
-    # The launch impulse that creates angular momentum spans ~0.1 s of
-    # ground contact; a coarser timestep loses it to the contact solve and
-    # the flip stops being learnable, despite the higher collector
-    # throughput.
-    sim: SimCfg = SimCfg(dt=0.005, solver_iterations=3)
     render_spacing: float = 1.5
 
     commands: CommandsCfg = CommandsCfg(

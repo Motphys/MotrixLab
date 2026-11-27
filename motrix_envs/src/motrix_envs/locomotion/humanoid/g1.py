@@ -149,7 +149,7 @@ def make_g129dof_walk_flat_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
                 )
             )
         ),
-        sim=SimCfg(dt=0.01, solver_iterations=3, solver_tolerance=1e-4),
+        sim=SimCfg(dt=0.01, solver_iterations=3, solver_tolerance=1e-4, max_contacts=512, max_contact_constraints=1536),
     )
 
 
@@ -169,6 +169,7 @@ def make_g129dof_walk_rough_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
                 robot=UnitreeG129Dof(),
             ),
         ),
+        sim=SimCfg(dt=0.01, solver_iterations=3, solver_tolerance=1e-4),
         sim_reset=WalkResetCfg(humanoid_state=WalkStateResetCfg(spawn_xy_range=4.0)),
         render_spacing=0.0,
     )

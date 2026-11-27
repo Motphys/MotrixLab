@@ -26,7 +26,7 @@ class RandomPlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
         self._upper = upper
         self._standing_probability = standing_probability
         self._hard_case_probability = hard_case_probability
-        self._hard_cases = torch.as_tensor(hard_cases, dtype=torch.float32)
+        self._hard_cases = torch.as_tensor(hard_cases, dtype=torch.float32, device=rng.device)
         self._rng = rng
 
         if hard_case_probability > 0.0 and not hard_cases:
@@ -35,14 +35,18 @@ class RandomPlanarVelocityBinding(CommandBinding[PlanarVelocityCommand]):
             raise ValueError("hard-case commands must lie inside the configured velocity bounds")
 
     def read_command(self, *, batch_size: int = 1) -> PlanarVelocityCommand:
-        u = torch.rand((batch_size, 3), generator=self._rng)
+        u = torch.rand((batch_size, 3), generator=self._rng, device=self._rng.device)
         values = self._lower + (self._upper - self._lower) * u
         if self._hard_case_probability > 0.0:
-            hard = torch.rand((batch_size,), generator=self._rng) < self._hard_case_probability
-            choices = torch.randint(self._hard_cases.shape[0], (batch_size,), generator=self._rng)
+            hard = torch.rand((batch_size,), generator=self._rng, device=self._rng.device) < self._hard_case_probability
+            choices = torch.randint(
+                self._hard_cases.shape[0], (batch_size,), generator=self._rng, device=self._rng.device
+            )
             values[hard] = self._hard_cases[choices[hard]]
         if self._standing_probability > 0.0:
-            standing = torch.rand((batch_size,), generator=self._rng) < self._standing_probability
+            standing = (
+                torch.rand((batch_size,), generator=self._rng, device=self._rng.device) < self._standing_probability
+            )
             values[standing] = 0.0
         return PlanarVelocityCommand(values)
 

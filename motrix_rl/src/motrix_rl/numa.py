@@ -394,14 +394,30 @@ def _hip_pci_bus_ids(
     return tuple(_normalize_pci_bus_id(bus_id) for bus_id in bus_ids)
 
 
+def _physical_cuda_ordinal(device_index: int) -> int | None:
+    """Map a visible CUDA ordinal through integer CUDA_VISIBLE_DEVICES entries."""
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible is None:
+        return device_index
+    entries: list[int] = []
+    for token in visible.split(","):
+        item = token.strip()
+        if not item or item in ("-1", "NoDevFiles"):
+            break
+        if not item.isdigit():
+            return None
+        entries.append(int(item))
+    return entries[device_index] if 0 <= device_index < len(entries) else None
+
+
 def gpu_numa_node(device_index: int, runtime: Literal["cuda", "hip"]) -> int | None:
     """NUMA node hosting a GPU for the explicitly selected runtime, or ``None``.
 
     HIP queries visible runtime ordinals in an isolated subprocess, never
     initializing HIP in the parent. CUDA retains NVML and the NVIDIA topology
-    fallback. Both read sysfs ``numa_node``; -1 means unknown. The caller owns
-    runtime selection, so importing this module never imports Torch. CUDA uses
-    physical NVML indices; CUDA_VISIBLE_DEVICES ordinal remapping is not handled.
+    fallback, mapping visible integer ordinals through ``CUDA_VISIBLE_DEVICES``.
+    Both read sysfs ``numa_node``; -1 means unknown. The caller owns runtime
+    selection, so importing this module never imports Torch.
     """
     if runtime not in ("cuda", "hip"):
         raise ValueError(f"Unknown GPU runtime: {runtime!r}")
@@ -414,6 +430,10 @@ def gpu_numa_node(device_index: int, runtime: Literal["cuda", "hip"]) -> int | N
             os.environ.get("CUDA_VISIBLE_DEVICES"),
         )
     else:
+        mapped = _physical_cuda_ordinal(device_index)
+        if mapped is None:
+            return None
+        device_index = mapped
         session = _nvml()
         bus_ids = session[1] if session is not None else None
     if bus_ids is None or device_index >= len(bus_ids):

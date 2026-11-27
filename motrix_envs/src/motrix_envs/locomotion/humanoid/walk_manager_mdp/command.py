@@ -6,7 +6,6 @@
 import math
 from dataclasses import dataclass
 
-import numpy as np
 import torch
 
 from motrix_env_core.config import configclass
@@ -63,12 +62,10 @@ def _resample_command(
     resample: torch.Tensor,
 ) -> None:
     """Resample velocity commands only on the selected lanes."""
-    ids = resample.nonzero().flatten()
-    sampled = _uniform_range(
-        ctx.rand.uniform((ids.numel(), 3), dtype=commands.dtype, device=commands.device), low, high
-    )
-    stand = ctx.rand.uniform((ids.numel(),), dtype=commands.dtype, device=commands.device) < float(stand_prob)
-    commands[ids] = torch.where(stand[:, None], torch.zeros_like(sampled), sampled)
+    sampled = _uniform_range(ctx.rand.uniform(commands.shape, dtype=commands.dtype, device=commands.device), low, high)
+    stand = ctx.rand.uniform(resample.shape, dtype=commands.dtype, device=commands.device) < float(stand_prob)
+    sampled = torch.where(stand[:, None], 0.0, sampled)
+    commands.copy_(torch.where(resample[:, None], sampled, commands))
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +169,18 @@ class WalkCommand(CommandTerm):
         not just terminated/truncated lanes), guarded so a pass with no
         episode rows leaves both EMA and scale untouched.
         """
-        idx = env_ids
+        self._reset_rows(ctx, env_ids, episode_reset)
+
+    def reset_masked(self, ctx: ManagerContext, world_mask: torch.Tensor, episode_reset: torch.Tensor) -> None:
+        self._reset_rows(ctx, ctx.env_id, episode_reset, world_mask)
+
+    def _reset_rows(
+        self,
+        ctx: ManagerContext,
+        idx: torch.Tensor,
+        episode_reset: torch.Tensor,
+        world_mask: torch.Tensor | None = None,
+    ) -> None:
         episode = episode_reset
         do_update = episode.any()
         avg_ep_len = self.avg_ep_len
@@ -220,12 +228,18 @@ class WalkCommand(CommandTerm):
         stand = ctx.rand.uniform((idx.numel(),), dtype=command.dtype, device=command.device) < float(self.stand_prob)
         command.copy_(torch.where(stand[:, None], torch.zeros_like(sampled), sampled))
         _phase(command, phase, sin_cos, phase_offset, steps[:, 0], phase_step[:, 0])
-        self.command[idx] = command
-        self.phase[idx] = phase
-        self.sin_cos[idx] = sin_cos
-        self.phase_offset[idx] = phase_offset
-        self.phase_step[idx] = phase_step
-        self.steps[idx] = steps
+        for target, value in (
+            (self.command, command),
+            (self.phase, phase),
+            (self.sin_cos, sin_cos),
+            (self.phase_offset, phase_offset),
+            (self.phase_step, phase_step),
+            (self.steps, steps),
+        ):
+            if world_mask is None:
+                target[idx] = value
+            else:
+                target.copy_(torch.where(world_mask[:, None], value, target))
 
 
 @configclass(kw_only=True)
@@ -257,13 +271,7 @@ class WalkCommandCfg(CommandCfg):
             vel_limit_high=torch.tensor(self.vel_limit[1], dtype=torch.float32),
             stand_prob=float(self.stand_prob),
             resample_steps=float(max(int(round(self.resampling_time / self.ctrl_dt)), 1)),
-            phase_step=torch.from_numpy(
-                np.full(
-                    (num_envs, 1),
-                    2.0 * math.pi * self.ctrl_dt / self.gait_period,
-                    dtype=np.float32,
-                )
-            ),
+            phase_step=torch.full((num_envs, 1), 2.0 * math.pi * self.ctrl_dt / self.gait_period, dtype=torch.float32),
             gait_period_base=float(self.gait_period),
             gait_period_width=float(self.gait_period_randomization_width),
             curriculum_enabled=self.curriculum_enabled,

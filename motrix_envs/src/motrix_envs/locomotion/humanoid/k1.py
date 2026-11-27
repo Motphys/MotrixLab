@@ -115,7 +115,9 @@ def make_k1_walk_flat_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
         ),
         rewards=_make_k1_rewards(),
         terminations=_make_k1_terminations(),
-        sim=SimCfg(dt=0.005, solver_iterations=6, solver_tolerance=1e-4),
+        sim=SimCfg(
+            dt=0.005, solver_iterations=6, solver_tolerance=1e-4, max_contacts=1024, max_contact_constraints=4096
+        ),
     )
 
 
@@ -136,6 +138,9 @@ def make_k1_walk_rough_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
                 ),
                 robot=_make_k1_robot(),
             ),
+        ),
+        sim=SimCfg(
+            dt=0.005, solver_iterations=6, solver_tolerance=1e-4, max_contacts=1536, max_contact_constraints=6144
         ),
         sim_reset=WalkResetCfg(humanoid_state=WalkStateResetCfg(spawn_xy_range=4.0)),
         render_spacing=0.0,

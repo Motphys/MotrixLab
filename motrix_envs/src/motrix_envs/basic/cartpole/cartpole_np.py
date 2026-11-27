@@ -39,7 +39,7 @@ class CartPoleEnv(DirectEnv):
         super().__init__(cfg, num_envs, backend=backend, **kwargs)
         self.model = self.sim.compile_model(_SIM_MODEL_QUERIES)
         self.sim_data = self.sim.compile_reads(_SIM_DATA_QUERIES)
-        self._ctrl_writes = self.sim.write_compiler.compile({"ctrl": CtrlTargetsWrite()})
+        self._ctrl_writes = self.sim.compile_action_writes({"ctrl": CtrlTargetsWrite()})
         self._reset_program = self.sim.write_compiler.compile(
             {
                 "cartpole_position": JointPositionWrite(("slider", "hinge")),
@@ -91,8 +91,8 @@ class CartPoleEnv(DirectEnv):
         cfg: CartPoleEnvCfg = self._cfg
         rows = env_ids.numel()
         scale = cfg.reset_noise_scale
-        dof_pos = (torch.rand(rows, 2, dtype=torch.float32) * 2.0 - 1.0) * scale
-        dof_vel = (torch.rand(rows, 2, dtype=torch.float32) * 2.0 - 1.0) * scale
+        dof_pos = (torch.rand(rows, 2, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * scale
+        dof_vel = (torch.rand(rows, 2, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * scale
 
         self._reset_position[env_ids] = dof_pos
         self._reset_velocity[env_ids] = dof_vel

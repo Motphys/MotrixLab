@@ -8,6 +8,9 @@ discovery never imports the native simulator. This backend provides no live
 simulation, so it never claims the default slot.
 """
 
+import torch
+
+from motrix_env_core.sim.backend import SimBackend
 from motrix_env_core.sim.registry import register_sim_backend
 
 
@@ -19,7 +22,9 @@ def _install_hint(exc: ModuleNotFoundError) -> ModuleNotFoundError:
     return exc
 
 
-def _sim_backend():
+def _sim_backend(device: torch.device) -> type[SimBackend]:
+    if device.type != "cpu":
+        raise ValueError(f"MuJoCo does not support simulation on {device}")
     try:
         from motrix_env_mujoco.backend import MuJoCoSimBackend
     except ModuleNotFoundError as exc:

@@ -187,8 +187,12 @@ class HostTransitionRing:
             return False
         index = self.write_completed_count
         slot = index % self.capacity
-        for name, value in batch.items():
-            self.data[name][slot].copy_(value)
+        first = next(iter(batch.values()))
+        if first.is_cuda and all(value.device == first.device for value in batch.values()):
+            self._copy_cuda_batch(slot, batch)
+        else:
+            for name, value in batch.items():
+                self.data[name][slot].copy_(value)
         if store is not None:
             store.write(index, payload)
         # Publish the slot. On x86/TSO the field copies above are guaranteed
@@ -197,6 +201,22 @@ class HostTransitionRing:
         # release here).
         self.cursors._write[0] += 1
         return True
+
+    def _copy_cuda_batch(self, slot: int, batch: Mapping[str, torch.Tensor]) -> None:
+        destinations = tuple((name, storage[slot]) for name, storage in self.data.items())
+        # Pack native bytes so mixed schema dtypes keep their full precision.
+        # A single ordered D2H copy completes before the slot is published.
+        packed = torch.cat(
+            [
+                batch[name].to(dtype=dst.dtype).expand_as(dst).reshape(-1).contiguous().view(torch.uint8)
+                for name, dst in destinations
+            ]
+        ).cpu()
+        offset = 0
+        for _, dst in destinations:
+            bytes_ = dst.view(-1).view(torch.uint8)
+            bytes_.copy_(packed.narrow(0, offset, bytes_.numel()))
+            offset += bytes_.numel()
 
     def has_next(self) -> bool:
         """Whether at least one unread slot is committed (i.e. readable)."""

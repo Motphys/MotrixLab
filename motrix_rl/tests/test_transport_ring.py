@@ -160,3 +160,16 @@ def test_cursors_are_the_channel_protocol_object():
     assert cursors.read_completed_count == 0
     ring.commit_reads(1)
     assert cursors.read_completed_count == 1
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA tensors")
+def test_host_ring_preserves_mixed_schema_values_from_cuda():
+    ring = _ring()
+    batch = _batch(7)
+    batch["frame"].add_(2**52)
+    assert ring.push({key: value.cuda() for key, value in batch.items()})
+    count, views = ring.read_span()
+    assert count == 1
+    for name, expected in batch.items():
+        torch.testing.assert_close(views[name][0], expected)

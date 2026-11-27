@@ -83,11 +83,5 @@ def class_to_dict(obj) -> dict | list | Any:
 
 
 def env_infos(state) -> dict:
-    """Compose Gym-style step infos for the RL-library boundary.
-
-    The env state keeps the per-term reward breakdown (``reward_terms``) and
-    metrics as first-class fields; RL libraries receive the breakdown under
-    ``infos["Reward"]`` and reduced batch-level scalar metrics under
-    ``infos["metrics"]``.
-    """
-    return {"Reward": state.reward_terms, "metrics": state.process_metrics()}
+    """Expose step diagnostics on their original device until the trainer logs them."""
+    return {"Reward": state.reward_terms, "metrics": state.metrics}

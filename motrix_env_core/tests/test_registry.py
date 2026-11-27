@@ -87,7 +87,7 @@ class _FakeRegistryBackend(SimBackend):
         return _EmptyReadProgram()
 
 
-register_sim_backend("fake-registry", lambda: _FakeRegistryBackend)
+register_sim_backend("fake-registry", lambda device: _FakeRegistryBackend)
 
 
 @pytest.fixture(autouse=True)
@@ -260,7 +260,7 @@ def test_render_config_reaches_backend_construction(workflow, headless, record, 
 
     factory = RenderBackend
 
-    monkeypatch.setattr(sim_registry, "create_sim_backend", lambda name: factory)
+    monkeypatch.setattr(sim_registry, "create_sim_backend", lambda name, device: factory)
     env_type = DirectRenderEnv if workflow == "direct" else ManagerEnv
     with pytest.raises(BackendConstructionReached):
         env_type(cfg, backend="render-test", headless=headless, record=record)
@@ -283,7 +283,7 @@ def test_environment_creation_rejects_compile_only_backends(workflow, headless, 
         def __init__(self, scene: SceneCfg, sim, num_envs: int) -> None:
             pytest.fail("Compile-only backend must not be constructed by an environment")
 
-    monkeypatch.setitem(sim_registry._sim_backends, "compile-only", lambda: CompileOnlyBackend)
+    monkeypatch.setitem(sim_registry._sim_backends, "compile-only", lambda _device: CompileOnlyBackend)
     env_name = "core-test-compile-only-env"
     cfg_type = DirectEnvCfg if workflow == "direct" else ManagerBasedEnvCfg
     env_base = DirectEnv if workflow == "direct" else ManagerEnv

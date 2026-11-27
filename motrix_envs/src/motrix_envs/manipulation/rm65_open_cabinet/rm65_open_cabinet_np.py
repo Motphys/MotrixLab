@@ -97,8 +97,11 @@ class RM65OpenCabinetEnv(DirectEnv):
                 gripper_mirror,
             ],
             dtype=torch.float32,
+            device=self.device,
         )
-        self._gripper_mimic_multipliers = torch.tensor([-1.0, 1.0, -1.0, -1.0, -1.0], dtype=torch.float32)
+        self._gripper_mimic_multipliers = torch.tensor(
+            [-1.0, 1.0, -1.0, -1.0, -1.0], dtype=torch.float32, device=self.device
+        )
 
         self._init_action_spaces()
         self._parse_arm_control_config()
@@ -108,7 +111,7 @@ class RM65OpenCabinetEnv(DirectEnv):
         self._num_dof_pos = 12  # 6 arm + 6 gripper joints
         self._num_dof_vel = 12
         self._init_dof_pos = self.robot_default_joint_pos
-        self._init_dof_vel = torch.zeros(self._num_dof_vel, dtype=torch.float32)
+        self._init_dof_vel = torch.zeros(self._num_dof_vel, dtype=torch.float32, device=self.device)
         self._init_model_handles()
         self._init_obs_buffers()
 
@@ -126,56 +129,64 @@ class RM65OpenCabinetEnv(DirectEnv):
         # None until the first observation: the first finite-difference
         # velocity is zero, matching a missing previous sample.
         self._obs_prev_dof_pos_abs_raw: torch.Tensor | None = None
-        self._obs_handle_bias_pos = torch.zeros(num_envs, 3, dtype=torch.float32)
-        self._obs_handle_bias_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32).repeat(num_envs, 1)
+        self._obs_handle_bias_pos = torch.zeros(num_envs, 3, dtype=torch.float32, device=self.device)
+        self._obs_handle_bias_quat = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device=self.device).repeat(
+            num_envs, 1
+        )
         handle_dim = 7  # pos(3) + quat(4)
-        self._obs_handle_pose_last = torch.zeros(num_envs, handle_dim, dtype=torch.float32)
+        self._obs_handle_pose_last = torch.zeros(num_envs, handle_dim, dtype=torch.float32, device=self.device)
         latency_steps = max(int(self._obs_noise_cfg.latency_steps), 0)
         self._obs_handle_pose_buffer = (
-            torch.zeros(num_envs, latency_steps + 1, handle_dim, dtype=torch.float32) if latency_steps > 0 else None
+            torch.zeros(num_envs, latency_steps + 1, handle_dim, dtype=torch.float32, device=self.device)
+            if latency_steps > 0
+            else None
         )
 
         # Action pipeline state
         action_dim = self._action_dim
-        self._current_actions = torch.zeros(num_envs, action_dim, dtype=torch.float32)
-        self._last_actions = torch.zeros(num_envs, action_dim, dtype=torch.float32)
+        self._current_actions = torch.zeros(num_envs, action_dim, dtype=torch.float32, device=self.device)
+        self._last_actions = torch.zeros(num_envs, action_dim, dtype=torch.float32, device=self.device)
         buffer_len = max(int(self._arm_action_delay_buffer_len), 1)
-        self._action_delay_buffer = torch.zeros(num_envs, buffer_len, action_dim, dtype=torch.float32)
+        self._action_delay_buffer = torch.zeros(
+            num_envs, buffer_len, action_dim, dtype=torch.float32, device=self.device
+        )
         if self._action_history_len > 0:
-            self._action_history = torch.zeros(num_envs, self._action_history_len, action_dim, dtype=torch.float32)
+            self._action_history = torch.zeros(
+                num_envs, self._action_history_len, action_dim, dtype=torch.float32, device=self.device
+            )
 
         # Per-episode arm randomization
-        self._arm_action_delay_steps_per_env = torch.zeros(num_envs, dtype=torch.int32)
-        self._arm_actuator_lag_alpha_per_env = torch.zeros(num_envs, dtype=torch.float32)
-        self._arm_max_step_per_env = torch.zeros(num_envs, dtype=torch.float32)
-        self._arm_max_acc_step_per_env = torch.zeros(num_envs, dtype=torch.float32)
+        self._arm_action_delay_steps_per_env = torch.zeros(num_envs, dtype=torch.int32, device=self.device)
+        self._arm_actuator_lag_alpha_per_env = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._arm_max_step_per_env = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._arm_max_acc_step_per_env = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
 
         # Arm action filtering state
         arm_dim = self._arm_action_dim
-        self._arm_target_smooth = torch.zeros(num_envs, arm_dim, dtype=torch.float32)
-        self._arm_prev_delta = torch.zeros(num_envs, arm_dim, dtype=torch.float32)
-        self._arm_actuator_target = torch.zeros(num_envs, arm_dim, dtype=torch.float32)
+        self._arm_target_smooth = torch.zeros(num_envs, arm_dim, dtype=torch.float32, device=self.device)
+        self._arm_prev_delta = torch.zeros(num_envs, arm_dim, dtype=torch.float32, device=self.device)
+        self._arm_actuator_target = torch.zeros(num_envs, arm_dim, dtype=torch.float32, device=self.device)
 
         # Gripper logic state
-        self._gripper_target_smooth = torch.zeros(num_envs, dtype=torch.float32)
-        self._gripper_binary_closed = torch.zeros(num_envs, dtype=torch.bool)
-        self._gripper_closed_cmd = torch.zeros(num_envs, dtype=torch.bool)
-        self._prev_gripper_closed_cmd = torch.zeros(num_envs, dtype=torch.bool)
-        self._gripper_steps_since_switch = torch.zeros(num_envs, dtype=torch.int32)
-        self._gripper_close_ratio = torch.zeros(num_envs, dtype=torch.float32)
-        self._current_gripper_action = torch.zeros(num_envs, dtype=torch.float32)
+        self._gripper_target_smooth = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._gripper_binary_closed = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._gripper_closed_cmd = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._prev_gripper_closed_cmd = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._gripper_steps_since_switch = torch.zeros(num_envs, dtype=torch.int32, device=self.device)
+        self._gripper_close_ratio = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._current_gripper_action = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
 
         # Grasp / opening task state
-        self._grasp_hold_steps = torch.zeros(num_envs, dtype=torch.int32)
-        self._grasped = torch.zeros(num_envs, dtype=torch.bool)
-        self._phase2_mask = torch.zeros(num_envs, dtype=torch.bool)
-        self._prev_open_dist = torch.zeros(num_envs, dtype=torch.float32)
-        self._open_bonus_progress = torch.zeros(num_envs, dtype=torch.int32)
+        self._grasp_hold_steps = torch.zeros(num_envs, dtype=torch.int32, device=self.device)
+        self._grasped = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._phase2_mask = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._prev_open_dist = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._open_bonus_progress = torch.zeros(num_envs, dtype=torch.int32, device=self.device)
 
     def _init_action_spaces(self) -> None:
         self._action_dim = len(self._cfg.action_scale) + 1
         self._arm_action_dim = self._action_dim - 1
-        self.action_scale = torch.tensor(self._cfg.action_scale, dtype=torch.float32)
+        self.action_scale = torch.tensor(self._cfg.action_scale, dtype=torch.float32, device=self.device)
         self._action_history_len = max(int(getattr(self._cfg, "action_history_len", 0)), 0)
         base_obs_dim = self._action_dim * 2 + 7  # action_dim*2 + 7
         self._obs_dim = base_obs_dim + self._action_dim * self._action_history_len
@@ -257,10 +268,10 @@ class RM65OpenCabinetEnv(DirectEnv):
 
     def _init_model_handles(self) -> None:
         self.robot_joint_pos_min_limit = torch.tensor(
-            [spec.ctrl_range[0] for spec in self.model.actuators], dtype=torch.float32
+            [spec.ctrl_range[0] for spec in self.model.actuators], dtype=torch.float32, device=self.device
         )
         self.robot_joint_pos_max_limit = torch.tensor(
-            [spec.ctrl_range[1] for spec in self.model.actuators], dtype=torch.float32
+            [spec.ctrl_range[1] for spec in self.model.actuators], dtype=torch.float32, device=self.device
         )
         self._obs_joint_pos_min_limit = self.robot_joint_pos_min_limit[: self._action_dim].clone()
         self._obs_joint_pos_max_limit = self.robot_joint_pos_max_limit[: self._action_dim].clone()
@@ -273,7 +284,7 @@ class RM65OpenCabinetEnv(DirectEnv):
         num_envs = dof_pos.shape[0]
         arm_pos = dof_pos[:, : self._arm_action_dim]
         if self._arm_action_mode == "delta":
-            arm_action = torch.zeros(num_envs, self._arm_action_dim, dtype=torch.float32)
+            arm_action = torch.zeros(num_envs, self._arm_action_dim, dtype=torch.float32, device=self.device)
         elif self._arm_action_mode == "joint_target":
             if self._arm_action_in_degrees:
                 arm_action = torch.rad2deg(arm_pos).to(torch.float32)
@@ -326,27 +337,36 @@ class RM65OpenCabinetEnv(DirectEnv):
                 self._arm_action_delay_steps_max + 1,
                 (num_envs,),
                 dtype=torch.int32,
+                device=self.device,
             )
             lag_alpha = (
-                torch.rand(num_envs, dtype=torch.float32)
+                torch.rand(num_envs, dtype=torch.float32, device=self.device)
                 * (self._arm_actuator_lag_alpha_max - self._arm_actuator_lag_alpha_min)
                 + self._arm_actuator_lag_alpha_min
             )
         else:
-            delay_steps = torch.full((num_envs,), int(self._arm_action_delay_steps), dtype=torch.int32)
-            lag_alpha = torch.full((num_envs,), float(self._arm_actuator_lag_alpha), dtype=torch.float32)
+            delay_steps = torch.full(
+                (num_envs,), int(self._arm_action_delay_steps), dtype=torch.int32, device=self.device
+            )
+            lag_alpha = torch.full(
+                (num_envs,), float(self._arm_actuator_lag_alpha), dtype=torch.float32, device=self.device
+            )
         if self._arm_speed_acc_randomization_enabled:
             max_step = (
-                torch.rand(num_envs, dtype=torch.float32) * (self._arm_max_step_max - self._arm_max_step_min)
+                torch.rand(num_envs, dtype=torch.float32, device=self.device)
+                * (self._arm_max_step_max - self._arm_max_step_min)
                 + self._arm_max_step_min
             )
             max_acc_step = (
-                torch.rand(num_envs, dtype=torch.float32) * (self._arm_max_acc_step_max - self._arm_max_acc_step_min)
+                torch.rand(num_envs, dtype=torch.float32, device=self.device)
+                * (self._arm_max_acc_step_max - self._arm_max_acc_step_min)
                 + self._arm_max_acc_step_min
             )
         else:
-            max_step = torch.full((num_envs,), float(self._arm_max_step), dtype=torch.float32)
-            max_acc_step = torch.full((num_envs,), float(self._arm_max_acc_step), dtype=torch.float32)
+            max_step = torch.full((num_envs,), float(self._arm_max_step), dtype=torch.float32, device=self.device)
+            max_acc_step = torch.full(
+                (num_envs,), float(self._arm_max_acc_step), dtype=torch.float32, device=self.device
+            )
         return delay_steps, lag_alpha, max_step, max_acc_step
 
     def _apply_action_delay(self, actions: torch.Tensor) -> torch.Tensor:
@@ -357,7 +377,7 @@ class RM65OpenCabinetEnv(DirectEnv):
         buffer = torch.roll(self._action_delay_buffer, 1, dims=1)
         buffer[:, 0, :] = actions
         self._action_delay_buffer = buffer
-        return buffer[torch.arange(num_envs), delay_steps, :]
+        return buffer[torch.arange(num_envs, device=self.device), delay_steps, :]
 
     def _update_action_history(self, raw_actions: torch.Tensor) -> None:
         if self._action_history_len <= 0:
@@ -487,7 +507,13 @@ class RM65OpenCabinetEnv(DirectEnv):
 
         return None
 
-    def compute_observation(self, state: ArrayEnvState):
+    def compute_observation(self, state: ArrayEnvState) -> None:
+        self._compute_observation(state, preview=False)
+
+    def _preview_observation(self, state: ArrayEnvState) -> None:
+        self._compute_observation(state, preview=True)
+
+    def _compute_observation(self, state: ArrayEnvState, *, preview: bool) -> None:
         """Build the full observation batch from cached simulator data.
 
         Reads only the cache left by the last read-program execution in the
@@ -521,7 +547,8 @@ class RM65OpenCabinetEnv(DirectEnv):
         reset_mask = episode_steps == 0
         if bool(reset_mask.any()):
             dof_vel_rel[reset_mask] = 0.0
-        self._obs_prev_dof_pos_abs_raw = dof_pos_abs_raw.clone()
+        if not preview:
+            self._obs_prev_dof_pos_abs_raw = dof_pos_abs_raw.clone()
 
         if obs_noise_cfg.enabled and obs_noise_cfg.joint_noise_enabled and obs_noise_cfg.joint_vel_std > 0.0:
             dof_vel_rel = dof_vel_rel + torch.randn_like(dof_vel_rel) * obs_noise_cfg.joint_vel_std
@@ -531,7 +558,7 @@ class RM65OpenCabinetEnv(DirectEnv):
         robot_grasp_pose = self._grasp_pose(slice(None))
         drawer_grasp_pose = self._handle_pose(slice(None))
         if obs_noise_cfg.enabled and obs_noise_cfg.handle_pose_noise_enabled:
-            drawer_grasp_pose = self._get_noisy_handle_pose(drawer_grasp_pose)
+            drawer_grasp_pose = self._get_noisy_handle_pose(drawer_grasp_pose, preview=preview)
         pos_delta = drawer_grasp_pose[:, :3] - robot_grasp_pose[:, :3]
         quat_target = drawer_grasp_pose[:, 3:]
         quat_current = robot_grasp_pose[:, 3:]
@@ -600,7 +627,9 @@ class RM65OpenCabinetEnv(DirectEnv):
         num_reset = env_ids.numel()
 
         noise_scale = self._cfg.reset.joint_pos_noise_scale
-        noise_pos = (torch.rand(num_reset, self._action_dim, dtype=torch.float32) * 2.0 - 1.0) * noise_scale
+        noise_pos = (
+            torch.rand(num_reset, self._action_dim, dtype=torch.float32, device=self.device) * 2.0 - 1.0
+        ) * noise_scale
 
         dof_pos = self._init_dof_pos.unsqueeze(0).repeat(num_reset, 1)
         dof_pos[:, : self._action_dim] += noise_pos  # Add noise in range [-0.125, 0.125]
@@ -620,9 +649,11 @@ class RM65OpenCabinetEnv(DirectEnv):
         init_binary_closed = init_close_ratio > self._gripper_close_on_threshold
         arm_delay_steps, arm_lag_alpha, arm_max_step, arm_max_acc_step = self._sample_arm_delay_lag(num_reset)
         obs_noise_cfg = self._obs_noise_cfg
-        bias_pos = torch.zeros(num_reset, 3, dtype=torch.float32)
+        bias_pos = torch.zeros(num_reset, 3, dtype=torch.float32, device=self.device)
         if obs_noise_cfg.target_pos_bias_std > 0.0:
-            bias_pos = torch.randn(num_reset, 3, dtype=torch.float32) * obs_noise_cfg.target_pos_bias_std
+            bias_pos = (
+                torch.randn(num_reset, 3, dtype=torch.float32, device=self.device) * obs_noise_cfg.target_pos_bias_std
+            )
         bias_quat = self._sample_quat_bias(num_reset, obs_noise_cfg.target_rot_bias_std)
         handle_pose = self._handle_pose(env_ids)
         # Seed the env-owned observation caches for the rows being reset; the
@@ -660,7 +691,7 @@ class RM65OpenCabinetEnv(DirectEnv):
         self._open_bonus_progress[env_ids] = 0
 
     def _sample_quat_bias(self, num_envs: int, rot_std: float):
-        identity = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32)
+        identity = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device=self.device)
         base = identity.unsqueeze(0).repeat(num_envs, 1)
         if rot_std <= 0.0:
             return base
@@ -668,12 +699,12 @@ class RM65OpenCabinetEnv(DirectEnv):
 
     def _apply_quat_noise(self, quat: torch.Tensor, rot_std: float):
         num_envs = quat.shape[0]
-        axes = torch.randn(num_envs, 3, dtype=torch.float32)
+        axes = torch.randn(num_envs, 3, dtype=torch.float32, device=self.device)
         axis_norm = torch.linalg.norm(axes, dim=-1, keepdim=True)
-        safe_axis = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
+        safe_axis = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32, device=self.device)
         axes = torch.where(axis_norm < 1e-6, safe_axis, axes)
         axes = axes / torch.clamp(axis_norm, min=1e-6)
-        angles = torch.randn(num_envs, dtype=torch.float32) * rot_std
+        angles = torch.randn(num_envs, dtype=torch.float32, device=self.device) * rot_std
         half_angles = angles * 0.5
         sin_half = torch.sin(half_angles)
         cos_half = torch.cos(half_angles)
@@ -682,7 +713,7 @@ class RM65OpenCabinetEnv(DirectEnv):
         quat_norm = torch.linalg.norm(noisy_quat, dim=-1, keepdim=True)
         return noisy_quat / torch.clamp(quat_norm, min=1e-6)
 
-    def _get_noisy_handle_pose(self, handle_pose: torch.Tensor):
+    def _get_noisy_handle_pose(self, handle_pose: torch.Tensor, *, preview: bool = False):
         cfg = self._obs_noise_cfg
         if not cfg.enabled or not cfg.handle_pose_noise_enabled:
             return handle_pose
@@ -694,14 +725,18 @@ class RM65OpenCabinetEnv(DirectEnv):
         if cfg.target_pos_bias_std > 0.0:
             bias_pos = self._obs_handle_bias_pos
             if not isinstance(bias_pos, torch.Tensor) or bias_pos.shape != (num_envs, 3):
-                bias_pos = torch.randn(num_envs, 3, dtype=torch.float32) * cfg.target_pos_bias_std
+                bias_pos = torch.randn(num_envs, 3, dtype=torch.float32, device=self.device) * cfg.target_pos_bias_std
             if bias_resample_prob > 0.0:
-                resample_mask = torch.rand(num_envs) < bias_resample_prob
+                resample_mask = torch.rand(num_envs, device=self.device) < bias_resample_prob
                 if bool(resample_mask.any()):
+                    if preview:
+                        bias_pos = bias_pos.clone()
                     bias_pos[resample_mask] = (
-                        torch.randn(int(resample_mask.sum()), 3, dtype=torch.float32) * cfg.target_pos_bias_std
+                        torch.randn(int(resample_mask.sum()), 3, dtype=torch.float32, device=self.device)
+                        * cfg.target_pos_bias_std
                     )
-            self._obs_handle_bias_pos = bias_pos
+            if not preview:
+                self._obs_handle_bias_pos = bias_pos
             noisy_pose[:, :3] = noisy_pose[:, :3] + bias_pos
 
         if cfg.target_rot_bias_std > 0.0:
@@ -709,20 +744,25 @@ class RM65OpenCabinetEnv(DirectEnv):
             if not isinstance(bias_quat, torch.Tensor) or bias_quat.shape != (num_envs, 4):
                 bias_quat = self._sample_quat_bias(num_envs, cfg.target_rot_bias_std)
             if bias_resample_prob > 0.0:
-                resample_mask = torch.rand(num_envs) < bias_resample_prob
+                resample_mask = torch.rand(num_envs, device=self.device) < bias_resample_prob
                 if bool(resample_mask.any()):
+                    if preview:
+                        bias_quat = bias_quat.clone()
                     bias_quat[resample_mask] = self._sample_quat_bias(int(resample_mask.sum()), cfg.target_rot_bias_std)
-            self._obs_handle_bias_quat = bias_quat
+            if not preview:
+                self._obs_handle_bias_quat = bias_quat
             noisy_pose[:, 3:] = quaternion.mul(bias_quat, noisy_pose[:, 3:])
 
         if cfg.target_pos_std > 0.0:
-            noisy_pose[:, :3] = noisy_pose[:, :3] + (torch.randn(num_envs, 3, dtype=torch.float32) * cfg.target_pos_std)
+            noisy_pose[:, :3] = noisy_pose[:, :3] + (
+                torch.randn(num_envs, 3, dtype=torch.float32, device=self.device) * cfg.target_pos_std
+            )
         if cfg.target_rot_std > 0.0:
             noisy_pose[:, 3:] = self._apply_quat_noise(noisy_pose[:, 3:], cfg.target_rot_std)
 
         dropout_prob = float(min(max(cfg.dropout_prob, 0.0), 1.0))
         if dropout_prob > 0.0:
-            dropout_mask = torch.rand(num_envs) < dropout_prob
+            dropout_mask = torch.rand(num_envs, device=self.device) < dropout_prob
             if bool(dropout_mask.any()):
                 last_pose = self._obs_handle_pose_last
                 if cfg.hold_last_on_dropout and isinstance(last_pose, torch.Tensor):
@@ -730,7 +770,8 @@ class RM65OpenCabinetEnv(DirectEnv):
                 else:
                     noisy_pose[dropout_mask] = handle_pose[dropout_mask]
 
-        self._obs_handle_pose_last = noisy_pose.clone()
+        if not preview:
+            self._obs_handle_pose_last = noisy_pose.clone()
 
         latency_steps = max(int(cfg.latency_steps), 0)
         if latency_steps > 0:
@@ -741,7 +782,8 @@ class RM65OpenCabinetEnv(DirectEnv):
             else:
                 buffer = torch.roll(buffer, 1, dims=1)
                 buffer[:, 0, :] = noisy_pose
-            self._obs_handle_pose_buffer = buffer
+            if not preview:
+                self._obs_handle_pose_buffer = buffer
             return buffer[:, -1, :]
 
         return noisy_pose

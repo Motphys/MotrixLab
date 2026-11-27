@@ -21,6 +21,7 @@ usage() {
     echo "Options:"
     echo "  --all                  Install the full development environment (all packages, groups and extras;"
     echo "                         ROCm hosts skip CUDA-only extras such as skrl-jax)"
+    echo "  --sim-gpu              Install the NVIDIA MotrixSim GPU physics runtime"
     echo "  --docs                 Include the docs toolchain (sphinx) for building the documentation"
     echo "  --gpu cuda|rocm|hygon  GPU profile (default: auto-detected from the kernel driver)"
     echo "                         Hygon skips accelerator packages; install DTK-compatible Torch yourself."
@@ -37,6 +38,7 @@ PYTHON=""
 SKRL_JAX=""
 RSLRL=""
 DOCS=""
+SIM_GPU=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -58,6 +60,9 @@ while [ $# -gt 0 ]; do
                 *) echo "error: invalid --python value: $2 (expected 3.10, 3.11, 3.12 or 3.13)" >&2; exit 1 ;;
             esac
             shift
+            ;;
+        --sim-gpu)
+            SIM_GPU=1
             ;;
         --skrl-torch)
             # SKRL Torch is already included in the required root dependencies.
@@ -109,6 +114,11 @@ if [ -z "$GPU" ]; then
     else
         GPU=cuda
     fi
+fi
+
+if [ -n "$SIM_GPU" ] && [ "$GPU" != cuda ]; then
+    echo "error: --sim-gpu requires the NVIDIA CUDA profile" >&2
+    exit 1
 fi
 
 if [ "$GPU" = hygon ] && [ -n "$SKRL_JAX" ]; then
@@ -247,6 +257,7 @@ elif [ -n "$ALL" ]; then
     fi
 else
     EXTRAS=""
+    [ -n "$SIM_GPU" ] && EXTRAS="$EXTRAS --extra sim-gpu"
     [ -n "$SKRL_JAX" ] && EXTRAS="$EXTRAS --extra skrl-jax"
     [ -n "$RSLRL" ] && EXTRAS="$EXTRAS --extra rslrl"
     [ -n "$DOCS" ] && EXTRAS="$EXTRAS --extra docs"

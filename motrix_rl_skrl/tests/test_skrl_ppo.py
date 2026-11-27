@@ -102,7 +102,7 @@ def test_trainer_sets_seed_before_creating_environment(entrypoint, args, num_env
     calls = []
     trainer = object.__new__(SkrlPpoTrainerBase)
     trainer._rlcfg = object()
-    trainer._context = SimpleNamespace(seed=17, num_envs=2, play_num_envs=3)
+    trainer._context = SimpleNamespace(run=None, sim_device=None, seed=17, num_envs=2, play_num_envs=3)
     trainer._set_seed = lambda seed: calls.append(("seed", seed))
 
     def make_env(*, num_envs, mode):

@@ -27,6 +27,7 @@ class RunMetadata:
     created_at: str
     checkpoint_format: str
     sim: str | None = None
+    sim_device: str | None = None
     motrixlab_version: str | None = None
     system: dict | None = None
     performance: dict | None = None
@@ -58,6 +59,7 @@ def make_metadata(
     seed: int | None,
     checkpoint_format: str,
     sim: str | None = None,
+    sim_device: str | None = None,
 ) -> RunMetadata:
     return RunMetadata(
         env_name=env_name,
@@ -68,6 +70,7 @@ def make_metadata(
         created_at=datetime.now(timezone.utc).isoformat(),
         checkpoint_format=checkpoint_format,
         sim=sim,
+        sim_device=sim_device,
     )
 
 
@@ -80,6 +83,7 @@ def create_run_context(
     checkpoint_format: str | None,
     runs_root: Path | str = LOG_DIR_PREFIX,
     sim: str | None = None,
+    sim_device: str | None = None,
 ) -> RunContext:
     """Create a framework-owned run directory and write its metadata.
 
@@ -102,6 +106,7 @@ def create_run_context(
         seed=seed,
         checkpoint_format=_normalize_checkpoint_format(checkpoint_format) or "",
         sim=sim,
+        sim_device=sim_device,
     )
     write_metadata(run_dir, metadata)
     context = RunContext(run_dir=run_dir, metadata=metadata)

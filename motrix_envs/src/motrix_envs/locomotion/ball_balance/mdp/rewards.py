@@ -5,7 +5,6 @@
 
 from dataclasses import dataclass
 
-import numpy as np
 import torch
 
 from motrix_env_core.config import configclass
@@ -102,6 +101,6 @@ class DofDefaultRewardCfg(RewardTermCfg):
         missing = sorted(set(joint_names).difference(default))
         if missing:
             raise KeyError(f"key pose 'default' is missing joints: {missing}")
-        reference = np.asarray([default[name] for name in joint_names], dtype=np.float32)
-        params = DofDefaultParams(torch.from_numpy(reference), float(self.sigma))
+        reference = torch.tensor([default[name] for name in joint_names], dtype=torch.float32)
+        params = DofDefaultParams(reference, float(self.sigma))
         return RewardTerm(dof_default_reward, params)

@@ -37,7 +37,7 @@ def symmetric_residual_action_space(
     scales = torch.as_tensor(action_scales, dtype=torch.float32)
     boundaries = torch.maximum(torch.abs(lower - default_values), torch.abs(upper - default_values)) / scales
     boundaries = torch.where(scales == 0.0, torch.zeros_like(boundaries), boundaries)
-    return gym.spaces.Box(-boundaries.numpy(), boundaries.numpy(), dtype=np.float32)
+    return gym.spaces.Box(-boundaries.cpu().numpy(), boundaries.cpu().numpy(), dtype=np.float32)
 
 
 def asymmetric_residual_action_space(
@@ -66,8 +66,8 @@ def asymmetric_residual_action_space(
     high = (upper - default_values) / scales
     zero = torch.zeros_like(low)
     return gym.spaces.Box(
-        torch.where(scales == 0.0, zero, low).numpy(),
-        torch.where(scales == 0.0, zero, high).numpy(),
+        torch.where(scales == 0.0, zero, low).cpu().numpy(),
+        torch.where(scales == 0.0, zero, high).cpu().numpy(),
         dtype=np.float32,
     )
 

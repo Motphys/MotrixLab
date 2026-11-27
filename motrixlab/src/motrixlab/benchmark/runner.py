@@ -20,11 +20,18 @@ class ProfileResult:
     root: PerfNode
 
 
-def _profile_calls(perf: Perf, function: Callable[[], object], count: int, root_name: str) -> ProfileResult:
+def _profile_calls(
+    perf: Perf,
+    function: Callable[[], object],
+    count: int,
+    root_name: str,
+    *,
+    synchronize: Callable[[], object] | None = None,
+) -> ProfileResult:
     was_enabled = perf.enabled
     perf.reset()
     if not was_enabled:
-        perf.enable()
+        perf.enable(synchronize=synchronize)
     started = time.perf_counter()
     try:
         for _ in range(count):

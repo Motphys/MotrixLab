@@ -85,11 +85,8 @@ def _quat_from_y_angle(angle: torch.Tensor) -> torch.Tensor:
 
 
 def _quat_to_z_axis(quat: torch.Tensor) -> torch.Tensor:
-    axis = torch.tensor([0.0, 0.0, 1.0], dtype=quat.dtype)
-    w = quat[..., 3:4]
-    im = quat[..., :3]
-    t = 2.0 * torch.cross(im, axis.expand_as(im), dim=-1)
-    return axis + w * t + torch.cross(im, t, dim=-1)
+    x, y, z, w = quat.unbind(dim=-1)
+    return torch.stack((2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x.square() + y.square())), dim=-1)
 
 
 def _tolerance(
@@ -154,17 +151,17 @@ class ManipulatorBase(DirectEnv):
 
         # Episode-scoped action history: full-batch buffers, reset writes the
         # done rows in place.
-        self._actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32)
-        self._last_actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32)
-        self._prev_move_dist = torch.zeros(self._num_envs, dtype=torch.float32)
+        self._actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32, device=self.device)
+        self._last_actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32, device=self.device)
+        self._prev_move_dist = torch.zeros(self._num_envs, dtype=torch.float32, device=self.device)
 
     def _init_action_space(self):
         ctrl_ranges = np.asarray([spec.ctrl_range for spec in self.model.actuators], dtype=np.float32)
         self._action_space = gym.spaces.Box(
             ctrl_ranges[:, 0], ctrl_ranges[:, 1], (self.num_actuators,), dtype=np.float32
         )
-        self._act_low = torch.from_numpy(ctrl_ranges[:, 0])
-        self._act_high = torch.from_numpy(ctrl_ranges[:, 1])
+        self._act_low = torch.from_numpy(ctrl_ranges[:, 0]).to(self.device)
+        self._act_high = torch.from_numpy(ctrl_ranges[:, 1]).to(self.device)
 
     def _init_observation_spec(self) -> None:
         # arm_pos(sin,cos)=16 + arm_vel=8 + touch=5 + hand=3 + object=3 + target=3 + rel=3
@@ -229,17 +226,17 @@ class ManipulatorBase(DirectEnv):
     def _sample_arm_joint_angles(self, num: int) -> torch.Tensor:
         low = self._joint_limit_low[: len(_ARM_JOINTS)]
         high = self._joint_limit_high[: len(_ARM_JOINTS)]
-        return torch.rand(num, len(_ARM_JOINTS), dtype=torch.float32) * (high - low) + low
+        return torch.rand(num, len(_ARM_JOINTS), dtype=torch.float32, device=self.device) * (high - low) + low
 
     def _sample_target_pose(self, num: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         cfg = self._cfg
-        target_x = torch.empty(num, dtype=torch.float32).uniform_(
+        target_x = torch.empty(num, dtype=torch.float32, device=self.device).uniform_(
             float(cfg.target_x_range[0]), float(cfg.target_x_range[1])
         )
-        target_z = torch.empty(num, dtype=torch.float32).uniform_(
+        target_z = torch.empty(num, dtype=torch.float32, device=self.device).uniform_(
             float(cfg.target_z_range[0]), float(cfg.target_z_range[1])
         )
-        target_angle = torch.empty(num, dtype=torch.float32).uniform_(
+        target_angle = torch.empty(num, dtype=torch.float32, device=self.device).uniform_(
             float(cfg.target_angle_range[0]), float(cfg.target_angle_range[1])
         )
         return target_x, target_z, target_angle
@@ -248,7 +245,7 @@ class ManipulatorBase(DirectEnv):
         self, env_ids: torch.Tensor, target_x: torch.Tensor, target_z: torch.Tensor, target_angle: torch.Tensor
     ):
         num = env_ids.numel()
-        pose = torch.zeros((num, 7), dtype=torch.float32)
+        pose = torch.zeros((num, 7), dtype=torch.float32, device=self.device)
         pose[:, 0] = target_x
         pose[:, 1] = float(self._cfg.target_y)
         pose[:, 2] = target_z
@@ -270,18 +267,18 @@ class ManipulatorBase(DirectEnv):
         num = dof_pos.shape[0]
 
         # Default: uniform in workspace.
-        object_x = torch.empty(num, dtype=torch.float32).uniform_(
+        object_x = torch.empty(num, dtype=torch.float32, device=self.device).uniform_(
             float(cfg.object_x_range[0]), float(cfg.object_x_range[1])
         )
-        object_z = torch.empty(num, dtype=torch.float32).uniform_(
+        object_z = torch.empty(num, dtype=torch.float32, device=self.device).uniform_(
             float(cfg.object_z_range[0]), float(cfg.object_z_range[1])
         )
-        object_angle = torch.empty(num, dtype=torch.float32).uniform_(
+        object_angle = torch.empty(num, dtype=torch.float32, device=self.device).uniform_(
             float(cfg.object_angle_range[0]), float(cfg.object_angle_range[1])
         )
 
         # dm_control-style object init distribution.
-        r = torch.rand(num, dtype=torch.float32)
+        r = torch.rand(num, dtype=torch.float32, device=self.device)
         in_hand = r < float(cfg.p_in_hand)
         in_target = (r >= float(cfg.p_in_hand)) & (r < float(cfg.p_in_hand + cfg.p_in_target))
         uniform = ~(in_hand | in_target)
@@ -302,10 +299,10 @@ class ManipulatorBase(DirectEnv):
                 if not pending.any():
                     break
                 n = int(pending.sum())
-                object_x[pending] = torch.empty(n, dtype=torch.float32).uniform_(
+                object_x[pending] = torch.empty(n, dtype=torch.float32, device=self.device).uniform_(
                     float(cfg.object_x_range[0]), float(cfg.object_x_range[1])
                 )
-                object_z[pending] = torch.empty(n, dtype=torch.float32).uniform_(
+                object_z[pending] = torch.empty(n, dtype=torch.float32, device=self.device).uniform_(
                     float(cfg.object_z_range[0]), float(cfg.object_z_range[1])
                 )
 
@@ -321,17 +318,17 @@ class ManipulatorBase(DirectEnv):
 
         dof_vel[:] = 0.0
         if uniform.any():
-            dof_vel[uniform, 0] = torch.empty(int(uniform.sum()), dtype=torch.float32).uniform_(
+            dof_vel[uniform, 0] = torch.empty(int(uniform.sum()), dtype=torch.float32, device=self.device).uniform_(
                 float(cfg.object_x_vel_range[0]), float(cfg.object_x_vel_range[1])
             )
 
     def initialize_episode(self, env_ids: torch.Tensor) -> None:
         """Episode initialization: direct state construction, no physics stepping."""
         num = env_ids.numel()
-        arm_pos = torch.zeros((num, len(_ARM_JOINTS)), dtype=torch.float32)
+        arm_pos = torch.zeros((num, len(_ARM_JOINTS)), dtype=torch.float32, device=self.device)
         arm_vel = torch.zeros_like(arm_pos)
-        object_pos = torch.zeros((num, 3), dtype=torch.float32)
-        object_vel = torch.zeros((num, 3), dtype=torch.float32)
+        object_pos = torch.zeros((num, 3), dtype=torch.float32, device=self.device)
+        object_vel = torch.zeros((num, 3), dtype=torch.float32, device=self.device)
 
         # Optionally randomize arm joint angles and symmetrize the hand.
         if getattr(self._cfg, "randomize_arm", True):

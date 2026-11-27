@@ -14,9 +14,11 @@ native simulator.
 from collections.abc import Callable
 from importlib.metadata import entry_points
 
+import torch
+
 from motrix_env_core.sim.backend import SimBackend
 
-SimBackendFactory = Callable[[], SimBackend]
+SimBackendFactory = Callable[[torch.device], type[SimBackend]]
 
 SIM_BACKEND_ENTRY_POINT_GROUP = "motrix_env.sim_backends"
 
@@ -36,7 +38,7 @@ def register_sim_backend(
 
     Args:
         name: Simulator name, such as ``"motrixsim"``.
-        factory: Builds the backend carrying the simulator's capabilities.
+        factory: Resolves the concrete backend class for the requested device.
         default: Designates this simulator as the one used when none is
             configured explicitly.
     """
@@ -64,15 +66,10 @@ def default_sim_backend_name() -> str:
     return _default_sim_backend
 
 
-def create_sim_backend(name: str) -> type[SimBackend]:
-    """Return the :class:`SimBackend` subclass registered for ``name``.
-
-    Backends are constructed with ``(scene, sim, num_envs)`` — scene
-    compilation is the backend's internal affair — so the registry hands
-    out the class (or any ``(scene, sim, num_envs)`` factory), never an
-    instance.
-    """
-    factory = _lookup(name)()
+def create_sim_backend(name: str | None = None, device: torch.device | str = "cpu") -> type[SimBackend]:
+    """Resolve the backend class before compiling a scene or allocating frontend buffers."""
+    name = name if name is not None else default_sim_backend_name()
+    factory = _lookup(name)(torch.device(device))
     if not (isinstance(factory, type) and issubclass(factory, SimBackend)):
         raise TypeError(f"Sim backend factory for {name!r} returned {type(factory).__name__}")
     return factory

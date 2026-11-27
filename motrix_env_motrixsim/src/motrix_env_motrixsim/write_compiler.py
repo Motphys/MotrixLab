@@ -3,6 +3,7 @@
 
 """MotrixSim compiler and executable program for declarative sim writes."""
 
+from abc import abstractmethod
 from dataclasses import dataclass
 
 import motrixsim as mtx
@@ -35,31 +36,25 @@ from motrix_env_core.sim.write import (
 
 
 @dataclass(frozen=True)
-class _CompiledWrite:
+class ResolvedWrite:
+    native: mtx_write.WriteSource
     pos_indices: np.ndarray | None = None
     vel_indices: np.ndarray | None = None
     refresh_kinematics: bool = False
-    native: mtx_write.WriteSource | None = None
     ctrl_indices: np.ndarray | None = None
 
 
-class MotrixSimWriteCompiler(SimWriteCompiler):
-    """Compile neutral write declarations against one MotrixSim model and data batch.
+class MotrixWriteCompiler(SimWriteCompiler):
+    """Resolve ordered write declarations and ownership against the host scene model."""
 
-    Every write compiles into one native write plan; reset and
-    forward-kinematics behavior are baked into the plan at compile time.
-    """
-
-    def __init__(self, model: mtx.SceneModel, data: mtx.SceneData) -> None:
+    def __init__(self, model: mtx.SceneModel) -> None:
         self._model = model
-        self._data = data
-        self._pending: list[tuple[str, _CompiledWrite]] = []
+        self._pending: list[tuple[str, ResolvedWrite]] = []
 
     def _begin_compile(self) -> None:
         self._pending = []
 
     def _build_program(self, *, reset: bool, forward_kinematics: bool) -> WriteProgram:
-        native_fields: dict[str, mtx_write.WriteSource] = {}
         ctrl_owners: dict[int, str] = {}
         claimed_pos: dict[int, str] = {}
         claimed_vel: dict[int, str] = {}
@@ -71,20 +66,12 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
                 self._claim(name, compiled.pos_indices, claimed_pos, "position")
             if compiled.vel_indices is not None:
                 self._claim(name, compiled.vel_indices, claimed_vel, "velocity")
-            native_fields[name] = compiled.native
             refresh_kinematics |= compiled.refresh_kinematics
-        buffers: dict[str, torch.Tensor] = {}
-        native_program = None
-        if native_fields:
-            # Reset (restore defaults, then apply the writes) and the FK pass
-            # are baked into the native plan at compile time.
-            refresh = forward_kinematics and (reset or refresh_kinematics)
-            native_program = self._model.compile_write(native_fields, reset=reset, forward_kinematic=refresh).allocate(
-                self._data
-            )
-            for name in native_fields:
-                buffers[name] = torch.from_numpy(native_program[name])
-        return _MotrixSimWriteProgram(self._data, buffers, native_program)
+        return self.allocate(reset=reset, refresh=forward_kinematics and (reset or refresh_kinematics))
+
+    @abstractmethod
+    def allocate(self, *, reset: bool, refresh: bool) -> WriteProgram:
+        """Bind the resolved fields to this device's simulator storage."""
 
     def compile_body_joint_position(self, name: str, write: BodyJointPositionWrite) -> None:
         body = _named_body(self._model, write.body)
@@ -94,7 +81,7 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
         self._pending.append(
             (
                 name,
-                _CompiledWrite(
+                ResolvedWrite(
                     native=mtx_write.BodyJointPosition([joint.name for joint in joints]),
                     pos_indices=indices,
                     refresh_kinematics=True,
@@ -110,7 +97,7 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
         self._pending.append(
             (
                 name,
-                _CompiledWrite(
+                ResolvedWrite(
                     native=mtx_write.BodyJointVelocity([joint.name for joint in joints]),
                     vel_indices=indices,
                 ),
@@ -123,7 +110,7 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
         self._pending.append(
             (
                 name,
-                _CompiledWrite(
+                ResolvedWrite(
                     native=mtx_write.BodyJointPosition([joint.name for joint in joints]),
                     pos_indices=indices,
                     refresh_kinematics=True,
@@ -137,7 +124,7 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
         self._pending.append(
             (
                 name,
-                _CompiledWrite(
+                ResolvedWrite(
                     native=mtx_write.BodyJointVelocity([joint.name for joint in joints]),
                     vel_indices=indices,
                 ),
@@ -145,14 +132,23 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
         )
 
     def compile_joint_quaternion(self, name: str, write: JointQuaternionWrite) -> None:
-        self._ball_joints(name, write.joints)
+        joints = self._ball_joints(name, write.joints)
+        indices = np.asarray([range(j.dof_pos_index, j.dof_pos_index + 4) for j in joints], dtype=np.int64)
         self._pending.append(
-            (name, _CompiledWrite(native=mtx_write.JointQuaternion(list(write.joints)), refresh_kinematics=True))
+            (
+                name,
+                ResolvedWrite(
+                    pos_indices=indices, native=mtx_write.JointQuaternion(list(write.joints)), refresh_kinematics=True
+                ),
+            )
         )
 
     def compile_joint_angular_velocity(self, name: str, write: JointAngularVelocityWrite) -> None:
-        self._ball_joints(name, write.joints)
-        self._pending.append((name, _CompiledWrite(native=mtx_write.JointAngularVelocity(list(write.joints)))))
+        joints = self._ball_joints(name, write.joints)
+        indices = np.asarray([range(j.dof_vel_index, j.dof_vel_index + 3) for j in joints], dtype=np.int64)
+        self._pending.append(
+            (name, ResolvedWrite(vel_indices=indices, native=mtx_write.JointAngularVelocity(list(write.joints))))
+        )
 
     def compile_ctrl_targets(self, name: str, write: CtrlTargetsWrite) -> None:
         if write.actuators is None:
@@ -167,7 +163,7 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
                 [_named_actuator(self._model, actuator).index for actuator in write.actuators], dtype=np.int64
             )
             selection = list(write.actuators)
-        self._pending.append((name, _CompiledWrite(native=mtx_write.ActuatorCtrls(selection), ctrl_indices=indices)))
+        self._pending.append((name, ResolvedWrite(native=mtx_write.ActuatorCtrls(selection), ctrl_indices=indices)))
 
     def compile_body_position(self, name: str, write: BodyPositionWrite) -> None:
         bases = self._floating_bases(name, write.bodies, type(write).__name__)
@@ -175,8 +171,8 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
         self._pending.append(
             (
                 name,
-                _CompiledWrite(
-                    pos_indices=indices.ravel(),
+                ResolvedWrite(
+                    pos_indices=indices,
                     refresh_kinematics=True,
                     native=mtx_write.BodyPosition(list(write.bodies)),
                 ),
@@ -189,8 +185,8 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
         self._pending.append(
             (
                 name,
-                _CompiledWrite(
-                    pos_indices=indices.ravel(),
+                ResolvedWrite(
+                    pos_indices=indices,
                     refresh_kinematics=True,
                     native=mtx_write.BodyRotation(list(write.bodies)),
                 ),
@@ -203,8 +199,8 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
         self._pending.append(
             (
                 name,
-                _CompiledWrite(
-                    vel_indices=indices.ravel(),
+                ResolvedWrite(
+                    vel_indices=indices,
                     native=mtx_write.BodyLinearVelocity(list(write.bodies)),
                 ),
             )
@@ -216,8 +212,8 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
         self._pending.append(
             (
                 name,
-                _CompiledWrite(
-                    vel_indices=indices.ravel(),
+                ResolvedWrite(
+                    vel_indices=indices,
                     native=mtx_write.BodyAngularVelocity(list(write.bodies)),
                 ),
             )
@@ -226,34 +222,34 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
     def compile_kinematic_body_position(self, name: str, write: KinematicBodyPositionWrite) -> None:
         self._mocaps(name, write.bodies)
         self._pending.append(
-            (name, _CompiledWrite(native=mtx_write.BodyPosition(list(write.bodies)), refresh_kinematics=True))
+            (name, ResolvedWrite(native=mtx_write.BodyPosition(list(write.bodies)), refresh_kinematics=True))
         )
 
     def compile_kinematic_body_rotation(self, name: str, write: KinematicBodyRotationWrite) -> None:
         self._mocaps(name, write.bodies)
         self._pending.append(
-            (name, _CompiledWrite(native=mtx_write.BodyRotation(list(write.bodies)), refresh_kinematics=True))
+            (name, ResolvedWrite(native=mtx_write.BodyRotation(list(write.bodies)), refresh_kinematics=True))
         )
 
     def compile_actuator_kp(self, name: str, write: ActuatorKpWrite) -> None:
         self._targets(name, write.actuators, "actuator", _named_actuator)
-        self._pending.append((name, _CompiledWrite(native=mtx_write.ActuatorKpOverride(list(write.actuators)))))
+        self._pending.append((name, ResolvedWrite(native=mtx_write.ActuatorKpOverride(list(write.actuators)))))
 
     def compile_actuator_damping(self, name: str, write: ActuatorDampingWrite) -> None:
         self._targets(name, write.actuators, "actuator", _named_actuator)
-        self._pending.append((name, _CompiledWrite(native=mtx_write.ActuatorDampingOverride(list(write.actuators)))))
+        self._pending.append((name, ResolvedWrite(native=mtx_write.ActuatorDampingOverride(list(write.actuators)))))
 
     def compile_link_mass(self, name: str, write: LinkMassWrite) -> None:
         self._targets(name, write.links, "link", _named_link)
-        self._pending.append((name, _CompiledWrite(native=mtx_write.LinkMassOverride(list(write.links)))))
+        self._pending.append((name, ResolvedWrite(native=mtx_write.LinkMassOverride(list(write.links)))))
 
     def compile_link_com(self, name: str, write: LinkComWrite) -> None:
         self._targets(name, write.links, "link", _named_link)
-        self._pending.append((name, _CompiledWrite(native=mtx_write.LinkCenterOfMassOverride(list(write.links)))))
+        self._pending.append((name, ResolvedWrite(native=mtx_write.LinkCenterOfMassOverride(list(write.links)))))
 
     def compile_geom_friction(self, name: str, write: GeomFrictionWrite) -> None:
         self._targets(name, write.geoms, "geom", _named_geom)
-        self._pending.append((name, _CompiledWrite(native=mtx_write.GeomFrictionOverride(list(write.geoms)))))
+        self._pending.append((name, ResolvedWrite(native=mtx_write.GeomFrictionOverride(list(write.geoms)))))
 
     def _joints(self, name: str, joint_names: tuple[str, ...]):
         if not joint_names:
@@ -270,17 +266,20 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
             joints.append(joint)
         return joints
 
-    def _ball_joints(self, name: str, joint_names: tuple[str, ...]) -> None:
+    def _ball_joints(self, name: str, joint_names: tuple[str, ...]) -> list[mtx.Joint]:
         if not joint_names:
             raise ValueError(f"Simulator write {name!r} must declare at least one joint.")
         if len(set(joint_names)) != len(joint_names):
             raise ValueError(f"Simulator write {name!r} contains duplicate joint names.")
+        joints = []
         for joint_name in joint_names:
             joint = self._model.get_joint(joint_name)
             if joint is None:
                 raise KeyError(f"Unknown joint {joint_name!r} in write {name!r}.")
             if joint.num_dof_pos != 4 or joint.num_dof_vel != 3:
                 raise ValueError(f"Simulator write joint {joint_name!r} in {name!r} must be a ball joint.")
+            joints.append(joint)
+        return joints
 
     def _require_single_dof_body(self, name: str, body_name: str, joints, channel: str) -> None:
         if joints and all(joint.num_dof_pos == 1 and joint.num_dof_vel == 1 for joint in joints):
@@ -316,7 +315,7 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
 
     @staticmethod
     def _claim(name: str, indices: np.ndarray, claimed: dict[int, str], channel: str) -> None:
-        for index in indices:
+        for index in indices.flat:
             previous = claimed.get(int(index))
             if previous is not None:
                 raise ValueError(
@@ -325,12 +324,32 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
             claimed[int(index)] = name
 
     def _claim_ctrl_targets(self, name: str, indices: np.ndarray, owners: dict[int, str]) -> None:
-        for index in indices:
+        for index in indices.flat:
             existing = owners.get(int(index))
             if existing is not None:
                 target = self._model.actuators[int(index)].name
                 raise ValueError(f"CtrlTargetsWrite {existing!r} and {name!r} both target actuator {target!r}.")
             owners[int(index)] = name
+
+
+class MotrixSimWriteCompiler(MotrixWriteCompiler):
+    def __init__(self, model: mtx.SceneModel, data: mtx.SceneData) -> None:
+        super().__init__(model)
+        self._data = data
+
+    def allocate(self, *, reset: bool, refresh: bool) -> WriteProgram:
+        native_fields = {name: field.native for name, field in self._pending}
+        buffers: dict[str, torch.Tensor] = {}
+        native_program = None
+        if native_fields:
+            # Reset (restore defaults, then apply the writes) and the FK pass
+            # are baked into the native plan at compile time.
+            native_program = self._model.compile_write(native_fields, reset=reset, forward_kinematic=refresh).allocate(
+                self._data
+            )
+            for name in native_fields:
+                buffers[name] = torch.from_numpy(native_program[name])
+        return _MotrixSimWriteProgram(self._data, buffers, native_program)
 
 
 class _MotrixSimWriteProgram(WriteProgram):

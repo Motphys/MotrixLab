@@ -189,6 +189,7 @@ When reinstalling, include any other options you still need in the same invocati
 | `--rslrl` | Add the RSL-RL provider |
 | `--skrl-jax` | Add the SKRL JAX runtime, Linux-only |
 | `--skrl-torch` | Compatibility option; SKRL Torch is already a required repository dependency |
+| `--sim-gpu` | Install the NVIDIA CUDA physics SDK (`motrixsim-gpu`). Use `sh install.sh --gpu cuda --sim-gpu` on a supported NVIDIA host. |
 | `--docs` | Add documentation tools |
 | `--all` | Full development environment, Python 3.10 only |
 | `--help` | Show the full installer option reference |

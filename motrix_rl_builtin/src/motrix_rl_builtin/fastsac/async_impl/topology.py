@@ -45,7 +45,10 @@ __all__ = [
 
 
 def use_ipc_transition_ring(
-    opts: FastSacAsyncOptionsCfg, learner_device: torch.device, collector_device: torch.device
+    opts: FastSacAsyncOptionsCfg,
+    learner_device: torch.device,
+    collector_device: torch.device,
+    sim_device: torch.device = torch.device("cpu"),
 ) -> bool:
     """Return whether a collector's transition ring should use CUDA IPC.
 
@@ -53,31 +56,30 @@ def use_ipc_transition_ring(
         opts: FastSAC asynchronous transport options.
         learner_device: Device used by the owning learner.
         collector_device: Collector inference device.
+        sim_device: Collector simulation device.
 
     Returns:
-        ``True`` when both workers use the same CUDA GPU and the configured
-        mode permits CUDA IPC.
+        ``True`` when the mode permits CUDA IPC and inference and learning
+        share one GPU with CUDA simulation, if used.
     """
     mode = getattr(opts, "transition_ipc", "auto")
     if isinstance(mode, bool):
         mode = "on" if mode else "off"
     if mode not in ("auto", "on", "off"):
         raise ValueError(f"async_options.transition_ipc must be auto, on or off, got {mode!r}")
-    same_gpu = same_cuda_device(learner_device, collector_device)
     if mode == "off":
         return False
+    same_gpu = same_cuda_device(learner_device, collector_device) and (
+        sim_device.type == "cpu" or same_cuda_device(learner_device, sim_device)
+    )
     if mode == "on" and not same_gpu:
-        reason = (
-            "collector inference device is not CUDA"
-            if collector_device.type != "cuda"
-            else f"learner device {learner_device} and collector device {collector_device} are different GPUs"
-            if learner_device.type == "cuda"
-            else "learner device is not CUDA"
-        )
         logger.warning(
-            "async_options.transition_ipc=on requires learner and collector inference on the same GPU, "
-            "but %s; falling back to the host shared-memory transition ring",
-            reason,
+            "async_options.transition_ipc=on requires a shared GPU for learner, collector inference and "
+            "CUDA simulation "
+            "(got %s, %s, %s). Falling back to the host transition ring.",
+            learner_device,
+            collector_device,
+            sim_device,
         )
     return same_gpu
 
@@ -120,6 +122,8 @@ def resolve_fastsac_topology(
     async_options: FastSacAsyncOptionsCfg,
     actor_param_numel: int,
     cpus_per_collector: int | None = None,
+    *,
+    sim_device: str = "cpu",
 ) -> AsyncTrainerTopology:
     """Resolve the complete FastSAC worker topology in one pass.
 
@@ -133,6 +137,7 @@ def resolve_fastsac_topology(
         async_options: FastSAC asynchronous transport options.
         actor_param_numel: Number of actor parameters.
         cpus_per_collector: Optional CPUs per collector slice.
+        sim_device: Simulation placement for the collectors.
 
     Returns:
         A generic topology populated with FastSAC transport decisions.
@@ -149,6 +154,7 @@ def resolve_fastsac_topology(
         collector_inference_device,
         default_device,
         cpus_per_collector=cpus_per_collector,
+        sim_device=sim_device,
     )
     channels = tuple(
         replace(
@@ -157,6 +163,7 @@ def resolve_fastsac_topology(
                 async_options,
                 topology.learners[channel.consumer_id].device,
                 topology.collectors[index].infer_device,
+                topology.collectors[index].sim_device,
             ),
         )
         for index, channel in enumerate(topology.transition_channels)

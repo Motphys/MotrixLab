@@ -45,8 +45,10 @@ def test_mujoco_backend_is_registered_and_loaded_lazily():
     assert isinstance(MuJoCoSceneCompiler().compile(SceneCfg(), SimCfg()), mj.MjModel)
 
     # Compile-only backend: construction compiles the scene, behavior gaps loudly.
+    from motrix_env_core.renderer import RenderConfig
+
     assert not MuJoCoSimBackend.capabilities.env_creation
-    backend = MuJoCoSimBackend(SceneCfg(), SimCfg(), 1)
+    backend = MuJoCoSimBackend(SceneCfg(), SimCfg(), 1, render=RenderConfig(headless=True))
     with pytest.raises(NotImplementedError, match="no live simulation"):
         backend.compile_reads({})
     with pytest.raises(NotImplementedError):
@@ -367,3 +369,10 @@ def test_mujoco_compiler_applies_urdf_augmentations(tmp_path):
     assert model.actuator_forcerange[actuator_id] == pytest.approx([-5.0, 5.0])
     assert model.actuator_gainprm[actuator_id, 0] == pytest.approx(20.0)
     assert model.actuator_biasprm[actuator_id, :3] == pytest.approx([0.0, -20.0, -2.0])
+
+
+def test_mujoco_factory_rejects_cuda():
+    from motrix_env_core.sim.registry import create_sim_backend
+
+    with pytest.raises(ValueError, match="MuJoCo does not support simulation on cuda:0"):
+        create_sim_backend("mujoco", "cuda:0")

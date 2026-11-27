@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -24,12 +25,22 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True, init=False)
 class ResetTerm(BaseTerm):
-    """Immutable reset dispatch descriptor and its static positional arguments."""
+    """Describe a simulator reset dispatch and its write outputs.
+
+    With ``stateless=True``, dispatch may receive all world IDs and full-size
+    buffers even if few worlds reset. It may read the context and draw from
+    its RNG, and must write only to ``sim_writes``. Only selected rows are
+    committed. Other terms always receive compact IDs and outputs.
+    """
 
     writes: dict[str, SimWrite]
+    stateless: bool
 
-    def __init__(self, dispatch: Callable[..., None], *args: Any, writes: dict[str, SimWrite]) -> None:
+    def __init__(
+        self, dispatch: Callable[..., None], *args: Any, writes: dict[str, SimWrite], stateless: bool = False
+    ) -> None:
         object.__setattr__(self, "writes", dict(writes))
+        object.__setattr__(self, "stateless", stateless)
         BaseTerm.__init__(self, dispatch, *args)
 
     def __post_init__(self) -> None:
@@ -46,6 +57,10 @@ class SimResetRuntime:
     terms: dict[str, ResetTerm]
     writes: dict[str, dict[str, SimWrite]]
     buffers: tuple[torch.Tensor, ...]
+
+    @cached_property
+    def supports_stateless_masked_reset(self) -> bool:
+        return all(term.stateless for term in self.terms.values())
 
     @classmethod
     def create(
@@ -67,6 +82,7 @@ class SimResetRuntime:
                 created.dispatch,
                 *canonicalize_term_args(created.args, context=f"Manager simulator reset term {name!r}"),
                 writes=created.writes,
+                stateless=created.stateless,
             )
         writes = {name: term.writes for name, term in terms.items()}
         for term_name, term_writes in writes.items():
@@ -98,14 +114,26 @@ class SimResetRuntime:
         env_ids: torch.Tensor,
         episode_reset: torch.Tensor,
     ) -> None:
-        """Materialize compact term outputs, scatter them, and execute reset."""
+        """Apply compact term outputs to the selected simulator rows."""
         with active_perf_scope("reset_kernel"):
             task_program.reset_kernel(env_ids, episode_reset, self.buffers)
-        for buffer in self.buffers:
-            compact = buffer[: env_ids.numel()].clone()
-            buffer[env_ids] = compact
         with active_perf_scope("backend_apply"):
-            self.program.execute(env_ids)
+            self.program.execute_compact(env_ids, self.buffers)
+
+    def apply_masked(
+        self,
+        task_program: TorchTaskProgram,
+        world_mask: torch.Tensor,
+        episode_reset: torch.Tensor,
+        env_ids: torch.Tensor | None,
+    ) -> None:
+        with active_perf_scope("reset_kernel"):
+            task_program.reset_masked_kernel(world_mask, episode_reset, env_ids, self.buffers)
+        with active_perf_scope("backend_apply"):
+            if env_ids is None:
+                self.program.execute_masked(world_mask)
+            else:
+                self.program.execute_compact(env_ids, self.buffers)
 
 
 __all__ = ["ResetTerm", "SimResetRuntime"]

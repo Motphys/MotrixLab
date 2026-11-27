@@ -102,6 +102,7 @@ class FrankaOpenCabinetEnv(DirectEnv):
                 0.04,
             ],
             dtype=torch.float32,
+            device=self.device,
         )
 
         self._action_dim = 8
@@ -114,13 +115,13 @@ class FrankaOpenCabinetEnv(DirectEnv):
         self._num_dof_pos = 9  # self._model.num_dof_pos # 9
         self._num_dof_vel = 9  # self._model.num_dof_vel # 9
         self._init_dof_pos = self.robot_default_joint_pos
-        self._init_dof_vel = torch.zeros(self._num_dof_vel, dtype=torch.float32)
+        self._init_dof_vel = torch.zeros(self._num_dof_vel, dtype=torch.float32, device=self.device)
         # Initialize properties
         self.robot_joint_pos_min_limit = torch.tensor(
-            [spec.ctrl_range[0] for spec in self.model.actuators], dtype=torch.float32
+            [spec.ctrl_range[0] for spec in self.model.actuators], dtype=torch.float32, device=self.device
         )
         self.robot_joint_pos_max_limit = torch.tensor(
-            [spec.ctrl_range[1] for spec in self.model.actuators], dtype=torch.float32
+            [spec.ctrl_range[1] for spec in self.model.actuators], dtype=torch.float32, device=self.device
         )
 
         self.count = 0
@@ -128,9 +129,9 @@ class FrankaOpenCabinetEnv(DirectEnv):
         # Episode-scoped task state: full-batch buffers, reset writes the done
         # rows in place.
         num_envs = self._num_envs
-        self._current_actions = torch.zeros(num_envs, self._action_dim, dtype=torch.float32)
-        self._last_actions = torch.zeros(num_envs, self._action_dim, dtype=torch.float32)
-        self._current_gripper_action = torch.zeros(num_envs, dtype=torch.float32)
+        self._current_actions = torch.zeros(num_envs, self._action_dim, dtype=torch.float32, device=self.device)
+        self._last_actions = torch.zeros(num_envs, self._action_dim, dtype=torch.float32, device=self.device)
+        self._current_gripper_action = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
 
     @property
     def observation_spec(self) -> ObservationSpec:
@@ -239,7 +240,9 @@ class FrankaOpenCabinetEnv(DirectEnv):
     def reset(self, env_ids: torch.Tensor) -> None:
         num_reset = env_ids.numel()
 
-        noise_pos = (torch.rand(num_reset, self._num_dof_pos, dtype=torch.float32) * 2.0 - 1.0) * 0.125
+        noise_pos = (
+            torch.rand(num_reset, self._num_dof_pos, dtype=torch.float32, device=self.device) * 2.0 - 1.0
+        ) * 0.125
 
         dof_pos = self._init_dof_pos.unsqueeze(0).expand(num_reset, -1) + noise_pos  # noise in [-0.125, 0.125]
         self._reset_program.buffer("robot_position")[env_ids] = dof_pos

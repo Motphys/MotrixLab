@@ -57,9 +57,9 @@ _SIM_DATA_QUERIES = {
 _SIM_MODEL_QUERIES = {"hand_joint_position_limits": BodyJointPositionLimitsQuery(body="rh_forearm")}
 
 
-def _generate_random_shoemake(size: int) -> torch.Tensor:
+def _generate_random_shoemake(size: int, device: torch.device) -> torch.Tensor:
     """Uniformly distributed random quaternions (Shoemake's method), (x, y, z, w)."""
-    u1, u2, u3 = torch.rand(3, size, dtype=torch.float32)
+    u1, u2, u3 = torch.rand(3, size, dtype=torch.float32, device=device)
     sqrt1_u1 = torch.sqrt(1 - u1)
     sqrtu1 = torch.sqrt(u1)
     w = sqrt1_u1 * torch.sin(2 * torch.pi * u2)
@@ -140,10 +140,10 @@ class ShadowHandReposeEnv(DirectEnv):
 
         # Get actuator control ranges from model
         self._actuator_ctrl_lower = torch.tensor(
-            [spec.ctrl_range[0] for spec in self.model.actuators], dtype=torch.float32
+            [spec.ctrl_range[0] for spec in self.model.actuators], dtype=torch.float32, device=self.device
         )
         self._actuator_ctrl_upper = torch.tensor(
-            [spec.ctrl_range[1] for spec in self.model.actuators], dtype=torch.float32
+            [spec.ctrl_range[1] for spec in self.model.actuators], dtype=torch.float32, device=self.device
         )
 
         # Hand limits use the same articulated-DOF order as the hand position slice.
@@ -164,15 +164,15 @@ class ShadowHandReposeEnv(DirectEnv):
         self._cube_base_vel = slice(-6, None)
 
         # Initial cube position (in hand)
-        self._in_hand_pos = torch.tensor(cfg.cube_initial_pos, dtype=torch.float32)
+        self._in_hand_pos = torch.tensor(cfg.cube_initial_pos, dtype=torch.float32, device=self.device)
 
         # Episode-scoped task state: full-batch buffers, reset writes the done
         # rows in place.
         num_envs = self._num_envs
         self._goal_pos = self._in_hand_pos.unsqueeze(0).repeat(num_envs, 1)
-        self._goal_rot = torch.zeros(num_envs, 4, dtype=torch.float32)
-        self._prev_actions = torch.zeros(num_envs, self._num_actuators, dtype=torch.float32)
-        self._successes = torch.zeros(num_envs, dtype=torch.int64)
+        self._goal_rot = torch.zeros(num_envs, 4, dtype=torch.float32, device=self.device)
+        self._prev_actions = torch.zeros(num_envs, self._num_actuators, dtype=torch.float32, device=self.device)
+        self._successes = torch.zeros(num_envs, dtype=torch.int64, device=self.device)
 
     @property
     def observation_spec(self) -> ObservationSpec:
@@ -364,13 +364,13 @@ class ShadowHandReposeEnv(DirectEnv):
         reward = torch.where(fallen, reward + cfg.fall_penalty, reward)
 
         # Termination conditions
-        terminated = torch.zeros(num_envs, dtype=torch.bool)
+        terminated = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
 
         # 1. Fall termination
         terminated = terminated | fallen
 
         # 2. Success termination with hold mechanism
-        new_pos = torch.zeros(num_envs, dtype=torch.bool)
+        new_pos = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
         if cfg.max_consecutive_successes > 0:
             # Reset progress on goal reached when max consecutive successes reached
             new_pos = self._successes >= cfg.max_consecutive_successes
@@ -387,10 +387,10 @@ class ShadowHandReposeEnv(DirectEnv):
         cfg = self._cfg
 
         # Compute visualization position (offset from goal position)
-        viz_pos = self._goal_pos + torch.tensor(cfg.viz_target_offset, dtype=torch.float32)
+        viz_pos = self._goal_pos + torch.tensor(cfg.viz_target_offset, dtype=torch.float32, device=self.device)
 
         # Update mocap body pose
-        all_ids = torch.arange(self._num_envs, dtype=torch.int64)
+        all_ids = torch.arange(self._num_envs, dtype=torch.int64, device=self.device)
         self._target_writes.buffer("target_pos")[all_ids, 0] = viz_pos
         self._target_writes.buffer("target_rot")[all_ids, 0] = self._goal_rot
         self._target_writes.execute(all_ids)
@@ -407,12 +407,12 @@ class ShadowHandReposeEnv(DirectEnv):
 
         # Add noise to DOF positions
         dof_pos_noise = (
-            torch.rand(num_resets, self._num_hand_dofs, dtype=torch.float32) * 2.0 - 1.0
+            torch.rand(num_resets, self._num_hand_dofs, dtype=torch.float32, device=self.device) * 2.0 - 1.0
         ) * cfg.reset_dof_pos_noise
 
         # Add noise to DOF velocities
         dof_vel_noise = (
-            torch.rand(num_resets, self._num_hand_dofs, dtype=torch.float32) * 2.0 - 1.0
+            torch.rand(num_resets, self._num_hand_dofs, dtype=torch.float32, device=self.device) * 2.0 - 1.0
         ) * cfg.reset_dof_vel_noise
 
         # Set hand DOF states for all envs being reset.
@@ -420,12 +420,14 @@ class ShadowHandReposeEnv(DirectEnv):
         hand_vel[env_ids] = dof_vel_noise
 
         # Reset cube position with small noise
-        cube_pos_noise = (torch.rand(num_resets, 3, dtype=torch.float32) * 2.0 - 1.0) * cfg.reset_position_noise
+        cube_pos_noise = (
+            torch.rand(num_resets, 3, dtype=torch.float32, device=self.device) * 2.0 - 1.0
+        ) * cfg.reset_position_noise
         cube_pos = self._in_hand_pos.unsqueeze(0).repeat(num_resets, 1)
         cube_pos = cube_pos + cube_pos_noise
 
         # Randomize cube orientation
-        cube_quat = _generate_random_shoemake(num_resets)
+        cube_quat = _generate_random_shoemake(num_resets, self.device)
 
         # BodyPositionWrite / BodyRotationWrite buffers are (N, B, 3) / (N, B, 4).
         self._reset_program.buffer("cube_position")[env_ids, 0] = cube_pos
@@ -438,7 +440,7 @@ class ShadowHandReposeEnv(DirectEnv):
         # Reset episode-scoped task state for the reset rows. The goal position
         # is fixed; the goal orientation is sampled uniformly on SO(3).
         self._goal_pos[env_ids] = self._in_hand_pos
-        self._goal_rot[env_ids] = _generate_random_shoemake(num_resets)
+        self._goal_rot[env_ids] = _generate_random_shoemake(num_resets, self.device)
         self._prev_actions[env_ids] = 0.0
         self._successes[env_ids] = 0
 
@@ -449,4 +451,4 @@ class ShadowHandReposeEnv(DirectEnv):
         # Goal position is fixed
 
         # Randomize goal orientation using Shoemake method for uniform SO(3) sampling
-        self._goal_rot[env_ids] = _generate_random_shoemake(num_resets)
+        self._goal_rot[env_ids] = _generate_random_shoemake(num_resets, self.device)

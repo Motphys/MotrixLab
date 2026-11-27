@@ -61,3 +61,14 @@ def test_sim_cfg_supports_backend_defaults_and_explicit_physics():
 def test_sim_cfg_retains_gravity_length_validation():
     with pytest.raises(ValueError, match=r"sim\.gravity must contain 3 values"):
         SimCfg(gravity=(0.0, -9.81)).validate()
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda", "cuda:2"])
+def test_sim_cfg_accepts_cpu_and_cuda_devices_without_allocating(device):
+    SimCfg(device=device).validate()
+
+
+@pytest.mark.parametrize("device", ["", "invalid-device", "mps"])
+def test_sim_cfg_rejects_unsupported_devices(device):
+    with pytest.raises(ValueError, match="sim.device"):
+        SimCfg(device=device).validate()

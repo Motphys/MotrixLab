@@ -35,12 +35,13 @@ class MotrixSimRenderer(SimRenderer):
         num_envs: int,
         render_spacing: float,
         system_camera: SystemCameraCfg,
+        render_app: RenderApp | None = None,
     ):
         self._data_source = data_source
         self._headless = config.headless
         self._closed = False
         offsets = _render_layout(num_envs, render_spacing)
-        self._render = RenderApp(headless=config.headless)
+        self._render = RenderApp(headless=config.headless) if render_app is None else render_app
         self._render.launch(
             model,
             batch=num_envs,

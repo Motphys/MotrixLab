@@ -3,6 +3,7 @@
 
 """Behavioral contract tests for the manager-based humanoid walk presets."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -95,7 +96,11 @@ def test_walk_rough_only_overrides_scene_spawn_range_and_render_spacing(make_fla
     assert rough_cfg.commands == flat_cfg.commands
     assert rough_cfg.actions == flat_cfg.actions
     assert rough_cfg.terminations == flat_cfg.terminations
-    assert rough_cfg.sim == flat_cfg.sim
+    assert replace(rough_cfg.sim, max_contacts=None, max_contact_constraints=None) == replace(
+        flat_cfg.sim, max_contacts=None, max_contact_constraints=None
+    )
+    assert rough_cfg.sim.max_contacts >= flat_cfg.sim.max_contacts
+    assert rough_cfg.sim.max_contact_constraints >= flat_cfg.sim.max_contact_constraints
     assert flat_cfg.sim_reset.humanoid_state.spawn_xy_range == 0.0
     assert rough_cfg.sim_reset.humanoid_state.spawn_xy_range > flat_cfg.sim_reset.humanoid_state.spawn_xy_range
     assert flat_cfg.render_spacing > 0.0

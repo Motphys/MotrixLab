@@ -29,6 +29,10 @@ from motrix_env_core.manager import ManagerContext, metric
 from motrix_envs.motion.tracked import WbtMotionClip
 
 
+def _publish_rebuild(target: torch.Tensor, value: torch.Tensor, active: torch.Tensor | None) -> None:
+    target.copy_(value if active is None else torch.where(active, value, target))
+
+
 @dataclass(frozen=True, slots=True)
 class MotionStartSampler:
     """Pluggable start-frame curriculum consumed by a motion command term.
@@ -75,7 +79,7 @@ class MotionStartSampler:
     ) -> None:
         """Fold finished reset rows into the curriculum statistics (reset hook)."""
 
-    def rebuild(self) -> None:
+    def rebuild(self, *, active: torch.Tensor | None = None) -> None:
         """Recompute the sampling distribution from the statistics (reset hook)."""
 
     def mark_episode_starts(
@@ -117,7 +121,7 @@ class UniformTimestepsSampler(MotionStartSampler):
 
 def _clip_geometry(clip: WbtMotionClip) -> tuple[np.ndarray, np.ndarray]:
     """Per-clip ``(start, end)`` global frame bounds from the per-frame boundaries."""
-    ends = np.unique(clip.frame_clip_end.numpy())
+    ends = np.unique(clip.frame_clip_end.cpu().numpy())
     starts = np.concatenate(([0], ends[:-1] + 1)).astype(np.int64)
     return starts, ends.astype(np.int64)
 
@@ -181,10 +185,10 @@ class AdaptiveTimestepsSampler(MotionStartSampler):
         offsets = np.concatenate(([0], np.cumsum(bins)[:-1]))
         num_bins = int(bins.sum())
         return AdaptiveTimestepsSampler(
-            clip_frame_start=torch.from_numpy(starts),
-            clip_frame_end=torch.from_numpy(ends),
-            clip_bins=torch.from_numpy(bins),
-            bin_clip_offset=torch.from_numpy(offsets),
+            clip_frame_start=torch.as_tensor(starts),
+            clip_frame_end=torch.as_tensor(ends),
+            clip_bins=torch.as_tensor(bins),
+            bin_clip_offset=torch.as_tensor(offsets),
             failed_count=torch.zeros((num_bins,), dtype=torch.float32),
             current_failed=torch.zeros((num_bins,), dtype=torch.float32),
             sampling_cdf=torch.cumsum(torch.full((num_bins,), 1.0 / num_bins), dim=0),
@@ -243,36 +247,38 @@ class AdaptiveTimestepsSampler(MotionStartSampler):
         histogram.scatter_add_(0, failed_bins, episode_failed.to(torch.float32))
         self.current_failed.add_(histogram)
 
-    def rebuild(self) -> None:
+    def rebuild(self, *, active: torch.Tensor | None = None) -> None:
         """Rebuild the sampling CDF from the smoothed failure statistics."""
         num_bins = self.failed_count.numel()
         probabilities = self.failed_count + self.uniform_ratio / num_bins
         kernel_size = max(self.kernel_size, 1)
         if kernel_size > 1:
-            kernel = torch.tensor([self.kernel_lambda**i for i in range(kernel_size)], dtype=torch.float32)
+            kernel = probabilities.new_tensor([self.kernel_lambda**i for i in range(kernel_size)])
             kernel /= kernel.sum()
-            padded = torch.nn.functional.pad(probabilities[None, None, :], (0, kernel_size - 1), mode="rep")
+            padded = torch.nn.functional.pad(probabilities[None, None, :], (0, kernel_size - 1), mode="replicate")
             probability = (padded.unfold(2, kernel_size, 1) @ kernel)[0, 0]
         else:
             probability = probabilities
         total = probability.sum()
-        uniform = torch.full((num_bins,), 1.0 / num_bins, dtype=torch.float32)
+        uniform = torch.full_like(probability, 1.0 / num_bins)
         positive = total > 0.0
         probabilities = torch.where(
             positive, probability / torch.where(positive, total, torch.ones_like(total)), uniform
         )
-        self.entropy.copy_(-(probabilities * torch.log(probabilities + 1e-12)).sum() / math.log(max(num_bins, 2)))
+        _publish_rebuild(
+            self.entropy, -(probabilities * torch.log(probabilities + 1e-12)).sum() / math.log(max(num_bins, 2)), active
+        )
         top_bin = torch.argmax(probabilities)
         # Gather (not ``probabilities[top_bin]``): tensor indexing would sync
         # the index to a Python int and break the graph.
-        self.top1_prob.copy_(torch.gather(probabilities, 0, top_bin.reshape(1)).reshape(()))
-        self.top1_bin.copy_(top_bin.to(torch.float32) / float(num_bins))
-        self.failure_mass.copy_(self.failed_count.sum())
+        _publish_rebuild(self.top1_prob, torch.gather(probabilities, 0, top_bin.reshape(1)).reshape(()), active)
+        _publish_rebuild(self.top1_bin, top_bin.to(torch.float32) / float(num_bins), active)
+        _publish_rebuild(self.failure_mass, self.failed_count.sum(), active)
         # Per-clip phase addressing keeps every bin reachable inside its clip
         # (starts clamp to a non-terminal frame), so no tail masking applies.
         cdf = torch.cumsum(probabilities, dim=0).to(torch.float32)
         cdf[-1] = 1.0
-        self.sampling_cdf.copy_(cdf)
+        _publish_rebuild(self.sampling_cdf, cdf, active)
 
 
 def per_clip_bins(clip: WbtMotionClip, bin_frames: int) -> tuple[np.ndarray, np.ndarray]:
@@ -283,7 +289,7 @@ def per_clip_bins(clip: WbtMotionClip, bin_frames: int) -> tuple[np.ndarray, np.
     frame minimum), so a drawn start never begins on a terminal frame while a
     nonterminal one exists in that clip.
     """
-    ends_per_frame = clip.frame_clip_end.numpy()
+    ends_per_frame = clip.frame_clip_end.cpu().numpy()
     starts = np.concatenate(([0], np.flatnonzero(np.diff(ends_per_frame) != 0) + 1)).astype(np.int64)
     ends = ends_per_frame[starts]
     bin_start = []
@@ -370,8 +376,8 @@ class ReturnTimestepsSampler(MotionStartSampler):
         num_bins = int(bin_start.size)
         num_frames = clip.joint_pos.shape[0]
         return ReturnTimestepsSampler(
-            bin_start=torch.from_numpy(bin_start),
-            bin_span=torch.from_numpy(bin_span),
+            bin_start=torch.as_tensor(bin_start),
+            bin_span=torch.as_tensor(bin_span),
             sampling_cdf=torch.cumsum(torch.full((num_bins,), 1.0 / num_bins), dim=0),
             bin_return=torch.zeros((num_bins,), dtype=torch.float32),
             bin_history=torch.full((num_bins,), 1.0 / max(num_bins, 1), dtype=torch.float32),
@@ -443,16 +449,17 @@ class ReturnTimestepsSampler(MotionStartSampler):
             self.lane_gamma[idx] * (undiscounted / lengths.clamp(min=1.0)) / (1.0 - self.sampling_gamma),
             torch.zeros_like(returns),
         )
-        values = (returns + bootstrap) * episode
+        values = torch.where(reset_episode, returns + bootstrap, 0.0)
         by_bin = torch.zeros_like(self.bin_return)
         counts = torch.zeros_like(self.bin_return)
         by_bin.index_add_(0, self.lane_start_bin[idx], values)
         counts.index_add_(0, self.lane_start_bin[idx], episode)
         touched = counts > 0
-        means = torch.where(touched, by_bin / counts.clamp(min=1.0), self.bin_return)
-        self.bin_return.copy_((1.0 - self.return_ema) * self.bin_return + self.return_ema * means)
+        means = by_bin / counts.clamp(min=1.0)
+        updated = (1.0 - self.return_ema) * self.bin_return + self.return_ema * means
+        self.bin_return.copy_(torch.where(touched, updated, self.bin_return))
 
-    def rebuild(self) -> None:
+    def rebuild(self, *, active: torch.Tensor | None = None) -> None:
         """Advance the history once per rebuild, then construct the sampling CDF.
 
         The 0.001 history rate follows SuperMimic's start-bin curriculum.
@@ -463,18 +470,20 @@ class ReturnTimestepsSampler(MotionStartSampler):
         scaled = -25.0 * self.bin_return / max(self.g_max, 1e-9)
         soft = torch.exp(scaled - scaled.max())
         soft = soft / soft.sum()
-        self.bin_history.mul_(0.999).add_(0.001 * soft)
+        _publish_rebuild(self.bin_history, 0.999 * self.bin_history + 0.001 * soft, active)
         history = self.bin_history / self.bin_history.sum()
         probability = self.uniform_mix / num_bins + self.return_mix * soft + self.history_mix * history
         probability = probability / probability.sum()
-        self.mean_bin_return.copy_(self.bin_return.mean())
-        self.entropy.copy_(-(probability * torch.log(probability + 1e-12)).sum() / math.log(max(num_bins, 2)))
+        _publish_rebuild(self.mean_bin_return, self.bin_return.mean(), active)
+        _publish_rebuild(
+            self.entropy, -(probability * torch.log(probability + 1e-12)).sum() / math.log(max(num_bins, 2)), active
+        )
         top_bin = torch.argmax(probability)
-        self.top1_prob.copy_(torch.gather(probability, 0, top_bin.reshape(1)).reshape(()))
-        self.top1_bin.copy_(top_bin.to(torch.float32) / float(num_bins))
+        _publish_rebuild(self.top1_prob, torch.gather(probability, 0, top_bin.reshape(1)).reshape(()), active)
+        _publish_rebuild(self.top1_bin, top_bin.to(torch.float32) / float(num_bins), active)
         cdf = torch.cumsum(probability, dim=0).to(torch.float32)
         cdf[-1] = 1.0
-        self.sampling_cdf.copy_(cdf)
+        _publish_rebuild(self.sampling_cdf, cdf, active)
 
     def mark_episode_starts(
         self,

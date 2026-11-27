@@ -4,7 +4,7 @@
 import gzip
 import json
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -126,7 +126,7 @@ def test_training_reports_live_metrics_but_play_does_not(demo_framework, monkeyp
     assert [record["data"]["state"] for record in records] == ["running", "finished"]
     running = records[0]["data"]
     expected = json.loads(RUNNING_FIXTURE.read_text())["body"]["records"][0]["data"]
-    assert set(running) == set(expected)
+    assert set(running) == set(expected) | {"sim_device"}
     assert running["config"] == runs.task_config_snapshot(_train_request(tmp_path).config)
     assert running["run_dir"] == str(result.run.run_dir)
     assert train_metrics.run_id == "demo-run"
@@ -183,3 +183,28 @@ class _RunnerProvider(frameworks.AgentProvider[DemoCfg]):
     ) -> frameworks.TrainerBase:
         self.trainer = _RunnerTrainer(context)
         return self.trainer
+
+
+@pytest.mark.parametrize("sim, sim_device", [(None, None), ("explicit-sim", "cpu")])
+def test_resume_inherits_sim_placement_and_honors_overrides(demo_framework, tmp_path, sim, sim_device):
+    request = _train_request(tmp_path)
+    previous_dir = tmp_path / "old-run"
+    checkpoint = previous_dir / "checkpoints" / "checkpoint.pt"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.touch()
+    metadata = runs.make_metadata(
+        env_name="demo-env",
+        rllib="external",
+        train_backend="custom",
+        algo="demo",
+        seed=7,
+        checkpoint_format="pt",
+        sim="motrixsim",
+        sim_device="cuda:1",
+    )
+    runs.write_metadata(previous_dir, metadata)
+    cfg = replace(request.config, resume=str(checkpoint), sim=sim, sim_device=sim_device)
+    handle = runner.create_training_handle(replace(request, config=cfg))
+    context = handle.trainer.context
+    assert (context.sim, context.sim_device) == (sim or "motrixsim", sim_device or "cuda:1")
+    assert context.resume_from == str(checkpoint)

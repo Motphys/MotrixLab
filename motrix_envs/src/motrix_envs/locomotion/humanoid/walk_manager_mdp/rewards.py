@@ -164,7 +164,7 @@ class PoseRewardCfg(RewardTermCfg):
         return RewardTerm(
             pose_reward,
             body.init_joint_pos,
-            torch.from_numpy(weights),
+            torch.as_tensor(weights),
             JointPositionQuery(joints=body.joint_names),
         )
 

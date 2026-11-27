@@ -17,7 +17,6 @@ from omegaconf import DictConfig, OmegaConf
 
 from motrix_env_core import registry
 from motrix_env_core.array.env import ArrayEnv
-from motrix_env_core.base import ABEnv
 from motrix_env_core.config import SimCfg, configclass
 from motrix_env_core.config.scene.base import RobotCfg, SceneCfg, SceneObjsCfg, SceneVisualCfg, SystemCameraCfg
 from motrix_env_core.config.scene.geometry import FlatTerrainCfg
@@ -36,32 +35,24 @@ class ViewConfig:
     env: str | None = None
     robot: str | None = None
     sim: str | None = None
+    sim_device: str | None = None
     num_envs: int = 1
 
 
-def _sample_random_action_np(env: ABEnv) -> np.ndarray:
-    action_space = env.action_space
-    if isinstance(action_space, gym.spaces.Box):
-        size = (env.num_envs, *action_space.shape)
-        low = action_space.low
-        high = action_space.high
-        low = np.where(np.isneginf(low), -1e6, low)
-        high = np.where(np.isposinf(high), 1e6, high)
-        return np.random.uniform(low=low, high=high, size=size).astype(action_space.dtype)
-    else:
-        raise NotImplementedError("Only Box action space is supported")
-
-
-def _run_np(env: ArrayEnv):
+def _run_env(env: ArrayEnv):
     import torch
 
+    action_space = env.action_space
+    if not isinstance(action_space, gym.spaces.Box):
+        raise NotImplementedError("Only Box action space is supported")
+    shape = (env.num_envs, *action_space.shape)
+    low = torch.as_tensor(np.where(np.isneginf(action_space.low), -1e6, action_space.low), device=env.device)
+    high = torch.as_tensor(np.where(np.isposinf(action_space.high), 1e6, action_space.high), device=env.device)
     renderer = create_renderer(env, RenderConfig())
     env_dt = env.cfg.ctrl_dt
-    # ArrayEnv frontends (DirectEnv and ManagerEnv alike) consume torch
-    # tensor actions; sample in numpy and hand the env its tensor currency.
     while True:
         t0 = time.monotonic()
-        actions = torch.from_numpy(_sample_random_action_np(env))
+        actions = low + (high - low) * torch.rand(shape, device=env.device, dtype=low.dtype)
         env.step(actions)
         renderer.render()
         real_dt = time.monotonic() - t0
@@ -186,7 +177,8 @@ def run(cfg: ViewConfig) -> None:
 
     env_name = cfg.env or DEFAULT_ENV_NAME
     try:
-        env = registry.make(env_name, num_envs=cfg.num_envs)
+        overrides = {key: val for key, val in (("sim", cfg.sim), ("sim_device", cfg.sim_device)) if val is not None}
+        env = registry.make(env_name, num_envs=cfg.num_envs, **overrides)
     except ModuleNotFoundError as exc:
         # Torch-frontend environments import torch when their factory resolves the env class.
         if exc.name == "torch":
@@ -194,7 +186,7 @@ def run(cfg: ViewConfig) -> None:
         raise
 
     if isinstance(env, ArrayEnv):
-        _run_np(env)
+        _run_env(env)
         return
 
     raise TypeError(f"Unsupported environment type '{type(env).__name__}'.")

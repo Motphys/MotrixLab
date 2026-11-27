@@ -40,6 +40,7 @@ def _make_env(history_length: int = 1, value_dim: int | None = None) -> Mock:
         observations["value"] = torch.zeros((_NUM_ENVS, value_dim * history_length), dtype=torch.float32)
     observation_spec = ObservationSpec(groups)
     env = Mock(spec=DirectEnv)
+    env.device = torch.device("cpu")
     state = ArrayEnvState(
         obs=EnvObs(observations),
         reward=torch.ones(_NUM_ENVS, dtype=torch.float32),
@@ -92,8 +93,8 @@ def test_rl_trainer_supports_sim_backend(monkeypatch, history_length: int, value
     renderer.close.assert_called_once_with()
 
 
-@pytest.mark.parametrize("mode", ["train", "play"])
-def test_provider_applies_render_init_kwargs_before_wrapping(monkeypatch, mode):
+@pytest.mark.parametrize(("mode", "sim_device"), [("train", None), ("play", None), ("play", "cuda:1")])
+def test_provider_applies_render_init_kwargs_before_wrapping(monkeypatch, mode, sim_device):
     pytest.importorskip("rsl_rl")
     module = importlib.import_module("motrix_rl_rslrl.torch.train.ppo")
     recording = RenderConfig(
@@ -104,10 +105,11 @@ def test_provider_applies_render_init_kwargs_before_wrapping(monkeypatch, mode):
         _env_name="cartpole",
         _sim="test-sim",
         _render=recording,
-        _context=SimpleNamespace(seed=7, num_envs=4, play_num_envs=2),
+        _context=SimpleNamespace(run=None, sim_device=sim_device, seed=7, num_envs=4, play_num_envs=2),
         _set_seed=Mock(),
     )
-    make = Mock()
+    device = torch.device(sim_device or "cpu")
+    make = Mock(return_value=SimpleNamespace(device=device))
     wrapper = Mock(side_effect=RuntimeError("stop before runner creation"))
     monkeypatch.setattr(module.env_registry, "make", make)
     monkeypatch.setattr(module, "resolve_default_device", lambda: torch.device("cpu"))
@@ -127,5 +129,6 @@ def test_provider_applies_render_init_kwargs_before_wrapping(monkeypatch, mode):
         seed=7,
         headless=True,
         record=recording.record,
+        **({"sim_device": sim_device} if sim_device is not None else {}),
     )
-    wrapper.assert_called_once_with(make.return_value, torch.device("cpu"), render=recording)
+    wrapper.assert_called_once_with(make.return_value, device, render=recording)

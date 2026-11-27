@@ -124,7 +124,7 @@ class Go1TerrainWalkDirectEnvCfg(DirectEnvCfg):
     normalization: Normalization = Normalization()
     asset: Asset = Asset()
     sensor: Sensor = Sensor()
-    sim: SimCfg = SimCfg(dt=0.01)
+    sim: SimCfg = SimCfg(dt=0.01, max_contacts=256, max_contact_constraints=768)
     ctrl_dt: float = 0.01
 
 

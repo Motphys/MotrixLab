@@ -54,6 +54,33 @@ class _CollectorPolicy(nn.Module):
         return self.actor.explore(self._normalize(obs), deterministic=True)
 
 
+class _DeviceEpisodeHistory:
+    """Keep the same last 100 completions as the host collector, newest first."""
+
+    def __init__(self, num_envs: int, device: torch.device):
+        self.ids = torch.arange(num_envs, device=device)
+        self.positions = torch.arange(100, device=device)
+        self.count = torch.zeros((), device=device, dtype=torch.int64)
+        self.history = torch.zeros((2, 100), device=device)
+        self.width = min(num_envs, 100)
+
+    def append(self, returns: torch.Tensor, lengths: torch.Tensor, done: torch.Tensor) -> None:
+        # Larger environment IDs finish later in the host loop for a tied step.
+        ids = torch.where(done, self.ids, -1).topk(self.width).values.clamp_min_(0)
+        completed = done.sum()
+        new_ids = ids[self.positions.clamp_max(self.width - 1)]
+        old_positions = (self.positions - completed).clamp_min_(0)
+        newest = torch.stack((returns[new_ids], lengths[new_ids]))
+        self.history = torch.where(self.positions < completed, newest, self.history[:, old_positions])
+        self.count.add_(completed)
+
+    def summary(self) -> tuple[float, float, int]:
+        # Empty history naturally reports NaN. Only these three scalars cross devices.
+        means = self.history.sum(dim=1) / self.count.clamp_max(100)
+        ret, length, count = torch.cat((means.double(), self.count.reshape(1))).tolist()
+        return ret, length, int(count)
+
+
 class Collector:
     def __init__(
         self,
@@ -77,7 +104,7 @@ class Collector:
         self.device = collector_device
         if self.device.type == "cuda":
             torch.cuda.set_device(self.device)
-        self.env_device = torch.device("cpu")
+        self.env_device = env.env.device
         self.num_envs = env.num_envs
         self.act_dim = act_dim
         self.ring = ring
@@ -127,32 +154,35 @@ class Collector:
         self._obs_host = None
         self._obs_device = None
         self._actions_host = None
-        if self.device.type in ("cuda", "mps"):
+        if self.device.type in ("cuda", "mps") and self.env_device.type == "cpu":
             pin = self._is_cuda
             self._obs_host = torch.empty((self.num_envs, obs_dim), dtype=torch.float32, pin_memory=pin)
             self._obs_device = torch.empty_like(self._obs_host, device=self.device)
             self._actions_host = torch.empty((self.num_envs, act_dim), dtype=torch.float32, pin_memory=pin)
-            if self._is_cuda and bool(self.async_options.collector_compile):
-                import torch._inductor.config as inductor_config
+        if self._is_cuda and bool(self.async_options.collector_compile):
+            import torch._inductor.config as inductor_config
 
-                inductor_config.compile_threads = 1
-                self._policy_runtime = torch.compile(self._policy, mode="reduce-overhead")
+            inductor_config.compile_threads = 1
+            self._policy_runtime = torch.compile(self._policy, mode="reduce-overhead")
 
-        self._action_scale_cpu = self.actor.action_scale.detach().cpu()
-        self._action_bias_cpu = self.actor.action_bias.detach().cpu()
+        self._action_scale = self.actor.action_scale.detach().to(self.env_device)
+        self._action_bias = self.actor.action_bias.detach().to(self.env_device)
 
         # rollout state
         self.obs = None
         self.critic_obs = None
         # episode bookkeeping (owned here since the collector sees reward/done)
         self.ep_return = torch.zeros(self.num_envs, device=self.env_device)
-        self.ep_len = torch.zeros(self.num_envs, device=self.env_device)
+        self.ep_len = torch.zeros_like(self.ep_return)
+        self._gpu_episodes = None
+        if self.env_device.type == "cuda":
+            self._gpu_episodes = _DeviceEpisodeHistory(self.num_envs, self.env_device)
         self.recent_returns: list[float] = []
         self.recent_lengths: list[float] = []
         self.n_episodes = 0
-        self.term_accum: dict[str, float] = {}
+        self.term_accum: dict[str, torch.Tensor] = {}
         self.term_count = 0
-        self.last_env_metrics: dict[str, float] = {}
+        self.last_env_metrics: dict[str, float | torch.Tensor] = {}
         # windowed collector timing (wall-clock spent producing one env-step batch)
         self._collect_t = 0.0
         self._sample_actions_t = 0.0
@@ -179,8 +209,13 @@ class Collector:
 
     @torch.no_grad()
     def _infer(self, obs: torch.Tensor) -> torch.Tensor:
-        if self.device.type == "cpu":
-            return self._policy_runtime(obs)
+        if self._obs_host is None:
+            with self._autocast():
+                actions = self._policy_runtime(obs.to(self.device))
+            # Graph-backed inference can reuse its output on the next replay.
+            return (
+                actions.clone() if actions.device == self.env_device and self._is_cuda else actions.to(self.env_device)
+            )
 
         self._obs_host.copy_(obs)
         self._obs_device.copy_(self._obs_host, non_blocking=True)
@@ -203,7 +238,7 @@ class Collector:
     def _sample_actions(self, warming: bool) -> torch.Tensor:
         if warming and not self.is_resume:
             actions = torch.empty(self.num_envs, self.act_dim, device=self.env_device).uniform_(-1.0, 1.0)
-            return actions * self._action_scale_cpu + self._action_bias_cpu
+            return actions * self._action_scale + self._action_bias
         return self._infer(self.obs)
 
     def sync_weights(self, *, record_timing: bool = False) -> None:
@@ -252,9 +287,9 @@ class Collector:
             final = self.env.final_frames(result)
             if final is not None:
                 final_payload = FinalObsPayload(
-                    torch.as_tensor(final.env_ids, dtype=torch.long),
-                    torch.as_tensor(final.obs.policy),
-                    torch.as_tensor(final.obs.value_or_policy),
+                    final.env_ids,
+                    final.obs.policy,
+                    final.obs.value_or_policy,
                 )
         rewards = result.reward.detach()
         terminated = result.terminated.detach().long()
@@ -275,28 +310,23 @@ class Collector:
         t_bookkeep = time.perf_counter()
 
         # episode bookkeeping (mirrors sync agent.py collect phase)
-        self.ep_return += rewards
-        self.ep_len += 1
-        done_idx = torch.nonzero(terminated | truncated, as_tuple=False).flatten()
-        if done_idx.numel():
-            # Vectorized: one batched gather + clear instead of per-episode
-            # Python-level scalar indexing — early in training hundreds of
-            # dones per step make the scalar loop dominate bookkeeping.
-            self.recent_returns.extend(self.ep_return[done_idx].tolist())
-            self.recent_lengths.extend(self.ep_len[done_idx].tolist())
-            self.ep_return[done_idx] = 0.0
-            self.ep_len[done_idx] = 0.0
-            self.n_episodes += int(done_idx.numel())
-        self.recent_returns = self.recent_returns[-100:]
-        self.recent_lengths = self.recent_lengths[-100:]
+        done = result.terminated | result.truncated
+        if self._gpu_episodes is None:
+            self._record_episodes(rewards, done)
+        else:
+            self.ep_return.add_(rewards)
+            self.ep_len.add_(1)
+            self._gpu_episodes.append(self.ep_return, self.ep_len, done)
+            self.ep_return.masked_fill_(done, 0)
+            self.ep_len.masked_fill_(done, 0)
 
         info = result.info
         reward_terms = info.get("Reward")
         if reward_terms:
             for k, v in reward_terms.items():
-                self.term_accum[k] = self.term_accum.get(k, 0.0) + float(v.mean())
+                self.term_accum[k] = self.term_accum.get(k, 0.0) + torch.as_tensor(v).detach().mean()
             self.term_count += 1
-        self.last_env_metrics = {k: float(np.mean(v)) for k, v in info.get("metrics", {}).items()}
+        self.last_env_metrics = info.get("metrics", {})
 
         self.obs = result.obs
         self.critic_obs = result.critic_obs
@@ -316,6 +346,22 @@ class Collector:
         self._collect_n += 1
         return True
 
+    def _record_episodes(self, rewards, done):
+        self.ep_return += rewards
+        self.ep_len += 1
+        done_idx = torch.nonzero(done, as_tuple=False).flatten()
+        if done_idx.numel():
+            # Vectorized: one batched gather + clear instead of per-episode
+            # Python-level scalar indexing — early in training hundreds of
+            # dones per step make the scalar loop dominate bookkeeping.
+            self.recent_returns.extend(self.ep_return[done_idx].tolist())
+            self.recent_lengths.extend(self.ep_len[done_idx].tolist())
+            self.ep_return[done_idx] = 0.0
+            self.ep_len[done_idx] = 0.0
+            self.n_episodes += int(done_idx.numel())
+        self.recent_returns = self.recent_returns[-100:]
+        self.recent_lengths = self.recent_lengths[-100:]
+
     # ------------------------------------------------------------------ stats
     def snapshot_stats(self) -> dict:
         """Compact rollout-stats snapshot for the learner's log panel.
@@ -324,15 +370,24 @@ class Collector:
         interval since the last call. Used by the M1 collector process to ship
         episode/reward info to the learner process (which owns logging).
         """
-        rr, rl = self.recent_returns, self.recent_lengths
-        term_means = {k: v / max(self.term_count, 1) for k, v in self.term_accum.items()}
+        if self._gpu_episodes is None:
+            rr, rl = self.recent_returns, self.recent_lengths
+            mean_return = sum(rr) / len(rr) if rr else float("nan")
+            mean_length = sum(rl) / len(rl) if rl else float("nan")
+            episodes = self.n_episodes
+        else:
+            mean_return, mean_length, episodes = self._gpu_episodes.summary()
+        term_means = {k: float(v) / max(self.term_count, 1) for k, v in self.term_accum.items()}
         stats = {
             "collector_id": self.collector_id,
-            "return": (sum(rr) / len(rr)) if rr else float("nan"),
-            "ep_len": (sum(rl) / len(rl)) if rl else float("nan"),
-            "episodes": self.n_episodes,
+            "return": mean_return,
+            "ep_len": mean_length,
+            "episodes": episodes,
             "reward_terms": term_means,
-            "env_metrics": dict(self.last_env_metrics),
+            "env_metrics": {
+                k: float(v.float().mean()) if isinstance(v, torch.Tensor) else float(np.mean(v))
+                for k, v in self.last_env_metrics.items()
+            },
             "policy_lag": self.policy_lag,
             # Average wall-clock milliseconds per successful env-step batch.
             # Nested stages use dotted paths (``sync.wait_writer``,

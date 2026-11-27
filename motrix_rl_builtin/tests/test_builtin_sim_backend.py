@@ -46,6 +46,7 @@ def _make_env():
         high=np.array([2.0, 3.0], dtype=np.float32),
     )
     env = Mock(spec=DirectEnv)
+    env.device = torch.device("cpu")
     state = ArrayEnvState(
         obs=EnvObs({"policy": torch.zeros((_NUM_ENVS, _OBS_DIM), dtype=torch.float32)}),
         reward=torch.ones(_NUM_ENVS, dtype=torch.float32),
@@ -114,7 +115,7 @@ class _AsyncEnv:
     def __init__(self, cfg: EnvCfg, num_envs: int = 1, backend=None) -> None:
         self._cfg = cfg
         self._num_envs = num_envs
-        self._device = torch.device("cpu")
+        self.device = torch.device("cpu")
         self._action_space = gym.spaces.Box(-1.0, 1.0, (_ACT_DIM,), dtype=np.float32)
         self._observation_spec = ObservationSpec(
             {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (_OBS_DIM,), dtype=np.float32))}
@@ -332,7 +333,7 @@ def test_sync_env_builder_separates_env_render_settings_and_recording(monkeypatc
     spec = Mock()
     spec.make.return_value = env
     device = torch.device("cpu")
-    instance = SimpleNamespace(_env_spec=spec, _context=SimpleNamespace(seed=7), _device=lambda: device)
+    instance = SimpleNamespace(_env_spec=spec, _context=SimpleNamespace(seed=7), _device=lambda sim_device: device)
     wrapper = Mock()
     monkeypatch.setattr(train, "FastSacEnvWrap", wrapper)
 

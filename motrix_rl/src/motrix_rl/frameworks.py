@@ -185,6 +185,7 @@ def create_trainer_context(
         run_dir=run.run_dir,
         checkpoint_dir=run.checkpoint_dir,
         sim=run.sim,
+        sim_device=run.metadata.sim_device,
         checkpoint_format=metadata.checkpoint_format,
         num_envs=num_envs,
         play_num_envs=play_num_envs,

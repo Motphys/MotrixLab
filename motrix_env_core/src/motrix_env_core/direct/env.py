@@ -15,7 +15,7 @@ from typing import TypeVar
 
 import torch
 
-from motrix_env_core.array.env import ArrayEnv, EnvObs
+from motrix_env_core.array.env import ArrayEnv, EnvObs, FinalObs
 from motrix_env_core.array.env import ArrayEnvState as ArrayEnvState
 from motrix_env_core.base import EnvCfg
 from motrix_env_core.config import configclass
@@ -51,21 +51,22 @@ class DirectEnv(ArrayEnv[DirectEnvCfgType]):
         headless: bool = False,
         record: RecordConfig | None = None,
     ):
-        super().__init__(cfg, num_envs)
-        from motrix_env_core.sim.registry import create_sim_backend, default_sim_backend_name
+        from motrix_env_core.sim.registry import create_sim_backend
 
-        factory = create_sim_backend(backend or default_sim_backend_name())
+        factory = create_sim_backend(backend or cfg.backend, cfg.sim.device)
         if not factory.capabilities.env_creation:
             raise ValueError(
                 f"Backend {factory.name!r} cannot create a DirectEnv or ManagerEnv. "
                 f"{factory.capabilities.env_creation_unavailable_reason}"
             )
+        super().__init__(cfg, num_envs)
         # Construction compiles the scene inside the backend: no compiled
         # artifact crosses the boundary.
         render = RenderConfig(headless=headless, record=record)
         self.sim: SimBackend = factory(cfg.scene, cfg.sim, num_envs, render=render)
-        self._reward = torch.zeros(num_envs)
-        self._terminated = torch.zeros(num_envs, dtype=torch.bool)
+        self._step_context = self.sim.step_context
+        self._reward = torch.zeros(num_envs, device=self.device)
+        self._terminated = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
         self._obs: EnvObs | None = None
         self._reward_terms: dict[str, torch.Tensor] = {}
 
@@ -128,6 +129,33 @@ class DirectEnv(ArrayEnv[DirectEnvCfgType]):
             num_envs=self.num_envs,
             render_spacing=self.render_spacing,
         )
+
+    def _process_episode_boundaries(self) -> None:
+        if self.device.type == "cuda" and not (self._terminated | self._truncated).any():
+            return
+        super()._process_episode_boundaries()
+
+    def _capture_final_obs(self, env_ids: torch.Tensor) -> FinalObs:
+        # Use the inactive buffer so the published starting observation stays intact.
+        obs = self._obs_buffers[1 - self._obs_index]
+        self._preview_observation(self.state.replace(obs=obs))
+        failed = self.engine_error_mask.index_select(0, env_ids)
+        return FinalObs(
+            env_ids,
+            EnvObs(
+                {
+                    name: group.index_select(0, env_ids).masked_fill_(failed.view(-1, *([1] * (group.ndim - 1))), 0.0)
+                    for name, group in obs.groups.items()
+                }
+            ),
+        )
+
+    def _preview_observation(self, state: ArrayEnvState) -> None:
+        """Write pre-reset observations without advancing any task-owned observation history.
+
+        Tasks with stateful observation updates override this hook.
+        """
+        self.compute_observation(state)
 
     def physics_step(self) -> None:
         self.sim.step(self._cfg.sim_substeps, result=self.engine_error_codes)

@@ -101,6 +101,39 @@ def test_ipc_ring_roundtrip_matches_pushed_data():
     assert expected == len(pushed)
 
 
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="cross-device stream ordering requires two GPUs")
+def test_ipc_ring_publishes_cross_device_batch_and_final_observations_together():
+    source = torch.device("cuda:0")
+    target = torch.device("cuda:1")
+    source_stream = torch.cuda.Stream(device=source)
+    target_stream = torch.cuda.Stream(device=target)
+    slots = torch.zeros(CAPACITY, N_ENV, FEAT, device=target)
+    storage = FinalObsStorage(CAPACITY, N_ENV, OBS, CRI, device=target)
+    ring = GpuIpcTransitionRing(RingCursors(), slots, SCHEMA, CAPACITY, N_ENV, payload_store=storage)
+    expected = _batch(0)
+    target_stream.wait_stream(torch.cuda.current_stream(target))
+    with torch.cuda.stream(target_stream), torch.cuda.stream(source_stream):
+        fields = {name: value.to(source).add_(1) for name, value in expected.items()}
+        payload = FinalObsPayload(
+            torch.tensor([1], device=source),
+            fields["obs"][1:2] + 100.0,
+            fields["critic_obs"][1:2] + 200.0,
+        )
+        assert ring.push(fields, payload)
+    target_stream.synchronize()
+
+    assert ring.size() == 1
+    count, views = ring.read_span()
+    assert count == 1
+    for name, rows in views.items():
+        torch.testing.assert_close(rows[0].cpu(), (expected[name] + 1).to(rows.dtype))
+    (final,) = storage.read(0, count)
+    assert final is not None
+    assert final.env_ids.tolist() == [1]
+    torch.testing.assert_close(final.obs.cpu(), expected["obs"][1:2] + 101.0)
+    torch.testing.assert_close(final.critic_obs.cpu(), expected["critic_obs"][1:2] + 201.0)
+
+
 @cuda_only
 def test_ipc_ring_cursor_publishes_only_after_event():
     """A pushed slot is invisible until its event completes; size() flushes."""

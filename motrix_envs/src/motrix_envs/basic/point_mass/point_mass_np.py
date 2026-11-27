@@ -63,7 +63,7 @@ class PointMassEnv(DirectEnv):
         self._target_radius = cfg.target_radius
 
         # Target stay counter, used to control reset after 0.5 seconds of overlap
-        self._in_target_steps = torch.zeros(self._num_envs, dtype=torch.int64)
+        self._in_target_steps = torch.zeros(self._num_envs, dtype=torch.int64, device=self.device)
         self._required_in_target_steps = int(0.5 / cfg.ctrl_dt)
 
     @property
@@ -163,18 +163,18 @@ class PointMassEnv(DirectEnv):
         num_reset = env_ids.numel()
 
         # Random initial position within a range for the point mass (only x, y)
-        x_pos = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * 1.0
-        y_pos = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * 1.0
+        x_pos = (torch.rand(num_reset, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * 1.0
+        y_pos = (torch.rand(num_reset, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * 1.0
 
         point_position = torch.stack([x_pos, y_pos], dim=-1)
-        point_velocity = torch.zeros((num_reset, 2), dtype=torch.float32)
+        point_velocity = torch.zeros((num_reset, 2), dtype=torch.float32, device=self.device)
 
         # Randomize target position using its slide joints
-        target_x = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * 1.5
-        target_y = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * 1.5
+        target_x = (torch.rand(num_reset, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * 1.5
+        target_y = (torch.rand(num_reset, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * 1.5
 
         target_position = torch.stack([target_x, target_y], dim=-1)
-        target_velocity = torch.zeros((num_reset, 2), dtype=torch.float32)
+        target_velocity = torch.zeros((num_reset, 2), dtype=torch.float32, device=self.device)
 
         self._point_position[env_ids] = point_position
         self._point_velocity[env_ids] = point_velocity

@@ -131,21 +131,21 @@ class WbtMotionClip:
         reference_index = motion.body_index(reference_body_name)
 
         return WbtMotionClip(
-            joint_pos=torch.from_numpy(np.ascontiguousarray(motion.joint_pos[:, joint_motion_idx])),
-            joint_vel=torch.from_numpy(np.ascontiguousarray(motion.joint_vel[:, joint_motion_idx])),
-            tracked_bodies_pos_w=torch.from_numpy(np.ascontiguousarray(motion.body_pos_w[:, tracked_idx])),
-            tracked_bodies_quat_w=torch.from_numpy(np.ascontiguousarray(motion.body_quat_w[:, tracked_idx])),
-            tracked_bodies_lin_vel_w=torch.from_numpy(np.ascontiguousarray(motion.body_lin_vel_w[:, tracked_idx])),
-            tracked_bodies_ang_vel_w=torch.from_numpy(np.ascontiguousarray(motion.body_ang_vel_w[:, tracked_idx])),
-            root_body_pos_w=torch.from_numpy(np.ascontiguousarray(motion.body_pos_w[:, root_index])),
-            root_body_quat_w=torch.from_numpy(np.ascontiguousarray(motion.body_quat_w[:, root_index])),
-            root_body_lin_vel_w=torch.from_numpy(np.ascontiguousarray(motion.body_lin_vel_w[:, root_index])),
-            root_body_ang_vel_w=torch.from_numpy(np.ascontiguousarray(motion.body_ang_vel_w[:, root_index])),
-            reference_body_pos_w=torch.from_numpy(np.ascontiguousarray(motion.body_pos_w[:, reference_index])),
-            reference_body_quat_w=torch.from_numpy(np.ascontiguousarray(motion.body_quat_w[:, reference_index])),
+            joint_pos=torch.as_tensor(np.ascontiguousarray(motion.joint_pos[:, joint_motion_idx])),
+            joint_vel=torch.as_tensor(np.ascontiguousarray(motion.joint_vel[:, joint_motion_idx])),
+            tracked_bodies_pos_w=torch.as_tensor(np.ascontiguousarray(motion.body_pos_w[:, tracked_idx])),
+            tracked_bodies_quat_w=torch.as_tensor(np.ascontiguousarray(motion.body_quat_w[:, tracked_idx])),
+            tracked_bodies_lin_vel_w=torch.as_tensor(np.ascontiguousarray(motion.body_lin_vel_w[:, tracked_idx])),
+            tracked_bodies_ang_vel_w=torch.as_tensor(np.ascontiguousarray(motion.body_ang_vel_w[:, tracked_idx])),
+            root_body_pos_w=torch.as_tensor(np.ascontiguousarray(motion.body_pos_w[:, root_index])),
+            root_body_quat_w=torch.as_tensor(np.ascontiguousarray(motion.body_quat_w[:, root_index])),
+            root_body_lin_vel_w=torch.as_tensor(np.ascontiguousarray(motion.body_lin_vel_w[:, root_index])),
+            root_body_ang_vel_w=torch.as_tensor(np.ascontiguousarray(motion.body_ang_vel_w[:, root_index])),
+            reference_body_pos_w=torch.as_tensor(np.ascontiguousarray(motion.body_pos_w[:, reference_index])),
+            reference_body_quat_w=torch.as_tensor(np.ascontiguousarray(motion.body_quat_w[:, reference_index])),
             frame_clip_end=torch.full((motion.num_frames,), motion.num_frames - 1, dtype=torch.int64),
             extensions={
-                name: MotionChannel(torch.from_numpy(load_extension_channel(motion, name)))
+                name: MotionChannel(torch.as_tensor(load_extension_channel(motion, name)))
                 for name in extension_channels
             },
         )

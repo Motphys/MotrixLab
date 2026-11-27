@@ -117,7 +117,9 @@ def make_dex_evt_walk_flat_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
                 ground_geom="floor",
             )
         ),
-        sim=SimCfg(dt=0.005, solver_iterations=6, solver_tolerance=0.0001),
+        sim=SimCfg(
+            dt=0.005, solver_iterations=6, solver_tolerance=0.0001, max_contacts=1024, max_contact_constraints=4096
+        ),
     )
 
 
@@ -138,6 +140,9 @@ def make_dex_evt_walk_rough_cfg() -> HumanoidVelocityTrackingManagerEnvCfg:
                 ),
                 robot=_make_dex_evt_robot(),
             ),
+        ),
+        sim=SimCfg(
+            dt=0.005, solver_iterations=6, solver_tolerance=0.0001, max_contacts=1536, max_contact_constraints=6144
         ),
         sim_reset=WalkResetCfg(humanoid_state=WalkStateResetCfg(spawn_xy_range=4.0)),
         render_spacing=0.0,

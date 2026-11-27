@@ -146,6 +146,7 @@ class Walker2DEnv(DirectEnv):
                 margin=self._stand_height * 4 / 5,
             ),
             dtype=torch.float32,
+            device=self.device,
         )
         rwd_upright = (1 + torso_upright) / 2
         rwd_stand = (3 * rwd_height + 1 * rwd_upright) / 4
@@ -168,6 +169,7 @@ class Walker2DEnv(DirectEnv):
                     sigmoid="linear",
                 ),
                 dtype=torch.float32,
+                device=self.device,
             )
             reward_terms["move"] = rwd_move
             rwd = rwd_stand * (5 * rwd_move + 1) / 6
@@ -182,14 +184,18 @@ class Walker2DEnv(DirectEnv):
     def reset(self, env_ids: torch.Tensor) -> None:
         num_reset = env_ids.numel()
 
-        dof_pos = torch.zeros((num_reset, self._reset_position.shape[1]), dtype=torch.float32)
-        dof_pos[:, 2] = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * np.pi  # randomize root yaw
+        dof_pos = torch.zeros((num_reset, self._reset_position.shape[1]), dtype=torch.float32, device=self.device)
+        dof_pos[:, 2] = (
+            torch.rand(num_reset, dtype=torch.float32, device=self.device) * 2.0 - 1.0
+        ) * np.pi  # randomize root yaw
         lower = self._joint_pos_lower[3:]
         upper = self._joint_pos_upper[3:]
         dof_pos[:, 3:] = (
-            torch.rand((num_reset, self._reset_position.shape[1] - 3), dtype=torch.float32) * (upper - lower) + lower
+            torch.rand((num_reset, self._reset_position.shape[1] - 3), dtype=torch.float32, device=self.device)
+            * (upper - lower)
+            + lower
         )  # randomize other joint angles
-        dof_vel = torch.zeros((num_reset, self._reset_velocity.shape[1]), dtype=torch.float32)
+        dof_vel = torch.zeros((num_reset, self._reset_velocity.shape[1]), dtype=torch.float32, device=self.device)
 
         self._reset_position[env_ids] = dof_pos
         self._reset_velocity[env_ids] = dof_vel

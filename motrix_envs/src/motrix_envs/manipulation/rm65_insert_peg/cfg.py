@@ -102,7 +102,7 @@ class PegInsertEnvCfg(DirectEnvCfg):
     render_spacing: float = 2.0
     scene: SceneCfg = SceneCfg(file=model_file)
     max_episode_seconds: float = 3.0
-    sim: SimCfg = SimCfg(dt=0.002)
+    sim: SimCfg = SimCfg(dt=0.002, max_contacts=128, max_contact_constraints=384)
     move_speed: float = 0.5
     ctrl_dt: float = 0.01
     reset_noise_scale: float = 0.005

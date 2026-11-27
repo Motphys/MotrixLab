@@ -49,6 +49,7 @@ class TrainerContext(Generic[CfgT]):
     rl_cfg: CfgT
     logging: Any
     checkpoint: Any
+    sim_device: str | None = None
     render: RenderConfig | None = None
     resume_from: str | None = None
     # Live metrics for this run; disabled unless the control plane enabled it for training.

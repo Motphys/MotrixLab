@@ -182,7 +182,7 @@ class KinematicTreeQuery(ModelQuery):
     """
 
     body: str
-    device: str = "cpu"
+    device: str | None = None
 
     def compile_with(self, compiler: SimModelCompiler, *, key: str) -> None:
         compiler.compile_kinematic_tree(key, self.body, self.device)
@@ -294,17 +294,21 @@ class SimModelCompiler(abc.ABC):
     the compiler to their engine model at construction.
     """
 
-    def compile(self, scene: SceneCfg, queries: Mapping[str, ModelQuery]) -> SimModel:
+    def compile(
+        self, scene: SceneCfg, queries: Mapping[str, ModelQuery], *, device: torch.device = torch.device("cpu")
+    ) -> SimModel:
         """Compile the scene surface and every named metadata query.
 
         Args:
             scene: The scene configuration the bound engine model was
                 compiled from; it drives the unconditional model surface.
             queries: Model queries keyed by their logical result names.
+            device: Default device for model tensors.
 
         Returns:
             The backend-neutral simulator model and compiled metadata values.
         """
+        self._device = device
         self._begin_compile()
         for key, query in queries.items():
             query.compile_with(self, key=key)
@@ -349,7 +353,7 @@ class SimModelCompiler(abc.ABC):
         """
 
     @abc.abstractmethod
-    def compile_kinematic_tree(self, key: str, body: str, device: str) -> None:
+    def compile_kinematic_tree(self, key: str, body: str, device: str | None) -> None:
         """Compile the differentiable kinematic tree of one body tree.
 
         Args:

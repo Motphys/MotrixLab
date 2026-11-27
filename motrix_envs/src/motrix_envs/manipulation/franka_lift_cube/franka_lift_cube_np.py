@@ -71,7 +71,9 @@ class FrankaLiftCubeEnv(DirectEnv):
             },
             reset=True,
         )
-        self.default_joint_pos = torch.as_tensor(self._cfg.init_state.default_joint_pos, dtype=torch.float32)
+        self.default_joint_pos = torch.as_tensor(
+            self._cfg.init_state.default_joint_pos, dtype=torch.float32, device=self.device
+        )
 
         self._action_dim = 8
         self._obs_dim = 36  # 9 + 9 + 3 + 7 + 8
@@ -83,10 +85,14 @@ class FrankaLiftCubeEnv(DirectEnv):
         self._num_dof_pos = 9  # self._model.num_dof_pos # 9
         self._num_dof_vel = 9  # self._model.num_dof_vel # 9
         self._init_dof_pos = self.default_joint_pos
-        self._init_dof_vel = torch.zeros(self._num_dof_vel, dtype=torch.float32)
+        self._init_dof_vel = torch.zeros(self._num_dof_vel, dtype=torch.float32, device=self.device)
 
-        self.joint_pos_min_limit = torch.tensor(self._cfg.control_config.min_pos, dtype=torch.float32)
-        self.joint_pos_max_limit = torch.tensor(self._cfg.control_config.max_pos, dtype=torch.float32)
+        self.joint_pos_min_limit = torch.tensor(
+            self._cfg.control_config.min_pos, dtype=torch.float32, device=self.device
+        )
+        self.joint_pos_max_limit = torch.tensor(
+            self._cfg.control_config.max_pos, dtype=torch.float32, device=self.device
+        )
 
         self.epsilon = START_EPSILON
 
@@ -95,9 +101,9 @@ class FrankaLiftCubeEnv(DirectEnv):
         # Episode-scoped task state: full-batch buffers, reset writes the done
         # rows in place.
         num_envs = self._num_envs
-        self._commands = torch.zeros(num_envs, 3, dtype=torch.float32)
-        self._current_actions = torch.zeros(num_envs, self._action_dim, dtype=torch.float32)
-        self._last_actions = torch.zeros(num_envs, self._action_dim, dtype=torch.float32)
+        self._commands = torch.zeros(num_envs, 3, dtype=torch.float32, device=self.device)
+        self._current_actions = torch.zeros(num_envs, self._action_dim, dtype=torch.float32, device=self.device)
+        self._last_actions = torch.zeros(num_envs, self._action_dim, dtype=torch.float32, device=self.device)
 
     @property
     def observation_spec(self) -> ObservationSpec:
@@ -190,7 +196,7 @@ class FrankaLiftCubeEnv(DirectEnv):
 
         # Robot arm initial joint angle noise
         noise_scale = self._cfg.init_state.joint_pos_reset_noise_scale
-        noise_pos = (torch.rand(self._num_dof_pos, dtype=torch.float32) * 2.0 - 1.0) * noise_scale
+        noise_pos = (torch.rand(self._num_dof_pos, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * noise_scale
         robot_dof_pos = self._init_dof_pos + noise_pos
 
         # Domain randomization for cube position
@@ -198,16 +204,16 @@ class FrankaLiftCubeEnv(DirectEnv):
         # y -0.25, 0.25
         x_low, x_high = -0.1, 0.1
         y_low, y_high = -0.25, 0.25
-        pos_x = torch.rand((), dtype=torch.float32) * (x_high - x_low) + x_low
-        pos_y = torch.rand((), dtype=torch.float32) * (y_high - y_low) + y_low
+        pos_x = torch.rand((), dtype=torch.float32, device=self.device) * (x_high - x_low) + x_low
+        pos_y = torch.rand((), dtype=torch.float32, device=self.device) * (y_high - y_low) + y_low
 
         self._reset_program.buffer("robot_position")[env_ids] = robot_dof_pos
         self._reset_program.buffer("robot_velocity")[env_ids] = self._init_dof_vel
         self._reset_program.buffer("cube_position")[env_ids, 0] = torch.tensor(
-            [pos_x, pos_y, 0.05], dtype=torch.float32
+            [pos_x, pos_y, 0.05], dtype=torch.float32, device=self.device
         )
         self._reset_program.buffer("cube_rotation")[env_ids, 0] = torch.tensor(
-            [1.0, 0.0, 0.0, 0.0], dtype=torch.float32
+            [1.0, 0.0, 0.0, 0.0], dtype=torch.float32, device=self.device
         )
         self._reset_program.buffer("cube_linear_velocity")[:, 0][env_ids] = 0.0
         self._reset_program.buffer("cube_angular_velocity")[:, 0][env_ids] = 0.0
@@ -324,9 +330,9 @@ class FrankaLiftCubeEnv(DirectEnv):
         y_low, y_high = self._cfg.command_config.target_pos_y
         z_low, z_high = self._cfg.command_config.target_pos_z
 
-        pos_x = torch.rand(num_envs, dtype=torch.float32) * (x_high - x_low) + x_low
-        pos_y = torch.rand(num_envs, dtype=torch.float32) * (y_high - y_low) + y_low
-        pos_z = torch.rand(num_envs, dtype=torch.float32) * (z_high - z_low) + z_low
+        pos_x = torch.rand(num_envs, dtype=torch.float32, device=self.device) * (x_high - x_low) + x_low
+        pos_y = torch.rand(num_envs, dtype=torch.float32, device=self.device) * (y_high - y_low) + y_low
+        pos_z = torch.rand(num_envs, dtype=torch.float32, device=self.device) * (z_high - z_low) + z_low
         command_cube_target_pos = torch.stack([pos_x, pos_y, pos_z], dim=-1)
 
         assert not command_cube_target_pos.isnan().any(), "command_cube_target_pos contain nan"

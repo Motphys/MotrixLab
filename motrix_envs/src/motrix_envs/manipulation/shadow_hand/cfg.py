@@ -39,7 +39,7 @@ class ShadowHandReposeEnvCfg(DirectEnvCfg):
     # ====================
     # Simulation Parameters
     # ====================
-    sim: SimCfg = SimCfg(dt=0.01)
+    sim: SimCfg = SimCfg(dt=0.01, max_contacts=256, max_contact_constraints=768)
     sim_substeps: int = 1  # Number of simulation steps per control step
     ctrl_dt: float = 0.01 * sim_substeps
 

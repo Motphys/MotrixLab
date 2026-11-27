@@ -144,6 +144,7 @@ class HopperEnv(DirectEnv):
                 margin=self._stand_height * 0.5,
             ),
             dtype=torch.float32,
+            device=self.device,
         )
 
         if self._hop_speed > 0.0:
@@ -156,6 +157,7 @@ class HopperEnv(DirectEnv):
                     sigmoid="linear",
                 ),
                 dtype=torch.float32,
+                device=self.device,
             )
 
             leg_vel = torch.linalg.norm(dof_vel[:, 4:7], dim=-1)
@@ -197,6 +199,7 @@ class HopperEnv(DirectEnv):
                     sigmoid="quadratic",
                 ),
                 dtype=torch.float32,
+                device=self.device,
             )
             small_control = (small_control + 4) / 5
 
@@ -212,7 +215,7 @@ class HopperEnv(DirectEnv):
     def reset(self, env_ids: torch.Tensor) -> None:
         num_reset = env_ids.numel()
 
-        dof_pos = torch.zeros((num_reset, self._reset_position.shape[1]), dtype=torch.float32)
+        dof_pos = torch.zeros((num_reset, self._reset_position.shape[1]), dtype=torch.float32, device=self.device)
 
         dof_pos[:, 2] = 0
 
@@ -220,11 +223,12 @@ class HopperEnv(DirectEnv):
             lower = self._joint_pos_lower[3:]
             upper = self._joint_pos_upper[3:]
             dof_pos[:, 3:] = (
-                torch.rand((num_reset, self._reset_position.shape[1] - 3), dtype=torch.float32) * (upper - lower)
+                torch.rand((num_reset, self._reset_position.shape[1] - 3), dtype=torch.float32, device=self.device)
+                * (upper - lower)
                 + lower
             )
 
-        dof_vel = torch.zeros((num_reset, self._reset_velocity.shape[1]), dtype=torch.float32)
+        dof_vel = torch.zeros((num_reset, self._reset_velocity.shape[1]), dtype=torch.float32, device=self.device)
 
         self._reset_position[env_ids] = dof_pos
         self._reset_velocity[env_ids] = dof_vel

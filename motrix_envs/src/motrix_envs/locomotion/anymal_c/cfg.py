@@ -108,7 +108,7 @@ class AnymalCEnvCfg(DirectEnvCfg):
     scene: SceneCfg = SceneCfg(file=model_file, objs=SceneObjsCfg(robot=AnymalC()))
     reset_noise_scale: float = 0.01
     max_episode_seconds: float = 7.0
-    sim: SimCfg = SimCfg(dt=0.01)
+    sim: SimCfg = SimCfg(dt=0.01, max_contacts=128, max_contact_constraints=384)
     ctrl_dt: float = 0.01
     reset_yaw_scale: float = 0.1
     max_dof_vel: float = 100.0  # maximum joint velocity threshold, greater tolerance during early training

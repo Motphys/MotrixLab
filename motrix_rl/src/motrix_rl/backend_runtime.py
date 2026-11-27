@@ -1,6 +1,8 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+import torch
+
 from motrix_rl import frameworks, utils
 from motrix_rl.method import RlMethod
 
@@ -12,6 +14,7 @@ def resolve_train_backend(
     method: RlMethod,
     requested_backend: str | None,
     device_supports: utils.DeviceSupports,
+    sim_device: str | None = None,
 ) -> str:
     """Resolve the training backend for an RL method.
 
@@ -20,16 +23,19 @@ def resolve_train_backend(
         method: Requested RL method.
         requested_backend: Backend requested by the user, or None for auto selection.
         device_supports: Runtime support information for built-in backends.
+        sim_device: Requested simulation device.
     """
     if requested_backend is not None:
         _validate_backend(method, requested_backend, device_supports)
         return requested_backend
 
     framework = frameworks.get_framework(method.rllib)
+    cuda_sim = sim_device is not None and torch.device(sim_device).type == "cuda"
     candidates = [
         backend
         for backend in framework.supported_train_backends(method.algo)
         if _backend_available(backend, device_supports)
+        and (backend != "jax" or not cuda_sim or device_supports.jax_gpu)
     ]
     if not candidates:
         raise ValueError(

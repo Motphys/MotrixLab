@@ -166,6 +166,10 @@ class SkrlPpoTrainerBase(TrainerBase):
         rlcfg = self._rlcfg
         self._set_seed(self._context.seed)
         env = self._make_env(num_envs=self._context.num_envs, mode="train")
+        if self._context.run is not None:
+            from motrix_rl.runs import annotate_run
+
+            annotate_run(self._context.run_dir, sim_device=str(env.device))
         skrl_env = self._wrap_env(env, self._render)
         models = self._make_model(skrl_env, rlcfg)
         ppo_cfg = rlcfg.agent.to_dict()

@@ -3,6 +3,7 @@
 
 import abc
 import dataclasses
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
@@ -152,11 +153,15 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
     def __init__(self, cfg: EnvCfgType, num_envs: int = 1):
         self._cfg = cfg
         self._num_envs = num_envs
+        self.device = torch.device(cfg.sim.device)
+        if self.device.type == "cuda" and self.device.index is None:
+            self.device = torch.device("cuda", torch.cuda.current_device())
+        self._step_context = nullcontext
         self.perf = Perf()
-        self.engine_error_codes = torch.zeros(num_envs, dtype=torch.int32)
-        self.engine_error_mask = torch.zeros(num_envs, dtype=torch.bool)
-        self._truncated = torch.zeros(num_envs, dtype=torch.bool)
-        self._episode_steps = torch.zeros(num_envs, dtype=torch.long)
+        self.engine_error_codes = torch.zeros(num_envs, dtype=torch.int32, device=self.device)
+        self.engine_error_mask = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._truncated = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._episode_steps = torch.zeros(num_envs, dtype=torch.long, device=self.device)
         self._initialized = False
         self._final_obs: FinalObs | None = None
         self._metrics: dict[str, float | torch.Tensor] = {}
@@ -202,7 +207,7 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         self._truncated.zero_()
         self._episode_steps.zero_()
         self._init_owned_state()
-        self.reset(torch.arange(self._num_envs))
+        self.reset(torch.arange(self._num_envs, device=self.device))
         state = self.state
         with self.perf.scope("observation"):
             self.compute_observation(state)
@@ -220,7 +225,7 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
 
     def _zeros_box(self, space: gym.spaces.Box) -> torch.Tensor:
         dtype = torch.from_numpy(np.empty((), dtype=space.dtype)).dtype
-        return torch.zeros((self._num_envs, *space.shape), dtype=dtype)
+        return torch.zeros((self._num_envs, *space.shape), dtype=dtype, device=self.device)
 
     def _zeros_obs(self, spec: ObservationSpec) -> EnvObs:
         return EnvObs({name: self._zeros_box(group.space) for name, group in spec.groups.items()})
@@ -247,8 +252,7 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
 
     def _clear_engine_error_rewards(self) -> None:
         """Publish a finite failure reward, only from the done/reset slow path."""
-        if bool(self.engine_error_mask.any()):
-            self.state.reward.masked_fill_(self.engine_error_mask, 0.0)
+        self.state.reward.masked_fill_(self.engine_error_mask, 0.0)
 
     @abc.abstractmethod
     def reset(self, env_ids: torch.Tensor) -> None:
@@ -275,7 +279,7 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         """Mark rows that reached the configured episode limit."""
         max_episode_steps = self._max_episode_steps()
         if max_episode_steps:
-            self._truncated[:] = self._episode_steps >= max_episode_steps
+            torch.ge(self._episode_steps, max_episode_steps, out=self._truncated)
 
     @abc.abstractmethod
     def create_renderer(self, config: RenderConfig) -> SimRenderer:
@@ -374,6 +378,10 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
             tensors (and copy dictionary contents) that must outlive the
             borrowed-buffer lifetime; finish asynchronous copies before reuse.
         """
+        with self._step_context():
+            return self._step(actions)
+
+    def _step(self, actions: torch.Tensor) -> ArrayEnvState:
         if not self.is_initialized:
             with self.perf.scope("initialize"):
                 self.initialize()
@@ -394,12 +402,7 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         state.terminated.logical_or_(self.engine_error_mask)
         self._episode_steps += 1
         self._update_truncate()
-        trunc_ids = torch.nonzero(self._truncated, as_tuple=False).flatten()
-        if trunc_ids.numel():
-            with self.perf.scope("final_obs"):
-                self._final_obs = self._capture_final_obs(trunc_ids)
-        with self.perf.scope("reset"):
-            self._reset_done_envs()
+        self._process_episode_boundaries()
         with self.perf.scope("observation"):
             self._pre_compute_observation()
             # The hook may have selected another observation buffer; do not
@@ -409,6 +412,14 @@ class ArrayEnv(ABEnv, Generic[EnvCfgType]):
         # fields (the final-observation snapshot, the reward-term breakdown)
         # that the cached view still holds stale.
         return self.state
+
+    def _process_episode_boundaries(self) -> None:
+        trunc_ids = torch.nonzero(self._truncated, as_tuple=False).flatten()
+        if trunc_ids.numel():
+            with self.perf.scope("final_obs"):
+                self._final_obs = self._capture_final_obs(trunc_ids)
+        with self.perf.scope("reset"):
+            self._reset_done_envs()
 
 
 __all__ = ["ArrayEnv", "ArrayEnvState", "EnvCfgType", "EnvObs", "FinalObs"]

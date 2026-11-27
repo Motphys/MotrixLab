@@ -44,6 +44,7 @@ def test_numpy_adapter_reads_final_result_without_consuming_environment_state():
     )
     initial = state.replace(final_obs=None)
     env = SimpleNamespace(
+        device=torch.device("cpu"),
         num_envs=1,
         observation_spec=ObservationSpec({"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (1,)))}),
         action_space=gym.spaces.Box(-1.0, 1.0, (1,), dtype=np.float32),
@@ -329,7 +330,7 @@ def _assert_live_rows(rb, tags):
         indices = rb._final_slot[:, absolute % rb._cap].long()
         torch.testing.assert_close(rb._final_obs_table[indices], torch.full((2, 1), float(tag)))
         torch.testing.assert_close(rb._final_critic_table[indices], torch.full((2, 1), float(tag + 100)))
-    live = [row for owners in rb._final_owners for row in owners.values()]
+    live = [row for owners in rb._final_owners for row in owners]
     assert len(live) == len(set(live))
     assert not set(live).intersection(rb._final_free)
     assert len(live) + len(rb._final_free) == rb._final_capacity

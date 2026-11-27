@@ -59,7 +59,7 @@ class AcrobotEnv(DirectEnv):
         )
         self._target_radius = 0.2
 
-        self._step_count = torch.zeros(self._num_envs, dtype=torch.int64)
+        self._step_count = torch.zeros(self._num_envs, dtype=torch.int64, device=self.device)
         self._max_steps = int(cfg.max_episode_seconds / cfg.ctrl_dt)
 
     @property
@@ -119,6 +119,7 @@ class AcrobotEnv(DirectEnv):
                 sigmoid="linear",
             ),
             dtype=torch.float32,
+            device=self.device,
         )
 
         in_target = dist_to_target < self._target_radius
@@ -148,11 +149,11 @@ class AcrobotEnv(DirectEnv):
         num_reset = env_ids.numel()
         self._step_count[env_ids] = 0
 
-        shoulder_angle = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * np.pi
-        elbow_angle = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * np.pi
+        shoulder_angle = (torch.rand(num_reset, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * np.pi
+        elbow_angle = (torch.rand(num_reset, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * np.pi
 
         dof_pos = torch.stack([shoulder_angle, elbow_angle], dim=-1)
-        dof_vel = torch.zeros((num_reset, 2), dtype=torch.float32)
+        dof_vel = torch.zeros((num_reset, 2), dtype=torch.float32, device=self.device)
 
         self._reset_position[env_ids] = dof_pos
         self._reset_velocity[env_ids] = dof_vel

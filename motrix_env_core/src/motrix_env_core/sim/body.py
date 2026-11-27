@@ -91,6 +91,7 @@ def assemble_body_model(
     init_link_positions: np.ndarray,
     init_link_quats: np.ndarray,
     robot_cfg: RobotCfg | None = None,
+    device: torch.device = torch.device("cpu"),
 ) -> BodyModel:
     """Assemble a :class:`BodyModel` from backend-extracted engine facts.
 
@@ -167,11 +168,13 @@ def assemble_body_model(
         base_link_name=base_link_name,
         link_names=tuple(link_names),
         joint_names=joint_names,
-        joint_pos_limits=None if limits is None else (torch.from_numpy(limits[0]), torch.from_numpy(limits[1])),
+        joint_pos_limits=None
+        if limits is None
+        else (torch.as_tensor(limits[0], device=device), torch.as_tensor(limits[1], device=device)),
         actuators=body_actuators,
-        init_base_position=torch.from_numpy(init_base_position),
-        init_base_quat=torch.from_numpy(init_base_quat),
-        init_joint_pos=torch.from_numpy(init_joint_pos),
-        init_link_positions=torch.from_numpy(positions),
-        init_link_quats=torch.from_numpy(quats),
+        init_base_position=torch.as_tensor(init_base_position, device=device),
+        init_base_quat=torch.as_tensor(init_base_quat, device=device),
+        init_joint_pos=torch.as_tensor(init_joint_pos, device=device),
+        init_link_positions=torch.as_tensor(positions, device=device),
+        init_link_quats=torch.as_tensor(quats, device=device),
     )

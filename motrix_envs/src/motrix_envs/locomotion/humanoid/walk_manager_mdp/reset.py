@@ -138,7 +138,8 @@ def _sample_randomized_dynamics(
             params.friction_range[0],
             params.friction_range[1],
         )
-        sim_writes["friction"][:, 0, :] = params.friction_default * ratio
+        sim_writes["friction"][:, 0, :] = params.friction_default
+        sim_writes["friction"][:, 0, :1] *= ratio
     mass_randomized = params.mass_scale_range[1] > params.mass_scale_range[0]
     base_mass_randomized = params.base_mass_off_range[1] > params.base_mass_off_range[0]
     if mass_randomized or base_mass_randomized:
@@ -316,4 +317,5 @@ class WalkStateResetCfg(ResetTermCfg):
             kernel,
             WalkResetParams(**params),
             writes=writes,
+            stateless=True,
         )

@@ -104,3 +104,20 @@ def test_worker_budget_does_not_override_default_and_survives_denied_affinity(mo
     assert threads == []
     numa.pin_worker_cpus({2, 4})
     assert threads == [2]
+
+
+def test_gpu_numa_node_maps_cuda_visible_devices_ordinals(monkeypatch, tmp_path):
+    from pathlib import Path as RealPath
+
+    pci_root = tmp_path / "pci"
+    for bus, node in (("0000:01:00.0", "0"), ("0000:81:00.0", "1")):
+        dev = pci_root / bus
+        dev.mkdir(parents=True)
+        (dev / "numa_node").write_text(node)
+    monkeypatch.setattr(numa, "_nvml", lambda: (object(), ["0000:01:00.0", "0000:81:00.0"]))
+    monkeypatch.setattr(numa, "Path", lambda p: pci_root if str(p) == "/sys/bus/pci/devices" else RealPath(p))
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+    assert numa.gpu_numa_node(0, "cuda") == 1
+    assert numa.gpu_numa_node(1, "cuda") is None
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-deadbeef")
+    assert numa.gpu_numa_node(0, "cuda") is None

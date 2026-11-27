@@ -84,7 +84,7 @@ class SimpleReplayBuffer(nn.Module):
         self._final_slot = None
         self._final_capacity = 0
         self._final_free: list[int] = []
-        self._final_owners: list[dict[int, int]] = [{} for _ in range(cap)]
+        self._final_owners: list[list[int]] = [[] for _ in range(cap)]
         if final_obs_bootstrap:
             self._enable_final_storage()
 
@@ -204,7 +204,7 @@ class SimpleReplayBuffer(nn.Module):
             return
         for offset in range(count):
             owners = self._final_owners[(start + offset) % self._cap]
-            self._final_free.extend(owners.values())
+            self._final_free.extend(owners)
             owners.clear()
         n = min(count, self._cap - start)
         self._final_slot[:, start : start + n] = -1
@@ -218,24 +218,26 @@ class SimpleReplayBuffer(nn.Module):
         Host allocation tracks live references, not episode frequency. Device
         tables are read by eager sampling, outside compiled gradient updates.
         """
-        ids = torch.as_tensor(env_ids, dtype=torch.long).cpu().tolist()
-        if not ids:
+        if not env_ids.numel():
             return
         slot = t_abs % self._cap
         owners = self._final_owners[slot]
-        for env_id in ids:
-            previous = owners.pop(env_id, None)
-            if previous is not None:
-                self._final_free.append(previous)
-        if len(self._final_free) < len(ids):
-            self._grow_final_storage(len(ids) - len(self._final_free))
-        rows = [self._final_free.pop() for _ in ids]
-        owners.update(zip(ids, rows))
-        device_ids = torch.tensor(ids, device=self.device, dtype=torch.long)
-        row_ids = torch.tensor(rows, device=self.device, dtype=torch.long)
+        device_ids = env_ids.to(device=self.device, dtype=torch.long)
+        # Normal ingest supplies every final for a slot together. A subsequent
+        # write to the same slot reuses rows already assigned to those envs.
+        new_ids = device_ids
+        if owners:
+            new_ids = device_ids[self._final_slot[device_ids, slot] < 0]
+        count = new_ids.numel()
+        if len(self._final_free) < count:
+            self._grow_final_storage(count - len(self._final_free))
+        rows = [self._final_free.pop() for _ in range(count)]
+        owners.extend(rows)
+        allocated = torch.tensor(rows, device=self.device, dtype=torch.int32)
+        self._final_slot[new_ids, slot] = allocated
+        row_ids = self._final_slot[device_ids, slot].long()
         self._final_obs_table[row_ids] = obs_rows.to(self.device, torch.float)
         self._final_critic_table[row_ids] = critic_rows.to(self.device, torch.float)
-        self._final_slot[device_ids, slot] = row_ids.to(torch.int32)
 
     def _write_span(self, slot: int, fields) -> None:
         obs, critic_obs, actions, rewards, dones, truncations = fields
@@ -271,16 +273,20 @@ class SimpleReplayBuffer(nn.Module):
             lanes = torch.arange(self.n_env, device=self.device)[:, None]
             obs = self.observations[lanes, ring]
             next_obs = self.observations[lanes, next_ring]
-            critic = self.critic_observations[lanes, ring]
-            next_critic = self.critic_observations[lanes, next_ring]
             truncations = self.truncations[lanes, ring]
-            if self._final_slot is not None:
+            have_finals = len(self._final_free) < self._final_capacity
+            if have_finals:
                 final_ids = self._final_slot[lanes, ring].long()
                 has_final = truncations.bool() & (final_ids >= 0)
-                final_policy = self._final_obs_table[final_ids.clamp_min(0)]
-                final_value = self._final_critic_table[final_ids.clamp_min(0)]
-                next_obs = torch.where(has_final[..., None], final_policy, next_obs)
-                next_critic = torch.where(has_final[..., None], final_value, next_critic)
+                final_ids.clamp_min_(0)
+                next_obs = torch.where(has_final[..., None], self._final_obs_table[final_ids], next_obs)
+            if self._shared_observations:
+                critic, next_critic = obs, next_obs
+            else:
+                critic = self.critic_observations[lanes, ring]
+                next_critic = self.critic_observations[lanes, next_ring]
+                if have_finals:
+                    next_critic = torch.where(has_final[..., None], self._final_critic_table[final_ids], next_critic)
             flat = self.n_env * batch_size
             return {
                 "obs": obs.reshape(flat, self.n_obs),

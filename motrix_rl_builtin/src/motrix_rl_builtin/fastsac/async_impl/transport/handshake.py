@@ -46,7 +46,7 @@ class StartupHandshake:
         self.slot_queues[collector_id].put(params)
 
     def ship_ring_slots(self, collector_id: int, ring_slots) -> None:
-        """Ship the CUDA-IPC transition-ring slots (``None`` for host rings)."""
+        """Ship CUDA-IPC transition slots and final rows (``None`` for host rings)."""
         self.ring_slot_queues[collector_id].put(ring_slots)
 
     # ------------------------------------------------------ collector side
