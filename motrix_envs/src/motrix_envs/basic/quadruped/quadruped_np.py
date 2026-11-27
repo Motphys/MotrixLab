@@ -214,7 +214,9 @@ class QuadrupedEnv(DirectEnv):
             # size) in every quadruped asset, so the capsule branch of the
             # legacy shape check reduces to the size tuple length.
             self._leg_geom_sizes = {
-                name: torch.as_tensor(self.model.others["geoms"][name].size, dtype=torch.float32).flatten()
+                name: torch.as_tensor(
+                    self.model.others["geoms"][name].size, dtype=torch.float32, device=self.device
+                ).flatten()
                 for name in self._leg_geom_names
             }
 
@@ -253,13 +255,13 @@ class QuadrupedEnv(DirectEnv):
         self._action_space = gym.spaces.Box(
             ctrl_ranges[:, 0], ctrl_ranges[:, 1], (self.num_actuators,), dtype=np.float32
         )
-        self._act_low = torch.from_numpy(ctrl_ranges[:, 0])
-        self._act_high = torch.from_numpy(ctrl_ranges[:, 1])
+        self._act_low = torch.from_numpy(ctrl_ranges[:, 0]).to(self.device)
+        self._act_high = torch.from_numpy(ctrl_ranges[:, 1]).to(self.device)
 
         # Episode-scoped action history: full-batch buffers, reset writes the
         # done rows in place.
-        self._actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32)
-        self._last_actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32)
+        self._actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32, device=self.device)
+        self._last_actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32, device=self.device)
 
     @property
     def observation_spec(self) -> ObservationSpec:
@@ -388,7 +390,7 @@ class QuadrupedEnv(DirectEnv):
 
     def _leg_body_ball_penalty(self, rows) -> torch.Tensor:
         if not self._leg_geom_names:
-            return torch.zeros((self._num_envs,), dtype=torch.float32)
+            return torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
 
         inputs = self.sim_data
         ball_pos = inputs["ball_geom_pos"][rows]
@@ -468,7 +470,7 @@ class QuadrupedEnv(DirectEnv):
         )
 
     def _radial_speed_reward(self) -> torch.Tensor:
-        radial_speed_reward = torch.zeros((self._num_envs,), dtype=torch.float32)
+        radial_speed_reward = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
         if not self._cfg.include_origin:
             return radial_speed_reward
 
@@ -487,7 +489,7 @@ class QuadrupedEnv(DirectEnv):
         )
 
     def _heading_reward(self) -> torch.Tensor:
-        heading_reward = torch.zeros((self._num_envs,), dtype=torch.float32)
+        heading_reward = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
         if self._cfg.heading_reward_weight <= 0.0:
             return heading_reward
 
@@ -652,7 +654,7 @@ class QuadrupedEnv(DirectEnv):
         return self._sum_scaled_rewards(reward_terms, self._locomotion_reward_scales())
 
     def _random_quaternion(self, num: int) -> torch.Tensor:
-        q = torch.randn(num, 4, dtype=torch.float32)
+        q = torch.randn(num, 4, dtype=torch.float32, device=self.device)
         return q / torch.norm(q, dim=-1, keepdim=True)
 
     def _yaw_quaternion(self, yaw: torch.Tensor) -> torch.Tensor:
@@ -678,7 +680,7 @@ class QuadrupedEnv(DirectEnv):
 
     def _lift_non_contacting(self, env_ids: torch.Tensor, dof_pos: torch.Tensor, dof_vel: torch.Tensor) -> torch.Tensor:
         z = dof_pos[:, 2].clone()
-        pending = torch.ones((env_ids.numel(),), dtype=torch.bool)
+        pending = torch.ones((env_ids.numel(),), dtype=torch.bool, device=self.device)
         for _ in range(1000):
             if not pending.any():
                 break
@@ -726,10 +728,10 @@ class QuadrupedLocomotionEnv(QuadrupedEnv):
     def reset(self, env_ids: torch.Tensor) -> None:
         num = env_ids.numel()
         dof_pos = self._init_dof_pos.unsqueeze(0).repeat(num, 1).contiguous()
-        dof_vel = torch.zeros((num, self.num_dof_vel), dtype=torch.float32)
+        dof_vel = torch.zeros((num, self.num_dof_vel), dtype=torch.float32, device=self.device)
 
         if self._cfg.fix_heading:
-            dof_pos[:, 3:7] = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32)
+            dof_pos[:, 3:7] = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device=self.device)
         else:
             dof_pos[:, 3:7] = self._random_quaternion(num)
 
@@ -953,22 +955,24 @@ class QuadrupedFetchEnv(QuadrupedEnv):
     def reset(self, env_ids: torch.Tensor) -> None:
         num = env_ids.numel()
         dof_pos = self._init_dof_pos.unsqueeze(0).repeat(num, 1).contiguous()
-        dof_vel = torch.zeros((num, self.num_dof_vel), dtype=torch.float32)
+        dof_vel = torch.zeros((num, self.num_dof_vel), dtype=torch.float32, device=self.device)
 
         floor_radius = self._floor_geom_size0
         if floor_radius <= 0.0:
             floor_radius = self._terrain_size
         spawn_radius = 0.12 * floor_radius
-        yaw = torch.rand(num, dtype=torch.float32) * 2.0 * torch.pi
-        dof_pos[:, 0] = (torch.rand(num, dtype=torch.float32) * 2.0 - 1.0) * spawn_radius
-        dof_pos[:, 1] = (torch.rand(num, dtype=torch.float32) * 2.0 - 1.0) * spawn_radius
+        yaw = torch.rand(num, dtype=torch.float32, device=self.device) * 2.0 * torch.pi
+        dof_pos[:, 0] = (torch.rand(num, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * spawn_radius
+        dof_pos[:, 1] = (torch.rand(num, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * spawn_radius
         dof_pos[:, 3:7] = self._yaw_quaternion(yaw)
 
-        ball_xy = (torch.rand(num, 2, dtype=torch.float32) * 2.0 - 1.0) * spawn_radius
+        ball_xy = (torch.rand(num, 2, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * spawn_radius
         ball_qpos = self._ball_pos_slice
         dof_pos[:, ball_qpos.start : ball_qpos.start + 2] = ball_xy
         dof_pos[:, ball_qpos.start + 2] = self._ball_geom_size0
-        dof_pos[:, ball_qpos.start + 3 : ball_qpos.stop] = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32)
+        dof_pos[:, ball_qpos.start + 3 : ball_qpos.stop] = torch.tensor(
+            [0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device=self.device
+        )
 
         ball_qvel = self._ball_vel_slice
         dof_vel[:, ball_qvel.start : ball_qvel.stop] = 0.0

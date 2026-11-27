@@ -84,11 +84,12 @@ _R = TypeVar("_R")
 class Perf:
     """Opt-in hierarchical wall-clock profiler owned by one environment."""
 
-    __slots__ = ("_clock", "_depth", "_enabled", "_frames", "_roots", "_scope_cache")
+    __slots__ = ("_clock", "_depth", "_enabled", "_frames", "_roots", "_scope_cache", "_synchronize")
 
     def __init__(self, *, enabled: bool = False, clock: _Clock = perf_counter_ns) -> None:
         self._enabled = enabled
         self._clock = clock
+        self._synchronize: Callable[[], object] | None = None
         self._roots: dict[str, _MutablePerfNode] = {}
         self._frames: list[_PerfFrame] = []
         self._depth = 0
@@ -98,11 +99,14 @@ class Perf:
     def enabled(self) -> bool:
         return self._enabled
 
-    def enable(self) -> None:
+    def enable(self, *, synchronize: Callable[[], object] | None = None) -> None:
+        """Enable timing and optionally wait for device work at every scope boundary."""
         self._set_enabled(True)
+        self._synchronize = synchronize
 
     def disable(self) -> None:
         self._set_enabled(False)
+        self._synchronize = None
 
     def _set_enabled(self, enabled: bool) -> None:
         if self._depth:
@@ -127,6 +131,8 @@ class Perf:
         if node is None:
             node = _MutablePerfNode(name)
             nodes[name] = node
+        if self._synchronize is not None:
+            self._synchronize()
         started_ns = self._clock()
         if depth == len(self._frames):
             self._frames.append(_PerfFrame(node=node, started_ns=started_ns))
@@ -147,6 +153,8 @@ class Perf:
         frame = self._frames[depth - 1]
         if name is not None and frame.node.name != name:
             raise RuntimeError(f"Perf scope mismatch: expected {frame.node.name!r}, got {name!r}.")
+        if self._synchronize is not None:
+            self._synchronize()
         elapsed_ns = self._clock() - frame.started_ns
         if elapsed_ns < 0:
             raise RuntimeError("Perf clock moved backwards.")

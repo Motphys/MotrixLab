@@ -170,7 +170,7 @@ class _FakeBackend(SimBackend):
         return self._write_compiler
 
 
-register_sim_backend("fake-direct", lambda: _FakeBackend)
+register_sim_backend("fake-direct", lambda device: _FakeBackend)
 
 
 @configclass
@@ -281,6 +281,27 @@ def test_direct_observations_survive_the_next_step() -> None:
         previous = current
 
 
+def test_direct_truncation_captures_owned_pre_reset_observations() -> None:
+    env = _FakeDirectEnv(_FakeDirectCfg(max_episode_seconds=0.02), num_envs=2, backend="fake-direct")
+    start = env.initialize().obs.policy
+    start_snapshot = start.clone()
+    env.state.episode_steps[1] = env.cfg.max_episode_steps - 1
+
+    state = env.step(torch.full((2, 2), 0.5))
+
+    assert state.truncated.tolist() == [False, True]
+    final = state.final_obs
+    assert final is not None
+    assert final.env_ids.tolist() == [1]
+    torch.testing.assert_close(final.obs.policy, state.obs.policy[:1])
+    torch.testing.assert_close(state.obs.policy[1], start_snapshot[1])
+    torch.testing.assert_close(start, start_snapshot)
+    snapshot = final.obs.policy.clone()
+    env.step(torch.zeros((2, 2)))
+    env.step(torch.zeros((2, 2)))
+    torch.testing.assert_close(final.obs.policy, snapshot)
+
+
 def test_direct_env_compiles_empty_read_program() -> None:
     class EmptyReadEnv(_FakeDirectEnv):
         def __init__(self, cfg, num_envs, backend: str | None = None):
@@ -381,3 +402,9 @@ def test_direct_initialize_clears_previous_transition_diagnostics() -> None:
     assert restarted.metrics == {}
     assert restarted.reward_terms == {}
     torch.testing.assert_close(restarted.reward, torch.zeros(2))
+
+
+def test_direct_env_uses_configured_backend_with_explicit_override() -> None:
+    assert isinstance(_FakeDirectEnv(_FakeDirectCfg(backend="fake-direct"), 2).sim, _FakeBackend)
+    cfg = _FakeDirectCfg(backend="not-registered")
+    assert isinstance(_FakeDirectEnv(cfg, 2, backend="fake-direct").sim, _FakeBackend)

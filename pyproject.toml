@@ -40,6 +40,7 @@ docs = [
 # installation entry points without duplicating versions or index routing.
 cuda = ["motrix-rl[cuda]==0.5.0"]
 rocm = ["motrix-rl[rocm]==0.5.0"]
+sim-gpu = ["motrix-env-motrixsim[gpu]==0.5.0"]
 
 [dependency-groups]
 dev = [

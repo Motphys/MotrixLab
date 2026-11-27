@@ -59,7 +59,7 @@ def test_trainer_sets_seed_before_creating_environment(monkeypatch, entrypoint, 
 
     calls = []
     trainer = object.__new__(Trainer)
-    trainer._context = SimpleNamespace(seed=17, num_envs=2, play_num_envs=3)
+    trainer._context = SimpleNamespace(run=None, sim_device=None, seed=17, num_envs=2, play_num_envs=3)
     trainer._env_name = "demo"
     trainer._sim = None
     trainer._render = None

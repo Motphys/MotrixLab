@@ -220,6 +220,9 @@ class _CtrlActionTerm(ActionTerm):
     def _reset(self, env_ids: np.ndarray) -> None:
         self.state.source[env_ids] = 0.0
 
+    def _reset_masked(self, world_mask: torch.Tensor) -> None:
+        self.state.source.masked_fill_(world_mask[:, None], 0)
+
 
 def _ctrl_action_space(ctx, actuator_indices) -> gym.spaces.Box:
     del ctx, actuator_indices
@@ -298,7 +301,7 @@ class _FakeActionsCfg(ManagerActionsCfg):
     ctrl: _CtrlActionCfg = _CtrlActionCfg()
 
 
-register_sim_backend("fake-manager", lambda: _FakeBackend)
+register_sim_backend("fake-manager", lambda device: _FakeBackend)
 
 
 @configclass
@@ -342,7 +345,11 @@ def test_manager_env_steps_on_fake_backend() -> None:
 
 
 @pytest.mark.parametrize("failed_reward", [1.0, float("nan"), float("inf")])
-def test_engine_error_terminates_and_resets_only_failed_rows(failed_reward: float, monkeypatch) -> None:
+@pytest.mark.parametrize("native_masked_reset", [False, True])
+def test_engine_error_terminates_and_resets_only_failed_rows(
+    failed_reward: float, native_masked_reset: bool, monkeypatch
+) -> None:
+    monkeypatch.setattr(_FakeBackend, "supports_native_masked_reset", native_masked_reset)
     env = _make_env()
     runtime = _FakeBackend.last
     env.initialize()
@@ -382,6 +389,103 @@ def test_engine_error_terminates_and_resets_only_failed_rows(failed_reward: floa
     assert not bool(status.any())
     assert state.episode_steps.tolist() == [2, 1, 2]
     assert not runtime.reset_calls
+
+
+@pytest.mark.parametrize("mixed_terms", [False, True])
+def test_native_reset_term_row_contract(mixed_terms: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_FakeBackend, "supports_native_masked_reset", True)
+    monkeypatch.setattr(torch, "compile", lambda fn, **kwargs: fn)
+
+    def reset_velocity(ctx: ManagerContext, env_ids: torch.Tensor, outputs: Mapping[str, torch.Tensor]) -> None:
+        outputs["joint_velocity"].fill_(env_ids.numel())
+
+    def reset_position(ctx: ManagerContext, env_ids: torch.Tensor, outputs: Mapping[str, torch.Tensor]) -> None:
+        ctx.actions["ctrl"].source[env_ids] += 10.0
+        outputs["joint_position"].copy_(ctx.sim["dof_pos"][env_ids] + 1.0)
+
+    @configclass
+    class VelocityResetCfg(ResetTermCfg):
+        def __call__(self, ctx: BuildContext) -> ResetTerm:
+            return ResetTerm(reset_velocity, writes={"joint_velocity": CtrlTargetsWrite()}, stateless=True)
+
+    @configclass
+    class PositionResetCfg(ResetTermCfg):
+        def __call__(self, ctx: BuildContext) -> ResetTerm:
+            return ResetTerm(reset_position, writes={"joint_position": CtrlTargetsWrite()})
+
+    @configclass
+    class ResetsCfg(ManagerResetCfg):
+        velocity: VelocityResetCfg = VelocityResetCfg()
+
+    @configclass
+    class MixedResetsCfg(ResetsCfg):
+        position: PositionResetCfg = PositionResetCfg()
+
+    resets = MixedResetsCfg() if mixed_terms else ResetsCfg()
+    env = ManagerEnv(_FakeManagerCfg(sim_reset=resets), num_envs=3, backend="fake-manager")
+    env.initialize()
+    env.sim.reset_calls.clear()
+    env.step(torch.full((3, 1), 0.5))
+    assert not env.sim.reset_calls
+
+    env.sim.status_codes[1] = 1
+    expected = env.sim.dof_pos + 0.25 * env.cfg.sim_substeps
+    untouched_velocities = env.sim.dof_vel[[0, 2]]
+    env.step(torch.full((3, 1), 0.5))
+
+    torch.testing.assert_close(env.sim.dof_vel[[0, 2]], untouched_velocities)
+    torch.testing.assert_close(env.sim.dof_vel[1], torch.full((2,), 1.0 if mixed_terms else 3.0))
+    source = env.action_terms["ctrl"].state.source[:, 0]
+    torch.testing.assert_close(source, torch.tensor([0.5, 10.0 if mixed_terms else 0.0, 0.5]))
+    if mixed_terms:
+        expected[1] += 1.0
+    else:
+        expected[1] = torch.tensor([0.5, -0.5])
+    torch.testing.assert_close(env.sim.dof_pos, expected)
+
+
+def test_stateless_cuda_reset_captures_staggered_timeouts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_FakeBackend, "supports_native_masked_reset", True)
+    monkeypatch.setattr(torch, "compile", lambda fn, **kwargs: fn)
+    env = _make_env()
+    env.cfg.max_episode_seconds = 3.1 * env.cfg.ctrl_dt
+    env.initialize()
+    # Exercise the host gate policy with otherwise ordinary CPU tensors.
+    monkeypatch.setattr(env, "device", torch.device("cuda:0"))
+    actions = torch.zeros((3, 1))
+
+    assert env.step(actions).final_obs is None
+    env.reset(torch.tensor([0]))
+    assert env.step(actions).final_obs is None
+    state = env.step(actions)
+    assert state.episode_steps.tolist() == [2, 0, 0]
+    final = state.final_obs
+    assert final is not None
+    assert final.env_ids.tolist() == [1, 2]
+    assert not torch.equal(final.obs.policy, state.obs.policy[final.env_ids])
+
+    state = env.step(actions)
+    assert state.episode_steps.tolist() == [0, 1, 1]
+    assert state.final_obs is not None
+    assert state.final_obs.env_ids.tolist() == [0]
+
+    env.cfg.max_episode_seconds = 1.1 * env.cfg.ctrl_dt
+    state = env.step(actions)
+    assert state.final_obs is not None
+    assert state.final_obs.env_ids.tolist() == [0, 1, 2]
+
+
+def test_cuda_fallback_skips_sparse_reset_when_no_rows_are_done(monkeypatch: pytest.MonkeyPatch) -> None:
+    env = _make_env()
+    env.initialize()
+    # Exercise only the CUDA branch selection using CPU tensors.
+    monkeypatch.setattr(env, "device", torch.device("cuda:0"))
+
+    def unexpected_sparse_reset():
+        pytest.fail("The idle CUDA fallback entered the sparse reset path")
+
+    monkeypatch.setattr(env, "_reset_done_envs", unexpected_sparse_reset)
+    env._process_episode_boundaries()
 
 
 def test_public_reset_restarts_only_episode_lane_counters() -> None:

@@ -54,6 +54,7 @@ class BodyPosResetCfg(ResetTermCfg):
             torch.tensor(self.spawn, dtype=torch.float32),
             torch.tensor(self.noise, dtype=torch.float32) * self.noise_scale,
             writes={"position": BodyPositionWrite((body,))},
+            stateless=True,
         )
 
 
@@ -80,6 +81,7 @@ class BodyRotResetCfg(ResetTermCfg):
             _reset_body_rot,
             amplitude,
             writes={"rotation": BodyRotationWrite((body,))},
+            stateless=True,
         )
 
 
@@ -104,6 +106,7 @@ class BodyLinVelResetCfg(ResetTermCfg):
             _reset_body_lin_vel,
             amplitude,
             writes={"linear_velocity": BodyLinearVelocityWrite((body,))},
+            stateless=True,
         )
 
 
@@ -128,6 +131,7 @@ class BodyRotVelResetCfg(ResetTermCfg):
             _reset_body_rot_vel,
             amplitude,
             writes={"angular_velocity": BodyAngularVelocityWrite((body,))},
+            stateless=True,
         )
 
 
@@ -182,6 +186,7 @@ class BodyDofPosResetCfg(ResetTermCfg):
                 noise_scale=float(self.noise * self.noise_scale),
             ),
             writes={"position": JointPositionWrite(joints), "velocity": JointVelocityWrite(joints)},
+            stateless=True,
         )
 
 
@@ -222,4 +227,5 @@ class BallResetCfg(ResetTermCfg):
                 "linear_velocity": BodyLinearVelocityWrite((self.ball_link_name,)),
                 "angular_velocity": BodyAngularVelocityWrite((self.ball_link_name,)),
             },
+            stateless=True,
         )

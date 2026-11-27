@@ -305,7 +305,7 @@ class QuadrupedWalkEnvCfg(DirectEnvCfg):
     gait_schedule_lateral_weight: float = 1.00
     # Shared by training and the compiled deployment task, not backend recipes.
     termination_min_up_z: float = 0.5
-    sim: SimCfg = SimCfg(dt=0.01, solver_iterations=1)
+    sim: SimCfg = SimCfg(dt=0.01, solver_iterations=1, max_contacts=128, max_contact_constraints=384)
     ctrl_dt: float = 0.02
 
     def validate(self) -> None:

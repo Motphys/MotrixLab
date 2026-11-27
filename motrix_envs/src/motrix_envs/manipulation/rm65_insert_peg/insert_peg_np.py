@@ -45,8 +45,6 @@ _SIM_DATA_QUERIES = {
 
 _SIM_MODEL_QUERIES = {}
 
-_Z_AXIS = torch.tensor([0.0, 0.0, 1.0], dtype=torch.float32)
-
 
 def _rotate_vector(quats: torch.Tensor, vector: torch.Tensor) -> torch.Tensor:
     """Rotate vectors by unit (x, y, z, w) quaternions: v + 2*im×(im×v − w·v)."""
@@ -86,7 +84,10 @@ class PegInsertEnv(DirectEnv):
         )
         self._peg_reset_translation = self._reset_program.buffer("peg_translation")
         self._peg_reset_orientation = self._reset_program.buffer("peg_orientation")[:, 0]
-        self.default_joint_pos = torch.as_tensor(self._cfg.init_state.default_joint_pos, dtype=torch.float32)
+        self._z_axis = torch.tensor([0.0, 0.0, 1.0], device=self.device)
+        self.default_joint_pos = torch.as_tensor(
+            self._cfg.init_state.default_joint_pos, dtype=torch.float32, device=self.device
+        )
 
         self._action_dim = 7
         self._num_dof_pos = 8
@@ -98,11 +99,17 @@ class PegInsertEnv(DirectEnv):
             {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (self._obs_dim,), dtype=np.float32))}
         )
 
-        self._init_dof_pos = torch.cat([self.default_joint_pos, torch.zeros(1, dtype=torch.float32)])
-        self._init_dof_vel = torch.zeros(self._num_dof_vel, dtype=torch.float32)
+        self._init_dof_pos = torch.cat(
+            [self.default_joint_pos, torch.zeros(1, dtype=torch.float32, device=self.device)]
+        )
+        self._init_dof_vel = torch.zeros(self._num_dof_vel, dtype=torch.float32, device=self.device)
 
-        self.joint_pos_min_limit = torch.tensor(self._cfg.control_config.min_pos, dtype=torch.float32)
-        self.joint_pos_max_limit = torch.tensor(self._cfg.control_config.max_pos, dtype=torch.float32)
+        self.joint_pos_min_limit = torch.tensor(
+            self._cfg.control_config.min_pos, dtype=torch.float32, device=self.device
+        )
+        self.joint_pos_max_limit = torch.tensor(
+            self._cfg.control_config.max_pos, dtype=torch.float32, device=self.device
+        )
 
         self.action_scale = self._cfg.action_config.action_scale
         self.gripper_closed = self._cfg.action_config.gripper_closed
@@ -110,35 +117,35 @@ class PegInsertEnv(DirectEnv):
 
         # Episode-scoped task state: full-batch buffers, reset writes the done
         # rows in place.
-        self._current_actions = torch.zeros(num_envs, self._action_dim, dtype=torch.float32)
+        self._current_actions = torch.zeros(num_envs, self._action_dim, dtype=torch.float32, device=self.device)
         self._last_actions = torch.zeros_like(self._current_actions)
-        self._socket_pos = torch.zeros(num_envs, 3, dtype=torch.float32)
-        self._initial_peg_pos = torch.zeros(num_envs, 3, dtype=torch.float32)
-        self._current_gripper_action = torch.zeros(num_envs, dtype=torch.float32)
-        self._gripper_is_closed = torch.zeros(num_envs, dtype=torch.bool)
-        self._grasp_success = torch.zeros(num_envs, dtype=torch.bool)
-        self._phase = torch.zeros(num_envs, dtype=torch.int32)
-        self._prev_hand_to_peg_dist = torch.zeros(num_envs, dtype=torch.float32)
-        self._prev_peg_to_socket_dist = torch.zeros(num_envs, dtype=torch.float32)
-        self._prev_gripper_closure = torch.zeros(num_envs, dtype=torch.float32)
-        self._prev_midpoint_xy_dist = torch.zeros(num_envs, dtype=torch.float32)
-        self._prev_pregrasp_height_error = torch.zeros(num_envs, dtype=torch.float32)
-        self._prev_peg_height = torch.zeros(num_envs, dtype=torch.float32)
-        self._prev_socket_xy_dist = torch.zeros(num_envs, dtype=torch.float32)
-        self._prev_insert_depth = torch.zeros(num_envs, dtype=torch.float32)
-        self._prev_socket_entry_gap = torch.full((num_envs,), 0.2, dtype=torch.float32)
-        self._consecutive_capture_steps = torch.zeros(num_envs, dtype=torch.int32)
-        self._consecutive_grasp_steps = torch.zeros(num_envs, dtype=torch.int32)
-        self._consecutive_pregrasp_open_steps = torch.zeros(num_envs, dtype=torch.int32)
+        self._socket_pos = torch.zeros(num_envs, 3, dtype=torch.float32, device=self.device)
+        self._initial_peg_pos = torch.zeros(num_envs, 3, dtype=torch.float32, device=self.device)
+        self._current_gripper_action = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._gripper_is_closed = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._grasp_success = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._phase = torch.zeros(num_envs, dtype=torch.int32, device=self.device)
+        self._prev_hand_to_peg_dist = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._prev_peg_to_socket_dist = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._prev_gripper_closure = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._prev_midpoint_xy_dist = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._prev_pregrasp_height_error = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._prev_peg_height = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._prev_socket_xy_dist = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._prev_insert_depth = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._prev_socket_entry_gap = torch.full((num_envs,), 0.2, dtype=torch.float32, device=self.device)
+        self._consecutive_capture_steps = torch.zeros(num_envs, dtype=torch.int32, device=self.device)
+        self._consecutive_grasp_steps = torch.zeros(num_envs, dtype=torch.int32, device=self.device)
+        self._consecutive_pregrasp_open_steps = torch.zeros(num_envs, dtype=torch.int32, device=self.device)
 
     def _sample_peg_xy(self, socket_xy: torch.Tensor) -> torch.Tensor:
         peg_init = self._cfg.peg_init_config
         num_reset = socket_xy.shape[0]
 
         def _uniform(low: float, high: float, size) -> torch.Tensor:
-            return torch.rand(size, dtype=torch.float32) * (high - low) + low
+            return torch.rand(size, dtype=torch.float32, device=self.device) * (high - low) + low
 
-        peg_xy = torch.empty(num_reset, 2, dtype=torch.float32)
+        peg_xy = torch.empty(num_reset, 2, dtype=torch.float32, device=self.device)
         peg_xy[:, 0] = _uniform(peg_init.x_range[0], peg_init.x_range[1], (num_reset,))
         peg_xy[:, 1] = _uniform(peg_init.y_range[0], peg_init.y_range[1], (num_reset,))
 
@@ -210,7 +217,7 @@ class PegInsertEnv(DirectEnv):
 
         midpoint_z_offset = finger_midpoint[:, 2] - peg_pos[:, 2]
 
-        peg_axis = _rotate_vector(peg_quat, _Z_AXIS)
+        peg_axis = _rotate_vector(peg_quat, self._z_axis)
 
         peg_uprightness = peg_axis[:, 2].clamp(-1.0, 1.0)
 
@@ -274,7 +281,7 @@ class PegInsertEnv(DirectEnv):
 
         inputs = self.sim_data
         peg_pos = inputs["peg_pos"][rows]
-        peg_axis = _rotate_vector(inputs["peg_quat"][rows], _Z_AXIS)
+        peg_axis = _rotate_vector(inputs["peg_quat"][rows], self._z_axis)
 
         socket_pos = self._socket_pos
 
@@ -362,7 +369,7 @@ class PegInsertEnv(DirectEnv):
         num_reset = env_ids.numel()
 
         noise_scale = self._cfg.init_state.joint_pos_reset_noise_scale
-        noise_pos = (torch.rand(self._num_dof_pos, dtype=torch.float32) * 2.0 - 1.0) * noise_scale
+        noise_pos = (torch.rand(self._num_dof_pos, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * noise_scale
         robot_dof_pos = self._init_dof_pos + noise_pos
 
         # Restore the semantic reset targets first and read the socket position
@@ -382,7 +389,7 @@ class PegInsertEnv(DirectEnv):
         peg_xy = self._sample_peg_xy(socket_pos[:, :2])
         peg_x = peg_xy[:, 0]
         peg_y = peg_xy[:, 1]
-        peg_z = torch.rand(num_reset, dtype=torch.float32) * (2 * peg_init.z_noise_scale) + (
+        peg_z = torch.rand(num_reset, dtype=torch.float32, device=self.device) * (2 * peg_init.z_noise_scale) + (
             peg_init.z_pos - peg_init.z_noise_scale
         )
 
@@ -522,7 +529,7 @@ class PegInsertEnv(DirectEnv):
         lift_height = torch.clamp(peg_pos[:, 2] - initial_peg_pos[:, 2], min=0.0)
         peg_xy_shift = torch.linalg.norm(peg_pos[:, :2] - initial_peg_pos[:, :2], dim=-1)
         peg_drop_height = torch.clamp(initial_peg_pos[:, 2] - peg_pos[:, 2], min=0.0)
-        peg_axis = _rotate_vector(peg_quat, _Z_AXIS)
+        peg_axis = _rotate_vector(peg_quat, self._z_axis)
         peg_uprightness = peg_axis[:, 2].clamp(-1.0, 1.0)
         peg_linear_vel = inputs["peg_lin_vel"]
         peg_speed = torch.linalg.norm(peg_linear_vel, dim=-1)
@@ -712,10 +719,10 @@ class PegInsertEnv(DirectEnv):
         find_peg_reward = torch.where(
             features["is_gripper_command_open"] & (~tracking["ever_grasped"]),
             xy_align_reward + height_align_reward + xy_progress_reward + height_progress_reward,
-            torch.zeros(num_envs, dtype=torch.float32),
+            torch.zeros(num_envs, dtype=torch.float32, device=self.device),
         )
 
-        hover_above_peg_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        hover_above_peg_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
 
         # hover_above_peg_mask = (
         #     features["is_gripper_command_open"]
@@ -729,7 +736,7 @@ class PegInsertEnv(DirectEnv):
         #     * torch.tanh((features["midpoint_z_offset"][hover_above_peg_mask] - 0.045) / 0.02)
         # )
 
-        pregrasp_open_reward = torch.zeros(num_envs, dtype=torch.float32)
+        pregrasp_open_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         pregrasp_open_mask = (
             tracking["pregrasp_ready"]
             & (~tracking["grasp_channel_ready"])
@@ -738,7 +745,7 @@ class PegInsertEnv(DirectEnv):
         )
         pregrasp_open_reward[pregrasp_open_mask] = 0.0
 
-        pregrasp_stall_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        pregrasp_stall_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         pregrasp_stall_mask = pregrasp_open_mask & (tracking["consecutive_pregrasp_open"] > 4)
         pregrasp_stall_penalty[pregrasp_stall_mask] = (
             -4.0
@@ -746,7 +753,7 @@ class PegInsertEnv(DirectEnv):
             - reward_cfg.hand_approach_bonus * 0.8 * features["close_quality"][pregrasp_stall_mask]
         )
 
-        ready_but_open_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        ready_but_open_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         ready_but_open_mask = (
             tracking["grasp_channel_ready"] & features["is_gripper_command_open"] & (~tracking["ever_grasped"])
         )
@@ -754,7 +761,7 @@ class PegInsertEnv(DirectEnv):
             -24.0 - reward_cfg.gripper_close_bonus * 6.0 * features["close_quality"][ready_but_open_mask]
         )
 
-        close_in_grasp_zone_reward = torch.zeros(num_envs, dtype=torch.float32)
+        close_in_grasp_zone_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         close_zone_mask = (
             tracking["pregrasp_ready"] & features["is_gripper_command_closed"] & (~tracking["ever_grasped"])
         )
@@ -762,7 +769,7 @@ class PegInsertEnv(DirectEnv):
             "close_quality"
         ][close_zone_mask] * (0.3 + 0.7 * features["close_commitment"][close_zone_mask])
 
-        premature_close_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        premature_close_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         premature_close_mask = (
             features["is_gripper_command_closed"] & (~tracking["pregrasp_ready"]) & (~tracking["ever_grasped"])
         )
@@ -772,7 +779,7 @@ class PegInsertEnv(DirectEnv):
             - 8.0 * torch.tanh(torch.clamp(features["midpoint_z_offset"][premature_close_mask] - 0.045, min=0.0) / 0.02)
         )
 
-        gripper_close_progress_reward = torch.zeros(num_envs, dtype=torch.float32)
+        gripper_close_progress_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         close_progress_mask = (
             features["is_gripper_command_closed"] & tracking["pregrasp_ready"] & (~tracking["ever_grasped"])
         )
@@ -781,13 +788,13 @@ class PegInsertEnv(DirectEnv):
             + 9.0 * torch.tanh(progress["gripper_closure_progress"][close_progress_mask].clamp(0.0, 0.12) / 0.03)
         )
 
-        grasp_channel_reward = torch.zeros(num_envs, dtype=torch.float32)
+        grasp_channel_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         grasp_channel_mask = features["is_gripper_command_closed"] & tracking["grasp_channel_ready"]
         grasp_channel_reward[grasp_channel_mask] = 40.0 + reward_cfg.gripper_close_bonus * 12.0 * features[
             "close_quality"
         ][grasp_channel_mask] * (0.2 + 0.8 * features["close_commitment"][grasp_channel_mask])
 
-        stable_close_reward = torch.zeros(num_envs, dtype=torch.float32)
+        stable_close_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         stable_close_mask = grasp_channel_mask & (~tracking["ever_grasped"])
         stable_close_reward[stable_close_mask] = (
             reward_cfg.grasp_weight
@@ -815,21 +822,21 @@ class PegInsertEnv(DirectEnv):
         """Reward successful capture, lifting, and transporting the peg toward the socket."""
         num_envs = features["xy_dist"].shape[0]
 
-        capture_reward = torch.zeros(num_envs, dtype=torch.float32)
+        capture_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         capture_mask = tracking["grasp_candidate"] & (~tracking["ever_grasped"])
         capture_reward[capture_mask] = reward_cfg.grasp_weight * (
             1.2 * features["close_quality"][capture_mask] * (0.35 + 0.65 * features["close_commitment"][capture_mask])
             + 0.8 * torch.tanh(tracking["consecutive_capture"][capture_mask].to(torch.float32) / 2.0)
         )
 
-        lift_intent_reward = torch.zeros(num_envs, dtype=torch.float32)
+        lift_intent_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         lift_intent_reward[capture_mask] = (
             reward_cfg.lift_weight
             * 2.2
             * torch.tanh(progress["peg_height_progress"][capture_mask].clamp(0.0, 0.008) / 0.003)
         )
 
-        grasp_reward = torch.zeros(num_envs, dtype=torch.float32)
+        grasp_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         grasp_reward[tracking["ever_grasped"]] = reward_cfg.grasp_weight * 0.4 * features["close_commitment"][
             tracking["ever_grasped"]
         ] + reward_cfg.lift_weight * 0.7 * torch.tanh(
@@ -840,13 +847,13 @@ class PegInsertEnv(DirectEnv):
         stable_grasp_mask = tracking["ever_grasped"] & (tracking["consecutive_grasp"] > 5)
         grasp_reward[stable_grasp_mask] += 10.0
 
-        grip_hold_reward = torch.zeros(num_envs, dtype=torch.float32)
+        grip_hold_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         hold_mask = tracking["ever_grasped"] & features["is_gripper_command_closed"]
         grip_hold_reward[hold_mask] = reward_cfg.gripper_close_bonus * 1.2 * features["close_commitment"][
             hold_mask
         ] + reward_cfg.grasp_weight * 0.2 * (1 - torch.tanh(features["midpoint_to_peg_dist"][hold_mask] / 0.025))
 
-        release_after_grasp_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        release_after_grasp_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         release_mask = tracking["ever_grasped"] & (
             (~features["is_gripper_command_closed"]) | (features["close_commitment"] < 0.35)
         )
@@ -854,14 +861,14 @@ class PegInsertEnv(DirectEnv):
             torch.clamp(0.35 - features["close_commitment"][release_mask], min=0.0) / 0.15
         )
 
-        carry_upright_reward = torch.zeros(num_envs, dtype=torch.float32)
+        carry_upright_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         carry_upright_reward[tracking["ever_grasped"]] = (
             reward_cfg.orientation_weight
             * 2.5
             * ((features["peg_uprightness"][tracking["ever_grasped"]] - 0.9) / 0.1).clamp(0.0, 1.0)
         )
 
-        carry_tilt_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        carry_tilt_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         carry_tilt_penalty[tracking["ever_grasped"]] = (
             -reward_cfg.orientation_weight
             * 3.0
@@ -870,14 +877,14 @@ class PegInsertEnv(DirectEnv):
 
         carry_target_z = features["socket_top_z"] + self._cfg.peg_config.peg_length * 0.5 + 0.01
         carry_height_error = torch.abs(features["peg_pos"][:, 2] - carry_target_z)
-        carry_height_reward = torch.zeros(num_envs, dtype=torch.float32)
+        carry_height_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         carry_height_mask = tracking["ever_grasped"] & (features["xy_dist"] > 0.045)
 
         carry_height_reward[carry_height_mask] = (
             reward_cfg.lift_weight * 1.4 * (1 - torch.tanh(carry_height_error[carry_height_mask] / 0.03))
         )
 
-        move_to_socket_reward = torch.zeros(num_envs, dtype=torch.float32)
+        move_to_socket_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         move_to_socket_reward[tracking["ever_grasped"]] = (
             reward_cfg.peg_to_socket_approach_weight
             * 2.2
@@ -889,7 +896,7 @@ class PegInsertEnv(DirectEnv):
             * torch.tanh(progress["xy_socket_progress"][tracking["ever_grasped"]].clamp(-0.02, 0.02) / 0.006)
         )
 
-        transport_stall_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        transport_stall_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         transport_stall_mask = (
             tracking["ever_grasped"] & (features["xy_dist"] > 0.04) & (progress["xy_socket_progress"] < 0.0015)
         )
@@ -899,7 +906,7 @@ class PegInsertEnv(DirectEnv):
             * torch.tanh((features["xy_dist"][transport_stall_mask] - 0.04) / 0.03)
         )
 
-        lift_reward = torch.zeros(num_envs, dtype=torch.float32)
+        lift_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         lift_stage_mask = (
             features["is_gripper_command_closed"]
             & (tracking["pregrasp_ready"] | tracking["grasp_channel_ready"])
@@ -909,7 +916,7 @@ class PegInsertEnv(DirectEnv):
             reward_cfg.lift_weight * 4.5 * torch.tanh(features["lift_height"][lift_stage_mask] / 0.03)
         )
 
-        carry_lift_reward = torch.zeros(num_envs, dtype=torch.float32)
+        carry_lift_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         carry_lift_mask = tracking["ever_grasped"] & (features["lift_height"] < 0.035)
         carry_lift_reward[carry_lift_mask] = (
             reward_cfg.lift_weight
@@ -917,7 +924,7 @@ class PegInsertEnv(DirectEnv):
             * (1 - torch.tanh(torch.clamp(0.035 - features["lift_height"][carry_lift_mask], min=0.0) / 0.02))
         )
 
-        lift_progress_reward = torch.zeros(num_envs, dtype=torch.float32)
+        lift_progress_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         lift_progress_reward[lift_stage_mask] = (
             reward_cfg.lift_weight
             * 5.0
@@ -928,7 +935,7 @@ class PegInsertEnv(DirectEnv):
             (progress["xy_socket_progress"] < 0) & tracking["ever_grasped"],
             -reward_cfg.peg_to_socket_approach_weight
             * torch.tanh(torch.clamp(-progress["xy_socket_progress"], min=0.0, max=0.02) / 0.01),
-            torch.zeros(num_envs, dtype=torch.float32),
+            torch.zeros(num_envs, dtype=torch.float32, device=self.device),
         )
 
         return {
@@ -955,26 +962,26 @@ class PegInsertEnv(DirectEnv):
             tracking["ever_grasped"] & (features["xy_dist"] < 0.01) & (features["peg_uprightness"] > 0.96)
         )
 
-        insert_progress_reward = torch.zeros(num_envs, dtype=torch.float32)
+        insert_progress_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         insert_progress_reward[aligned_for_insert] = (
             reward_cfg.insert_weight
             * 2.2
             * torch.tanh(tracking["insert_depth_progress"][aligned_for_insert].clamp(-0.01, 0.01) / 0.003)
         )
 
-        preinsert_descend_reward = torch.zeros(num_envs, dtype=torch.float32)
+        preinsert_descend_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         preinsert_descend_reward[aligned_for_insert] = (
             reward_cfg.insert_weight * 0.15 * (1 - torch.tanh(tracking["socket_entry_gap"][aligned_for_insert] / 0.015))
         )
 
-        descend_progress_reward = torch.zeros(num_envs, dtype=torch.float32)
+        descend_progress_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         descend_progress_reward[aligned_for_insert] = (
             reward_cfg.insert_weight
             * 2.4
             * torch.tanh(tracking["socket_entry_gap_progress"][aligned_for_insert].clamp(-0.02, 0.02) / 0.004)
         )
 
-        hover_near_socket_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        hover_near_socket_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         hover_near_socket_mask = (
             tracking["ever_grasped"] & (features["xy_dist"] < 0.05) & (tracking["socket_entry_gap"] > 0.03)
         )
@@ -984,7 +991,7 @@ class PegInsertEnv(DirectEnv):
             * torch.tanh((tracking["socket_entry_gap"][hover_near_socket_mask] - 0.03) / 0.03)
         )
 
-        high_hold_near_socket_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        high_hold_near_socket_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         high_hold_mask = (
             tracking["ever_grasped"]
             & (features["xy_dist"] < 0.06)
@@ -998,7 +1005,7 @@ class PegInsertEnv(DirectEnv):
             )
         )
 
-        premature_descend_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        premature_descend_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         premature_descend_mask = (
             tracking["ever_grasped"]
             & (features["xy_dist"] > 0.028)
@@ -1017,7 +1024,7 @@ class PegInsertEnv(DirectEnv):
             )
         )
 
-        touch_reward = torch.zeros(num_envs, dtype=torch.float32)
+        touch_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         touch_reward[tracking["touch_socket"]] = 120.0
 
         insert_reward = tracking["insert_depth"] * reward_cfg.insert_weight * 6.0
@@ -1028,7 +1035,7 @@ class PegInsertEnv(DirectEnv):
             torch.float32
         )
 
-        precision_reward = torch.zeros(num_envs, dtype=torch.float32)
+        precision_reward = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         precision_reward[tracking["touch_socket"]] = reward_cfg.precision_weight * (
             1 - torch.tanh(features["xy_dist"][tracking["touch_socket"]] / 0.008)
         )
@@ -1057,7 +1064,7 @@ class PegInsertEnv(DirectEnv):
         peg_drop_excess = torch.clamp(features["peg_drop_height"] - 0.002, min=0.0)
         peg_speed_excess = torch.clamp(features["peg_speed"] - 0.18, min=0.0)
 
-        pregrasp_knock_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        pregrasp_knock_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         pregrasp_knock_mask = (~tracking["ever_grasped"]) & (
             (features["midpoint_xy_dist"] < 0.05) | tracking["pregrasp_ready"] | tracking["grasp_channel_ready"]
         )
@@ -1068,11 +1075,11 @@ class PegInsertEnv(DirectEnv):
             - reward_cfg.anti_shake_weight * 1800.0 * torch.tanh(peg_speed_excess[pregrasp_knock_mask] / 0.25)
         )
 
-        drop_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        drop_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         peg_dropped = tracking["ever_grasped"] & (~tracking["is_grasping"])
         drop_penalty[peg_dropped] = -100.0
 
-        carry_shake_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        carry_shake_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
 
         carry_mask = tracking["ever_grasped"] & (~tracking["success"])
 
@@ -1169,7 +1176,7 @@ class PegInsertEnv(DirectEnv):
                 ("pregrasp_knock_penalty", "drop_penalty", "carry_shake_penalty"),
             ),
         )
-        reward = torch.zeros(self._num_envs, dtype=torch.float32)
+        reward = torch.zeros(self._num_envs, dtype=torch.float32, device=self.device)
         reward_details = {}
         for reward_dict, reward_keys in reward_component_groups:
             for reward_key in reward_keys:

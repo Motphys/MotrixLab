@@ -57,7 +57,7 @@ class PendulumEnv(DirectEnv):
             {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (3,), dtype=np.float32))}
         )
         # Episode-scoped control history for the control-delta penalty.
-        self._prev_ctrl = torch.zeros(self._num_envs, dtype=torch.float32)
+        self._prev_ctrl = torch.zeros(self._num_envs, dtype=torch.float32, device=self.device)
 
     @property
     def observation_spec(self) -> ObservationSpec:
@@ -109,6 +109,7 @@ class PendulumEnv(DirectEnv):
                 sigmoid="gaussian",
             ),
             dtype=torch.float32,
+            device=self.device,
         )
         reward = 3.0 * upright + energy_reward - vel_penalty - 0.001 * ctrl**2 - 0.001 * ctrl_delta**2
 
@@ -124,10 +125,12 @@ class PendulumEnv(DirectEnv):
         cfg: PendulumEnvCfg = self._cfg
         reset_noise_scale = getattr(cfg, "reset_noise_scale", 0.0)
         num_reset = env_ids.numel()
-        dof_pos = (torch.rand(num_reset, 1, dtype=torch.float32) * 2.0 - 1.0) * np.pi
-        dof_vel = torch.zeros(num_reset, 1, dtype=torch.float32)
+        dof_pos = (torch.rand(num_reset, 1, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * np.pi
+        dof_vel = torch.zeros(num_reset, 1, dtype=torch.float32, device=self.device)
         if reset_noise_scale > 0.0:
-            dof_vel = (torch.rand(num_reset, 1, dtype=torch.float32) * 2.0 - 1.0) * reset_noise_scale
+            dof_vel = (
+                torch.rand(num_reset, 1, dtype=torch.float32, device=self.device) * 2.0 - 1.0
+            ) * reset_noise_scale
 
         self._reset_position[env_ids] = dof_pos
         self._reset_velocity[env_ids] = dof_vel

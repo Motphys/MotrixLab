@@ -76,9 +76,9 @@ class ActionTerm(abc.ABC):
     def process(self, actions: torch.Tensor) -> torch.Tensor | None:
         """Record raw tensor actions and process one batched action slice."""
         state = self.state
-        ptr = (int(state.action_ptr[0]) + 1) % state.action_queue.shape[1]
-        state.action_ptr[0] = ptr
-        state.action_queue[:, ptr] = actions
+        ptr = state.action_ptr
+        ptr.add_(1).remainder_(state.action_queue.shape[1])
+        state.action_queue.index_copy_(1, ptr, actions.unsqueeze(1))
         return self._process(actions)
 
     @abc.abstractmethod
@@ -87,8 +87,17 @@ class ActionTerm(abc.ABC):
 
     def reset(self, env_ids: torch.Tensor) -> None:
         """Clear raw history and reset action-specific state for selected rows."""
-        self.state.action_queue[env_ids] = 0.0
+        self.state.action_queue.index_fill_(0, env_ids.long(), 0)
         self._reset(env_ids)
+
+    def reset_masked(self, world_mask: torch.Tensor) -> None:
+        """Clear selected action histories and reset action-specific state."""
+        self.state.action_queue.masked_fill_(world_mask[:, None, None], 0)
+        self._reset_masked(world_mask)
+
+    def _reset_masked(self, world_mask: torch.Tensor) -> None:
+        """Optional device-side counterpart of the action-specific reset."""
+        raise NotImplementedError
 
     @abc.abstractmethod
     def _reset(self, env_ids: torch.Tensor) -> None:
@@ -136,7 +145,7 @@ class ActionManager:
     ) -> None:
         self.cfgs = cfgs
         self.actuators = self._resolve_actuators(cfgs, actuators)
-        self.writes = sim.compile_writes(
+        self.writes = sim.compile_action_writes(
             {name: CtrlTargetsWrite(cfg.actuator_names) for name, cfg in cfgs.items() if cfg.actuator_names != ()}
         )
         self.terms: dict[str, ActionTerm] = {}
@@ -219,10 +228,23 @@ class ActionManager:
         for term in self.terms.values():
             term.reset(env_ids)
 
+    @property
+    def supports_masked_reset(self) -> bool:
+        return all(type(term)._reset_masked is not ActionTerm._reset_masked for term in self.terms.values())
+
+    def reset_masked(self, world_mask: torch.Tensor) -> None:
+        for term in self.terms.values():
+            term.reset_masked(world_mask)
+
+    def clear_targets_masked(self, world_mask: torch.Tensor) -> None:
+        for name, actuators in self.actuators.items():
+            if actuators is not None:
+                self.writes.buffer(name).masked_fill_(world_mask[:, None], 0)
+
     def clear_targets(self, env_ids: torch.Tensor) -> None:
         for name, actuators in self.actuators.items():
             if actuators is not None:
-                self.writes.buffer(name)[env_ids] = 0.0
+                self.writes.buffer(name).index_fill_(0, env_ids, 0.0)
 
 
 __all__ = ["ActionManager"]

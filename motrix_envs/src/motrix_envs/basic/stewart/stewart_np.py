@@ -49,8 +49,8 @@ def _normalize_actions(actions: torch.Tensor, num_envs: int, action_dim: int) ->
     return actions.clamp(-1.0, 1.0)
 
 
-def _identity_quat(shape: tuple[int, ...]) -> torch.Tensor:
-    quat = torch.zeros((*shape, 4), dtype=torch.float32)
+def _identity_quat(shape: tuple[int, ...], device: torch.device) -> torch.Tensor:
+    quat = torch.zeros((*shape, 4), dtype=torch.float32, device=device)
     quat[..., 3] = 1.0
     return quat
 
@@ -58,7 +58,7 @@ def _identity_quat(shape: tuple[int, ...]) -> torch.Tensor:
 def _normalize_quat(quat: torch.Tensor) -> torch.Tensor:
     quat = quat.to(torch.float32)
     norm = torch.norm(quat, dim=-1, keepdim=True)
-    identity = _identity_quat(tuple(quat.shape[:-1]))
+    identity = _identity_quat(tuple(quat.shape[:-1]), quat.device)
     safe = norm > 1e-8
     return torch.where(safe, quat / torch.clamp(norm, min=1e-8), identity)
 
@@ -207,13 +207,17 @@ class StewartEnv(DirectEnv):
         if self._model_action_dim != 6:
             raise ValueError(f"Stewart model mismatch: expected 6 actuators, got {self._model_action_dim}")
 
-        self._actuator_low = torch.tensor([spec.ctrl_range[0] for spec in self.model.actuators], dtype=torch.float32)
-        self._actuator_high = torch.tensor([spec.ctrl_range[1] for spec in self.model.actuators], dtype=torch.float32)
+        self._actuator_low = torch.tensor(
+            [spec.ctrl_range[0] for spec in self.model.actuators], dtype=torch.float32, device=self.device
+        )
+        self._actuator_high = torch.tensor(
+            [spec.ctrl_range[1] for spec in self.model.actuators], dtype=torch.float32, device=self.device
+        )
 
         # Snapshot the default-pose geometry the same way the legacy env read
         # it from a fresh SceneData: write default rows (reset runs FK) and
         # read the compiled queries once before any episode reset.
-        default_ids = torch.arange(self._num_envs, dtype=torch.int64)
+        default_ids = torch.arange(self._num_envs, dtype=torch.int64, device=self.device)
         self.sim_data.execute(default_ids)
         inputs = self.sim_data
         self._top_pos_init = inputs["top_pos"][0].clone()
@@ -234,35 +238,36 @@ class StewartEnv(DirectEnv):
         # Episode-scoped task state: full-batch buffers, reset writes the done
         # rows in place.
         num_envs = self._num_envs
-        self._target_pos = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._target_quat = _identity_quat((num_envs,))
-        self._target_tilt_cmd = torch.zeros((num_envs, 2), dtype=torch.float32)
-        self._prev_rel = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._filtered_rel_vel = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._last_rel_vel = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._prev_top_quat = _identity_quat((num_envs,))
-        self._filtered_top_ang_vel = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._last_top_ang_vel = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._initial_rel_xy = torch.zeros(num_envs, dtype=torch.float32)
-        self._prev_zero_vel_rel_xy = torch.zeros(num_envs, dtype=torch.float32)
-        self._still_steps = torch.zeros(num_envs, dtype=torch.int32)
-        self._still_window_active = torch.zeros(num_envs, dtype=torch.bool)
-        self._policy_action = torch.zeros((num_envs, self._action_dim), dtype=torch.float32)
-        self._prev_action_exec = torch.zeros((num_envs, self._action_dim), dtype=torch.float32)
-        self._action_exec = torch.zeros((num_envs, self._action_dim), dtype=torch.float32)
-        self._disturb_time = torch.zeros(num_envs, dtype=torch.float32)
-        self._disturb_pos = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._disturb_lin_vel = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._disturb_rot_deg = torch.zeros((num_envs, 2), dtype=torch.float32)
-        self._disturb_ang_vel_deg = torch.zeros((num_envs, 2), dtype=torch.float32)
-        self._disturb_pos_alpha = torch.ones((num_envs, 3), dtype=torch.float32)
-        self._disturb_pos_limit_scale = torch.ones((num_envs, 3), dtype=torch.float32)
-        self._disturb_pos_noise_scale = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._disturb_pos_jitter_scale = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._disturb_rot_alpha = torch.ones((num_envs, 2), dtype=torch.float32)
-        self._disturb_rot_limit_scale = torch.ones((num_envs, 2), dtype=torch.float32)
-        self._disturb_rot_noise_scale = torch.zeros((num_envs, 2), dtype=torch.float32)
-        self._disturb_rot_jitter_scale = torch.zeros((num_envs, 2), dtype=torch.float32)
+        self._target_pos = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._target_quat = _identity_quat((num_envs,), self.device)
+        self._target_tilt_cmd = torch.zeros((num_envs, 2), dtype=torch.float32, device=self.device)
+        self._prev_rel = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._filtered_rel_vel = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._last_rel_vel = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._prev_top_quat = _identity_quat((num_envs,), self.device)
+        self._filtered_top_ang_vel = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._last_top_ang_vel = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._initial_rel_xy = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._prev_zero_vel_rel_xy = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._still_steps = torch.zeros(num_envs, dtype=torch.int32, device=self.device)
+        self._still_window_active = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._policy_action = torch.zeros((num_envs, self._action_dim), dtype=torch.float32, device=self.device)
+        self._prev_action_exec = torch.zeros((num_envs, self._action_dim), dtype=torch.float32, device=self.device)
+        self._action_exec = torch.zeros((num_envs, self._action_dim), dtype=torch.float32, device=self.device)
+        self._disturb_time = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._disturb_pos = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._disturb_lin_vel = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._disturb_rot_deg = torch.zeros((num_envs, 2), dtype=torch.float32, device=self.device)
+        self._disturb_ang_vel_deg = torch.zeros((num_envs, 2), dtype=torch.float32, device=self.device)
+        self._disturb_pos_alpha = torch.ones((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._disturb_pos_limit_scale = torch.ones((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._disturb_pos_noise_scale = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._disturb_pos_jitter_scale = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._disturb_rot_alpha = torch.ones((num_envs, 2), dtype=torch.float32, device=self.device)
+        self._disturb_rot_limit_scale = torch.ones((num_envs, 2), dtype=torch.float32, device=self.device)
+        self._disturb_rot_noise_scale = torch.zeros((num_envs, 2), dtype=torch.float32, device=self.device)
+        self._disturb_rot_jitter_scale = torch.zeros((num_envs, 2), dtype=torch.float32, device=self.device)
+        self._substep_error_codes = torch.zeros(num_envs, dtype=torch.int32, device=self.device)
 
     @property
     def observation_spec(self) -> ObservationSpec:
@@ -330,14 +335,16 @@ class StewartEnv(DirectEnv):
             ratio = (rel_xy_now / max(self._cfg.center_control_radius, 1e-6)).clamp(0.0, 1.0)
             gain = self._cfg.center_control_min_gain + (1.0 - self._cfg.center_control_min_gain) * ratio
         else:
-            gain = torch.ones((actions.shape[0],), dtype=torch.float32)
+            gain = torch.ones((actions.shape[0],), dtype=torch.float32, device=self.device)
         effective_actions = actions * gain[:, None]
 
         target_pos = self._top_pos_init.unsqueeze(0).expand(actions.shape[0], -1).contiguous()
         target_roll_deg = effective_actions[:, 0] * self._cfg.target_rotation_limit_deg
         target_pitch_deg = effective_actions[:, 1] * self._cfg.target_rotation_limit_deg
         target_tilt_cmd = torch.stack([target_roll_deg, target_pitch_deg], dim=-1)
-        target_euler_deg = torch.cat([target_tilt_cmd, torch.zeros((actions.shape[0], 1), dtype=torch.float32)], dim=-1)
+        target_euler_deg = torch.cat(
+            [target_tilt_cmd, torch.zeros((actions.shape[0], 1), dtype=torch.float32, device=self.device)], dim=-1
+        )
         target_euler_rad = target_euler_deg * torch.pi / 180.0
         target_quat = _from_euler(target_euler_rad[..., 0], target_euler_rad[..., 1], target_euler_rad[..., 2])
 
@@ -369,22 +376,34 @@ class StewartEnv(DirectEnv):
         freq_min = max(1e-4, float(self._cfg.disturb_freq_min_hz))
         freq_max = max(freq_min, float(self._cfg.disturb_freq_max_hz))
 
-        pos_freq = torch.empty(num, 3, dtype=torch.float32).uniform_(freq_min, freq_max)
-        rot_freq = torch.empty(num, 2, dtype=torch.float32).uniform_(freq_min, freq_max)
+        pos_freq = torch.empty(num, 3, dtype=torch.float32, device=self.device).uniform_(freq_min, freq_max)
+        rot_freq = torch.empty(num, 2, dtype=torch.float32, device=self.device).uniform_(freq_min, freq_max)
         self._disturb_pos_alpha[env_ids] = torch.exp(-2.0 * torch.pi * pos_freq * self._cfg.ctrl_dt)
         self._disturb_rot_alpha[env_ids] = torch.exp(-2.0 * torch.pi * rot_freq * self._cfg.ctrl_dt)
-        pos_limit_scale = torch.ones((num, 3), dtype=torch.float32)
+        pos_limit_scale = torch.ones((num, 3), dtype=torch.float32, device=self.device)
         if self._cfg.disturb_pos_xy_max > 0.0:
             xy_min_ratio = min(max(self._cfg.disturb_pos_xy_min / max(self._cfg.disturb_pos_xy_max, 1e-8), 0.0), 1.0)
-            pos_limit_scale[:, :2] = torch.empty(num, 2, dtype=torch.float32).uniform_(float(xy_min_ratio), 1.0)
+            pos_limit_scale[:, :2] = torch.empty(num, 2, dtype=torch.float32, device=self.device).uniform_(
+                float(xy_min_ratio), 1.0
+            )
         if self._cfg.disturb_pos_z_max > 0.0:
-            pos_limit_scale[:, 2] = torch.empty(num, dtype=torch.float32).uniform_(0.75, 1.0)
+            pos_limit_scale[:, 2] = torch.empty(num, dtype=torch.float32, device=self.device).uniform_(0.75, 1.0)
         self._disturb_pos_limit_scale[env_ids] = pos_limit_scale
-        self._disturb_rot_limit_scale[env_ids] = torch.empty(num, 2, dtype=torch.float32).uniform_(0.75, 1.0)
-        self._disturb_pos_noise_scale[env_ids] = torch.empty(num, 3, dtype=torch.float32).uniform_(0.35, 0.60)
-        self._disturb_rot_noise_scale[env_ids] = torch.empty(num, 2, dtype=torch.float32).uniform_(0.35, 0.60)
-        self._disturb_pos_jitter_scale[env_ids] = torch.empty(num, 3, dtype=torch.float32).uniform_(0.02, 0.06)
-        self._disturb_rot_jitter_scale[env_ids] = torch.empty(num, 2, dtype=torch.float32).uniform_(0.03, 0.08)
+        self._disturb_rot_limit_scale[env_ids] = torch.empty(num, 2, dtype=torch.float32, device=self.device).uniform_(
+            0.75, 1.0
+        )
+        self._disturb_pos_noise_scale[env_ids] = torch.empty(num, 3, dtype=torch.float32, device=self.device).uniform_(
+            0.35, 0.60
+        )
+        self._disturb_rot_noise_scale[env_ids] = torch.empty(num, 2, dtype=torch.float32, device=self.device).uniform_(
+            0.35, 0.60
+        )
+        self._disturb_pos_jitter_scale[env_ids] = torch.empty(num, 3, dtype=torch.float32, device=self.device).uniform_(
+            0.02, 0.06
+        )
+        self._disturb_rot_jitter_scale[env_ids] = torch.empty(num, 2, dtype=torch.float32, device=self.device).uniform_(
+            0.03, 0.08
+        )
 
     def _update_disturbance_state(self, advance: bool) -> None:
         num = self._num_envs
@@ -397,17 +416,19 @@ class StewartEnv(DirectEnv):
             self._disturb_ang_vel_deg[:] = 0.0
             return
 
-        ramp = torch.ones((num,), dtype=torch.float32)
+        ramp = torch.ones((num,), dtype=torch.float32, device=self.device)
         if self._cfg.disturb_ramp_seconds > 1e-8:
             ramp = (self._disturb_time / self._cfg.disturb_ramp_seconds).clamp(0.0, 1.0)
 
         base_pos_limit = self._cfg.disturbance_scale * torch.tensor(
             [self._cfg.disturb_pos_xy_max, self._cfg.disturb_pos_xy_max, self._cfg.disturb_pos_z_max],
             dtype=torch.float32,
+            device=self.device,
         )
         base_rot_limit = self._cfg.disturbance_scale * torch.tensor(
             [self._cfg.disturb_rot_max_deg, self._cfg.disturb_rot_max_deg],
             dtype=torch.float32,
+            device=self.device,
         )
         pos_limit = ramp[:, None] * base_pos_limit[None, :] * self._disturb_pos_limit_scale
         rot_limit = ramp[:, None] * base_rot_limit[None, :] * self._disturb_rot_limit_scale
@@ -418,10 +439,10 @@ class StewartEnv(DirectEnv):
 
         prev_pos = self._disturb_pos.clone()
         prev_rot = self._disturb_rot_deg.clone()
-        pos_noise = torch.randn(num, 3, dtype=torch.float32)
-        rot_noise = torch.randn(num, 2, dtype=torch.float32)
-        pos_jitter = torch.randn(num, 3, dtype=torch.float32)
-        rot_jitter = torch.randn(num, 2, dtype=torch.float32)
+        pos_noise = torch.randn(num, 3, dtype=torch.float32, device=self.device)
+        rot_noise = torch.randn(num, 2, dtype=torch.float32, device=self.device)
+        pos_jitter = torch.randn(num, 3, dtype=torch.float32, device=self.device)
+        rot_jitter = torch.randn(num, 2, dtype=torch.float32, device=self.device)
         pos_blend = torch.sqrt((1.0 - self._disturb_pos_alpha**2).clamp(min=0.0))
         rot_blend = torch.sqrt((1.0 - self._disturb_rot_alpha**2).clamp(min=0.0))
 
@@ -442,7 +463,7 @@ class StewartEnv(DirectEnv):
     def _apply_disturbance_to_stage(self, env_ids: torch.Tensor) -> None:
         num = env_ids.numel()
         disturb_rot_deg = torch.cat(
-            [self._disturb_rot_deg[env_ids], torch.zeros((num, 1), dtype=torch.float32)],
+            [self._disturb_rot_deg[env_ids], torch.zeros((num, 1), dtype=torch.float32, device=self.device)],
             dim=-1,
         )
         disturb_rot_rad = disturb_rot_deg * torch.pi / 180.0
@@ -460,7 +481,7 @@ class StewartEnv(DirectEnv):
         stage_pos = self._stage_pos_init[None, :] + self._disturb_pos[env_ids]
         stage_ang_vel = (
             torch.cat(
-                [self._disturb_ang_vel_deg[env_ids], torch.zeros((num, 1), dtype=torch.float32)],
+                [self._disturb_ang_vel_deg[env_ids], torch.zeros((num, 1), dtype=torch.float32, device=self.device)],
                 dim=-1,
             )
             * torch.pi
@@ -529,24 +550,67 @@ class StewartEnv(DirectEnv):
             "tilt_deg": torch.maximum(torch.abs(roll_deg), torch.abs(pitch_deg)),
         }
 
+    def _stage_full_batch_disturbance(self) -> None:
+        num = self._num_envs
+        program = self._body_state_writes["disturb_stage"]
+        if (not self._cfg.disturbance_enabled) or self._cfg.disturbance_scale <= 0.0:
+            program.buffer("disturb_stage_position")[:, 0] = self._stage_pos_init
+            program.buffer("disturb_stage_rotation")[:, 0] = self._stage_quat_init
+            program.buffer("disturb_stage_linear_velocity")[:, 0] = 0.0
+            program.buffer("disturb_stage_angular_velocity")[:, 0] = 0.0
+            program.execute()
+            return
+        disturb_rot_deg = torch.cat(
+            [self._disturb_rot_deg, torch.zeros((num, 1), dtype=torch.float32, device=self.device)],
+            dim=-1,
+        )
+        disturb_rot_rad = disturb_rot_deg * torch.pi / 180.0
+        disturb_rot_quat = _from_euler(disturb_rot_rad[..., 0], disturb_rot_rad[..., 1], disturb_rot_rad[..., 2])
+        stage_quat = _quat_mul(disturb_rot_quat, self._stage_quat_init.expand(disturb_rot_quat.shape))
+        roll_rad, pitch_rad, yaw_rad = _euler_xyz(_normalize_quat(stage_quat))
+        roll_deg = (roll_rad * 180.0 / torch.pi).clamp(
+            -self._cfg.disturb_rot_limit_deg, self._cfg.disturb_rot_limit_deg
+        )
+        pitch_deg = (pitch_rad * 180.0 / torch.pi).clamp(
+            -self._cfg.disturb_rot_limit_deg, self._cfg.disturb_rot_limit_deg
+        )
+        yaw_deg = yaw_rad * 180.0 / torch.pi
+        stage_euler_rad = torch.stack([roll_deg, pitch_deg, yaw_deg], dim=-1) * torch.pi / 180.0
+        stage_quat = _from_euler(stage_euler_rad[..., 0], stage_euler_rad[..., 1], stage_euler_rad[..., 2])
+        stage_pos = self._stage_pos_init[None, :] + self._disturb_pos
+        stage_ang_vel = (
+            torch.cat(
+                [self._disturb_ang_vel_deg, torch.zeros((num, 1), dtype=torch.float32, device=self.device)],
+                dim=-1,
+            )
+            * torch.pi
+            / 180.0
+        )
+        program.buffer("disturb_stage_position")[:, 0] = stage_pos
+        program.buffer("disturb_stage_rotation")[:, 0] = _normalize_quat(stage_quat)
+        program.buffer("disturb_stage_linear_velocity")[:, 0] = self._disturb_lin_vel
+        program.buffer("disturb_stage_angular_velocity")[:, 0] = stage_ang_vel
+        program.execute()
+
     def _prepare_control_step(self) -> None:
         self._smooth_actions(self._policy_action)
         self._apply_pose_delta(self._action_exec)
         self._update_disturbance_state(advance=True)
-        all_ids = torch.arange(self._num_envs, dtype=torch.int64)
-        self._apply_disturbance_to_stage(all_ids)
-        self.sim_data.execute(all_ids)
+        self._stage_full_batch_disturbance()
+        self.sim_data.execute()
         ctrl = self._ctrl_writes.buffer("ctrl")
         ctrl.copy_(self._compute_leg_ctrls(slice(None), self._target_pos, self._target_quat))
         self._ctrl_writes.execute()
 
     def _simulate_control_step(self) -> None:
-        all_ids = torch.arange(self._num_envs, dtype=torch.int64)
+        stage_program = self._body_state_writes["disturb_stage"]
+        self.engine_error_codes.zero_()
         for _ in range(self._cfg.sim_substeps):
-            self._apply_disturbance_to_stage(all_ids)
-            self.sim.step(1)
+            stage_program.execute()
+            self.sim.step(1, result=self._substep_error_codes)
+            self.engine_error_codes.bitwise_or_(self._substep_error_codes)
 
-        self._apply_disturbance_to_stage(all_ids)
+        stage_program.execute()
 
     def physics_step(self) -> None:
         # Stewart interleaves floating-base disturbance writes with per-substep
@@ -645,13 +709,13 @@ class StewartEnv(DirectEnv):
 
         reward = term_center + term_zero_vel_closer + term_still_bonus
 
-        term_terminal = torch.zeros((self._num_envs,), dtype=torch.float32)
+        term_terminal = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
         reward = torch.where(fallen, torch.full_like(reward, float(self._cfg.fall_penalty)), reward)
         term_terminal[fallen] = float(self._cfg.fall_penalty)
 
         # Timeout flag for logging only; the framework owns truncation via its
         # terminated/truncated bookkeeping.
-        timeout = torch.zeros((self._num_envs,), dtype=torch.bool)
+        timeout = torch.zeros((self._num_envs,), dtype=torch.bool, device=self.device)
         if self._cfg.max_episode_steps is not None and self._cfg.max_episode_steps > 0:
             timeout = (state.episode_steps + 1) >= self._cfg.max_episode_steps
             timeout &= ~(fallen | success)
@@ -689,19 +753,21 @@ class StewartEnv(DirectEnv):
 
     def reset(self, env_ids: torch.Tensor) -> None:
         num = env_ids.numel()
-        zeros3 = torch.zeros((num, 3), dtype=torch.float32)
+        zeros3 = torch.zeros((num, 3), dtype=torch.float32, device=self.device)
 
-        roll_deg = torch.empty(num, dtype=torch.float32).uniform_(
+        roll_deg = torch.empty(num, dtype=torch.float32, device=self.device).uniform_(
             float(self._cfg.min_init_tilt_deg), float(self._cfg.init_tilt_deg)
         )
-        roll_deg *= torch.where(torch.rand(num) < 0.5, -1.0, 1.0)
-        pitch_deg = torch.empty(num, dtype=torch.float32).uniform_(
+        roll_deg *= torch.where(torch.rand(num, device=self.device) < 0.5, -1.0, 1.0)
+        pitch_deg = torch.empty(num, dtype=torch.float32, device=self.device).uniform_(
             float(self._cfg.min_init_tilt_deg), float(self._cfg.init_tilt_deg)
         )
-        pitch_deg *= torch.where(torch.rand(num) < 0.5, -1.0, 1.0)
+        pitch_deg *= torch.where(torch.rand(num, device=self.device) < 0.5, -1.0, 1.0)
 
         target_pos = self._top_pos_init.unsqueeze(0).expand(num, -1).contiguous()
-        target_euler_deg = torch.stack([roll_deg, pitch_deg, torch.zeros((num,), dtype=torch.float32)], dim=-1)
+        target_euler_deg = torch.stack(
+            [roll_deg, pitch_deg, torch.zeros((num,), dtype=torch.float32, device=self.device)], dim=-1
+        )
         target_euler_rad = target_euler_deg * torch.pi / 180.0
         target_quat = _from_euler(target_euler_rad[..., 0], target_euler_rad[..., 1], target_euler_rad[..., 2])
 
@@ -728,8 +794,10 @@ class StewartEnv(DirectEnv):
             dim=-1,
         )
         top_pose = torch.cat([target_pos, _normalize_quat(target_quat)], dim=-1)
-        hidden_ball_pos = torch.tensor([0.0, 0.0, -10.0], dtype=torch.float32).unsqueeze(0).expand(num, -1)
-        ball_pose = torch.cat([hidden_ball_pos, _identity_quat((num,))], dim=-1)
+        hidden_ball_pos = (
+            torch.tensor([0.0, 0.0, -10.0], dtype=torch.float32, device=self.device).unsqueeze(0).expand(num, -1)
+        )
+        ball_pose = torch.cat([hidden_ball_pos, _identity_quat((num,), self.device)], dim=-1)
         for name, pose in (("stage", stage_pose), ("top", top_pose), ("ball", ball_pose)):
             self._reset_program.buffer(f"{name}_position")[env_ids, 0] = pose[:, :3]
             self._reset_program.buffer(f"{name}_rotation")[env_ids, 0] = pose[:, 3:7]
@@ -752,20 +820,27 @@ class StewartEnv(DirectEnv):
         radius = (
             self._cfg.platform_radius
             * self._cfg.init_ball_radius_ratio
-            * torch.sqrt(torch.rand(num, dtype=torch.float32))
+            * torch.sqrt(torch.rand(num, dtype=torch.float32, device=self.device))
         )
-        theta = torch.rand(num, dtype=torch.float32) * 2.0 * torch.pi
+        theta = torch.rand(num, dtype=torch.float32, device=self.device) * 2.0 * torch.pi
         local_xy = torch.stack([radius * torch.cos(theta), radius * torch.sin(theta)], dim=-1)
         local_pos = torch.cat(
             [
                 local_xy,
-                torch.full((num, 1), self._cfg.top_surface_offset + self._cfg.ball_radius, dtype=torch.float32),
+                torch.full(
+                    (num, 1),
+                    self._cfg.top_surface_offset + self._cfg.ball_radius,
+                    dtype=torch.float32,
+                    device=self.device,
+                ),
             ],
             dim=-1,
         )
         world_pos = target_pos + _rotate_vector(target_quat, local_pos)
-        self._write_body_state("ball", env_ids, world_pos, _identity_quat((num,)), zeros3, zeros3)
-        self._write_ctrl_rows(env_ids, torch.zeros((num, self._model_action_dim), dtype=torch.float32))
+        self._write_body_state("ball", env_ids, world_pos, _identity_quat((num,), self.device), zeros3, zeros3)
+        self._write_ctrl_rows(
+            env_ids, torch.zeros((num, self._model_action_dim), dtype=torch.float32, device=self.device)
+        )
         self.sim_data.execute(env_ids)
 
         ball_pos = self.sim_data["ball_pos"][env_ids]

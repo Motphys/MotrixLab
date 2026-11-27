@@ -53,8 +53,9 @@ class BodyPosResetCfg(ResetTermCfg):
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_pos,
-            torch.from_numpy(amplitude),
+            torch.as_tensor(amplitude),
             writes={"position": BodyPositionWrite((body,))},
+            stateless=True,
         )
 
 
@@ -107,8 +108,9 @@ class BodyRotResetCfg(ResetTermCfg):
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_rot,
-            torch.from_numpy(amplitude),
+            torch.as_tensor(amplitude),
             writes={"rotation": BodyRotationWrite((body,))},
+            stateless=True,
         )
 
 
@@ -138,8 +140,9 @@ class BodyLinVelResetCfg(ResetTermCfg):
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_lin_vel,
-            torch.from_numpy(amplitude),
+            torch.as_tensor(amplitude),
             writes={"linear_velocity": BodyLinearVelocityWrite((body,))},
+            stateless=True,
         )
 
 
@@ -169,8 +172,9 @@ class BodyRotVelResetCfg(ResetTermCfg):
         amplitude = np.asarray(self.noise, dtype=np.float32) * np.float32(self.noise_scale)
         return ResetTerm(
             _reset_body_rot_vel,
-            torch.from_numpy(amplitude),
+            torch.as_tensor(amplitude),
             writes={"angular_velocity": BodyAngularVelocityWrite((body,))},
+            stateless=True,
         )
 
 
@@ -203,4 +207,5 @@ class BodyDofPosResetCfg(ResetTermCfg):
             _reset_body_dof_pos,
             float(self.noise * self.noise_scale),
             writes={"position": JointPositionWrite(joints), "velocity": JointVelocityWrite(joints)},
+            stateless=True,
         )

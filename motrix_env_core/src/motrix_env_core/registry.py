@@ -38,6 +38,7 @@ class EnvBuildSpec:
         num_envs: int = 1,
         mode: str = "train",
         seed: int | None = None,
+        sim_device: str | None = None,
         headless: bool = False,
         record: RecordConfig | None = None,
     ) -> ABEnv:
@@ -45,6 +46,8 @@ class EnvBuildSpec:
         env_cfg = copy.deepcopy(self.env_cfg)
         if mode == "play":
             env_cfg = env_cfg.for_play()
+        if sim_device is not None:
+            env_cfg.sim.device = sim_device
         env_cfg.validate()
         return _construct_env(self.env_cls, env_cfg, num_envs, self.sim, seed, headless=headless, record=record)
 
@@ -384,6 +387,8 @@ def resolve(
     name: str,
     env_cfg: EnvCfg | None = None,
     sim: str | None = None,
+    *,
+    sim_device: str | None = None,
 ) -> EnvBuildSpec:
     """Resolve a registered environment into spawn-safe construction metadata."""
 
@@ -395,6 +400,8 @@ def resolve(
         env_cfg = copy.deepcopy(env_cfg)
         env_cfg.validate()
 
+    if sim_device is not None:
+        env_cfg.sim.device = sim_device
     return EnvBuildSpec(
         env_cls=env_cls,
         env_cfg=env_cfg,
@@ -410,6 +417,7 @@ def make(
     sim: str | None = None,
     seed: int | None = None,
     *,
+    sim_device: str | None = None,
     headless: bool = False,
     record: RecordConfig | None = None,
 ) -> ABEnv:
@@ -425,6 +433,7 @@ def make(
         sim: Simulator name resolved through the SimBackend registry
             (:func:`motrix_env_core.sim.registry.create_sim_backend`) and
             injected into manager-based environments.
+        sim_device: Simulation device override, such as cpu or cuda:0.
         seed: Runtime seed applied to manager-based environment configs.
         headless: Disable window output independently of the rollout config.
         record: Optional image dimensions and recording settings.
@@ -437,6 +446,9 @@ def make(
         env_cfg_override=env_cfg_override,
         mode=mode,
     )
+    if sim_device is not None:
+        env_cfg.sim.device = sim_device
+        env_cfg.sim.validate()
     env_cls = _env_cls_or_raise(name, meta)
     return _construct_env(env_cls, env_cfg, num_envs, sim, seed, headless=headless, record=record)
 

@@ -71,6 +71,14 @@ class CommandTerm(abc.ABC):
         episode_reset; simulator reset terms subsequently process all env_ids.
         """
 
+    def reset_masked(self, ctx: context.ManagerContext, world_mask: torch.Tensor, episode_reset: torch.Tensor) -> None:
+        """Optional static reset. Both masks are aligned to the N environment rows.
+
+        Implementations must leave every row outside world_mask unchanged.
+        Episode statistics may include only rows selected by episode_reset.
+        """
+        raise NotImplementedError
+
 
 @configclass(kw_only=True)
 class CommandCfg(abc.ABC):
@@ -105,6 +113,8 @@ class CommandManager:
         cfgs: dict[str, CommandCfg],
         build_context: context.BuildContext,
         num_envs: int,
+        *,
+        device: torch.device,
     ) -> None:
         # Command factories must be independent: the context they receive
         # carries an empty commands mapping (and no actions) by contract.
@@ -119,7 +129,11 @@ class CommandManager:
             )
             self.terms[name] = term
             for metric_name, value in collect_metrics(
-                term, num_envs, context=f"Manager command {name!r}", context_path=("commands", name)
+                term,
+                num_envs,
+                context=f"Manager command {name!r}",
+                context_path=("commands", name),
+                device=device,
             ):
                 if metric_name in self.metrics:
                     raise ValueError(f"Duplicate per-environment metric name: {metric_name!r}")

@@ -67,7 +67,7 @@ def _validate_reset_ids(env_ids: torch.Tensor, label: str) -> torch.Tensor:
             f"ManagerEnv.reset {label} must have an integer dtype, got {env_ids.dtype}; "
             "use torch.tensor([...], dtype=torch.long)."
         )
-    return env_ids
+    return env_ids.long()
 
 
 def _merge_query_declarations(
@@ -127,7 +127,6 @@ def _manager_group_to_dict(
 class ManagerBasedEnvCfg(EnvCfg):
     """Complete environment config with manager groups at the top level."""
 
-    backend: str | None = None
     sim_reset: ManagerResetCfg = ManagerResetCfg()
     commands: dict[str, CommandCfg] = field(default_factory=dict)
     actions: dict[str, ActionCfg] = field(default_factory=dict)
@@ -204,25 +203,31 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         """
         if not isinstance(cfg, ManagerBasedEnvCfg):
             raise TypeError(f"{type(cfg).__name__} must inherit ManagerBasedEnvCfg.")
-        super().__init__(cfg, num_envs)
         self._build_seed = 1 if seed is None else seed
         from motrix_env_core.manager.random import RandomSource
 
         # Root Torch seeding belongs to the training entry point, not env construction.
         self._random = RandomSource()
-        from motrix_env_core.sim.registry import create_sim_backend, default_sim_backend_name
+        from motrix_env_core.sim.registry import create_sim_backend
 
-        factory = create_sim_backend(backend or cfg.backend or default_sim_backend_name())
+        factory = create_sim_backend(backend or cfg.backend, cfg.sim.device)
         if not factory.capabilities.env_creation:
             raise ValueError(
                 f"Backend {factory.name!r} cannot create a DirectEnv or ManagerEnv. "
                 f"{factory.capabilities.env_creation_unavailable_reason}"
             )
+        super().__init__(cfg, num_envs)
         # Construction compiles the scene inside the backend: no compiled
         # artifact crosses the boundary.
         render = RenderConfig(headless=headless, record=record)
         self.sim: SimBackend = factory(cfg.scene, cfg.sim, num_envs, render=render)
+        self._step_context = self.sim.step_context
         self.model = self.sim.compile_model(cfg.model_query_cfgs())
+        # Term factories allocate their durable tensors during this scoped build.
+        with self.device:
+            self._build_terms(cfg)
+
+    def _build_terms(self, cfg: ManagerBasedEnvCfg) -> None:
         # Full-width ctrl buffer in canonical actuator order, owned by the
         # compiled ctrl write program; routing happens here, the backend only
         # receives the merged targets.
@@ -233,6 +238,14 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         self._initialize_manager_state()
         self._build_managers(cfg)
         self._compile_simulator_reads(cfg)
+        self._uses_episode_step_limit = type(self)._update_truncate is ArrayEnv._update_truncate
+        self._native_masked_reset = (
+            self.sim.supports_native_masked_reset
+            and self._action_manager.supports_masked_reset
+            and all(
+                type(term).reset_masked is not CommandTerm.reset_masked for term in self._command_manager.terms.values()
+            )
+        )
 
     def _initialize_manager_state(self) -> None:
         self.metrics: dict[str, torch.Tensor] = {}
@@ -257,6 +270,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
             cfg.command_cfgs(),
             build_context=self.build_context(actions={}, commands={}),
             num_envs=self.num_envs,
+            device=self.device,
         )
         self._register_metrics(self._command_manager.metrics)
         self._sim_reset_runtime = SimResetRuntime.create(
@@ -348,6 +362,8 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         )
 
     def _init_owned_state(self) -> None:
+        self._truncation_limit = self._max_episode_steps()
+        self._steps_until_truncation = self._truncation_limit or 0
         startup_started = perf_counter()
         env_name = type(self).__name__
         if self._task_program is None:
@@ -378,7 +394,11 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         )
 
     def _capture_final_obs(self, env_ids: torch.Tensor) -> FinalObs:
-        return self.observation_manager.preview(env_ids)
+        final = self.observation_manager.preview(env_ids)
+        failed = self.engine_error_mask.index_select(0, env_ids)
+        for group in final.obs.groups.values():
+            group.masked_fill_(failed.view(-1, *([1] * (group.ndim - 1))), 0.0)
+        return final
 
     @property
     def action_cfgs(self) -> dict[str, ActionCfg]:
@@ -466,6 +486,74 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         with self.perf.scope("reset_read_inputs"):
             self.sim_data.execute(env_ids)
 
+    def _process_episode_boundaries(self) -> None:
+        native_reset = self._native_masked_reset and self._task_program.reset_masked_kernel is not None
+        if self.device.type != "cuda" and not native_reset:
+            super()._process_episode_boundaries()
+            return
+
+        episode_reset = self.termination_manager.terminated | self._truncated
+        sim_reset = episode_reset | self._sim_reset_requested[:, 0]
+        if not native_reset:
+            if sim_reset.any():
+                super()._process_episode_boundaries()
+            return
+
+        stateless = self._sim_reset_runtime.supports_stateless_masked_reset
+        can_skip_gate = self.device.type == "cuda" and stateless and self._uses_episode_step_limit
+        reset_ids = None
+        truncation_due = False
+        if can_skip_gate:
+            # Episode resets can only decrease the maximum episode length.
+            # That makes the countdown a safe lower bound on the next truncation.
+            limit = self._max_episode_steps()
+            if limit != self._truncation_limit:
+                self._truncation_limit = limit
+                self._steps_until_truncation = 0
+            if limit:
+                self._steps_until_truncation -= 1
+                truncation_due = self._steps_until_truncation <= 0
+
+        if not can_skip_gate or truncation_due:
+            counts = torch.stack((sim_reset, self._truncated)).sum(dim=1)
+            if truncation_due:
+                longest_remaining = self._episode_steps.masked_fill(episode_reset, 0).amax()
+                reset_count, trunc_count, longest = torch.cat((counts, longest_remaining.view(1))).tolist()
+                self._steps_until_truncation = limit - longest
+            else:
+                reset_count, trunc_count = counts.tolist()
+            if not reset_count:
+                return
+            if trunc_count:
+                trunc_ids = torch.nonzero_static(self._truncated, size=trunc_count).flatten()
+                with self.perf.scope("final_obs"):
+                    self._final_obs = self._capture_final_obs(trunc_ids)
+            if not stateless:
+                reset_ids = torch.nonzero_static(sim_reset, size=reset_count).flatten()
+
+        with self.perf.scope("reset"):
+            self._reset_with_masks(sim_reset, episode_reset, reset_ids)
+
+    def _clear_engine_error_rewards(self) -> None:
+        super()._clear_engine_error_rewards()
+        mask = self.engine_error_mask[:, None]
+        self._reward_manager.term_rewards.masked_fill_(mask, 0.0)
+        self._reward_manager.weighted_term_rewards.masked_fill_(mask, 0.0)
+
+    def _reset_with_masks(
+        self, sim_reset: torch.Tensor, episode_reset: torch.Tensor, reset_ids: torch.Tensor | None
+    ) -> None:
+        self._clear_engine_error_rewards()
+        self._episode_steps.masked_fill_(episode_reset, 0)
+        self.observation_manager.reset_masked(episode_reset)
+        with self.perf.scope("action_reset"):
+            self._action_manager.reset_masked(episode_reset)
+            self._action_manager.clear_targets_masked(sim_reset)
+        with self.perf.scope("apply_sim_reset"):
+            self._sim_reset_runtime.apply_masked(self._task_program, sim_reset, episode_reset, reset_ids)
+        with self.perf.scope("reset_read_inputs"):
+            self.sim_data.execute_masked(sim_reset)
+
     def _reset_done_envs(self) -> None:
         """Reset done lanes and requested sim-reset lanes in one pass.
 
@@ -485,7 +573,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         if env_ids.numel():
             self._clear_engine_error_rewards()
             with self.perf.scope("select_done"):
-                self._episode_steps[env_ids] = 0
+                self._episode_steps.index_fill_(0, env_ids, 0)
         with self.perf.scope("reset_envs"):
             self._reset_rows(
                 env_ids,
@@ -510,12 +598,16 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         appends its endpoint. Episode-reset lanes instead publish a first frame
         on the next compute call.
         """
-        env_ids = _validate_reset_ids(env_ids, "env_ids")
+        device = self._episode_steps.device
+        env_ids = _validate_reset_ids(env_ids, "env_ids").to(device)
         if sim_reset_ids is not None:
-            sim_reset_ids = _validate_reset_ids(sim_reset_ids, "sim_reset_ids")
+            sim_reset_ids = _validate_reset_ids(sim_reset_ids, "sim_reset_ids").to(device)
         self._final_obs = None
+        if sim_reset_ids is not None and env_ids.numel():
+            # Explicit callers can supply overlapping sets. Episode reset takes precedence.
+            sim_reset_ids = sim_reset_ids[~torch.isin(sim_reset_ids, env_ids)]
         self._reset_rows(env_ids, sim_reset_ids)
-        self._episode_steps[env_ids] = 0
+        self._episode_steps.index_fill_(0, env_ids, 0)
 
     def _reset_rows(self, env_ids: torch.Tensor, sim_reset_ids: torch.Tensor | None = None) -> None:
         """Torch-control-plane reset shared by the public wrapper and the
@@ -530,9 +622,6 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         # Context remains whole-batch and never carries reset-pass scratch.
         episode_reset = torch.ones_like(env_ids, dtype=torch.bool)
         if sim_reset_ids is not None and sim_reset_ids.numel():
-            if env_ids.numel():
-                # Episode reset wins when the public caller supplies overlapping sets.
-                sim_reset_ids = sim_reset_ids[~torch.isin(sim_reset_ids, env_ids)]
             episode_reset = torch.cat([episode_reset, torch.zeros_like(sim_reset_ids, dtype=torch.bool)])
             env_ids = torch.cat([env_ids, sim_reset_ids])
         if env_ids.numel():
@@ -542,7 +631,7 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         """Assemble the persistent live metrics view for the current state.
 
         Values are views into the kernel reward/termination buffers and the
-        term-owned CPU tensor arrays, so kernels write them in place every
+        term-owned tensors, so kernels write them in place every
         step and nothing needs rebuilding per transition. Host-side writers
         may add batch-level scalar entries (e.g. sampler statistics at reset
         time). Consumers retain values across steps through

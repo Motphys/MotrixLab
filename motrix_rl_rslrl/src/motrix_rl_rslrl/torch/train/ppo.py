@@ -57,9 +57,6 @@ class Trainer(TrainerBase):
 
         Creates the environment, wraps it for RSLRL, and runs the training loop.
         """
-        # Determine device for training
-        device = resolve_default_device()
-
         # Set random seed
         self._set_seed(self._context.seed)
 
@@ -67,6 +64,7 @@ class Trainer(TrainerBase):
         env = env_registry.make(
             self._env_name,
             sim=self._sim,
+            **({"sim_device": self._context.sim_device} if self._context.sim_device is not None else {}),
             num_envs=self._context.num_envs,
             mode="train",
             seed=self._context.seed,
@@ -74,9 +72,14 @@ class Trainer(TrainerBase):
             record=self._render.record if self._render else None,
         )
 
+        device = env.device if env.device.type == "cuda" else resolve_default_device()
         logger.info(f"Using device: {device}")
 
         # Wrap environment for RSLRL
+        if self._context.run is not None:
+            from motrix_rl.runs import annotate_run
+
+            annotate_run(self._context.run_dir, sim_device=str(env.device))
         vec_env = wrap_env(env, device, render=self._render)
 
         # Create RSLRL config - use to_dict() method
@@ -127,9 +130,6 @@ class Trainer(TrainerBase):
         """
         import time
 
-        # Determine device for evaluation
-        device = resolve_default_device()
-
         # Set random seed
         self._set_seed(self._context.seed)
 
@@ -137,6 +137,7 @@ class Trainer(TrainerBase):
         env = env_registry.make(
             self._env_name,
             sim=self._sim,
+            **({"sim_device": self._context.sim_device} if self._context.sim_device is not None else {}),
             num_envs=self._context.play_num_envs,
             mode="play",
             seed=self._context.seed,
@@ -144,7 +145,7 @@ class Trainer(TrainerBase):
             record=self._render.record if self._render else None,
         )
 
-        # Wrap environment for RSLRL
+        device = env.device if env.device.type == "cuda" else resolve_default_device()
         vec_env = wrap_env(env, device, render=self._render)
 
         # Create RSLRL config (minimal for evaluation)
@@ -155,7 +156,7 @@ class Trainer(TrainerBase):
 
         # Load policy
         logger.info(f"Loading policy from {policy_path}")
-        runner.load(policy_path)
+        runner.load(policy_path, map_location=device)
 
         # Run evaluation loop
         logger.info("Starting evaluation loop...")

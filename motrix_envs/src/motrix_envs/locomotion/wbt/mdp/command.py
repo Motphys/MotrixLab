@@ -151,19 +151,32 @@ class WbtMotionCommand(CommandTerm):
         frame indices back; finally the sampler opens new episodes on the
         episode rows.
         """
-        idx = env_ids
-        self.sampler.fold_episode_stats(idx, episode_reset, ctx.terminated, self.steps[idx, 0])
-        self.sampler.rebuild()
-        if bool(self.sequential_clips):
-            # Sequential playback rematerializes onto the current frame.
-            self.sampler.mark_episode_starts(idx, episode_reset, self.steps[idx, 0])
-            return
-        draws = 2 * ctx.rand.uniform((idx.numel(), self.sampler.draw_count), device=self.steps.device) - 1
-        steps = self.sampler.sample(draws, self.start_at_timestep_zero_prob)
-        # ``clip_ended`` is intentionally left untouched; advance recomputes it
-        # on the following transition.
-        self.steps[idx, 0] = steps
-        self.sampler.mark_episode_starts(idx, episode_reset, self.steps[idx, 0])
+        self._reset_rows(ctx, env_ids, episode_reset)
+
+    def reset_masked(self, ctx: ManagerContext, world_mask: torch.Tensor, episode_reset: torch.Tensor) -> None:
+        self._reset_rows(ctx, ctx.env_id, episode_reset, world_mask)
+
+    def _reset_rows(
+        self,
+        ctx: ManagerContext,
+        idx: torch.Tensor,
+        episode_reset: torch.Tensor,
+        world_mask: torch.Tensor | None = None,
+    ) -> None:
+        steps = self.steps[idx, 0]
+        self.sampler.fold_episode_stats(idx, episode_reset, ctx.terminated, steps)
+        self.sampler.rebuild(active=None if world_mask is None else world_mask.any())
+        if not bool(self.sequential_clips):
+            draws = 2 * ctx.rand.uniform((idx.numel(), self.sampler.draw_count), device=self.steps.device) - 1
+            sampled = self.sampler.sample(draws, self.start_at_timestep_zero_prob)
+            if world_mask is None:
+                self.steps[idx, 0] = sampled
+                steps = sampled
+            else:
+                steps = torch.where(world_mask, sampled, steps)
+                self.steps[:, 0].copy_(steps)
+        # Advance recomputes clip_ended on the next transition.
+        self.sampler.mark_episode_starts(idx, episode_reset, steps)
 
 
 @configclass(kw_only=True)

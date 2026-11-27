@@ -1485,12 +1485,19 @@ dependencies = [
     { name = "numpy" },
 ]
 
+[package.optional-dependencies]
+gpu = [
+    { name = "motrixsim-gpu", marker = "(platform_machine == 'AMD64' and sys_platform == 'win32') or (platform_machine != 'AMD64' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (platform_machine != 'AMD64' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm') or sys_platform == 'linux' or (sys_platform != 'win32' and extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (sys_platform != 'win32' and extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "motrix-env-core", editable = "motrix_env_core" },
     { name = "motrixsim-core", specifier = "===1.0.0" },
+    { name = "motrixsim-gpu", marker = "(platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'gpu') or (sys_platform == 'linux' and extra == 'gpu')", specifier = "===1.0.0" },
     { name = "numpy", specifier = ">=1.26" },
 ]
+provides-extras = ["gpu"]
 
 [[package]]
 name = "motrix-env-mujoco"
@@ -1581,6 +1588,9 @@ rocm = [
 rslrl = [
     { name = "motrix-rl-rslrl" },
 ]
+sim-gpu = [
+    { name = "motrix-env-motrixsim", extra = ["gpu"] },
+]
 skrl-jax = [
     { name = "motrix-rl-skrl", extra = ["jax"] },
 ]
@@ -1615,6 +1625,7 @@ requires-dist = [
     { name = "motrix-deploy-tasks", editable = "motrix_deploy_tasks" },
     { name = "motrix-deploy-unitree", extras = ["native"], marker = "extra == 'unitree'", editable = "motrix_deploy_unitree" },
     { name = "motrix-env-motrixsim", editable = "motrix_env_motrixsim" },
+    { name = "motrix-env-motrixsim", extras = ["gpu"], marker = "extra == 'sim-gpu'", editable = "motrix_env_motrixsim" },
     { name = "motrix-env-mujoco", editable = "motrix_env_mujoco" },
     { name = "motrix-envs", editable = "motrix_envs" },
     { name = "motrix-rl", editable = "motrix_rl" },
@@ -1635,7 +1646,7 @@ requires-dist = [
     { name = "sphinxcontrib-video", marker = "extra == 'docs'" },
     { name = "tensorboard", marker = "extra == 'docs'", specifier = "==2.20.0" },
 ]
-provides-extras = ["rslrl", "skrl-jax", "unitree", "docs", "cuda", "rocm"]
+provides-extras = ["rslrl", "skrl-jax", "unitree", "docs", "cuda", "rocm", "sim-gpu"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1876,6 +1887,29 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/54/6d/43ad2575cbfd4aba11d1ba57ffc68dfc6d0ed470f0ca5b8fdc40a950de85/motrixsim_core-1.0.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:33d801b3ff815a3185a0a9d960385dbea425a54e57889162026e6cf294d08247", size = 95273015, upload-time = "2026-11-19T04:55:47.909Z" },
     { url = "https://files.pythonhosted.org/packages/db/16/288228c6c92ee9e6e46f70f6ccbdf6e6742f3f7294329567ef8b00e4800b/motrixsim_core-1.0.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e28e9f85a93e88b2179ddb70cb598c0f5ab6b6b714e521f7f44b8a2e6115cadf", size = 92136790, upload-time = "2026-11-19T05:01:40.292Z" },
     { url = "https://files.pythonhosted.org/packages/ac/9c/8de1ff6bee9587d1dac325aa8087d3258d662c2724f318d125af3e4dda75/motrixsim_core-1.0.0-cp313-cp313-win_amd64.whl", hash = "sha256:fb2cff1d11ee46b73831e9005993bf892806fc76d546b859736a3a352e2092df", size = 71778061, upload-time = "2026-11-19T04:54:27.452Z" },
+]
+
+[[package]]
+name = "motrixsim-gpu"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "motrixsim-core", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+    { name = "warp-lang", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/22/5f/78391caeacdfa9ec79cb718cfb31fa38e7e6f88518de3ff9d1c3d7cd5e77/motrixsim_gpu-1.0.0-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:c143d740b7fd52adfda7ba94fbba807bb4f98be231086acfee22a6713927e0f6", size = 69370625, upload-time = "2026-11-19T07:45:40.85Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/b8/11f99c1305add1868d27c9fe63e91f8f21f7b78404eda396bdc06696f17a/motrixsim_gpu-1.0.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:01661a89e4e37496287ff77b9f27b2bda2070ca60e193018434af19c51c58b99", size = 70340078, upload-time = "2026-11-19T07:41:21.179Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/c9/af581b5036c05424bb8cd4763ce9bd76d20ba364f1d4f9625edc35555a0b/motrixsim_gpu-1.0.0-cp310-cp310-win_amd64.whl", hash = "sha256:3cf584a5b73f9b6df2f8426371d90d960f6ab55f12ff54a1bcfaea973ac1a811", size = 66657967, upload-time = "2026-11-19T07:40:41.974Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/12/5f77c33430f133c6a1d79045a9d7a8c58888cc305d6a572bbbbc1bef0527/motrixsim_gpu-1.0.0-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:11688ab2490f4c41dd8f3252d52c600b150133fe481e38914b623f2e326691f6", size = 69166637, upload-time = "2026-11-19T07:45:14.311Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/2e/2e7ba8068c26f32e2d76c9d18a1ee7cbd857dc46bc46e2fb119915e5582b/motrixsim_gpu-1.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:9a482d998fea57619fc2cf55f7fa9f84eb2ce4b5d6aefc034ed8c270844a823c", size = 68752464, upload-time = "2026-11-19T07:44:16.68Z" },
+    { url = "https://files.pythonhosted.org/packages/24/6d/5b0dfbb53b6dca09ed8ba3d2724242e87da91f181c6efd2d52bf971b5a83/motrixsim_gpu-1.0.0-cp311-cp311-win_amd64.whl", hash = "sha256:a88126e269097c0c032a8b41dd94eac2846a81ed853d4aedd993f4b872467da2", size = 66541505, upload-time = "2026-11-19T07:42:05.838Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/be/28640bb40e81bd0ceea954a630be75e8cc8d9b5b8a377a5212ae20461b96/motrixsim_gpu-1.0.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:f63fd37344e88531cc1b6877a7e336703c8f3b61ba72f829ee9914371d83d8a3", size = 68569763, upload-time = "2026-11-19T07:44:38.7Z" },
+    { url = "https://files.pythonhosted.org/packages/29/32/9f1c24724807e3417877d5282be6741b994645eb71eeaf8ecfd8a5b7b1c4/motrixsim_gpu-1.0.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:a308c750492aabc5457dde498c2b8a25430e74bfcdeb3682c33d2dc9a6131872", size = 69778123, upload-time = "2026-11-19T07:43:30.064Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/b7/3c523c6ccda55a1e47dbcd0b40515f1829cc7b8c721a3ad11e9bda42298d/motrixsim_gpu-1.0.0-cp312-cp312-win_amd64.whl", hash = "sha256:277a14489309153fe7e6785a18653df905d00c68d2ef3193934e4818600d5475", size = 66062316, upload-time = "2026-11-19T07:39:01.31Z" },
+    { url = "https://files.pythonhosted.org/packages/72/7c/fde51d21bb247ff894bf3639b5f5bbf804cd30e1a34d78987275ecb02344/motrixsim_gpu-1.0.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:42587ba2cfec27d24d05f13aa0f48786d111f7fe206ad47575ae7923292d539c", size = 68207662, upload-time = "2026-11-19T07:40:12.167Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/ad/8c800b36b6b0fc524aaafc9768aa2f6e54b1bdf531ca77d6c9e4b704fa6c/motrixsim_gpu-1.0.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:bacd5ff3fb744e3131b32588602b08dff7a0bc072bbf2c21f0526e073ea118bd", size = 69365778, upload-time = "2026-11-19T07:42:40.967Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/5f/9187b69c8ea89e2766aeda55c17a8255a1769f15b94e43d483cf5ca357f7/motrixsim_gpu-1.0.0-cp313-cp313-win_amd64.whl", hash = "sha256:7de69fa0a7b493c643b9df6529d3a739b621a9c246edf7f6dadaa9bf8f94be94", size = 65788253, upload-time = "2026-11-19T07:39:37.674Z" },
 ]
 
 [[package]]
@@ -4116,6 +4150,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760", size = 393185, upload-time = "2025-06-18T14:07:41.644Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/c2/fe1e52489ae3122415c51f387e221dd0773709bad6c6cdaa599e8a2c5185/urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc", size = 129795, upload-time = "2025-06-18T14:07:40.39Z" },
+]
+
+[[package]]
+name = "warp-lang"
+version = "1.17.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", marker = "sys_platform != 'darwin' or (extra == 'extra-10-motrix-lab-cuda' and extra == 'extra-10-motrix-lab-rocm') or (extra == 'extra-9-motrix-rl-cuda' and extra == 'extra-9-motrix-rl-rocm')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/b0/9b1de407fa10b380f5ca4ed1c3e5b129be55ea26a927c7a49e45cdde14b0/warp_lang-1.17.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:f2fec43afb81caa2190c0b7fa3aaf4d869f3599839f0c40b9ead84331f91e993", size = 27544218, upload-time = "2026-08-31T05:52:29.177Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/a1/e11aa6898e8bbb6910e89fe31a3338fb2566f038912010875c072e6dafd1/warp_lang-1.17.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:47cd93636828dd16e55eeb4e77a0e3547b5fb0f383000a3d228629df68f28fd8", size = 164347636, upload-time = "2026-08-31T05:53:14.441Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/4f/a17b1f0ebfeabe37326f01afb6109961f20a0165c1258242f46d10a554f5/warp_lang-1.17.0-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:5051271048da956a8b94e2db9771ce60ce9591a3ac5bb49037f3d6812d1eea00", size = 172665443, upload-time = "2026-08-31T05:53:52.47Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/7a/36306a503085cbfc79c35a28e441c59dd1d8070d2dd65152345ebf2dfec2/warp_lang-1.17.0-py3-none-win_amd64.whl", hash = "sha256:ca35c82242a7553046f09023bbe56750b5c3d9af72625bd1a905a56d3189771d", size = 151236515, upload-time = "2026-08-31T05:54:27.944Z" },
 ]
 
 [[package]]

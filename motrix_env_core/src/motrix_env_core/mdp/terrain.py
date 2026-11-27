@@ -50,7 +50,7 @@ def heightfield_lookup(grid: HeightFieldGrid, x: torch.Tensor, y: torch.Tensor) 
     arrive as zero-copy tensor views of the shared grid arrays.
     """
     if not grid.enabled:
-        return torch.full((x.shape[0],), float(grid.constant), dtype=torch.float64)
+        return torch.full_like(x, float(grid.constant), dtype=torch.float64)
     heights = grid.heights
     origin = grid.origin
     spacing = grid.spacing
@@ -59,8 +59,10 @@ def heightfield_lookup(grid: HeightFieldGrid, x: torch.Tensor, y: torch.Tensor) 
     # world coordinates, so the whole mapping stays in float64.
     fx = ((x - origin[0]) / spacing[0]).clamp(0.0, heights.shape[1] - 1.0 - 1e-6)
     fy = ((y - origin[1]) / spacing[1]).clamp(0.0, heights.shape[0] - 1.0 - 1e-6)
-    col = fx.to(torch.long)
-    row = fy.to(torch.long)
+    # Failed physics rows still pass through transition evaluation before reset.
+    # Keep their NaN interpolation weights, but never index the grid with NaN.
+    col = fx.to(torch.long).clamp(0, heights.shape[1] - 2)
+    row = fy.to(torch.long).clamp(0, heights.shape[0] - 2)
     tx = fx - col
     ty = fy - row
     h00 = heights[row, col]

@@ -23,7 +23,7 @@ def test_default_view_target_is_cartpole(monkeypatch):
         return env
 
     monkeypatch.setattr(view.registry, "make", make)
-    monkeypatch.setattr(view, "_run_np", run_calls.append)
+    monkeypatch.setattr(view, "_run_env", run_calls.append)
 
     view.run(ViewConfig())
 

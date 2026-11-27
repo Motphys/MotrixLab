@@ -14,12 +14,14 @@ from motrix_env_core.sim import (
     ActuatorCtrlQuery,
     ActuatorKdQuery,
     ActuatorKpQuery,
+    BatchLinkNetContactForceQuery,
     BodyAngularVelocityWrite,
     BodyJointPositionLimitsQuery,
     BodyJointPositionQuery,
     BodyJointPositionWrite,
     BodyJointVelocityQuery,
     BodyLinearVelocityWrite,
+    BodyLinkNetContactForceQuery,
     BodyPositionWrite,
     BodyRotationWrite,
     DofPositionLimitsQuery,
@@ -31,12 +33,14 @@ from motrix_env_core.sim import (
     JointVelocityQuery,
     LinkAngularVelocityQuery,
     LinkLinearVelocityQuery,
+    LinkNetContactForceQuery,
     LinkPositionQuery,
     LinkQuaternionQuery,
+    SensorValuesQuery,
 )
-from motrix_env_core.sim.model import SimModel
+from motrix_env_core.sim.model import KinematicTreeQuery, SimModel
 from motrix_env_core.sim.registry import create_sim_backend, list_sim_backends
-from motrix_env_core.sim.write import BodyJointVelocityWrite, CtrlTargetsWrite, JointVelocityWrite
+from motrix_env_core.sim.write import BodyJointVelocityWrite, CtrlTargetsWrite, JointQuaternionWrite, JointVelocityWrite
 from motrix_env_motrixsim.compiler import MotrixSimSceneCompiler
 from motrix_env_motrixsim.runtime import MotrixSimBackend
 
@@ -64,6 +68,12 @@ def test_motrixsim_backend_is_registered():
 
     with pytest.raises(ValueError, match="Unknown sim backend 'unknown'"):
         create_sim_backend("unknown")
+
+
+def test_motrixsim_factory_defaults_to_cpu_and_rejects_other_device_types():
+    assert create_sim_backend() is MotrixSimBackend
+    with pytest.raises(ValueError, match="does not support simulation on meta"):
+        create_sim_backend("motrixsim", "meta")
 
 
 def test_sim_cfg_configures_msd_world_before_build():
@@ -517,3 +527,404 @@ def test_read_views_alias_arena_and_stay_conventionally_read_only():
     # The backing numpy views stay non-writeable; torch cannot carry that
     # flag, so the read-only contract is documented on ``view``.
     assert not program._views["all_pos"].flags.writeable
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires NVIDIA CUDA")
+def test_cuda_live_control_views_on_alternating_caller_streams():
+    pytest.importorskip("motrixsim.gpu")
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("cartpole")
+    cfg.sim.device = "cuda:0"
+    device = torch.device(cfg.sim.device)
+    backend = create_sim_backend("motrixsim", device)(cfg.scene, cfg.sim, 3)
+    reads = backend.compile_reads({"ctrl": ActuatorCtrlQuery(), "alias": ActuatorCtrlQuery()})
+    writes = backend.compile_action_writes({"ctrl": CtrlTargetsWrite()})
+    controls = reads["ctrl"]
+    assert controls is reads["alias"]
+    assert controls.data_ptr() == writes.buffer("ctrl").data_ptr()
+    assert reads.arena_bytes == 0
+    with pytest.raises(RuntimeError, match="full-batch"):
+        writes.execute(torch.tensor([1], device=device))
+    with pytest.raises(RuntimeError, match="full-batch"):
+        writes.execute_masked(torch.tensor([False, True, False], device=device))
+    streams = [torch.cuda.Stream(device=device), torch.cuda.Stream(device=device)]
+    caller = torch.cuda.current_stream(device)
+    for index, stream in enumerate(streams, 1):
+        stream.wait_stream(caller)
+        with torch.cuda.stream(stream):
+            writes.buffer("ctrl").fill_(index)
+            writes.execute()
+            reads.execute(torch.tensor([1], device=device))
+            torch.testing.assert_close(controls, torch.full_like(controls, index))
+        caller.wait_stream(stream)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires NVIDIA CUDA")
+@pytest.mark.parametrize("masked", [False, True])
+def test_cuda_control_staging_preserves_unselected_worlds(masked):
+    pytest.importorskip("motrixsim.gpu")
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("cartpole")
+    cfg.sim.device = "cuda:0"
+    backend = create_sim_backend("motrixsim", cfg.sim.device)(cfg.scene, cfg.sim, 3)
+    controls = backend.compile_reads({"ctrl": ActuatorCtrlQuery()})["ctrl"]
+    writes = backend.compile_writes({"ctrl": CtrlTargetsWrite()})
+    initial = controls.clone()
+    writes.buffer("ctrl").copy_(initial + 1)
+    torch.testing.assert_close(controls, initial)
+
+    if masked:
+        writes.execute_masked(torch.tensor([False, True, False], device=backend.device))
+    else:
+        writes.execute(torch.tensor([1], device=backend.device))
+
+    initial[1] += 1
+    torch.testing.assert_close(controls, initial)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires NVIDIA CUDA")
+def test_cuda_contact_reports_for_offset_load(tmp_path):
+    pytest.importorskip("motrixsim.gpu")
+    scene = tmp_path / "offset_contact.xml"
+    scene.write_text(
+        """<mujoco><worldbody>
+        <geom name="floor" type="plane" size="2 2 .1"/>
+        <body name="load" pos="0 0 .4">
+          <joint name="height" type="slide" axis="0 0 1"/>
+          <inertial pos="0 0 0" mass="1" diaginertia=".01 .01 .01"/>
+          <geom name="sphere" pos=".1 0 0" type="sphere" size=".15"/>
+          <site name="bottom" pos=".1 0 -.15" type="box" size=".03 .03 .03"/>
+          <site name="top" pos=".1 0 .15" size=".03"/>
+        </body></worldbody>
+        <sensor>
+          <touch name="pressure" site="bottom"/><touch name="miss" site="top"/>
+          <contact name="up" geom1="floor" geom2="sphere" data="normal" num="1"/>
+          <contact name="down" geom1="sphere" geom2="floor" data="normal" num="1"/>
+        </sensor></mujoco>"""
+    )
+    device = torch.device("cuda:0")
+    backend = create_sim_backend("motrixsim", device)(
+        SceneCfg(file=scene), SimCfg(dt=0.005, gravity=(0, 0, -9.81), device=str(device)), 2
+    )
+    reads = backend.compile_reads(
+        {
+            "wrench": BodyLinkNetContactForceQuery(body="load"),
+            "link_wrench": LinkNetContactForceQuery(link="load"),
+            "batch_wrench": BatchLinkNetContactForceQuery(links=("load",)),
+            "reports": SensorValuesQuery(sensors=("pressure", "miss", "up", "down")),
+        }
+    )
+    backend.step(180)
+    reads.execute()
+
+    # The normal balances the 1 kg load, 0.1 m from its center of mass.
+    expected = torch.tensor([0, 0, 9.81, 0, -0.981, 0], device=device)
+    torch.testing.assert_close(reads["wrench"][:, 0], expected.expand(2, -1), atol=0.01, rtol=0.001)
+    reports = torch.tensor([9.81, 0, 0, 0, 1, 0, 0, -1], device=device)
+    torch.testing.assert_close(reads["reports"], reports.expand(2, -1), atol=0.01, rtol=0.001)
+    torch.testing.assert_close(reads["link_wrench"], reads["wrench"][:, 0])
+    torch.testing.assert_close(reads["batch_wrench"], reads["wrench"])
+
+    untouched = reads["link_wrench"][1].clone()
+    mask = torch.tensor([True, False], device=device)
+    backend.reset_masked(mask)
+    reads.execute_masked(mask)
+    torch.testing.assert_close(reads["link_wrench"][0], torch.zeros_like(untouched))
+    torch.testing.assert_close(reads["link_wrench"][1], untouched)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires NVIDIA CUDA")
+def test_cuda_compact_writes_route_rows_in_caller_order():
+    pytest.importorskip("motrixsim.gpu")
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("dm-finger-spin", mode="play")
+    cfg.sim.device = "cuda:0"
+    device = torch.device(cfg.sim.device)
+    backend = create_sim_backend("motrixsim", device)(cfg.scene, cfg.sim, 4)
+    joints = ("distal", "hinge")
+    program = backend.compile_writes({"position": JointPositionWrite(joints)}, reset=True)
+    read = backend.compile_reads({"position": JointPositionQuery(joints=joints)})
+    read.execute()
+    expected = read["position"].clone()
+    ids = torch.tensor([3, 0], device=device)
+    compact = torch.tensor([[0.2, -0.1], [-0.4, 0.3]], device=device)
+    staging = program.buffer("position")
+    staging[:2].copy_(compact)
+    program.execute_compact(ids, (staging,))
+    read.execute()
+    expected[ids] = compact
+    torch.testing.assert_close(read["position"], expected)
+    with pytest.raises(ValueError, match="conflict"):
+        backend.compile_writes({"a": JointPositionWrite(joints), "b": JointPositionWrite(("hinge",))})
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires NVIDIA CUDA")
+def test_cuda_actuator_gains_skip_invalid_values_and_restore_selected_worlds():
+    pytest.importorskip("motrixsim.gpu")
+    from motrix_env_core import registry
+    from motrix_env_core.sim.write import ActuatorDampingWrite, ActuatorKpWrite
+
+    cfg = registry.make_env_config("go2-walk-flat")
+    cfg.sim.device = "cuda:0"
+    device = torch.device(cfg.sim.device)
+    backend = create_sim_backend("motrixsim", device)(cfg.scene, cfg.sim, 3)
+    actuators = backend.model.actuators[:2][::-1]
+    names = tuple(a.name for a in actuators)
+    gains = backend.compile_writes({"kp": ActuatorKpWrite(names), "kd": ActuatorDampingWrite(names)})
+    reset = backend.compile_writes({}, reset=True)
+    rows = torch.tensor([2, 0], device=device)
+    for key in ("kp", "kd"):
+        gains.buffer(key)[:2] = gains.buffer(key).new_tensor([[3.5, float("nan")], [float("inf"), 0]])
+    with backend.physics_stream():
+        defaults = [(a.get_kp_override(backend.data), a.get_damping_override(backend.data)) for a in actuators]
+    gains.execute_compact(rows, (gains.buffer("kp"), gains.buffer("kd")))
+    for restored in (False, True):
+        if restored:
+            reset.execute(rows[:1])
+        with backend.physics_stream():
+            for column, actuator in enumerate(actuators):
+                for initial, getter in zip(defaults[column], (actuator.get_kp_override, actuator.get_damping_override)):
+                    expected = initial.copy()
+                    if column == 0 and not restored:
+                        expected[2] = 3.5
+                    elif column == 1:
+                        expected[0] = 0
+                    np.testing.assert_array_equal(getter(backend.data), expected)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires NVIDIA CUDA")
+def test_cuda_reset_commits_final_parameter_values_once(monkeypatch):
+    pytest.importorskip("motrixsim.gpu")
+    from motrix_env_core import registry
+    from motrix_env_core.sim.write import LinkMassWrite
+
+    cfg = registry.make_env_config("cartpole")
+    cfg.sim.device = "cuda:0"
+    backend = create_sim_backend("motrixsim", cfg.sim.device)(cfg.scene, cfg.sim, 3)
+    updates = backend.compile_writes({"mass": LinkMassWrite(("cart", "pole"))})
+    reset = backend.compile_writes({"pole": LinkMassWrite(("pole",))}, reset=True)
+    get_cart_mass = backend.model.get_link("cart").get_mass_override
+    get_pole_mass = backend.model.get_link("pole").get_mass_override
+    with backend.physics_stream():
+        cart_default = get_cart_mass(backend.data).copy()
+        pole_default = get_pole_mass(backend.data).copy()
+    updates.buffer("mass").copy_(updates.buffer("mass").new_tensor([[2, 5], [3, 6], [4, 7]]))
+    updates.execute()
+    reset.buffer("pole")[:, 0] = reset.buffer("pole").new_tensor([float("nan"), 8, 9])
+
+    commits = 0
+    original_commit = backend.overrides.commit_link_inertia
+
+    def record(warp_mask):
+        nonlocal commits
+        commits += 1
+        original_commit(warp_mask)
+
+    monkeypatch.setattr(backend.overrides, "commit_link_inertia", record)
+    reset.execute_masked(torch.tensor([True, False, True], device=backend.device))
+
+    assert commits == 1
+    cart_default[1] = 3
+    pole_default[1:] = [6, 9]
+    with backend.physics_stream():
+        np.testing.assert_allclose(get_cart_mass(backend.data), cart_default)
+        np.testing.assert_allclose(get_pole_mass(backend.data), pole_default)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires NVIDIA CUDA")
+def test_cuda_parameter_overrides_match_sdk_setters_for_welded_links_and_colliders(tmp_path):
+    pytest.importorskip("motrixsim.gpu")
+    from motrix_env_core.sim.write import (
+        ActuatorDampingWrite,
+        ActuatorKpWrite,
+        GeomFrictionWrite,
+        LinkComWrite,
+        LinkMassWrite,
+    )
+
+    scene = tmp_path / "welded_overrides.xml"
+    scene.write_text(
+        """<mujoco>
+        <worldbody>
+          <geom name="floor" type="plane" size="5 5 0.1" friction="0.8 0.01 0.001"/>
+          <body name="base" pos="0 0 0.35">
+            <freejoint name="root"/>
+            <inertial pos="0.02 -0.03 0.04" quat="0.9238795 0.3826834 0 0" mass="2.5" diaginertia="0.1 0.2 0.3"/>
+            <geom name="g1" type="sphere" size="0.1" pos="0.1 0 -0.2" friction="0.6 0.01 0.001"/>
+            <body name="welded_child" pos="0.15 0.2 -0.1" quat="0.6 0.8 0 0">
+              <inertial pos="-0.01 0.05 0.02" quat="0.8 0.6 0 0" mass="1.2" diaginertia="0.02 0.03 0.04"/>
+              <geom name="g2" type="box" size="0.05 0.05 0.05" friction="0.7 0.02 0.002"/>
+            </body>
+            <body name="arm" pos="0 0.2 0">
+              <joint name="j1" type="hinge" axis="0 1 0"/>
+              <inertial pos="0 0.1 0" mass="0.8" diaginertia="0.01 0.015 0.02"/>
+              <geom name="g3" type="capsule" size="0.03 0.1"/>
+            </body>
+          </body>
+        </worldbody>
+        <actuator>
+          <position name="act_root" joint="root" kp="12"/>
+          <position name="act_j1" joint="j1" kp="20"/>
+        </actuator></mujoco>"""
+    )
+    sim_cfg = SimCfg(dt=0.005, device="cuda:0")
+    scene_cfg = SceneCfg(file=scene)
+    backend = create_sim_backend("motrixsim", sim_cfg.device)(scene_cfg, sim_cfg, 4)
+    reference = create_sim_backend("motrixsim", sim_cfg.device)(scene_cfg, sim_cfg, 4)
+
+    writes = backend.compile_writes(
+        {
+            "mass": LinkMassWrite(("base", "welded_child", "arm")),
+            "com": LinkComWrite(("base", "welded_child")),
+            "friction": GeomFrictionWrite(("g1", "g2")),
+            "kp": ActuatorKpWrite(("act_root", "act_j1")),
+            "kd": ActuatorDampingWrite(("act_root", "act_j1")),
+        }
+    )
+    device = backend.device
+    masses = torch.tensor([[3.1, 1.7, 0.9], [2.2, float("nan"), 1.1], [4.0, 0.8, 0.6], [2.5, 2.1, 1.3]], device=device)
+    coms = torch.tensor(
+        [
+            [[0.05, -0.01, 0.02], [0.03, -0.02, 0.08]],
+            [[0.02, -0.03, 0.04], [-0.04, 0.09, -0.03]],
+            [[float("nan"), 0.0, 0.0], [0.08, 0.01, -0.05]],
+            [[-0.03, 0.04, 0.01], [0.02, -0.06, 0.07]],
+        ],
+        device=device,
+    )
+    frictions = torch.tensor(
+        [
+            [[1.1, 0.01, 0.001], [0.4, 0.02, 0.002]],
+            [[0.3, 0.01, 0.001], [float("nan"), 0.02, 0.002]],
+            [[0.9, 0.01, 0.001], [1.3, 0.02, 0.002]],
+            [[0.5, 0.01, 0.001], [0.9, 0.02, 0.002]],
+        ],
+        device=device,
+    )
+    kps = torch.tensor([[15.0, 25.0], [10.0, float("nan")], [18.0, 30.0], [12.0, 22.0]], device=device)
+    kds = torch.tensor([[1.5, 2.5], [float("nan"), 1.0], [2.0, 3.0], [0.5, 1.2]], device=device)
+
+    writes.buffer("mass").copy_(masses)
+    writes.buffer("com").copy_(coms)
+    writes.buffer("friction").copy_(frictions)
+    writes.buffer("kp").copy_(kps)
+    writes.buffer("kd").copy_(kds)
+    writes.execute_masked(torch.tensor([True, True, True, False], device=device))
+
+    with reference.physics_stream():
+        for col, name in enumerate(("base", "welded_child", "arm")):
+            vals = masses[:, col].cpu().numpy()
+            vals[3] = np.nan
+            reference.model.get_link(name).set_mass_override(reference.data, vals)
+        for col, name in enumerate(("base", "welded_child")):
+            vals = coms[:, col].cpu().numpy()
+            vals[3] = np.nan
+            reference.model.get_link(name).set_center_of_mass_override(reference.data, vals)
+        for col, name in enumerate(("g1", "g2")):
+            vals = frictions[:, col, 0].cpu().numpy()
+            vals[3] = np.nan
+            reference.model.get_geom(name).set_friction_override(reference.data, vals)
+        for col, name in enumerate(("act_root", "act_j1")):
+            kp_vals = kps[:, col].cpu().numpy()
+            kd_vals = kds[:, col].cpu().numpy()
+            kp_vals[3] = np.nan
+            kd_vals[3] = np.nan
+            reference.model.get_actuator(name).set_kp_override(reference.data, kp_vals)
+            reference.model.get_actuator(name).set_damping_override(reference.data, kd_vals)
+
+    backend.control.fill_(0.35)
+    reference.control.fill_(0.35)
+    backend.step(20)
+    reference.step(20)
+    torch.testing.assert_close(backend.position, reference.position, atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(backend.velocity, reference.velocity, atol=1e-5, rtol=1e-5)
+
+    # Masked reset of world 0 restores every overridden domain to nominal defaults.
+    backend.reset_masked(torch.tensor([True, False, False, False], device=device))
+    with backend.physics_stream(), reference.physics_stream():
+        for name in ("base", "welded_child", "arm"):
+            assert np.isclose(
+                backend.model.get_link(name).get_mass_override(backend.data)[0],
+                reference.model.get_link(name).get_mass_override(reference.data)[3],
+            )
+        for name in ("g1", "g2"):
+            assert np.isclose(
+                backend.model.get_geom(name).get_friction_override(backend.data)[0],
+                reference.model.get_geom(name).get_friction_override(reference.data)[3],
+            )
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires NVIDIA CUDA")
+def test_cuda_ball_joint_write_normalizes_each_quaternion(tmp_path):
+    pytest.importorskip("motrixsim.gpu")
+    scene = tmp_path / "ball.xml"
+    scene.write_text(
+        '<mujoco><worldbody><body name="link"><joint type="ball" name="ball"/>'
+        '<geom type="sphere" size=".1"/></body></worldbody></mujoco>'
+    )
+    device = torch.device("cuda:0")
+    backend = create_sim_backend("motrixsim", device)(SceneCfg(file=scene), SimCfg(device=str(device)), 2)
+    writes = backend.compile_writes({"ball": JointQuaternionWrite(("ball",))})
+    reads = backend.compile_reads({"position": DofPositionQuery()})
+    writes.buffer("ball")[:, 0] = torch.tensor([[0, 3, 0, 4], [0, 0, 0, 2]], device=device)
+    writes.execute()
+    reads.execute()
+    torch.testing.assert_close(reads["position"], torch.tensor([[0, 0.6, 0, 0.8], [0, 0, 0, 1]], device=device))
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires NVIDIA CUDA")
+@pytest.mark.parametrize("name", ["go2-walk-flat", "go2-walk-rough"])
+def test_cuda_metadata_and_terrain_follow_simulation_device(name):
+    pytest.importorskip("motrixsim.gpu")
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config(name)
+    cpu = create_sim_backend("motrixsim")(cfg.scene, cfg.sim, 1)
+    cfg.sim.device = "cuda:0"
+    device = torch.device(cfg.sim.device)
+    backend = create_sim_backend("motrixsim", device)(cfg.scene, cfg.sim, 1)
+    body = cfg.scene.objs.robot.resolved_base_link_name
+    model = backend.compile_model({"tree": KinematicTreeQuery(body), "host": KinematicTreeQuery(body, "cpu")})
+    assert (
+        model.init_dof_pos.device
+        == model.bodies["robot"].init_joint_pos.device
+        == model.others["tree"].axes.device
+        == device
+    )
+    assert model.others["host"].axes.device.type == "cpu"
+    ids = torch.tensor([0])
+    xy = torch.tensor([[[0.0, 0.0], [0.25, 0.25]]])
+    expected = cpu.sample_terrain_height(cfg.ground_geom_name, ids, xy)
+    actual = backend.sample_terrain_height(cfg.ground_geom_name, ids, xy)
+    assert actual.device == device
+    torch.testing.assert_close(actual.cpu(), expected, atol=5e-3, rtol=1e-3)
+    with pytest.raises(KeyError, match="absent"):
+        backend.sample_terrain_height("absent", ids, xy)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires NVIDIA CUDA")
+def test_cuda_manager_keeps_captured_read_inputs_alive():
+    pytest.importorskip("motrixsim.gpu")
+    from motrix_env_core import registry
+
+    env = registry.make("g1-wbt-dance", num_envs=16, seed=7, sim_device="cuda:0")
+    actions = torch.zeros((env.num_envs, *env.action_space.shape), device=env.device)
+    env.initialize()
+    for _ in range(4):
+        state = env.step(actions)
+        torch.testing.assert_close(state.reward, torch.nan_to_num(state.reward))
+        torch.testing.assert_close(state.obs.policy, torch.nan_to_num(state.obs.policy))
+    assert (env.engine_error_codes == 0).all()

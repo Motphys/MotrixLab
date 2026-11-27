@@ -35,16 +35,16 @@ class Trainer(TrainerBase):
         env_name = context.env_name
         self._rlcfg = context.rl_cfg
         self._env_name = env_name
-        self._env_spec = env_registry.resolve(env_name, sim=context.sim)
+        self._env_spec = env_registry.resolve(env_name, sim=context.sim, sim_device=context.sim_device)
         self._render = context.render
         self._resume_from = context.resume_from
         self._context = context
 
     # ------------------------------------------------------------------ setup
-    def _device(self) -> torch.device:
+    def _device(self, sim_device: torch.device) -> torch.device:
         if self._rlcfg.device:
             return torch.device(self._rlcfg.device)
-        return resolve_default_device()
+        return sim_device if sim_device.type == "cuda" else resolve_default_device()
 
     def _make_env(
         self,
@@ -59,14 +59,14 @@ class Trainer(TrainerBase):
             headless=render.headless if render else False,
             record=render.record if render else None,
         )
-        return FastSacEnvWrap(env, self._device(), render=render)
+        return FastSacEnvWrap(env, self._device(env.device), render=render)
 
     def _make_agent(self, env: FastSacEnvWrap) -> FastSacAgent:
         inner = env.env
         obs_dim = inner.observation_spec.policy.space.shape[-1]
         critic_obs_dim = inner.observation_spec.value_or_policy.space.shape[-1]
         act_dim = inner.action_space.shape[-1]
-        device = self._device()
+        device = env.device
         low = env.action_low
         high = env.action_high
         action_scale = (high - low) / 2.0
@@ -105,6 +105,10 @@ class Trainer(TrainerBase):
 
         try:
             env = self._make_env(self._context.num_envs, render=self._render)
+            if self._context.run is not None:
+                from motrix_rl.runs import annotate_run
+
+                annotate_run(self._context.run_dir, sim_device=str(env.env.device))
             agent = self._make_agent(env)
             num_iterations = self._rlcfg.trainer.num_learning_iterations
 
@@ -307,7 +311,9 @@ class Trainer(TrainerBase):
                     # generic env metrics channel: the wrapper merges the state's
                     # metrics snapshot into infos["metrics"], so backends log them
                     # without hardcoding any metric name.
-                    env_metrics = {k: float(np.mean(v)) for k, v in info.get("metrics", {}).items()}
+                    env_metrics = {
+                        k: float(torch.as_tensor(v).float().mean()) for k, v in info.get("metrics", {}).items()
+                    }
                     system = system_sampler.sample()
                     stats = TrainingPanelStats(
                         iteration=agent.global_step,

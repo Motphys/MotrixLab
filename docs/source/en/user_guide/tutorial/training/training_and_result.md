@@ -45,6 +45,8 @@ mxlab train task=cartpole/skrl.ppo task.train_backend=torch
 mxlab train task=g1-wbt-dance/motrix.fastsac sim=motrixsim
 ```
 
+Use `mxlab train task=cartpole/skrl.ppo sim_device=cuda:0` for GPU simulation. The default simulation device is CPU. The learner keeps its provider device setting. Playback uses the simulation device recorded at training time. Use `mxlab play env=cartpole sim_device=cpu` to override it, or `mxlab view env=cartpole sim_device=cuda:0` to inspect the GPU environment.
+
 ### Training Scale and Random Seed
 
 ```bash

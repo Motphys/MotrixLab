@@ -101,7 +101,7 @@ class Humanoid3DEnv(DirectEnv):
 
         self._move_speed = float(cfg.move_speed)
         self._stand_height = float(cfg.stand_height)
-        self._target_direction = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
+        self._target_direction = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32, device=self.device)
         self._target_direction_xy = self._target_direction[:2].clone()
 
         self._qpos_low, self._qpos_high = self._build_qpos_limits()
@@ -441,21 +441,25 @@ class Humanoid3DEnv(DirectEnv):
         num_actuators = int(self.num_actuators)
         low, high = self._qpos_low, self._qpos_high
 
-        qpos = torch.zeros((n, num_dof_pos), dtype=torch.float32)
+        qpos = torch.zeros((n, num_dof_pos), dtype=torch.float32, device=self.device)
         qpos[:, 2] = self._reset_height
         qpos[:, 3] = 1.0
 
         # qpos 7=abdomen_z (yaw), 8=abdomen_y (pitch), 9=abdomen_x (roll) per humanoid.xml
-        qpos[:, 7] = torch.empty(n, dtype=torch.float32).uniform_(*self._hip_yaw_range)
-        qpos[:, 8] = torch.empty(n, dtype=torch.float32).uniform_(*self._hip_pitch_range)
-        qpos[:, 9] = torch.empty(n, dtype=torch.float32).uniform_(*self._hip_roll_range)
+        qpos[:, 7] = torch.empty(n, dtype=torch.float32, device=self.device).uniform_(*self._hip_yaw_range)
+        qpos[:, 8] = torch.empty(n, dtype=torch.float32, device=self.device).uniform_(*self._hip_pitch_range)
+        qpos[:, 9] = torch.empty(n, dtype=torch.float32, device=self.device).uniform_(*self._hip_roll_range)
 
         self._randomize_symmetric_legs(qpos, n, num_dof_pos, low, high)
         self._randomize_symmetric_arms(qpos, n, num_dof_pos, low, high)
         self._randomize_remaining_joints(qpos, n, num_dof_pos, low, high)
 
-        qvel = (torch.rand(n, num_dof_vel, dtype=torch.float32) * 2.0 - 1.0) * self._reset_qvel_range
-        actuator_ctrls = (torch.rand(n, num_actuators, dtype=torch.float32) * 2.0 - 1.0) * self._reset_actuator_range
+        qvel = (
+            torch.rand(n, num_dof_vel, dtype=torch.float32, device=self.device) * 2.0 - 1.0
+        ) * self._reset_qvel_range
+        actuator_ctrls = (
+            torch.rand(n, num_actuators, dtype=torch.float32, device=self.device) * 2.0 - 1.0
+        ) * self._reset_actuator_range
 
         torso_pose = qpos[:, :7].clone()
         torso_pose[:, 3:7] = torch.cat([qpos[:, 4:7], qpos[:, 3:4]], dim=1)
@@ -479,15 +483,19 @@ class Humanoid3DEnv(DirectEnv):
     ) -> None:
         for left_idx, right_idx, (min_rad, max_rad) in self._symmetric_leg_pairs_rad:
             if left_idx < num_dof_pos:
-                lo = float(torch.clamp(torch.tensor(min_rad), low[left_idx], high[left_idx]))
-                hi = float(torch.clamp(torch.tensor(max_rad), low[left_idx], high[left_idx]))
-                qpos[:, left_idx] = torch.empty(n, dtype=torch.float32).uniform_(lo, hi)
+                lo = float(torch.clamp(torch.tensor(min_rad, device=self.device), low[left_idx], high[left_idx]))
+                hi = float(torch.clamp(torch.tensor(max_rad, device=self.device), low[left_idx], high[left_idx]))
+                qpos[:, left_idx] = torch.empty(n, dtype=torch.float32, device=self.device).uniform_(lo, hi)
             if right_idx < num_dof_pos:
                 right_min_rad = -max_rad
                 right_max_rad = -min_rad
-                lo = float(torch.clamp(torch.tensor(right_min_rad), low[right_idx], high[right_idx]))
-                hi = float(torch.clamp(torch.tensor(right_max_rad), low[right_idx], high[right_idx]))
-                qpos[:, right_idx] = torch.empty(n, dtype=torch.float32).uniform_(lo, hi)
+                lo = float(
+                    torch.clamp(torch.tensor(right_min_rad, device=self.device), low[right_idx], high[right_idx])
+                )
+                hi = float(
+                    torch.clamp(torch.tensor(right_max_rad, device=self.device), low[right_idx], high[right_idx])
+                )
+                qpos[:, right_idx] = torch.empty(n, dtype=torch.float32, device=self.device).uniform_(lo, hi)
 
     def _randomize_symmetric_arms(
         self, qpos: torch.Tensor, n: int, num_dof_pos: int, low: torch.Tensor, high: torch.Tensor
@@ -515,16 +523,18 @@ class Humanoid3DEnv(DirectEnv):
                 right_max_clipped = min(right_max, hi_r)
 
                 if left_min < left_max:
-                    qpos[:, left_idx] = torch.empty(n, dtype=torch.float32).uniform_(left_min, left_max)
+                    qpos[:, left_idx] = torch.empty(n, dtype=torch.float32, device=self.device).uniform_(
+                        left_min, left_max
+                    )
                 else:
-                    qpos[:, left_idx] = torch.empty(n, dtype=torch.float32).uniform_(lo_l, hi_l)
+                    qpos[:, left_idx] = torch.empty(n, dtype=torch.float32, device=self.device).uniform_(lo_l, hi_l)
 
                 if right_min_clipped < right_max_clipped:
-                    qpos[:, right_idx] = torch.empty(n, dtype=torch.float32).uniform_(
+                    qpos[:, right_idx] = torch.empty(n, dtype=torch.float32, device=self.device).uniform_(
                         right_min_clipped, right_max_clipped
                     )
                 else:
-                    qpos[:, right_idx] = torch.empty(n, dtype=torch.float32).uniform_(lo_r, hi_r)
+                    qpos[:, right_idx] = torch.empty(n, dtype=torch.float32, device=self.device).uniform_(lo_r, hi_r)
 
     def _randomize_remaining_joints(
         self, qpos: torch.Tensor, n: int, num_dof_pos: int, low: torch.Tensor, high: torch.Tensor
@@ -538,4 +548,4 @@ class Humanoid3DEnv(DirectEnv):
             if i not in used_indices:
                 lo = float(low[i]) if torch.isfinite(low[i]) else default_lo
                 hi = float(high[i]) if torch.isfinite(high[i]) else default_hi
-                qpos[:, i] = torch.empty(n, dtype=torch.float32).uniform_(lo, hi)
+                qpos[:, i] = torch.empty(n, dtype=torch.float32, device=self.device).uniform_(lo, hi)

@@ -187,7 +187,9 @@ class MicroduckBallBalanceEnvCfg(ManagerBasedEnvCfg):
 
     max_episode_seconds: float = 20.0
     sim_reset: ManagerResetCfg = ResetCfg()
-    sim: SimCfg = SimCfg(dt=0.005, solver_iterations=6, solver_tolerance=1e-4)
+    sim: SimCfg = SimCfg(
+        dt=0.005, solver_iterations=6, solver_tolerance=1e-4, max_contacts=128, max_contact_constraints=384
+    )
     ctrl_dt: float = 0.02
     actions: ActionsCfg = ActionsCfg()
     observations: ObservationsCfg = ObservationsCfg()

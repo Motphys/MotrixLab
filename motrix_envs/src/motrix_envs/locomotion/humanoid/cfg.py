@@ -12,6 +12,8 @@ queries (height-field grid, key-pose foot frames via FK) provide the static
 data those terms consume. No environment subclass is needed.
 """
 
+from dataclasses import replace
+
 from motrix_robots.humanoid import HumanoidRobotCfg
 
 from motrix_env_core.base import SimCfg
@@ -225,8 +227,21 @@ class HumanoidVelocityTrackingManagerEnvCfg(ManagerBasedEnvCfg):
         # static grid so the fused kernel can look up ground heights itself.
         # The exported query's presence in model.others selects the rough path.
         floor_obj = getattr(self.scene.objs, "floor", None)
-        if isinstance(floor_obj, HFieldTerrainCfg):
+        is_rough = isinstance(floor_obj, HFieldTerrainCfg)
+        if is_rough:
             self.queries.model["ground_heightfield"] = HeightFieldDataQuery(geom=ground_geom)
+
+        default_contacts, default_constraints = (512, 1536) if is_rough else (256, 768)
+        if self.sim.max_contacts is None or self.sim.max_contact_constraints is None:
+            self.sim = replace(
+                self.sim,
+                max_contacts=default_contacts if self.sim.max_contacts is None else self.sim.max_contacts,
+                max_contact_constraints=(
+                    default_constraints
+                    if self.sim.max_contact_constraints is None
+                    else self.sim.max_contact_constraints
+                ),
+            )
 
         # Scene-level facts shared by several terms.
         self.rewards.feet_phase.ground_geom = ground_geom

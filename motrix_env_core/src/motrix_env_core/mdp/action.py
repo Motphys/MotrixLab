@@ -63,7 +63,7 @@ class JointPositionActionTerm(ActionTerm):
         super().__init__(space, state)
         # Seeded generator driving reset-time delay resampling; lives on the
         # term (not the kernel-data state) because it is host-only.
-        self.generator = torch.Generator()
+        self.generator = torch.Generator(device=state.action_queue.device)
 
     def _process(self, actions: torch.Tensor) -> torch.Tensor:
         """Map raw policy actions to targets using manager-owned action history.
@@ -74,12 +74,11 @@ class JointPositionActionTerm(ActionTerm):
         ``motrix_env_core.torch_manager.actions.process_joint_position_actions``.
         """
         state = self.state
-        ptr = int(state.action_ptr[0])
         target_raw = actions
         if state.delay_hi > 0:
             queue = state.action_queue
             width = queue.shape[1]
-            delay_indices = (ptr - state.delay_steps) % width
+            delay_indices = (state.action_ptr - state.delay_steps) % width
             target_raw = torch.take_along_dim(queue, delay_indices[:, None, None], dim=1)[:, 0, :]
         return target_raw * state.action_scales + state.default_angles
 
@@ -92,7 +91,20 @@ class JointPositionActionTerm(ActionTerm):
                 state.delay_hi + 1,
                 (env_ids.numel(),),
                 generator=self.generator,
+                device=state.delay_steps.device,
             )
+
+    def _reset_masked(self, world_mask: torch.Tensor) -> None:
+        state = self.state
+        if state.delay_hi > 0:
+            delays = torch.randint(
+                state.delay_lo,
+                state.delay_hi + 1,
+                state.delay_steps.shape,
+                generator=self.generator,
+                device=state.delay_steps.device,
+            )
+            state.delay_steps.copy_(torch.where(world_mask, delays, state.delay_steps))
 
 
 @configclass(kw_only=True)
@@ -166,7 +178,7 @@ class JointPositionActionCfg(ActionCfg):
                 raise ValueError(f"position actuator {spec.name!r} must define or inherit ctrl_range")
             ctrl_ranges.append(spec.ctrl_range)
         space = joint_position_action_space_from_ctrl_ranges(
-            torch.tensor(ctrl_ranges, dtype=torch.float32), state.default_angles.cpu(), state.action_scales.cpu()
+            torch.tensor(ctrl_ranges, dtype=torch.float32), state.default_angles, state.action_scales
         )
         term = JointPositionActionTerm(space, state)
         # Reset-time delay resampling is reproducible per environment seed.
@@ -198,7 +210,7 @@ class JointPositionActionCfg(ActionCfg):
 
     @staticmethod
     def _read_position_actuator_kps(model: SimModel) -> torch.Tensor:
-        return torch.as_tensor(model.others["actuator_kp"]).detach().cpu()
+        return torch.as_tensor(model.others["actuator_kp"]).detach()
 
     @staticmethod
     def _read_position_actuator_effort_limits(model: SimModel) -> torch.Tensor:

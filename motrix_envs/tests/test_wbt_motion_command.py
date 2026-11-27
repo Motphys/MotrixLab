@@ -291,6 +291,16 @@ def _multi_clip(clip_lengths: tuple[int, ...]) -> WbtMotionClip:
     return dataclasses.replace(clip, frame_clip_end=frame_clip_end)
 
 
+def test_adaptive_smoothing_repeats_last_bin_at_clip_end():
+    sampler = dataclasses.replace(_adaptive_sampler(2), kernel_size=2, kernel_lambda=1.0, uniform_ratio=0.0)
+    sampler.failed_count[-1] = 1.0
+
+    sampler.rebuild()
+
+    # The middle bin averages zero and one; the last bin averages one and one.
+    torch.testing.assert_close(sampler.sampling_cdf, torch.tensor([0.0, 1.0 / 3.0, 1.0]))
+
+
 def test_per_clip_bins_never_straddle_clip_boundaries():
     # Two clips of 40 and 13 frames at env_fps=10: 5 + 2 bins, each bin's
     # frames inside exactly one clip.

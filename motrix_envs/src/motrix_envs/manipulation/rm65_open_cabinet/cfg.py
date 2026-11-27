@@ -135,7 +135,7 @@ class RM65OpenCabinetEnvCfg(DirectEnvCfg):
 
     scene: SceneCfg = SceneCfg(file=model_file)
     max_episode_seconds: float = 30.0
-    sim: SimCfg = SimCfg(dt=0.005)
+    sim: SimCfg = SimCfg(dt=0.005, max_contacts=256, max_contact_constraints=768)
     ctrl_dt: float = 0.025
     render_spacing: float = 2.0
     action_scale = (0.05, 0.05, 0.05, 0.05, 0.05, 0.05)

@@ -27,6 +27,7 @@ class EnvStepConfig(BenchmarkConfig):
     seed: int = 20260808
     zero_actions: bool = False
     sim_backend: str | None = None
+    sim_device: str | None = None
     breakdown: bool = False
 
     def __post_init__(self) -> None:
@@ -47,6 +48,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int, default=20260808)
     parser.add_argument("--zero-actions", action="store_true")
     parser.add_argument("--sim-backend")
+    parser.add_argument("--sim-device", help="Simulation device, e.g. cpu or cuda:0.")
     parser.add_argument("--breakdown", action="store_true")
 
 
@@ -60,6 +62,7 @@ def build_config(args: argparse.Namespace) -> EnvStepConfig:
         seed=args.seed,
         zero_actions=args.zero_actions,
         sim_backend=args.sim_backend,
+        sim_device=args.sim_device,
         breakdown=args.breakdown,
     )
 
@@ -86,7 +89,9 @@ def _run_batch(batch_config: EnvStepConfig, num_envs: int) -> BenchmarkResult:
     if batch_config.breakdown:
         profile_env, profile_case = workload.prepare_case(batch_config, num_envs)
         try:
-            profile = runner._profile_calls(profile_env.perf, profile_case.step, batch_config.steps, "step")
+            profile = runner._profile_calls(
+                profile_env.perf, profile_case.step, batch_config.steps, "step", synchronize=profile_case.synchronize
+            )
         finally:
             profile_case.close_once()
         print(

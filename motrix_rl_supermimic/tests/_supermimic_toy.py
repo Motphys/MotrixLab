@@ -371,7 +371,7 @@ def register() -> None:
     if not _registered:
         from motrix_env_core.sim.registry import register_sim_backend
 
-        register_sim_backend(_ToyBackend.name, lambda: _ToyBackend)
+        register_sim_backend(_ToyBackend.name, lambda _device: _ToyBackend)
         registry.envcfg("supermimic-toy")(ToyEnvCfg)
         registry.env("supermimic-toy")(SuperMimicEnv)
         _registered = True

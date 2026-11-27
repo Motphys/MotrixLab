@@ -6,7 +6,7 @@
 With auto-reset envs the observation returned by the terminating step is NOT
 the reset observation that the following slot stores, yet the replay buffer
 needs it to bootstrap the n-step return. This store keeps those sparse rows
-in host shared memory; the generic ring treats it as an opaque
+on the transition device; the generic ring treats it as an opaque
 ``SlotPayloadStore`` and governs row reclamation with the transition cursors.
 """
 
@@ -21,7 +21,7 @@ from motrix_rl.transport.common import _shared
 
 @dataclass
 class FinalObsPayload:
-    """Owned compact CPU observation rows belonging to one transition slot."""
+    """Owned compact observation rows belonging to one transition slot."""
 
     env_ids: torch.Tensor
     obs: torch.Tensor
@@ -36,12 +36,25 @@ class FinalObsStorage:
     releases its rows; no independently published or consumed cursor exists.
     """
 
-    def __init__(self, capacity: int, num_envs: int, obs_dim: int, critic_obs_dim: int):
+    def __init__(
+        self,
+        capacity: int,
+        num_envs: int,
+        obs_dim: int,
+        critic_obs_dim: int,
+        device: torch.device = torch.device("cpu"),
+    ):
         self.slot_capacity = capacity
         self.capacity = 3 * num_envs
-        self.env_ids = _shared((self.capacity,), torch.int64)
-        self.obs = _shared((self.capacity, obs_dim), torch.float32)
-        self.critic_obs = _shared((self.capacity, critic_obs_dim), torch.float32)
+
+        def rows(shape, dtype):
+            if device.type == "cpu":
+                return _shared(shape, dtype)
+            return torch.empty(shape, dtype=dtype, device=device)
+
+        self.env_ids = rows((self.capacity,), torch.int64)
+        self.obs = rows((self.capacity, obs_dim), torch.float32)
+        self.critic_obs = rows((self.capacity, critic_obs_dim), torch.float32)
         self.starts = _shared((capacity,), torch.int64)
         self.counts = _shared((capacity,), torch.int64)
         self.ends = _shared((capacity,), torch.int64)
@@ -72,10 +85,16 @@ class FinalObsStorage:
         n = 0 if payload is None else len(payload.env_ids)
         start = self._row_write
         if n:
-            rows = (start + torch.arange(n, dtype=torch.int64)) % self.capacity
-            self.env_ids[rows] = torch.as_tensor(payload.env_ids, dtype=torch.int64)
-            self.obs[rows] = torch.as_tensor(payload.obs, dtype=torch.float32)
-            self.critic_obs[rows] = torch.as_tensor(payload.critic_obs, dtype=torch.float32)
+            device = self.env_ids.device
+            rows = (start + torch.arange(n, device=device)) % self.capacity
+            fields = ((self.env_ids, payload.env_ids), (self.obs, payload.obs), (self.critic_obs, payload.critic_obs))
+            if device.type == "cuda":
+                stream = torch.cuda.current_stream(device)
+                for source in {source.device for _, source in fields}:
+                    if source.type == "cuda" and source != device:
+                        stream.wait_stream(torch.cuda.current_stream(source))
+            for target, source in fields:
+                target[rows] = source.to(device=device, dtype=target.dtype, non_blocking=device.type == "cuda")
         self.starts[slot] = start
         self.counts[slot] = n
         self.ends[slot] = start + n
@@ -90,7 +109,7 @@ class FinalObsStorage:
             if not n:
                 result.append(None)
                 continue
-            rows = (int(self.starts[slot]) + torch.arange(n, dtype=torch.int64)) % self.capacity
+            rows = (int(self.starts[slot]) + torch.arange(n, device=self.env_ids.device)) % self.capacity
             # Advanced indexing produces owned snapshots, including on wrap.
             result.append(FinalObsPayload(self.env_ids[rows], self.obs[rows], self.critic_obs[rows]))
         return result

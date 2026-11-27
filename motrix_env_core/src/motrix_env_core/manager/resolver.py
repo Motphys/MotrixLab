@@ -533,7 +533,7 @@ class ManagerProgramResolver:
         metrics = dict(self._env.metrics)
         commands = dict(self._env.command_terms)
         value = ManagerContext(
-            env_id=torch.arange(self._env.num_envs, dtype=torch.int64),
+            env_id=torch.arange(self._env.num_envs, dtype=torch.int64, device=self._env.device),
             actions=actions,
             commands=commands,
             metrics=metrics,

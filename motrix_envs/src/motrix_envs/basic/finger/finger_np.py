@@ -111,7 +111,7 @@ class FingerEnv(DirectEnv):
             else None
         )
 
-        self._target_xyz = torch.zeros((num_envs, 3), dtype=torch.float32)
+        self._target_xyz = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
         self._target_radius = float(cfg.target_radius)
         self._spin_vel_threshold = float(cfg.spin_velocity_threshold)
 
@@ -129,8 +129,8 @@ class FingerEnv(DirectEnv):
 
         # Episode-scoped action history: full-batch buffers, reset writes the
         # done rows in place.
-        self._actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32)
-        self._last_actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32)
+        self._actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32, device=self.device)
+        self._last_actions = torch.zeros((self._num_envs, self.num_actuators), dtype=torch.float32, device=self.device)
 
     @property
     def observation_spec(self) -> ObservationSpec:
@@ -161,7 +161,9 @@ class FingerEnv(DirectEnv):
         if self._target_reset is None:
             return
         self._target_reset.buffer("target_position")[env_ids, 0] = positions
-        self._target_reset.buffer("target_rotation")[env_ids, 0] = torch.tensor([0.0, 0.0, 0.0, 1.0])
+        self._target_reset.buffer("target_rotation")[env_ids, 0] = torch.tensor(
+            [0.0, 0.0, 0.0, 1.0], device=self.device
+        )
         self._target_reset.buffer("target_linear_velocity")[env_ids, 0] = 0.0
         self._target_reset.buffer("target_angular_velocity")[env_ids, 0] = 0.0
         self._target_reset.execute(env_ids)
@@ -174,7 +176,7 @@ class FingerEnv(DirectEnv):
         positions = self._joint_resets.buffer("joints_position")
         velocities = self._joint_resets.buffer("joints_velocity")
         velocities[env_ids] = 0.0
-        pending = torch.ones((num,), dtype=torch.bool)
+        pending = torch.ones((num,), dtype=torch.bool, device=self.device)
         for _ in range(max_attempts):
             if not bool(pending.any()):
                 break
@@ -183,15 +185,17 @@ class FingerEnv(DirectEnv):
             for column in range(2):
                 low = float(self._joint_limit_low[column])
                 high = float(self._joint_limit_high[column])
-                positions[env_ids[pending], column] = (torch.rand(num_pending, dtype=torch.float32) * 2.0 - 1.0) * (
-                    (high - low) / 2.0
-                ) + (high + low) / 2.0
+                positions[env_ids[pending], column] = (
+                    torch.rand(num_pending, dtype=torch.float32, device=self.device) * 2.0 - 1.0
+                ) * ((high - low) / 2.0) + (high + low) / 2.0
 
-            positions[env_ids[pending], 2] = (torch.rand(num_pending, dtype=torch.float32) * 2.0 - 1.0) * np.pi
+            positions[env_ids[pending], 2] = (
+                torch.rand(num_pending, dtype=torch.float32, device=self.device) * 2.0 - 1.0
+            ) * np.pi
 
             self._joint_resets.execute(env_ids)
             if self._target_reset is not None:
-                self._reset_target(env_ids, torch.tile(torch.tensor([0.0, 0.0, 0.4]), (num, 1)))
+                self._reset_target(env_ids, torch.tile(torch.tensor([0.0, 0.0, 0.4], device=self.device), (num, 1)))
             self.sim_data.execute(env_ids)
             # Contact iff any declared collidable geom pair is colliding; this
             # reproduces the legacy global ``num_contacts > 0`` check exactly.
@@ -237,10 +241,10 @@ class FingerSpinEnv(FingerEnv):
         else:
             spin = spin_sparse
 
-        touch_raw = torch.zeros((self._num_envs,), dtype=torch.float32)
-        touch_bonus = torch.zeros((self._num_envs,), dtype=torch.float32)
-        approach_dist = torch.zeros((self._num_envs,), dtype=torch.float32)
-        approach_reward = torch.zeros((self._num_envs,), dtype=torch.float32)
+        touch_raw = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
+        touch_bonus = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
+        approach_dist = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
+        approach_reward = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
 
         if self._cfg.reward_mode == "shaped":
             if float(getattr(self._cfg, "spin_touch_bonus_scale", 0.0)) > 0.0:
@@ -318,12 +322,12 @@ class FingerTurnEnv(FingerEnv):
         dist_to_target = self._dist_to_target(slice(None))
         turn_sparse = (dist_to_target <= 0.0).float()
 
-        touch_raw = torch.zeros((self._num_envs,), dtype=torch.float32)
-        touch_bonus = torch.zeros((self._num_envs,), dtype=torch.float32)
-        approach_dist = torch.zeros((self._num_envs,), dtype=torch.float32)
-        approach_reward = torch.zeros((self._num_envs,), dtype=torch.float32)
-        action_l2 = torch.zeros((self._num_envs,), dtype=torch.float32)
-        action_delta_l2 = torch.zeros((self._num_envs,), dtype=torch.float32)
+        touch_raw = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
+        touch_bonus = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
+        approach_dist = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
+        approach_reward = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
+        action_l2 = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
+        action_delta_l2 = torch.zeros((self._num_envs,), dtype=torch.float32, device=self.device)
 
         if self._cfg.reward_mode == "shaped":
             # Encourage approaching the spinner so the agent actually makes contact and can rotate it.
@@ -406,7 +410,7 @@ class FingerTurnEnv(FingerEnv):
         # Match dm_control: radius = cap1.geom_size.sum() for capsule (radius + half-length).
         cap1_size = self.model.others["geoms"]["cap1"].size
         radius = float(sum(cap1_size[:2]))
-        target_angle = (torch.rand(num, dtype=torch.float32) * 2.0 - 1.0) * np.pi
+        target_angle = (torch.rand(num, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * np.pi
         target_x = hinge_xyz[:, 0] + radius * torch.sin(target_angle)
         target_z = hinge_xyz[:, 2] + radius * torch.cos(target_angle)
         self._target_xyz[env_ids] = torch.stack([target_x, hinge_xyz[:, 1], target_z], dim=-1)

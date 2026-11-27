@@ -488,15 +488,15 @@ class PhysicsReadProgram(abc.ABC):
     Built once by :meth:`SimBackend.compile_reads` from the complete
     declared query set and executed many times. The program owns its physical
     memory planning: equal declared queries are collapsed onto shared storage
-    while every declared key stays servable, the authoritative arena is
-    private, ``execute`` is the only writer, and consumers read only through
-    the stable read-only logical views the program serves.
+    while every declared key stays servable through a stable read-only view.
+    Views may alias live simulator storage. Read them after ``execute`` for
+    current values and clone any values needed across simulator mutations.
     """
 
     @property
     @abc.abstractmethod
     def arena_bytes(self) -> int:
-        """Size of the program's authoritative destination storage in bytes."""
+        """Size of program-owned read storage in bytes."""
 
     @property
     @abc.abstractmethod
@@ -511,7 +511,7 @@ class PhysicsReadProgram(abc.ABC):
     def view(self, key: str) -> torch.Tensor:
         """Return the stable read-only logical view for one declared query key.
 
-        The view aliases the arena with the query's declared trailing shape and
+        The view has the query's declared trailing shape and
         leading batch dimension, is a float32 torch tensor, and stays valid for
         the program's lifetime.
         """
@@ -524,8 +524,14 @@ class PhysicsReadProgram(abc.ABC):
 
     @abc.abstractmethod
     def execute(self, env_ids: torch.Tensor | None = None) -> None:
-        """Refresh the authoritative arena — the full batch, or selected rows.
+        """Make current physics data available for the full batch or selected rows.
 
         ``env_ids`` is either ``None`` (full batch) or a one-dimensional
         integer row-index tensor.
         """
+
+    def execute_masked(self, world_mask: torch.Tensor) -> None:
+        """Refresh selected rows of a whole-batch boolean mask."""
+        ids = world_mask.nonzero(as_tuple=True)[0]
+        if ids.numel():
+            self.execute(ids)

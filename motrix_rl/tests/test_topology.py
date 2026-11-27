@@ -278,3 +278,42 @@ def test_resolve_learner_devices_rejects_bad_configs(monkeypatch) -> None:
         resolve_learner_devices(["cuda:0", "cuda:5"], 2, torch.device("cuda"))
     with pytest.raises(ValueError, match="requires CUDA"):
         resolve_learner_devices(None, 2, torch.device("cpu"))
+
+
+@pytest.mark.parametrize(
+    "requested, expected",
+    [
+        ("cpu", ["cpu", "cpu"]),
+        ("cuda", ["cuda:0", "cuda:1"]),
+        ("cuda:1", ["cuda:1", "cuda:1"]),
+    ],
+)
+def test_collector_sim_placement_is_independent_of_policy_device(monkeypatch, requested, expected):
+    monkeypatch.setattr(system_numa, "available_numa_nodes", lambda: [0])
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    topology = resolve_async_trainer_topology(
+        8,
+        2,
+        2,
+        ["cuda:0", "cuda:1"],
+        "cpu",
+        torch.device("cuda:0"),
+        sim_device=requested,
+    )
+    assert [str(collector.infer_device) for collector in topology.collectors] == ["cpu", "cpu"]
+    assert [str(collector.sim_device) for collector in topology.collectors] == expected
+
+
+def test_topology_falls_back_to_inherited_cpus_when_gpu_numa_node_disallowed(monkeypatch) -> None:
+    node_cpus = {0: [0, 1, 2, 3], 1: [4, 5, 6, 7]}
+    monkeypatch.setattr(system_numa, "available_numa_nodes", lambda: [0, 1])
+    monkeypatch.setattr(system_numa, "gpu_numa_node", lambda index, runtime: 0)
+    monkeypatch.setattr(system_numa, "numa_node_cpus", lambda node: node_cpus[node])
+    monkeypatch.setattr("os.sched_getaffinity", lambda pid: {4, 5, 6, 7})
+    monkeypatch.setattr("torch.cuda.device_count", lambda: 1)
+
+    topo = resolve_async_trainer_topology(4, 1, 1, None, "cuda", torch.device("cuda:0"))
+    assert topo.learners[0].numa_node is None
+    assert list(topo.learners[0].cpus) == [4, 5, 6, 7]
+    assert topo.collectors[0].numa_node is None
+    assert topo.collectors[0].cpus == (4, 5, 6, 7)

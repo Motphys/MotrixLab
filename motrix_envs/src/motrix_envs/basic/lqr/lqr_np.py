@@ -71,8 +71,8 @@ class LqrEnv(DirectEnv):
 
         obs_dim = self._nq + self._nv
         ctrl_ranges = np.asarray([spec.ctrl_range for spec in self.model.actuators], dtype=np.float32)
-        self._action_low = torch.from_numpy(ctrl_ranges[:, 0].copy())
-        self._action_high = torch.from_numpy(ctrl_ranges[:, 1].copy())
+        self._action_low = torch.from_numpy(ctrl_ranges[:, 0].copy()).to(self.device)
+        self._action_high = torch.from_numpy(ctrl_ranges[:, 1].copy()).to(self.device)
         self._observation_spec = ObservationSpec(
             {"policy": ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (obs_dim,), dtype=np.float32))}
         )
@@ -148,7 +148,7 @@ class LqrEnv(DirectEnv):
     def reset(self, env_ids: torch.Tensor) -> None:
         num_envs = env_ids.numel()
 
-        qpos = torch.randn(num_envs, self._nq, dtype=torch.float32)
+        qpos = torch.randn(num_envs, self._nq, dtype=torch.float32, device=self.device)
         norms = torch.linalg.norm(qpos, dim=-1, keepdim=True)
         zero_norm = norms[:, 0] < 1e-8
         if zero_norm.any():
@@ -156,7 +156,7 @@ class LqrEnv(DirectEnv):
             norms = torch.linalg.norm(qpos, dim=-1, keepdim=True)
         qpos *= self._cfg.reset_position_norm / norms.clamp_min(1e-8)
 
-        qvel = torch.zeros((num_envs, self._nv), dtype=torch.float32)
+        qvel = torch.zeros((num_envs, self._nv), dtype=torch.float32, device=self.device)
         self._reset_position[env_ids] = qpos
         self._reset_velocity[env_ids] = qvel
         self._reset_program.execute(env_ids)

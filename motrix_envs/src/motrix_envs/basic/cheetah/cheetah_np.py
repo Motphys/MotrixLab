@@ -107,6 +107,7 @@ class CheetahEnv(DirectEnv):
                 sigmoid="linear",
             ),
             dtype=torch.float32,
+            device=self.device,
         )
 
         torso_height = inputs["torso_pos"][:, 2]
@@ -122,8 +123,8 @@ class CheetahEnv(DirectEnv):
     def reset(self, env_ids: torch.Tensor) -> None:
         num = env_ids.numel()
 
-        qpos = torch.zeros((num, self._reset_position.shape[1]), dtype=torch.float32)
-        dof_vel = torch.zeros((num, self._reset_velocity.shape[1]), dtype=torch.float32)
+        qpos = torch.zeros((num, self._reset_position.shape[1]), dtype=torch.float32, device=self.device)
+        dof_vel = torch.zeros((num, self._reset_velocity.shape[1]), dtype=torch.float32, device=self.device)
         self._reset_position[env_ids] = qpos
         self._reset_velocity[env_ids] = dof_vel
         self._reset_program.execute(env_ids)

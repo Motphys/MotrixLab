@@ -84,11 +84,11 @@ class BounceBallEnv(DirectEnv):
         # Episode-scoped task state: full-batch buffers, reset writes the
         # done rows in place.
         num_envs = self._num_envs
-        self._ball_was_upward = torch.zeros(num_envs, dtype=torch.bool)
-        self._consecutive_bounces = torch.zeros(num_envs, dtype=torch.int32)
-        self._target_heights = torch.zeros(num_envs, dtype=torch.float32)
-        self._current_actions = torch.zeros((num_envs, 6), dtype=torch.float32)
-        self._last_actions = torch.zeros((num_envs, 6), dtype=torch.float32)
+        self._ball_was_upward = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._consecutive_bounces = torch.zeros(num_envs, dtype=torch.int32, device=self.device)
+        self._target_heights = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self._current_actions = torch.zeros((num_envs, 6), dtype=torch.float32, device=self.device)
+        self._last_actions = torch.zeros((num_envs, 6), dtype=torch.float32, device=self.device)
 
         # Observation space: joint states + paddle position + target height (29D)
         self._observation_spec = ObservationSpec(
@@ -96,15 +96,17 @@ class BounceBallEnv(DirectEnv):
         )
 
         # Initial arm joint positions
-        self._init_arm_qpos = torch.tensor(self._cfg.arm_init_qpos, dtype=torch.float32) * torch.pi / 180.0
+        self._init_arm_qpos = (
+            torch.tensor(self._cfg.arm_init_qpos, dtype=torch.float32, device=self.device) * torch.pi / 180.0
+        )
 
         # Action scaling
-        self._action_scale = torch.tensor(self._cfg.action_scale, dtype=torch.float32)
-        self._action_bias = torch.tensor(self._cfg.action_bias, dtype=torch.float32)
+        self._action_scale = torch.tensor(self._cfg.action_scale, dtype=torch.float32, device=self.device)
+        self._action_bias = torch.tensor(self._cfg.action_bias, dtype=torch.float32, device=self.device)
 
         # Ball initial conditions
-        self._ball_init_pos = torch.tensor(self._cfg.ball_init_pos, dtype=torch.float32)
-        self._ball_init_vel = torch.tensor(self._cfg.ball_init_vel, dtype=torch.float32)
+        self._ball_init_pos = torch.tensor(self._cfg.ball_init_pos, dtype=torch.float32, device=self.device)
+        self._ball_init_vel = torch.tensor(self._cfg.ball_init_vel, dtype=torch.float32, device=self.device)
 
         # Constants for marker poses
         self._ball_radius = 0.019  # Ball radius in meters
@@ -120,6 +122,7 @@ class BounceBallEnv(DirectEnv):
                 1.0,  # identity quaternion
             ],
             dtype=torch.float32,
+            device=self.device,
         )
         # Paddle home marker pose: [x, y, z, qx, qy, qz, qw]
         self._paddle_home_marker_pose = torch.tensor(
@@ -133,6 +136,7 @@ class BounceBallEnv(DirectEnv):
                 1.0,  # identity quaternion
             ],
             dtype=torch.float32,
+            device=self.device,
         )
 
     @property
@@ -568,23 +572,31 @@ class BounceBallEnv(DirectEnv):
         # Randomize target heights for the environments being reset
         if cfg.randomize_target_height:
             min_height, max_height = cfg.target_height_range
-            new_target_heights = torch.rand(num_reset, dtype=torch.float32) * (max_height - min_height) + min_height
+            new_target_heights = (
+                torch.rand(num_reset, dtype=torch.float32, device=self.device) * (max_height - min_height) + min_height
+            )
         else:
             # Use mean of target_height_range when not randomizing
             default_height = sum(cfg.target_height_range) / 2.0
-            new_target_heights = torch.full((num_reset,), default_height, dtype=torch.float32)
+            new_target_heights = torch.full((num_reset,), default_height, dtype=torch.float32, device=self.device)
 
         # Add noise to initial arm joint positions only (not ball)
-        arm_noise_pos = (torch.rand(num_reset, 6, dtype=torch.float32) * 2.0 - 1.0) * cfg.reset_noise_scale
-        arm_vel = (torch.rand(num_reset, 6, dtype=torch.float32) * 2.0 - 1.0) * cfg.reset_noise_scale
+        arm_noise_pos = (
+            torch.rand(num_reset, 6, dtype=torch.float32, device=self.device) * 2.0 - 1.0
+        ) * cfg.reset_noise_scale
+        arm_vel = (
+            torch.rand(num_reset, 6, dtype=torch.float32, device=self.device) * 2.0 - 1.0
+        ) * cfg.reset_noise_scale
 
         arm_pos = self._init_arm_qpos.tile((num_reset, 1)) + arm_noise_pos
-        ball_pos = self._ball_init_pos + (torch.rand(num_reset, 3, dtype=torch.float32) * 2.0 - 1.0) * 0.01
+        ball_pos = (
+            self._ball_init_pos + (torch.rand(num_reset, 3, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * 0.01
+        )
 
         self._arm_reset_position[env_ids] = arm_pos
         self._arm_reset_velocity[env_ids] = arm_vel
         self._ball_reset_position[env_ids] = ball_pos
-        self._ball_reset_rotation[env_ids] = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32)
+        self._ball_reset_rotation[env_ids] = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device=self.device)
         self._ball_reset_linear_velocity[env_ids] = 0.0
         self._ball_reset_angular_velocity[env_ids] = 0.0
         self._reset_program.execute(env_ids)

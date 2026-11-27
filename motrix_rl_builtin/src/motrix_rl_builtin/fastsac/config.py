@@ -77,13 +77,10 @@ class FastSacAsyncOptionsCfg:
     # collector.
     learner_cpu_cores: str | None = None
     collector_cpu_cores: str | None = None
-    # Transition-ring transport between the async collector and learner:
-    # "auto" places the ring slots in CUDA-IPC device memory when learner and
-    # collector inference share one GPU (single fused H2D on the collector,
-    # D2D-only learner ingest) and falls back to host shared memory otherwise;
-    # "on"/"off" force the device/host path ("on" warns and falls back when
-    # the two sides are not on the same GPU). Keep the values quoted: unquoted
-    # on/off parse as booleans in YAML.
+    # Transition-ring transport: "auto" uses CUDA IPC when learner and
+    # collector inference share a GPU and CUDA simulation, if used, is on it
+    # too. "off" uses host memory. "on" warns if the placement requires the
+    # host ring. Quote these values in YAML so they stay strings.
     transition_ipc: str = "auto"
     # Weight-snapshot transport between the async learner and collector:
     # "auto" picks CUDA-IPC device slots when both sides share one GPU and the

@@ -16,5 +16,8 @@ dependencies = [
     "numpy>=1.26",
 ]
 
+[project.optional-dependencies]
+gpu = ["motrixsim-gpu===1.0.0; sys_platform == 'linux' or (sys_platform == 'win32' and platform_machine == 'AMD64')"]
+
 [project.entry-points."motrix_env.sim_backends"]
 motrixsim = "motrix_env_motrixsim.register:register"

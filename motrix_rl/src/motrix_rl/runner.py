@@ -39,16 +39,35 @@ def create_training_handle(request: TrainRequest) -> frameworks.TrainerHandle:
     """Create a trainer handle for a new training run."""
     startup_started = time.perf_counter()
     config = request.config
+    resume_from = None
+    if config.resume is not None:
+        resume_from = str(checkpoints.resolve_resume_checkpoint_path(config.resume))
+        if config.sim is None or config.sim_device is None:
+            previous_run = runs.find_metadata_for_policy(resume_from)
+            if previous_run is not None:
+                _, metadata = previous_run
+                config = replace(
+                    config,
+                    sim=metadata.sim if config.sim is None else config.sim,
+                    sim_device=metadata.sim_device if config.sim_device is None else config.sim_device,
+                )
     task = config.task
     method = RlMethod(rllib=task.rllib, algo=task.algo)
     logger.info("Training startup: resolving train backend for %s/%s", method.rllib, method.algo)
     step_started = time.perf_counter()
-    device_supports = utils.get_device_supports()
+    candidates = (
+        (task.train_backend,)
+        if task.train_backend is not None
+        else frameworks.get_framework(method.rllib).supported_train_backends(method.algo)
+    )
+    # Torch providers do not need to initialize a CUDA context to check backend availability.
+    device_supports = utils.get_device_supports() if "jax" in candidates else utils.DeviceSupports(torch=True)
     train_backend = backend_runtime.resolve_train_backend(
         task.env,
         method,
         task.train_backend,
         device_supports,
+        sim_device=config.sim_device,
     )
     logger.info(
         "Training startup: resolved train backend '%s' in %.3fs (env=%s, num_envs=%d)",
@@ -72,6 +91,7 @@ def create_training_handle(request: TrainRequest) -> frameworks.TrainerHandle:
         train_backend=provider.train_backend,
         algo=method.algo,
         sim=config.sim,
+        sim_device=config.sim_device,
         seed=config.seed,
         checkpoint_format=provider.checkpoint_format,
         runs_root=request.runs_root,
@@ -82,9 +102,6 @@ def create_training_handle(request: TrainRequest) -> frameworks.TrainerHandle:
         time.perf_counter() - step_started,
         run.run_dir,
     )
-    resume_from = None
-    if config.resume is not None:
-        resume_from = str(checkpoints.resolve_resume_checkpoint_path(config.resume))
     metrics = MetricsLogger.from_env(run.run_dir)
     try:
         handle = _create_handle(
@@ -195,6 +212,7 @@ def _running_fields(run: runs.RunContext, provider: frameworks.AgentProvider, co
         "algo": metadata.algo,
         "seed": metadata.seed,
         "sim": metadata.sim,
+        "sim_device": metadata.sim_device,
         "checkpoint_format": metadata.checkpoint_format,
         "family": _METRICS_FAMILIES.get(metadata.algo),
         "job_type": "train",

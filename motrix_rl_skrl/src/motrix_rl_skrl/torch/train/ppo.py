@@ -1,6 +1,7 @@
 # Copyright Motphys Technology Co., Ltd. 2025, 2026
 # SPDX-License-Identifier: Apache-2.0
 
+from collections import defaultdict
 from typing import Any
 
 import torch
@@ -51,7 +52,62 @@ def _instantiate_memory(memory_cfg: SkrlMemoryCfg, memory_size: int, num_envs: i
 
 
 class PPO(BasePPO):
-    _total_custom_rewards: dict[str, torch.Tensor] = {}
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._episode_totals: dict[str, torch.Tensor] = {}
+        self._tracking_window: dict[str, list[torch.Tensor]] = defaultdict(list)
+        self._tracking_dirty = False
+
+    def _track_values(self, tag: str, values: torch.Tensor, done: torch.Tensor | None = None) -> None:
+        if done is None:
+            stats = torch.stack((values.amin(), values.mean(), values.amax()))
+        else:
+            count = done.sum()
+            lo = values.masked_fill(~done, float("inf")).amin()
+            hi = values.masked_fill(~done, -float("inf")).amax()
+            mean = values.masked_fill(~done, 0).sum() / count.clamp_min(1)
+            stats = torch.where(count > 0, torch.stack((lo, mean, hi)), float("nan"))
+        self._tracking_window[tag].append(stats)
+        self._tracking_dirty = True
+
+    def _track_episode(self, tag: str, values: torch.Tensor, done: torch.Tensor) -> None:
+        if tag not in self._episode_totals:
+            self._episode_totals[tag] = torch.zeros_like(values)
+        total = self._episode_totals[tag]
+        total.add_(values)
+        self._track_values(tag, total, done)
+        total.masked_fill_(done, 0)
+
+    def _publish_tracking(self) -> None:
+        if not self._tracking_dirty:
+            return
+        summaries = []
+        for window in self._tracking_window.values():
+            lo, mean, hi = torch.stack(window).unbind(dim=1)
+            summaries.append(
+                torch.stack(
+                    (
+                        torch.nan_to_num(lo, nan=float("inf"), posinf=float("inf"), neginf=-float("inf")).amin(),
+                        torch.nanmean(mean),
+                        torch.nan_to_num(hi, nan=-float("inf"), posinf=float("inf"), neginf=-float("inf")).amax(),
+                    )
+                )
+            )
+        for tag, (lo, mean, hi) in zip(self._tracking_window, torch.stack(summaries).cpu().tolist()):
+            if mean == mean:
+                for stat, value in zip(("min", "mean", "max"), (lo, mean, hi)):
+                    self.tracking_data[f"{tag} ({stat})"] = [value]
+        self._tracking_dirty = False
+
+    def post_interaction(self, *, timestep: int, timesteps: int) -> None:
+        if timestep > 0 and self.checkpoint_interval > 0 and (timestep + 1) % self.checkpoint_interval == 0:
+            self._publish_tracking()
+        super().post_interaction(timestep=timestep, timesteps=timesteps)
+
+    def write_tracking_data(self, *, timestep: int, timesteps: int) -> None:
+        self._publish_tracking()
+        super().write_tracking_data(timestep=timestep, timesteps=timesteps)
+        self._tracking_window.clear()
 
     def record_transition(
         self,
@@ -67,50 +123,43 @@ class PPO(BasePPO):
         timestep,
         timesteps,
     ) -> None:
-        super().record_transition(
-            observations=observations,
-            states=states,
-            actions=actions,
-            rewards=rewards,
-            next_observations=next_observations,
-            next_states=next_states,
-            terminated=terminated,
-            truncated=truncated,
-            infos=infos,
-            timestep=timestep,
-            timesteps=timesteps,
-        )
-        if "Reward" in infos:
-            for key, value in infos["Reward"].items():
-                value = torch.tensor(value, device=self.device)
-                self.tracking_data[f"Reward Instant / {key} (max)"].append(torch.max(value).item())
-                self.tracking_data[f"Reward Instant / {key} (min)"].append(torch.min(value).item())
-                self.tracking_data[f"Reward Instant / {key} (mean)"].append(torch.mean(value).item())
-                if key not in self._total_custom_rewards:
-                    self._total_custom_rewards[key] = torch.zeros_like(value)
-                self._total_custom_rewards[key] += value
-            done = terminated | truncated
-            done = done.reshape(-1)
-            if done.any():
-                for key in self._total_custom_rewards:
-                    self.tracking_data[f"Reward Total/ {key} (mean)"].append(
-                        torch.mean(self._total_custom_rewards[key][done]).item()
-                    )
-                    self.tracking_data[f"Reward Total/ {key} (min)"].append(
-                        torch.min(self._total_custom_rewards[key][done]).item()
-                    )
-                    self.tracking_data[f"Reward Total/ {key} (max)"].append(
-                        torch.max(self._total_custom_rewards[key][done]).item()
-                    )
+        interval = self.write_interval
+        device_tracking = rewards.is_cuda and interval > 0
+        if device_tracking:
+            # The native tracker performs dynamic indexing and host reads each step.
+            self.write_interval = 0
+        try:
+            super().record_transition(
+                observations=observations,
+                states=states,
+                actions=actions,
+                rewards=rewards,
+                next_observations=next_observations,
+                next_states=next_states,
+                terminated=terminated,
+                truncated=truncated,
+                infos=infos,
+                timestep=timestep,
+                timesteps=timesteps,
+            )
+        finally:
+            self.write_interval = interval
+        if interval <= 0:
+            return
 
-                    self._total_custom_rewards[key] = self._total_custom_rewards[key] * (~done)
-
-        if "metrics" in infos:
-            for key, value in infos["metrics"].items():
-                tracked_value = torch.tensor(value, device=self.device)
-                self.tracking_data[f"metrics / {key} (max)"].append(torch.max(tracked_value).item())
-                self.tracking_data[f"metrics / {key} (min)"].append(torch.min(tracked_value).item())
-                self.tracking_data[f"metrics / {key} (mean)"].append(torch.mean(tracked_value).item())
+        done = (terminated | truncated).reshape(-1)
+        if device_tracking:
+            values = rewards.reshape(-1).float()
+            self._track_values("Reward / Instantaneous reward", values)
+            self._track_episode("Reward / Total reward", values, done)
+            self._track_episode("Episode / Total timesteps", torch.ones_like(values), done)
+        for key, value in infos.get("Reward", {}).items():
+            value = torch.as_tensor(value, device=self.device).detach().float()
+            self._track_values(f"Reward Instant / {key}", value)
+            self._track_episode(f"Reward Total/ {key}", value, done)
+        for key, value in infos.get("metrics", {}).items():
+            mean = torch.as_tensor(value, device=self.device).detach().float().mean()
+            self._track_values(f"metrics / {key}", mean)
 
 
 class Trainer(SkrlPpoTrainerBase):
@@ -128,6 +177,7 @@ class Trainer(SkrlPpoTrainerBase):
             num_envs=num_envs,
             mode=mode,
             sim=self._sim,
+            **({"sim_device": self._context.sim_device} if self._context.sim_device is not None else {}),
             seed=self._context.seed,
             headless=self._render.headless if self._render else False,
             record=self._render.record if self._render else None,

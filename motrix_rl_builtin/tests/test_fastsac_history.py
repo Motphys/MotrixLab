@@ -74,6 +74,7 @@ def test_frame_views_are_copied_before_environment_buffer_reuse(with_value: bool
         groups["value"] = ObservationGroupSpec(gym.spaces.Box(-np.inf, np.inf, (2,)), 2)
 
     class Env:
+        device = torch.device("cpu")
         num_envs = 1
         action_space = gym.spaces.Box(-1.0, 1.0, (1,), dtype=np.float32)
         observation_spec = ObservationSpec(groups)

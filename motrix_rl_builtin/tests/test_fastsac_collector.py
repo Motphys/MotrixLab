@@ -35,6 +35,8 @@ _ACT_DIM = 3
 class _CpuEnv:
     """Wrapper stand-in: the collector reads the original env via ``.env``."""
 
+    device = torch.device("cpu")
+
     def __init__(self):
         self.num_envs = _NUM_ENVS
         self.last_actions = None
@@ -383,8 +385,8 @@ def test_compiled_cuda_stochastic_actions_change_and_stay_in_bounds() -> None:
     assert torch.isfinite(first).all()
     assert torch.isfinite(second).all()
     assert not torch.equal(first, second)
-    low = collector._action_bias_cpu - collector._action_scale_cpu
-    high = collector._action_bias_cpu + collector._action_scale_cpu
+    low = collector._action_bias - collector._action_scale
+    high = collector._action_bias + collector._action_scale
     assert torch.all(first >= low)
     assert torch.all(first <= high)
     assert torch.all(second >= low)

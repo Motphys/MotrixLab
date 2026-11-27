@@ -95,6 +95,7 @@ class TrainConfig(TaskConfig):
     render: bool = False
     play: bool = False
     sim: str | None = None
+    sim_device: str | None = None
     resume: str | None = None
 
 
@@ -104,6 +105,7 @@ class PlayConfig:
 
     env: str | None = None
     sim: str | None = None
+    sim_device: str | None = None
     policy: str | None = None
     num_envs: int | None = None
     seed: int | None = None

@@ -58,7 +58,7 @@ class Reacher2DEnv(DirectEnv):
         self._target_velocity = self._reset_program.buffer("target_velocity")
 
         self._target_size = cfg.target_size
-        self._target_xyz = torch.zeros((num_envs, 3), dtype=torch.float32)
+        self._target_xyz = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
         self._init_observation_spec()
         self._init_action_space()
 
@@ -104,6 +104,7 @@ class Reacher2DEnv(DirectEnv):
                 dist, bounds=(0.0, self._target_size), margin=self._target_size, value_at_margin=0.0, sigmoid="linear"
             ),
             dtype=torch.float32,
+            device=self.device,
         )
         terminated = (
             self.sim_data["dof_pos"].isnan().any(dim=-1)
@@ -123,14 +124,14 @@ class Reacher2DEnv(DirectEnv):
         """Reset environment with randomized target position in xy plane (z=0)."""
         num_reset = env_ids.numel()
 
-        arm_position = (torch.rand(num_reset, 2, dtype=torch.float32) * 2.0 - 1.0) * np.pi
+        arm_position = (torch.rand(num_reset, 2, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * np.pi
 
-        target_x = (torch.rand(num_reset, dtype=torch.float32) * 2.0 - 1.0) * 0.15
-        target_y = torch.full((num_reset,), 0.15, dtype=torch.float32)
+        target_x = (torch.rand(num_reset, dtype=torch.float32, device=self.device) * 2.0 - 1.0) * 0.15
+        target_y = torch.full((num_reset,), 0.15, dtype=torch.float32, device=self.device)
 
         target_position = torch.stack([target_x, target_y], dim=-1)
-        arm_velocity = torch.zeros((num_reset, 2), dtype=torch.float32)
-        target_velocity = torch.zeros((num_reset, 2), dtype=torch.float32)
+        arm_velocity = torch.zeros((num_reset, 2), dtype=torch.float32, device=self.device)
+        target_velocity = torch.zeros((num_reset, 2), dtype=torch.float32, device=self.device)
 
         self._arm_position[env_ids] = arm_position
         self._arm_velocity[env_ids] = arm_velocity

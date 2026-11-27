@@ -460,6 +460,7 @@ def capture_system_info(topology: Any = None, fallback_device: Any = None) -> di
             _add_device_role(roles, learner.device, "learner")
         for collector in topology.collectors:
             _add_device_role(roles, collector.infer_device, "collector-inference")
+            _add_device_role(roles, collector.sim_device, "simulation")
     elif fallback_device is not None:
         _add_device_role(roles, fallback_device, "trainer")
 
@@ -504,10 +505,21 @@ def _cuda_device_name(index: int) -> str:
     try:
         import torch
 
-        if torch.cuda.is_available():
+        if torch.cuda.is_initialized():
             return torch.cuda.get_device_name(index)
     except Exception:
         pass
+    # Device inventory is also collected by the async parent before spawn.
+    # Use the monitor's device names without initializing Torch CUDA there.
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    names = _gpu_device_names()
+    if names:
+        try:
+            physical = int(visible.split(",")[index]) if visible else index
+            if physical >= 0 and names[physical]:
+                return names[physical]
+        except (ValueError, IndexError):
+            pass
     return f"cuda:{index}"
 
 

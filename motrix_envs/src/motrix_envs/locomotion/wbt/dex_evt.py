@@ -61,7 +61,9 @@ class DexEvtWbtEnvCfg(WbtEnvCfg):
             action_scales_by_effort_limit_over_p_gain=False,
         ),
     )
-    sim: SimCfg = SimCfg(dt=0.005, solver_iterations=6, solver_tolerance=0.0001)
+    sim: SimCfg = SimCfg(
+        dt=0.005, solver_iterations=6, solver_tolerance=0.0001, max_contacts=1024, max_contact_constraints=4096
+    )
     scene: StandardSceneCfg = StandardSceneCfg(
         system_camera=SystemCameraCfg(distance=7.0, elevation=-20.0, azimuth=180.0),
         objs=StandardSceneObjsCfg(

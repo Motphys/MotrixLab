@@ -336,14 +336,15 @@ class SimWriteCompiler(abc.ABC):
 class WriteProgram(abc.ABC):
     """Compiled set of writes executed together at one point in the loop.
 
-    Owns one value buffer per declared write; environments fill buffers
+    Ordinary programs expose staging buffers isolated from live simulator state.
+    Environments fill buffers
     (row-scoped ops read only the ``execute(env_ids)`` rows) and call
     :meth:`execute` to push everything to the backend in one crossing.
     """
 
     @abc.abstractmethod
     def buffer(self, name: str) -> torch.Tensor:
-        """Return the program-owned buffer of one declaration."""
+        """Return the writable buffer for one declaration."""
 
     @abc.abstractmethod
     def execute(self, env_ids: torch.Tensor | None = None) -> None:
@@ -352,3 +353,15 @@ class WriteProgram(abc.ABC):
         ``env_ids`` selects rows; ``None`` means every row. Reset-before-write
         and derived-state refresh behavior are fixed when the program is compiled.
         """
+
+    def execute_masked(self, world_mask: torch.Tensor) -> None:
+        """Apply full-batch buffers to the selected rows of a boolean mask."""
+        ids = world_mask.nonzero(as_tuple=True)[0]
+        if ids.numel():
+            self.execute(ids)
+
+    def execute_compact(self, env_ids: torch.Tensor, buffers: tuple[torch.Tensor, ...]) -> None:
+        """Apply the first K buffer rows to the corresponding K world IDs."""
+        for buffer in buffers:
+            buffer[env_ids] = buffer[: env_ids.numel()].clone()
+        self.execute(env_ids)

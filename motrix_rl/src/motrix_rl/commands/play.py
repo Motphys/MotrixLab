@@ -47,6 +47,7 @@ def _policy_play_target(
     policy_path: str | Path,
     requested_env_name: str | None,
     sim: str | None = None,
+    sim_device: str | None = None,
 ) -> PlayTarget:
     policy_path = Path(policy_path)
     logger.info(f"Using specified policy: {policy_path}")
@@ -61,13 +62,15 @@ def _policy_play_target(
         raise ValueError(f"env={requested_env_name!r} does not match policy metadata env {metadata.env_name!r}")
     if sim is not None:
         metadata = replace(metadata, sim=sim)
+    if sim_device is not None:
+        metadata = replace(metadata, sim_device=sim_device)
     logger.info(f"Using policy metadata: {metadata.rllib}.{metadata.algo} ({metadata.train_backend})")
     return PlayTarget(run=runs.open_run_context(run_dir, metadata), policy_path=policy_path)
 
 
 def _resolve_play_target(cfg: PlayConfig) -> PlayTarget:
     if cfg.policy is not None:
-        return _policy_play_target(cfg.policy, cfg.env, sim=cfg.sim)
+        return _policy_play_target(cfg.policy, cfg.env, sim=cfg.sim, sim_device=cfg.sim_device)
 
     rllib = cfg.rllib
     if rllib is not None:
@@ -76,8 +79,12 @@ def _resolve_play_target(cfg: PlayConfig) -> PlayTarget:
 
     target = _latest_play_target(cfg.env or DEFAULT_ENV_NAME, rllib=rllib)
     logger.info(f"Auto-discovered best policy: {target.policy_path}")
-    if cfg.sim is not None:
-        metadata = replace(target.run.metadata, sim=cfg.sim)
+    if cfg.sim is not None or cfg.sim_device is not None:
+        metadata = replace(
+            target.run.metadata,
+            sim=cfg.sim or target.run.metadata.sim,
+            sim_device=cfg.sim_device or target.run.metadata.sim_device,
+        )
         target = replace(target, run=runs.open_run_context(target.run.run_dir, metadata))
     return target
 

@@ -36,6 +36,8 @@ def prepare_case(config: EnvStepConfig, num_envs: int) -> tuple[object, Prepared
     kwargs = {"mode": config.mode, "num_envs": num_envs}
     if config.sim_backend is not None:
         kwargs["sim"] = config.sim_backend
+    if config.sim_device is not None:
+        kwargs["sim_device"] = config.sim_device
     env = registry.make(name, **kwargs)
     try:
         actual_num_envs = int(env.num_envs)
@@ -49,13 +51,19 @@ def prepare_case(config: EnvStepConfig, num_envs: int) -> tuple[object, Prepared
             low = np.where(np.isfinite(space.low), space.low, -1.0)
             high = np.where(np.isfinite(space.high), space.high, 1.0)
             actions = np.random.default_rng(config.seed).uniform(low, high, size=shape).astype(space.dtype)
+        synchronize = None
         if isinstance(env, manager_env_type):
             import torch
 
-            actions = torch.from_numpy(np.ascontiguousarray(actions))
+            actions = torch.from_numpy(np.ascontiguousarray(actions)).to(env.device)
+            if env.device.type == "cuda":
+                from functools import partial
+
+                synchronize = partial(torch.cuda.synchronize, env.device)
         case = PreparedCase(
             step=lambda: env.step(actions),
             close=lambda: close_env(env),
+            synchronize=synchronize,
             items_per_step=float(actual_num_envs),
             unit="env steps",
         )

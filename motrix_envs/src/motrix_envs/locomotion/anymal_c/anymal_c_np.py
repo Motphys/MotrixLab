@@ -93,6 +93,7 @@ class AnymalCEnv(DirectEnv):
         **kwargs,
     ):
         super().__init__(cfg, num_envs, backend=backend, **kwargs)
+        self._gravity = _GRAVITY.to(self.device)
         self.model = self.sim.compile_model(_sim_model_queries(cfg))
         self.sim_data = self.sim.compile_reads(_sim_data_queries(cfg))
         self._heading_writes = self.sim.write_compiler.compile(
@@ -144,12 +145,14 @@ class AnymalCEnv(DirectEnv):
 
     def _init_buffer(self):
         cfg = self._cfg
-        self.default_angles = torch.zeros(self._num_action, dtype=torch.float32)
+        self.default_angles = torch.zeros(self._num_action, dtype=torch.float32, device=self.device)
         # PD parameters controlled by kp and kv in XML
 
         # Normalization coefficients
         self.commands_scale = torch.tensor(
-            [cfg.normalization.lin_vel, cfg.normalization.lin_vel, cfg.normalization.ang_vel], dtype=torch.float32
+            [cfg.normalization.lin_vel, cfg.normalization.lin_vel, cfg.normalization.ang_vel],
+            dtype=torch.float32,
+            device=self.device,
         )
 
         # Set default joint angles
@@ -164,11 +167,11 @@ class AnymalCEnv(DirectEnv):
         # Episode-scoped navigation state: full-batch buffers, reset writes the
         # done rows in place.
         num_envs = self._num_envs
-        self._pose_commands = torch.zeros((num_envs, 3), dtype=torch.float32)
-        self._last_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32)
-        self._current_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32)
-        self._ever_reached = torch.zeros(num_envs, dtype=torch.bool)
-        self._min_distance = torch.zeros(num_envs, dtype=torch.float32)
+        self._pose_commands = torch.zeros((num_envs, 3), dtype=torch.float32, device=self.device)
+        self._last_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32, device=self.device)
+        self._current_actions = torch.zeros((num_envs, self._num_action), dtype=torch.float32, device=self.device)
+        self._ever_reached = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._min_distance = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
 
     def _init_contact_geometry(self):
         """Initialize geometry name pairs required for contact detection"""
@@ -235,7 +238,7 @@ class AnymalCEnv(DirectEnv):
         return self._action_space
 
     def apply_action(self, actions: torch.Tensor, state: ArrayEnvState):
-        actions = torch.as_tensor(actions, dtype=torch.float32)
+        actions = torch.as_tensor(actions, dtype=torch.float32, device=self.device)
         # Save current action for incremental control
         self._last_actions.copy_(self._current_actions)
         self._current_actions.copy_(actions)
@@ -347,11 +350,11 @@ class AnymalCEnv(DirectEnv):
 
         # Update target position marker
         num_envs = self._num_envs
-        self._update_target_marker(torch.arange(num_envs, dtype=torch.int64), self._pose_commands)
+        self._update_target_marker(torch.arange(num_envs, dtype=torch.int64, device=self.device), self._pose_commands)
         # Update arrow visualization (no physical effect)
         base_lin_vel_xy = base_lin_vel[:, :2]
         self._update_heading_arrows(
-            torch.arange(num_envs, dtype=torch.int64), root_pos, desired_vel_xy, base_lin_vel_xy
+            torch.arange(num_envs, dtype=torch.int64, device=self.device), root_pos, desired_vel_xy, base_lin_vel_xy
         )
 
         # Calculate reward
@@ -380,7 +383,7 @@ class AnymalCEnv(DirectEnv):
         cur_yaw = torch.where(
             torch.linalg.vector_norm(base_lin_vel_xy, dim=1) > 1e-3,
             torch.atan2(base_lin_vel_xy[:, 1], base_lin_vel_xy[:, 0]),
-            torch.zeros((), dtype=torch.float32),
+            torch.zeros((), dtype=torch.float32, device=self.device),
         )
         robot_arrow_pos = robot_pos.clone()
         robot_arrow_pos[:, 2] = arrow_height
@@ -390,7 +393,7 @@ class AnymalCEnv(DirectEnv):
         des_yaw = torch.where(
             torch.linalg.vector_norm(desired_vel_xy, dim=1) > 1e-6,
             torch.atan2(desired_vel_xy[:, 1], desired_vel_xy[:, 0]),
-            torch.zeros((), dtype=torch.float32),
+            torch.zeros((), dtype=torch.float32, device=self.device),
         )
         self._heading_writes.buffer("desired_pos")[env_ids, 0] = robot_arrow_pos
         self._heading_writes.buffer("desired_rot")[env_ids, 0] = _yaw_quaternion(des_yaw)
@@ -404,7 +407,7 @@ class AnymalCEnv(DirectEnv):
         """
         num_envs = self._num_envs
         # Calculate termination condition penalties
-        termination_penalty = torch.zeros(num_envs, dtype=torch.float32)
+        termination_penalty = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
 
         # Check if DOF velocity exceeds limit
         dof_vel = self.get_dof_vel()
@@ -444,7 +447,7 @@ class AnymalCEnv(DirectEnv):
         # One-time reward for first time reaching position
         first_time_reach = reached_all & ~self._ever_reached
         self._ever_reached |= reached_all
-        arrival_bonus = torch.where(first_time_reach, 10.0, torch.zeros((), dtype=torch.float32))
+        arrival_bonus = torch.where(first_time_reach, 10.0, torch.zeros((), dtype=torch.float32, device=self.device))
 
         # Distance approach reward: incentivize getting closer to target
         # Use historical minimum distance to calculate progress
@@ -464,9 +467,13 @@ class AnymalCEnv(DirectEnv):
         # Arrival and stop determination (reward bonus)
         speed_xy = torch.linalg.vector_norm(base_lin_vel[:, :2], dim=1)
         zero_ang_mask = gyro[:, 2].abs() < 0.05  # Relax to 0.05 rad/s ≈ 2.86°/s
-        zero_ang_bonus = torch.where(reached_all & zero_ang_mask, 6.0, torch.zeros((), dtype=torch.float32))
+        zero_ang_bonus = torch.where(
+            reached_all & zero_ang_mask, 6.0, torch.zeros((), dtype=torch.float32, device=self.device)
+        )
         stop_base = 2 * (0.8 * torch.exp(-((speed_xy / 0.2) ** 2)) + 1.2 * torch.exp(-((gyro[:, 2].abs() / 0.1) ** 4)))
-        stop_bonus = torch.where(reached_all, stop_base + zero_ang_bonus, torch.zeros((), dtype=torch.float32))
+        stop_bonus = torch.where(
+            reached_all, stop_base + zero_ang_bonus, torch.zeros((), dtype=torch.float32, device=self.device)
+        )
 
         # 4. Z-axis linear velocity penalty
         lin_vel_z_penalty = torch.square(base_lin_vel[:, 2])
@@ -525,14 +532,16 @@ class AnymalCEnv(DirectEnv):
         num_envs = pose_commands.shape[0]
         arrow_pos = pose_commands.clone()
         arrow_pos[:, 2] = 0.05
-        arrow_pos = torch.stack([pose_commands[:, 0], pose_commands[:, 1], torch.full((num_envs,), 0.5)], dim=1)
+        arrow_pos = torch.stack(
+            [pose_commands[:, 0], pose_commands[:, 1], torch.full((num_envs,), 0.5, device=self.device)], dim=1
+        )
         arrow_quat = _yaw_quaternion(pose_commands[:, 2])
         self._target_writes.buffer("target_pos")[env_ids, 0] = arrow_pos
         self._target_writes.buffer("target_rot")[env_ids, 0] = arrow_quat
         self._target_writes.execute(env_ids)
 
     def _compute_terminated(self, state: ArrayEnvState) -> ArrayEnvState:
-        terminated = torch.zeros(self._num_envs, dtype=torch.bool)
+        terminated = torch.zeros(self._num_envs, dtype=torch.bool, device=self.device)
 
         # Check if DOF velocity exceeds limit (prevent inf/numerical divergence)
         dof_vel = self.get_dof_vel()
@@ -565,21 +574,27 @@ class AnymalCEnv(DirectEnv):
 
         # First generate robot initial position (in world coordinates)
         pos_range = cfg.init_state.pos_randomization_range
-        robot_init_x = pos_range[0] + (pos_range[2] - pos_range[0]) * torch.rand(num_envs, dtype=torch.float32)
-        robot_init_y = pos_range[1] + (pos_range[3] - pos_range[1]) * torch.rand(num_envs, dtype=torch.float32)
+        robot_init_x = pos_range[0] + (pos_range[2] - pos_range[0]) * torch.rand(
+            num_envs, dtype=torch.float32, device=self.device
+        )
+        robot_init_y = pos_range[1] + (pos_range[3] - pos_range[1]) * torch.rand(
+            num_envs, dtype=torch.float32, device=self.device
+        )
         robot_init_pos = torch.stack([robot_init_x, robot_init_y], dim=1)  # [num_envs, 2]
 
         # Generate target position: offset relative to robot initial position
         # pose_command_range now represents offset range relative to robot
         pose_command_range = cfg.commands.pose_command_range
-        offset_low = torch.tensor(pose_command_range[:2], dtype=torch.float32)
-        offset_high = torch.tensor(pose_command_range[3:5], dtype=torch.float32)
-        target_offset = offset_low + (offset_high - offset_low) * torch.rand((num_envs, 2), dtype=torch.float32)
+        offset_low = torch.tensor(pose_command_range[:2], dtype=torch.float32, device=self.device)
+        offset_high = torch.tensor(pose_command_range[3:5], dtype=torch.float32, device=self.device)
+        target_offset = offset_low + (offset_high - offset_low) * torch.rand(
+            (num_envs, 2), dtype=torch.float32, device=self.device
+        )
         target_positions = robot_init_pos + target_offset  # Target position in world coordinates
 
         # Generate target heading (absolute heading, random in horizontal direction)
         target_headings = pose_command_range[2] + (pose_command_range[5] - pose_command_range[2]) * torch.rand(
-            (num_envs, 1), dtype=torch.float32
+            (num_envs, 1), dtype=torch.float32, device=self.device
         )
 
         pose_commands = torch.cat([target_positions, target_headings], dim=1)
@@ -660,4 +675,4 @@ class AnymalCEnv(DirectEnv):
         self._min_distance[rows] = distance_to_target
 
     def _compute_projected_gravity(self, quat: torch.Tensor) -> torch.Tensor:
-        return _rotate_vector(quat, _GRAVITY)
+        return _rotate_vector(quat, self._gravity)

@@ -191,6 +191,14 @@ WBT 在 motion clip wrap 时使用该机制。sim-reset dispatch 通过 `env_ids
 直接填紧凑 `(K, *write_shape)` 的 `sim_writes`；第 j 个写入行对应 `env_ids[j]`，不能再按原始行号索引写入缓冲。
 per-step 统计折叠（如 WBT 的失败计数 EMA）由 term 自行内联进 `advance` 图内。
 
+CUDA 的自动复位按后端与复位项特征自适应执行：支持原生掩码复位的后端可用 `(N,)` 布尔掩码复位仿真和刷新读数。
+Command term 可提供 `reset_masked(self, ctx, world_mask, episode_reset)`，用 `world_mask` 选择要重采样的行，
+用 `episode_reset` 筛选参与回合统计的行；Action term 可提供 `_reset_masked(self, world_mask)`。
+声明 `stateless=True` 的纯写入 `ResetTerm`（只写 `sim_writes`、不修改 `ctx`）可与命令掩码复位合入同一张静态
+`(N,)` 编译图并通过 `execute_masked(world_mask)` 提交（当写程序不含主机侧参数表提交且未达截断步时全程零主机同步）；
+默认 `stateless=False` 的自定义 `ResetTerm` 则先经主机门控提取实际复位行的紧凑 `env_ids` 和对应的紧凑 `sim_writes`。
+第三方 command/action term 只提供紧凑复位钩子时，环境使用紧凑复位路径。
+
 ActionTerm 是 host 侧描述对象：静态 action space、canonicalized state 和批量 process/reset callback。
 只有 `term.state` 进入 kernel ABI，`ctx.actions[name]` 直接取得 lane-scoped state；host 通过
 `env.action_terms[name].state` 访问同一份 backing。callback 不进入 kernel data，不要求 `@dispatch`。

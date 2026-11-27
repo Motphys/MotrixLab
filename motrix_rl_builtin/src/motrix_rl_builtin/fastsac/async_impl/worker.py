@@ -76,19 +76,21 @@ def set_seed(seed: int | None) -> None:
 def build_env(
     env_spec: EnvBuildSpec,
     num_envs: int,
-    device: torch.device,
+    device: torch.device | None,
     render: RenderConfig | None = None,
     mode: str = "train",
     seed: int | None = None,
+    sim_device: str | None = None,
 ) -> FastSacEnvWrap:
     env = env_spec.make(
+        **({"sim_device": sim_device} if sim_device is not None else {}),
         num_envs=num_envs,
         mode=mode,
         seed=seed,
         headless=render.headless if render else False,
         record=render.record if render else None,
     )
-    return FastSacEnvWrap(env, device, render=render)
+    return FastSacEnvWrap(env, env.device if device is None else device, render=render)
 
 
 def actor_param_numel(cfg: FastSacCfg, dims, action_scale, action_bias) -> int:
@@ -244,10 +246,10 @@ def run_collector_process(
     run_dir: str,
     handshake: StartupHandshake,
     collector_device: torch.device,
+    sim_device: str | None = None,
     collector_id: int = 0,
     numa_node: int | None = None,
     cpus: list[int] | None = None,
-    final_store: FinalObsStorage | None = None,
 ) -> None:
     role = f"collector[{collector_id}]"
     _install_graceful_sigint(control)
@@ -263,9 +265,8 @@ def run_collector_process(
         opts = cfg.trainer.async_options
         pin_worker_cpus(resolve_worker_cpus(opts.collector_cpu_cores, "collector_cpu_cores"))
         obs_dim, critic_obs_dim, act_dim = dims
-        device = torch.device("cpu")
         env_started = time.perf_counter()
-        env = build_env(env_spec, num_envs, device, seed=seed)
+        env = build_env(env_spec, num_envs, None, seed=seed, sim_device=sim_device)
         logger.info(
             "collector startup: env build (scene + manager kernels) finished in %.3fs",
             time.perf_counter() - env_started,
@@ -281,6 +282,7 @@ def run_collector_process(
         if isinstance(ring, RingCursors):
             if ring_slots is None:
                 raise RuntimeError("the learner shipped no transition-ring slots for the IPC ring handshake")
+            ring_slots, final_store = ring_slots
             ring = GpuIpcTransitionRing(
                 ring,
                 ring_slots,
@@ -349,14 +351,16 @@ def run_collector_process(
                 except Empty:
                     pass
                 collector_data_queue.put(collector.snapshot_stats())
+        if isinstance(ring, GpuIpcTransitionRing):
+            while not control.stop and ring.write_completed_count < ring.write_issued_count:
+                time.sleep(opts.idle_sleep_s)
     except BaseException:
+        control.set_stop()
         if not isinstance(sys.exc_info()[1], (KeyboardInterrupt, SystemExit)):
             # Ctrl+C is an operator action, not a defect: the stop flag is
             # already set by the SIGINT handler; don't spam async_errors.
             error_queue.put((role, traceback.format_exc()))
         raise
-    finally:
-        control.set_stop()  # signal the learner if the collector exits for any reason
 
 
 # ------------------------------------------------------------------ learner process
@@ -389,15 +393,15 @@ def run_learner_process(
     num_learners: int = 1,
     rendezvous_file: str | None = None,
     learner_device: str | None = None,
-    final_stores: list[FinalObsStorage] | None = None,
+    final_obs_enabled: bool = False,
     notify_checkpoints: bool = False,
     observation_spec: ObservationSpec | None = None,
 ) -> None:
     """One learner process; ``rank 0`` additionally owns stats aggregation,
     logging and checkpointing.
 
-    ``final_stores`` is either absent for all owned collectors or contains one
-    store per owned ring; final-observation support is uniform across collectors.
+    ``final_obs_enabled`` requests truncation bootstrapping and learner-owned
+    CUDA final-observation buffers for IPC rings.
     ``collector_ids`` gives the global collector ID for each local ring/weight
     endpoint, preserving channel identity when ownership is non-contiguous.
 
@@ -460,7 +464,7 @@ def run_learner_process(
             action_scale,
             action_bias,
             world_size=num_learners,
-            final_obs_bootstrap=final_stores is not None,
+            final_obs_bootstrap=final_obs_enabled,
             observation_spec=observation_spec,
         )
         if resume_from:
@@ -514,14 +518,22 @@ def run_learner_process(
                     dtype=torch.float32,
                     device=device,
                 )
+                final_store = (
+                    FinalObsStorage(
+                        opts.ring_capacity, per_collector_envs, agent.rb.n_obs, agent.rb.n_critic_obs, device=device
+                    )
+                    if final_obs_enabled
+                    else None
+                )
                 rings[j] = GpuIpcTransitionRing(
                     ring,
                     ring_slots,
                     schema,
                     opts.ring_capacity,
                     per_collector_envs,
-                    payload_store=final_stores[j] if final_stores is not None else None,
+                    payload_store=final_store,
                 )
+                ring_slots = (ring_slots, final_store)
             handshake.ship_ring_slots(collector_id, ring_slots)
 
         endpoints = [CollectorEndpoint(ring=rings[j], weight_sender=weight_txs[j]) for j in range(len(weight_txs))]
@@ -578,17 +590,30 @@ def run_learner_process(
         # Each collector runs until its own counter reaches num_iterations; the
         # aggregate (sum) therefore reaches num_iterations * num_collectors.
         total_collector_steps = num_iterations * num_collectors
-        while not control.stop and control.collector_steps < total_collector_steps:
+        remaining_batches = num_iterations - resume_step
+        while remaining_batches > 0 and not control.stop:
             # Progress basis: full num_envs-batch equivalents — the aggregate
             # counter counts per-collector batches of per_collector_envs
             # transitions each, so dividing by num_collectors recovers the
             # sync-trainer "iteration collects num_envs transitions" unit
             # (identical to the raw counter when num_collectors == 1). All
             # ranks read the same shared value.
-            step = control.collector_steps // num_collectors
+            collected = control.collector_steps
+            if dist is not None:
+                progress = torch.tensor(collected, device=device)
+                dist.broadcast(progress, src=0)
+                collected = int(progress)
+            finished = collected >= total_collector_steps
+            step = collected // num_collectors
             control.global_step = step
             t_drain = time.perf_counter()
             ingested = learner.drain()
+            if finished:
+                while not control.stop and any(r.read_issued_count < remaining_batches for r in rings):
+                    count = learner.drain()
+                    ingested += count
+                    if not count:
+                        time.sleep(opts.idle_sleep_s)
             if ingested:
                 if not start_anchored:
                     start_time = time.time()
@@ -717,6 +742,8 @@ def run_learner_process(
                     except Full:
                         logger.warning("learner data queue full; checkpoint notice for %s dropped", path)
                 next_save += save_interval
+            if finished:
+                break
 
         if num_learners > 1:
             # All ranks have consumed the identical global step count, so the

@@ -103,6 +103,7 @@ def collect_metrics(
     *,
     context: str,
     context_path: tuple[str, ...],
+    device: torch.device = torch.device("cpu"),
 ) -> tuple[tuple[str, torch.Tensor], ...]:
     """Collect metric fields from one canonical manager term, recursing into
     nested kernel-data members.
@@ -124,14 +125,15 @@ def collect_metrics(
                         num_envs,
                         context=f"{context} field {data_field.name!r}",
                         context_path=(*context_path, data_field.name),
+                        device=device,
                     )
                 )
             continue
         tensor = child
         if not isinstance(tensor, torch.Tensor):
             raise TypeError(f"{context} metric field {data_field.name!r} must hold a torch.Tensor.")
-        if tensor.device.type != "cpu":
-            raise TypeError(f"{context} metric field {data_field.name!r} must be CPU-backed.")
+        if tensor.device != device:
+            raise TypeError(f"{context} metric field {data_field.name!r} must be on {device}.")
         if spec.scalar:
             if tensor.ndim != 0:
                 raise ValueError(

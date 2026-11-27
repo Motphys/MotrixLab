@@ -26,12 +26,11 @@ class SkrlTorchEnvWrap(SkrlWrapper):
     _renderer: SimRenderer | VideoRecorder | None = None
 
     def __init__(self, env: ArrayEnv, render: RenderConfig | None = None):
+        self._sim_device = env.device
         super().__init__(env)
-        # skrl's fallback for device-less envs is cuda-else-cpu; resolve with
-        # the shared cuda -> mps -> cpu policy so Apple Silicon trains on MPS.
-        # CUDA is normalized to an explicit index: skrl realizes tensors on
-        # cuda:<current>, and torch.device("cuda") != torch.device("cuda:0").
-        if not hasattr(env, "device"):
+        # Keep CUDA rollouts on the simulator GPU. CPU simulation uses the
+        # project's default learning device (CUDA, MPS, or CPU).
+        if self._sim_device.type == "cpu":
             device = resolve_default_device()
             self._device = torch.device("cuda", torch.cuda.current_device()) if device.type == "cuda" else device
         self._renderer = create_renderer(env, render)
@@ -49,7 +48,7 @@ class SkrlTorchEnvWrap(SkrlWrapper):
         torch.Tensor,
         Any,
     ]:
-        state = self._env.step(torch.as_tensor(actions, dtype=torch.float32).detach().cpu())
+        state = self._env.step(torch.as_tensor(actions, dtype=torch.float32, device=self._sim_device).detach())
         return (
             state.obs.policy.to(device=self.device, dtype=torch.float32),
             state.reward.reshape(-1, 1).to(device=self.device, dtype=torch.float32),

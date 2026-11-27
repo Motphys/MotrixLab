@@ -72,7 +72,7 @@ class Trainer(TrainerBase):
         env_name = context.env_name
         self._rlcfg = context.rl_cfg
         self._env_name = env_name
-        self._env_spec = env_registry.resolve(env_name, sim=context.sim)
+        self._env_spec = env_registry.resolve(env_name, sim=context.sim, sim_device=context.sim_device)
         self._render = context.render
         self._resume_from = context.resume_from
         self._context = context
@@ -90,6 +90,8 @@ class Trainer(TrainerBase):
         render: RenderConfig | None,
         device: torch.device | None = None,
         mode: str = "train",
+        *,
+        sim_device: str | None = None,
     ) -> FastSacEnvWrap:
         return build_env(
             self._env_spec,
@@ -98,6 +100,7 @@ class Trainer(TrainerBase):
             render=render,
             mode=mode,
             seed=self._context.seed,
+            sim_device=sim_device,
         )
 
     def _dims(self, env: FastSacEnvWrap):
@@ -151,7 +154,7 @@ class Trainer(TrainerBase):
 
         # Read dims once in the parent (cheap 1-env build), then discard. Each
         # child rebuilds its own env because env objects are not picklable across spawn.
-        probe = self._make_env(1, render=None, device=torch.device("cpu"))
+        probe = self._make_env(1, render=None, device=torch.device("cpu"), sim_device="cpu")
         obs_dim, critic_obs_dim, act_dim, action_scale, action_bias = self._dims(probe)
         max_episode_steps = probe.max_episode_steps
         observation_spec = probe.observation_spec
@@ -160,10 +163,14 @@ class Trainer(TrainerBase):
         probe.close()
         dims = (obs_dim, critic_obs_dim, act_dim)
 
-        learner_device = self._device()
-
         num_collectors = async_options.num_collectors
         num_learners = async_options.num_learners
+        requested_sim = self._env_spec.env_cfg.sim.device
+        indexed_sim = torch.device(requested_sim)
+        if num_learners == 1 and cfg.device is None and indexed_sim.type == "cuda" and indexed_sim.index is not None:
+            default_device = indexed_sim
+        else:
+            default_device = self._device()
         if num_learners < 1:
             raise ValueError(f"num_learners must be >= 1, got {num_learners}")
         if num_learners > 1 and num_collectors % num_learners != 0:
@@ -210,10 +217,11 @@ class Trainer(TrainerBase):
             num_learners,
             async_options.learner_devices,
             async_options.collector_inference_device,
-            self._device(),
+            default_device,
             async_options,
             param_numel,
             cpus_per_collector=cpus_per_collector,
+            sim_device=requested_sim,
         )
         learner_devices = [learner.device for learner in topology.learners]
         collector_devices = [collector.infer_device for collector in topology.collectors]
@@ -227,14 +235,15 @@ class Trainer(TrainerBase):
         # Provenance for performance snapshots: record the devices this run
         # actually uses (topology is the single source of truth), not the
         # host inventory.
-        annotate_run(self._context.run_dir, system=capture_system_info(topology=topology))
+        sim_devices = [str(collector.sim_device) for collector in topology.collectors]
+        annotate_run(
+            self._context.run_dir,
+            system=capture_system_info(topology=topology),
+            sim_device=sim_devices[0],
+            collector_sim_devices=sim_devices,
+        )
         final_obs_enabled = max_episode_steps is not None
         transition_schema = fastsac_transition_schema(frame_dim, value_frame_dim, act_dim)
-        final_stores: list[FinalObsStorage] | None = (
-            [FinalObsStorage(async_options.ring_capacity, shard, frame_dim, value_frame_dim) for shard in env_shards]
-            if final_obs_enabled
-            else None
-        )
         rings: list[HostTransitionRing | RingCursors] = [
             RingCursors()
             if ipc
@@ -242,9 +251,13 @@ class Trainer(TrainerBase):
                 transition_schema,
                 async_options.ring_capacity,
                 shard,
-                payload_store=final_stores[i] if final_stores is not None else None,
+                payload_store=(
+                    FinalObsStorage(async_options.ring_capacity, shard, frame_dim, value_frame_dim)
+                    if final_obs_enabled
+                    else None
+                ),
             )
-            for i, (ipc, shard) in enumerate(zip(ring_ipc, env_shards))
+            for ipc, shard in zip(ring_ipc, env_shards)
         ]
         weights = [
             WeightChannelShared(fastsac_inference_bundle_spec(obs_dim, param_numel)) for _ in range(num_collectors)
@@ -309,10 +322,11 @@ class Trainer(TrainerBase):
             unique_collector_devices[0] if len(unique_collector_devices) == 1 else unique_collector_devices
         )
         print(
-            f"[motrix.fastsac async] collector/learner training '{self._env_name}' learner={learner_device} "
+            f"[motrix.fastsac async] collector/learner training '{self._env_name}' learner={learner_devices[0]} "
             f"learner_replicas={num_learners} "
             + (f"learner_devices={[str(d) for d in learner_devices]} " if num_learners > 1 else "")
-            + f"collector_env=cpu collector_inference={collector_banner} num_collectors={num_collectors} "
+            + f"collector_env={list(dict.fromkeys(sim_devices))} collector_inference={collector_banner} "
+            f"num_collectors={num_collectors} "
             f"numa_nodes={numa_nodes} learner_numa_nodes={learner_numa_nodes} "
             f"num_envs={num_envs} iters={num_iterations} "
             f"from={resume_step} utd_mode={async_options.utd_mode}"
@@ -377,15 +391,7 @@ class Trainer(TrainerBase):
                     ],
                     "learner_cpus": topology.learners[rank].cpus if learner_numa_nodes else None,
                     "learner_numa_node": learner_numa_nodes[rank] if learner_numa_nodes else None,
-                    "final_stores": (
-                        [
-                            final_stores[index]
-                            for index in range(num_collectors)
-                            if topology.transition_channels[index].consumer_id == rank
-                        ]
-                        if final_stores is not None
-                        else None
-                    ),
+                    "final_obs_enabled": final_obs_enabled,
                 },
                 name="fastsac-async-learner" if num_learners == 1 else f"fastsac-async-learner-{rank}",
             )
@@ -396,6 +402,7 @@ class Trainer(TrainerBase):
                 target=run_collector_process,
                 kwargs={
                     "env_spec": self._env_spec,
+                    "sim_device": sim_devices[i],
                     "cfg": cfg,
                     "num_envs": env_shards[i],
                     "dims": dims,
@@ -416,7 +423,6 @@ class Trainer(TrainerBase):
                     "collector_device": topology.collectors[i].infer_device,
                     "run_dir": str(self._context.run_dir),
                     "handshake": handshake,
-                    "final_store": final_stores[i] if final_stores is not None else None,
                 },
                 name=f"fastsac-async-collector-{i}",
             )

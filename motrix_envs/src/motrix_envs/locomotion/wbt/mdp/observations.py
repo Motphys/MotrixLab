@@ -157,7 +157,7 @@ class DofPosRelObsCfg(ObservationTermCfg):
         if missing:
             raise ValueError(f"RobotCfg {robot_name!r} key pose is missing queried joints: {missing}.")
         reference = np.asarray([positions[name] for name in queried_joints], dtype=np.float32)
-        params = RelativePositionParams(torch.from_numpy(reference), float(self.noise.amplitude))
+        params = RelativePositionParams(torch.as_tensor(reference), float(self.noise.amplitude))
         return ObsTerm(reference.shape[0], dof_pos_rel_obs, params)
 
 
