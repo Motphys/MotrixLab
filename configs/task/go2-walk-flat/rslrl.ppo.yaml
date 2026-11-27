@@ -14,7 +14,7 @@ seed: 1
 checkpoint:
   interval: 100
 algo:
-  max_iterations: 1000
+  max_iterations: 2000
   obs_groups:
     actor:
       - policy
