@@ -1,0 +1,264 @@
+# Copyright Motphys Technology Co., Ltd. 2025, 2026
+# SPDX-License-Identifier: Apache-2.0
+
+"""Numerical migration contracts from the validated task-repo recipe:
+
+- WM loss scores with ``inc_norm`` but de-normalizes with ``out_norm``;
+  the graphed kernel matches the eager path loss and every parameter gradient.
+- Reference-action policies share one construction contract across
+  learner/collector/evaluator and keep the residual identity.
+- The policy LR schedule reproduces the validated trigger/ramp/anneal shape.
+"""
+
+import pytest
+import torch
+from _helpers import make_toy_task
+from _supermimic_toy import ToyEnvCfg
+from motrix_rl_supermimic.config import AgentCfg, SuperMimicCfg, TrainerCfg
+from motrix_rl_supermimic.imagined_task import ImaginedTask
+from motrix_rl_supermimic.networks import WorldModel
+from motrix_rl_supermimic.optim import policy_multiplier, trigger_decay
+from motrix_rl_supermimic.wm_graph import FlattenFullLoss
+from motrix_rl_supermimic.world_state import EuclideanState, WorldStateManager
+
+from motrix_env_core.config import configclass
+
+
+class _CaptureState(EuclideanState):
+    def capture(self, sim, out: torch.Tensor) -> None:
+        out.copy_(sim["state"])
+
+
+def _wm(seed: int = 13, *, structured: bool = False):
+    torch.manual_seed(seed)
+    codec = _CaptureState(size=5, error_scale=0.01)
+    world_state = WorldStateManager({"state": codec})
+    wm = WorldModel(world_state, context_dim=3, hidden=(16, 16, 16), structured=structured, action_dim=2)
+    with torch.no_grad():
+        wm.net[-1].weight.normal_(0, 0.001)
+        wm.out_norm.mean.normal_(0, 0.01)
+        wm.out_norm.var.uniform_(0.01, 0.03)
+        wm.inc_norm.mean.normal_(0, 0.03)
+        wm.inc_norm.var.uniform_(0.1, 0.2)
+    return wm, codec
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_wm_loss_uses_inc_stats_for_scoring_and_out_stats_for_prediction(structured):
+    wm, codec = _wm(structured=structured)
+
+    batch, window = 3, 2
+    initial = torch.randn(batch, codec.size)
+    actions = torch.randn(batch, window, 2)
+    xis = torch.randn(batch, window, 3)
+    targets = initial[:, None].repeat(1, window, 1)
+    mask = torch.tensor([[1.0, 1.0], [1.0, 0.0], [1.0, 1.0]])
+    floor = torch.full((codec.prediction_dim,), 0.001)
+
+    s = initial
+    predictions = []
+    for j in range(window):
+        s = wm.step(s, actions[:, j], xis[:, j])
+        predictions.append(s)
+    predicted = torch.stack(predictions, 1)
+    scale = torch.maximum(wm.inc_norm.std(), floor)
+    expected = ((wm.state_error(predicted, targets) / scale).square().mean(-1) * mask).sum() / batch
+    expected_grads = torch.autograd.grad(expected, tuple(wm.parameters()))
+
+    module = FlattenFullLoss(wm, floor, window, batch, normalize_context=lambda xi: xi)
+    module.sync_norms(floor)
+    actual = module(initial, actions, xis, targets, mask)
+    torch.testing.assert_close(actual, expected)
+    actual_grads = torch.autograd.grad(actual, tuple(wm.parameters()))
+    for a, e in zip(actual_grads, expected_grads):
+        torch.testing.assert_close(a, e)
+
+
+@configclass
+class _ReferenceEnvCfg(ToyEnvCfg):
+    def reference_action(self) -> torch.nn.Module:
+        module = torch.nn.Linear(1, 1, bias=False)
+        with torch.no_grad():
+            module.weight.fill_(1.0)
+        return module
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_reference_action_policy_contract(tmp_path, enabled: bool) -> None:
+    from motrix_rl_supermimic.learner import Learner
+    from motrix_rl_supermimic.networks import build_policy
+
+    cfg = SuperMimicCfg(agent=AgentCfg(hidden=16, pi_ref_skip=enabled))
+    env_cfg = _ReferenceEnvCfg(goal_frames=1)
+    task = ImaginedTask(env_cfg.for_imagined(), "cpu")
+    learner = Learner(cfg, task, 1, task.heads.dt, "cpu", tmp_path)
+    collector = build_policy(
+        cfg.agent,
+        obs_dim=task.heads.observation_dim,
+        goal_dim=task.heads.goal_dim,
+        action_dim=task.heads.action_dim,
+        device="cpu",
+        observation_spec=task.heads.observation_spec.policy,
+        reference_action=env_cfg.reference_action() if enabled else None,
+    )
+    collector.load_state_dict(learner.pi.state_dict())
+    assert (learner.pi.reference_action is not None) == enabled
+    assert (collector.reference_action is not None) == enabled
+    obs = torch.randn(3, 2, task.heads.observation_dim)
+    goal = torch.randn(3, task.heads.goal_dim)
+    torch.testing.assert_close(learner.pi(obs, goal), collector(obs, goal))
+    # A zero residual decoder leaves exactly the configured base action, or zero
+    # when reference actions are disabled on either construction path.
+    with torch.no_grad():
+        for policy in (learner.pi, collector):
+            policy.dec[-1].weight.zero_()
+            policy.dec[-1].bias.zero_()
+    expected = goal if enabled else torch.zeros_like(goal)
+    torch.testing.assert_close(learner.pi(obs, goal), expected)
+    torch.testing.assert_close(collector(obs, goal), expected)
+
+
+@pytest.mark.parametrize("source_reference", [False, True])
+def test_policy_checkpoint_requires_matching_reference_module(source_reference: bool) -> None:
+    from motrix_rl_supermimic.networks import Policy
+
+    cfg = _ReferenceEnvCfg()
+    source = Policy(4, 1, 1, hist=2, hidden=(8,), reference_action=cfg.reference_action() if source_reference else None)
+    target = Policy(4, 1, 1, hist=2, hidden=(8,), reference_action=None if source_reference else cfg.reference_action())
+    with pytest.raises(RuntimeError, match="reference_action.weight"):
+        target.load_state_dict(source.state_dict(), strict=True)
+
+
+def test_schedule_trigger_ramp_anneal_and_sticky_state():
+    cfg = TrainerCfg(
+        pi_lr_mult=4.0, lr_decay_ret=0.75, lr_decay_by=1400, lr_decay_len=300, pi_anneal_len=3000, pi_anneal_min=0.1
+    )
+    assert trigger_decay(cfg, 1000, 0.74, None) is None
+    assert trigger_decay(cfg, 1100, 0.75, None) == 1100
+    assert trigger_decay(cfg, 1400, 0.1, None) == 1400
+    assert trigger_decay(cfg, 2000, 0.9, 1100) == 1100
+    assert policy_multiplier(cfg, 1000, None) == 4.0
+    assert policy_multiplier(cfg, 1100, 1100) == 4.0
+    assert policy_multiplier(cfg, 1250, 1100) == pytest.approx(2.5)
+    assert policy_multiplier(cfg, 1400, 1100) == 1.0
+    assert policy_multiplier(cfg, 2900, 1100) == pytest.approx(0.55)
+    assert policy_multiplier(cfg, 4400, 1100) == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("zero_rows", [(), (0,), (3,), (1, 5)])
+def test_survival_cumprod_matches_aten_values_and_vjp(zero_rows):
+    """Graph-safe survival product must be bit-equal to cumprod in value and VJP."""
+    from motrix_rl_supermimic.survival import SurvivalCumprod
+
+    generator = torch.Generator().manual_seed(31)
+    x = torch.rand(8, 5, generator=generator)
+    for row in zero_rows:
+        x[row] = 0
+    a = x.clone().requires_grad_(True)
+    b = x.clone().requires_grad_(True)
+    weight = torch.randn(x.shape, generator=generator)
+    expected = torch.cumprod(a, 0)
+    actual = SurvivalCumprod.apply(b)
+    assert torch.equal(actual, expected)
+    (da,) = torch.autograd.grad(expected, a, weight)
+    (db,) = torch.autograd.grad(actual, b, weight)
+    assert torch.equal(db.contiguous().view(torch.uint8), da.contiguous().view(torch.uint8))
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("zero_rows", [(), (0,), (1, 3)])
+def test_survival_backward_is_cuda_graph_capturable(zero_rows):
+    """Policy imagination requires capture-safe gradients, including exact zeros."""
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    from motrix_rl_supermimic.survival import SurvivalCumprod
+
+    x = torch.rand(4, 8, device="cuda")
+    for row in zero_rows:
+        x[row] = 1.0  # survival input is 1 - x
+    x.requires_grad_(True)
+    weight = torch.randn(4, 8, device="cuda")
+    expected = torch.autograd.grad(torch.cumprod(1 - x, dim=0), x, weight)[0]
+    stream = torch.cuda.Stream()
+    stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(stream):
+        y = SurvivalCumprod.apply(1 - x)
+        torch.autograd.grad(y, [x], weight, allow_unused=True)
+    torch.cuda.current_stream().wait_stream(stream)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        y = SurvivalCumprod.apply(1 - x)
+        actual = torch.autograd.grad(y, x, weight)[0]
+    graph.replay()
+    torch.cuda.synchronize()
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+def test_norm_stats_view_publishes_real_statistics():
+    """Regression: RunningNorm lacked the transport's _mean/_std/_var/_var
+    attribute contract, so publish() silently shipped empty normalizer stats
+    and the collector ran new weights under initial normalization."""
+    from motrix_rl_supermimic.networks import NormStatsView
+
+    from motrix_rl.transport.inference_bundle import InferenceBundleSpec, ModuleSection, NormalizerSection
+    from motrix_rl.transport.weight_channel import HostWeightSender, WeightChannelShared
+
+    spec = InferenceBundleSpec(
+        modules=(ModuleSection("policy", 10),),
+        normalizers=(NormalizerSection("obs_norm", 6),),
+    )
+    shared = WeightChannelShared(spec)
+    sender = HostWeightSender(shared)
+    norm = None
+    from motrix_rl_supermimic.networks import RunningNorm
+
+    norm = RunningNorm(6)
+    with torch.no_grad():
+        norm.mean.fill_(0.5)
+        norm.var.fill_(2.0)
+        norm.count.fill_(123)
+
+    class _Tiny(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.p = torch.nn.Parameter(torch.zeros(10))
+
+    sender.publish({"policy": _Tiny()}, {"obs_norm": NormStatsView(norm)})
+    assert float(shared.count[1][0]) == 123
+    assert float(shared.mean[1][0, 0]) == 0.5
+    assert float(shared.var[1][0, 0]) == 2.0
+
+
+@pytest.mark.parametrize("transport", ["host", pytest.param("cuda", marks=pytest.mark.integration)])
+def test_transition_fields_roundtrip(transport):
+    """Algorithm transition layout and values survive either transport endpoint."""
+    from motrix_rl_supermimic.replay import transition_schema
+
+    from motrix_rl.transport.ring import HostTransitionRing, RingCursors
+
+    task = make_toy_task()
+    schema = transition_schema(
+        state_dim=task.world_state.size, context_dim=task.world_context.size, action_dim=task.heads.action_dim
+    )
+    if transport == "cuda":
+        if not torch.cuda.is_available():
+            pytest.skip("requires CUDA")
+        from motrix_rl.transport.gpu_ipc_ring import GpuIpcTransitionRing
+
+        cursors = RingCursors()
+        slots = torch.zeros(2, 2, schema.feature_width, device="cuda")
+        producer = GpuIpcTransitionRing(cursors, slots, schema, 2, 2)
+        consumer = GpuIpcTransitionRing(cursors, slots, schema, 2, 2)
+    else:
+        producer = consumer = HostTransitionRing(schema, 2, 2)
+    row = {field.name: torch.zeros(schema.slot_shape(field, 2), dtype=field.dtype) for field in schema.fields}
+    row["s"].fill_(3.0)
+    assert producer.push(row)
+    if transport == "cuda":
+        torch.cuda.synchronize()
+        assert producer.has_next()  # publish completed producer writes
+    count, views = consumer.read_span()
+    assert count == 1
+    for name, expected in row.items():
+        torch.testing.assert_close(views[name][0].cpu(), expected.to(views[name].dtype))
+    consumer.commit_reads(count)

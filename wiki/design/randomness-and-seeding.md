@@ -22,6 +22,23 @@ out += (2 * ctx.rand.uniform_like(out) - 1) * amplitude
 
 构造期 `BuildContext.seed` 保留现有语义：环境未指定 seed 时传入 `1`，供 action 等构造期 generator 使用。它与运行期 `ctx.rand` 的默认流不同，不代表默认 Torch RNG 的隐式播种。
 
+## SuperMimic 的组件随机所有权
+
+SuperMimic 在 provider 层管理训练根 seed，不改变上述 Manager 契约。`resolve_seed(None)` 通过系统熵解析一次根 seed；`derive_seed(root, purpose, worker_id)` 使用固定域标识和 SHA-256 派生 Torch 可用的 63-bit 非负整数，不依赖对象构造顺序或 Python 内置 `hash()`。实现见 [randomness](../../motrix_rl_supermimic/src/motrix_rl_supermimic/randomness.py)。
+
+- learner 在训练入口用 `derive_seed(root, "learner")` 初始化默认 Torch RNG。
+- collector 使用 `derive_seed(root, "environment", worker_id=0)` 作为环境构造 seed。默认 Torch RNG 的播种仍须由 collector 入口负责，不能依赖 ManagerEnv 构造函数；环境 term 之间仍共享默认流。
+- collector exploration 持有独立 CPU `torch.Generator`，用 `derive_seed(root, "exploration", worker_id=0)` 播种。policy action 移到 CPU 后再生成探索噪声，环境 reset/观测随机消耗不推进该 generator。
+- world model、policy（含 reference action factory）、critic 分别在 `model/world_model`、`model/policy`、`model/critic` 初始化作用域内构造。`torch.random.fork_rng` 保存并恢复 CPU 和所有可见 CUDA 默认 RNG；模型 device transfer 在作用域外。目标设备是 CUDA 不意味着 Linear 参数初始化消耗 CUDA RNG。
+
+隔离只发生在已有组件边界，不在数值 kernel 或 CUDA Graph 中切换 Generator；环境各 term 与 learner 内部采样/增强仍各自共享所在进程、设备的默认流。它不承诺每行 reset 独立流，也不承诺 learner 内所有用途互相隔离。实现入口见 [trainer](../../motrix_rl_supermimic/src/motrix_rl_supermimic/trainer.py) 和 [collector](../../motrix_rl_supermimic/src/motrix_rl_supermimic/collector.py)。
+
+### Warm resume 边界
+
+SuperMimic learner checkpoint 保存并恢复自身的 CPU/CUDA 默认 RNG、resolved root seed、模型、优化器和训练控制状态；collector 与环境重新初始化，exploration Generator 从保存的 root 派生 seed 重新开始，不恢复已推进的 collector Generator 状态。replay、simulator、policy history 和 reset 采样统计不保存，因此恢复不具备轨迹精确性。resume/play 在模型或 reference factory 构造前读取 checkpoint root；没有 root 字段的 checkpoint 使用本次启动解析的 root。实现见 [learner](../../motrix_rl_supermimic/src/motrix_rl_supermimic/learner.py)。
+
+若要续接远端 collector 随机流，需要独立的控制快照通道和明确的异步采样位置；不能由 learner 伪造远端状态，也不逐 transition 将 RNG 状态写入 ring。当前实现保持 warm resume 边界。
+
 ## 终态 Preview 与随机消耗
 
 Task evaluate、command/reset、正常 observe 与终态 observation preview 均通过当前 context 的随机入口消费默认流；observe 不替换独立 stream。终态 preview 不备份或恢复 RNG，额外抽样可以改变同设备上后续正常观测噪声以及 command/reset 的随机样本。不承诺 preview 与正常观测噪声相同或完全独立。

@@ -12,9 +12,10 @@ readme = "README.md"
 license = "Apache-2.0"
 dependencies = [
     "motrix-rl==0.5.0",
+    "motrix-rl-supermimic==0.5.0",
     "gymnasium==1.1.1",
     "numpy>=1.26",
-    "torch>=2.7,<3",
+    "torch>=2.9,<3",
     "motrix-bench==0.5.0",
 ]
 
