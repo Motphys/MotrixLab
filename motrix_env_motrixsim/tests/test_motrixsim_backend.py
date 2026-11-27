@@ -179,6 +179,26 @@ def test_dof_position_limits_follow_global_dof_position_order():
         np.testing.assert_array_equal(upper[position_slice], limits[:, 1])
 
 
+def test_finger_zero_depth_contact_steps_without_solver_failure() -> None:
+    from motrix_env_core import registry
+
+    cfg = registry.make_env_config("dm-finger-turn-easy")
+    model = MotrixSimSceneCompiler().compile(cfg.scene, cfg.sim)
+    data = mtx.SceneData(model, batch=[1])
+    # This captured state reaches a zero-depth contact on the second substep.
+    qpos = np.array([[0.29978949, -0.8047815, 0.09507811, 0.27580708, 0, 0.2943909, 0, 0, 0, 1]], dtype=np.float32)
+    qvel = np.array([[4.423561, 1.3571916, 1.3083084e-5, 0, 0, 0, 0, 0, 0]], dtype=np.float32)
+    data.reset(model, qpos, qvel)
+    data.actuator_ctrls = np.array([[0.9125488, -0.9831114]], dtype=np.float32)
+    status = np.empty(1, dtype=np.int32)
+
+    model.step_n(data, cfg.sim_substeps, result=status)
+
+    assert status[0] == 0
+    assert np.isfinite(data.dof_pos).all()
+    assert np.isfinite(data.dof_vel).all()
+
+
 def test_geom_specs_include_only_declared_names_in_order():
     from motrix_env_core import registry
 
