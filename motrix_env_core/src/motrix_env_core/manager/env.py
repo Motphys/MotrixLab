@@ -213,6 +213,11 @@ class ManagerEnv(ArrayEnv[EnvCfgType]):
         from motrix_env_core.sim.registry import create_sim_backend, default_sim_backend_name
 
         factory = create_sim_backend(backend or cfg.backend or default_sim_backend_name())
+        if not factory.capabilities.env_creation:
+            raise ValueError(
+                f"Backend {factory.name!r} cannot create a DirectEnv or ManagerEnv. "
+                f"{factory.capabilities.env_creation_unavailable_reason}"
+            )
         # Construction compiles the scene inside the backend: no compiled
         # artifact crosses the boundary.
         render = RenderConfig(headless=headless, record=record)

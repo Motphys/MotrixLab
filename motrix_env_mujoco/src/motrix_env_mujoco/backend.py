@@ -8,7 +8,7 @@ from __future__ import annotations
 import torch
 
 from motrix_env_core.config.sim import SimCfg
-from motrix_env_core.sim.backend import SimBackend
+from motrix_env_core.sim.backend import SimBackend, SimBackendCapabilities
 from motrix_env_core.sim.model import SimModelCompiler
 from motrix_env_core.sim.read import PhysicsReadProgram
 from motrix_env_mujoco.compiler import MuJoCoSceneCompiler
@@ -23,6 +23,13 @@ class MuJoCoSimBackend(SimBackend):
     """
 
     name = "mujoco"
+    capabilities = SimBackendCapabilities(
+        env_creation=False,
+        env_creation_unavailable_reason=(
+            "MuJoCo is currently used for sim2sim deployment and does not yet support "
+            "creating environments for training."
+        ),
+    )
 
     _GAP = "MuJoCo only compiles scene models; it provides no live simulation."
 

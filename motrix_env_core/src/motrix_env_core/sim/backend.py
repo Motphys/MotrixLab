@@ -15,6 +15,7 @@ import abc
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 import torch
 
@@ -23,6 +24,14 @@ from motrix_env_core.config.scene import SceneCfg
 from motrix_env_core.sim.model import ModelQuery, SimModel, SimModelCompiler
 from motrix_env_core.sim.read import PhysicsReadProgram
 from motrix_env_core.sim.write import SimWrite, SimWriteCompiler, WriteProgram
+
+
+@dataclass(frozen=True)
+class SimBackendCapabilities:
+    """Capabilities exposed by a simulator backend to environment frontends."""
+
+    env_creation: bool = True
+    env_creation_unavailable_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -104,6 +113,7 @@ class SimBackend(abc.ABC):
     """
 
     name: str
+    capabilities: ClassVar[SimBackendCapabilities] = SimBackendCapabilities()
 
     def __init__(self, scene: SceneCfg, sim: SimCfg, num_envs: int, *, render: RenderConfig | None = None) -> None:
         """Compile ``scene`` and allocate ``num_envs`` batched data rows.
