@@ -127,7 +127,7 @@ class HostTransitionRing:
         num_envs: int,
         cursors: RingCursors | None = None,
         payload_store: SlotPayloadStore | None = None,
-    ):
+    ) -> None:
         if capacity < 1:
             raise ValueError(f"ring_capacity must be >= 1, got {capacity}")
         self.schema = schema

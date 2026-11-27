@@ -18,7 +18,8 @@ MotrixLab 是构建在 MotrixSim 仿真后端之上的强化学习框架，提�
 - `motrix_robots`：可复用机器人配置、默认姿态与模型资产；仅依赖 core。框架代码从定义模块导入模型类，例如 `motrix_robots.unitree`
 - `motrix_envs`：内置环境与任务资产
 - `motrix_rl`：RL 控制平面、训练编排与稳定 contracts（runner、run/checkpoint、backend 选择、`motrix_rl.frameworks` discovery、provider/trainer 接口）
-- `motrix_rl_builtin`：内置 Motrix FastSAC provider 插件
+- `motrix_rl_builtin`：内置 Motrix 算法集成插件，统一注册 FastSAC 与 SuperMimic provider
+- `motrix_rl_supermimic`：独立的 SuperMimic world-model MBRL 实现与 provider，由 builtin 集成注册
 - `motrix_rl_skrl`：SKRL PPO provider 插件（Torch 必需，额外 JAX runtime 可选）
 - `motrix_rl_rslrl`：RSLRL PPO provider 插件（Torch）
 - `motrix_deploy`：框架无关的 artifact、运行时契约与部署 CLI
