@@ -20,7 +20,7 @@ from motrix_env_core.direct.env import DirectEnv, DirectEnvCfg
 from motrix_env_core.manager.env import ManagerBasedEnvCfg, ManagerEnv
 from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
 from motrix_env_core.sim import ModelQuery
-from motrix_env_core.sim.backend import RecordConfig, RenderConfig, SimBackend
+from motrix_env_core.sim.backend import RecordConfig, RenderConfig, SimBackend, SimBackendCapabilities
 from motrix_env_core.sim.model import SimModel
 from motrix_env_core.sim.read import PhysicsReadProgram
 from motrix_env_core.sim.registry import register_sim_backend
@@ -251,16 +251,68 @@ def test_render_config_reaches_backend_construction(workflow, headless, record, 
     cfg_type = DirectEnvCfg if workflow == "direct" else ManagerBasedEnvCfg
     cfg = cfg_type(scene=SceneCfg())
 
-    def factory(scene, sim, num_envs, *, render: RenderConfig):
-        assert render == RenderConfig(headless=headless, record=record)
-        assert render.record is record
-        assert scene is cfg.scene
-        raise BackendConstructionReached
+    class RenderBackend(_FakeRegistryBackend):
+        def __init__(self, scene, sim, num_envs, *, render: RenderConfig):
+            assert render == RenderConfig(headless=headless, record=record)
+            assert render.record is record
+            assert scene is cfg.scene
+            raise BackendConstructionReached
+
+    factory = RenderBackend
 
     monkeypatch.setattr(sim_registry, "create_sim_backend", lambda name: factory)
     env_type = DirectRenderEnv if workflow == "direct" else ManagerEnv
     with pytest.raises(BackendConstructionReached):
         env_type(cfg, backend="render-test", headless=headless, record=record)
+
+
+@pytest.mark.parametrize("workflow", ["direct", "manager"])
+@pytest.mark.parametrize("headless", [False, True])
+@pytest.mark.parametrize("use_spec", [False, True], ids=["registry", "build-spec"])
+def test_environment_creation_rejects_compile_only_backends(workflow, headless, use_spec, monkeypatch):
+    """Reject unsupported runtime selection before constructing or compiling a backend."""
+    from motrix_env_core.sim import registry as sim_registry
+
+    class CompileOnlyBackend(_FakeRegistryBackend):
+        name = "compile-only"
+        capabilities = SimBackendCapabilities(
+            env_creation=False,
+            env_creation_unavailable_reason="This backend only supports scene compilation.",
+        )
+
+        def __init__(self, scene: SceneCfg, sim, num_envs: int) -> None:
+            pytest.fail("Compile-only backend must not be constructed by an environment")
+
+    monkeypatch.setitem(sim_registry._sim_backends, "compile-only", lambda: CompileOnlyBackend)
+    env_name = "core-test-compile-only-env"
+    cfg_type = DirectEnvCfg if workflow == "direct" else ManagerBasedEnvCfg
+    env_base = DirectEnv if workflow == "direct" else ManagerEnv
+
+    @registry.envcfg(env_name)
+    @configclass
+    class RuntimeEnvCfg(cfg_type):
+        scene: SceneCfg = SceneCfg()
+
+    @registry.env(env_name)
+    class RuntimeEnv(env_base):
+        observation_spec = property(lambda self: None)
+        action_space = property(lambda self: None)
+
+        def apply_action(self, actions, state):
+            pass
+
+        def compute_transition(self, state):
+            pass
+
+        def reset(self, env_ids):
+            pass
+
+    with pytest.raises(ValueError, match="Backend 'compile-only'.*cannot create a DirectEnv or ManagerEnv") as exc_info:
+        if use_spec:
+            registry.resolve(env_name, sim="compile-only").make(headless=headless)
+        else:
+            registry.make(env_name, sim="compile-only", headless=headless)
+    assert CompileOnlyBackend.capabilities.env_creation_unavailable_reason in str(exc_info.value)
 
 
 def test_custom_environment_can_be_registered_and_created_without_builtins():

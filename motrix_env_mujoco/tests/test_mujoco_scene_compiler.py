@@ -45,6 +45,7 @@ def test_mujoco_backend_is_registered_and_loaded_lazily():
     assert isinstance(MuJoCoSceneCompiler().compile(SceneCfg(), SimCfg()), mj.MjModel)
 
     # Compile-only backend: construction compiles the scene, behavior gaps loudly.
+    assert not MuJoCoSimBackend.capabilities.env_creation
     backend = MuJoCoSimBackend(SceneCfg(), SimCfg(), 1)
     with pytest.raises(NotImplementedError, match="no live simulation"):
         backend.compile_reads({})
