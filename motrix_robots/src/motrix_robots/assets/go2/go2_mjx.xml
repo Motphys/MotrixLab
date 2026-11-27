@@ -13,7 +13,7 @@
   <default>
     <default class="go2">
       <geom condim="1"/>
-      <joint axis="0 1 0" damping="2" armature="0.01"/>
+      <joint axis="0 1 0" armature="0.01"/>
       <position forcerange="-24 24" kp="35" kv="0.5"/>
 
       <default class="abduction">

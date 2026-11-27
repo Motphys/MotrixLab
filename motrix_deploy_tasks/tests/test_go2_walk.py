@@ -599,7 +599,7 @@ def test_previous_action_and_trot_phase_advance_after_first_tick() -> None:
     np.testing.assert_allclose(observation[45:49], [0.04, 0.54, 0.54, 0.04])
 
 
-def test_gait_phase_restarts_after_standing_and_reset() -> None:
+def test_gait_phase_starts_from_full_support_after_standing_and_reset() -> None:
     robot = _robot()
     state = _state(robot)
     task = Go2WalkPolicyProcessor(_task_spec(), robot)
@@ -607,18 +607,19 @@ def test_gait_phase_restarts_after_standing_and_reset() -> None:
     standing = [0.0, 0.0, 0.0]
     task.reset(state, _context(0, 0.0, moving))
 
-    phases = [
-        task.build_observation(state, _context(step, step * 0.02, command))[45:49]
-        for step, command in enumerate((moving, moving, standing, standing, moving, moving))
-    ]
-    np.testing.assert_allclose(phases[0], 0.0)
-    np.testing.assert_allclose(phases[1], [0.04, 0.54, 0.54, 0.04])
-    np.testing.assert_allclose(phases[2:4], 0.0)
-    np.testing.assert_allclose(phases[4], phases[1])
-    np.testing.assert_allclose(phases[5], [0.08, 0.58, 0.58, 0.08])
+    first = task.build_observation(state, _context(0, 0.0, moving))[45:49]
+    second = task.build_observation(state, _context(1, 0.02, moving))[45:49]
+    stand = task.build_observation(state, _context(2, 0.04, standing))[45:49]
+    resumed = task.build_observation(state, _context(3, 0.06, moving))[45:49]
+
+    np.testing.assert_allclose(first, 0.0)
+    np.testing.assert_allclose(second, [0.04, 0.54, 0.54, 0.04])
+    np.testing.assert_allclose(stand, 0.0)
+    # Stand and walk share phase zero so startup begins from full support.
+    np.testing.assert_allclose(resumed, [0.04, 0.54, 0.54, 0.04])
 
     task.reset(state, _context(0, 0.0, moving))
-    np.testing.assert_allclose(task.build_observation(state, _context(1, 0.02, moving))[45:49], phases[1])
+    np.testing.assert_allclose(task.build_observation(state, _context(1, 0.02, moving))[45:49], second)
 
 
 def test_standing_command_freezes_deployment_gait_phase() -> None:

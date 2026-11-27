@@ -167,7 +167,7 @@ class UnitreeGo2Robot(QuadrupedRobotCfg):
             "RR_calf_joint",
         ],
         poses={
-            "default": [0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 1.0, -1.5, 0.0, 1.0, -1.5],
+            "default": [0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 0.8, -1.5],
             "lie_down": [
                 0.05175,
                 1.238835,
