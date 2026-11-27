@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 
 from motrix_env_core import registry
 from motrix_env_core.mdp.action_space import joint_position_action_space
@@ -18,8 +19,8 @@ def test_joint_position_action_space_uses_symmetric_position_ranges():
     ]
     space = joint_position_action_space(
         actuators,
-        default_angles=np.asarray([-0.25, 0.5], dtype=np.float32),
-        action_scales=np.asarray([0.25, 0.5], dtype=np.float32),
+        default_angles=torch.tensor([-0.25, 0.5], dtype=torch.float32),
+        action_scales=torch.tensor([0.25, 0.5], dtype=torch.float32),
     )
 
     np.testing.assert_allclose(space.low, [-13.0, -2.0])
@@ -36,9 +37,9 @@ def test_joint_position_action_space_subset_indices_keep_their_own_bounds():
     # first and motor_0's narrower bound second, without re-indexing rows.
     space = joint_position_action_space(
         actuators,
-        default_angles=np.zeros(2, dtype=np.float32),
+        default_angles=torch.zeros(2, dtype=torch.float32),
         action_scales=1.0,
-        actuator_indices=np.asarray([2, 0], dtype=np.int64),
+        actuator_indices=torch.tensor([2, 0], dtype=torch.int64),
     )
 
     np.testing.assert_allclose(space.low, [-4.0, -1.0])
@@ -64,13 +65,15 @@ def test_quadruped_action_space_maps_to_actuator_control_limits(env_name):
     env.initialize()
 
     state = env.state
-    state = env.apply_action(np.zeros((2, env._num_action), dtype=np.float32), state)
+    env.apply_action(torch.zeros((2, env._num_action), dtype=torch.float32), state)
     env.sim_data.execute()
-    np.testing.assert_allclose(
-        env.sim_data["actuator_ctrls"], np.broadcast_to(env.default_angles, (2, env._num_action))
+    torch.testing.assert_close(
+        env.sim_data["actuator_ctrls"], env.default_angles.expand(2, env._num_action), rtol=1e-7, atol=0
     )
 
-    target_low = env.default_angles + action_scale * env.action_space.low
-    target_high = env.default_angles + action_scale * env.action_space.high
-    np.testing.assert_allclose(target_low, control_ranges[:, 0])
-    np.testing.assert_allclose(target_high, control_ranges[:, 1])
+    action_low = torch.as_tensor(env.action_space.low)
+    action_high = torch.as_tensor(env.action_space.high)
+    target_low = env.default_angles + action_scale * action_low
+    target_high = env.default_angles + action_scale * action_high
+    torch.testing.assert_close(target_low, torch.as_tensor(control_ranges[:, 0]), rtol=1e-7, atol=0)
+    torch.testing.assert_close(target_high, torch.as_tensor(control_ranges[:, 1]), rtol=1e-7, atol=0)
