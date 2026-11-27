@@ -124,11 +124,6 @@ class SuperMimicEnv(ManagerEnv):
     def world_context(self) -> WorldContext:
         return self._world_context
 
-    @property
-    def device(self) -> torch.device:
-        """Device of the initialized Manager runtime and its action tensors."""
-        return self._compiled_manager_program.context.env_id.device
-
     def _init_owned_state(self) -> None:
         super()._init_owned_state()
         self._recorder = TransitionRecorder.create(
