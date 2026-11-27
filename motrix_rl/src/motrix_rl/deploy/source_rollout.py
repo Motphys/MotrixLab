@@ -7,6 +7,7 @@ import hashlib
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from motrix_deploy.artifact import read_artifact
 from motrix_deploy.policy import OnnxPolicy
@@ -37,7 +38,8 @@ def validate_motrixsim_source_rollout(
     state = env.initialize()
     # Walk-flavor tasks keep their velocity commands in the episode-scoped
     # ``_commands`` buffer; pin row 0 so the rollout drives a fixed command.
-    env._commands[0] = command
+    command_tensor = torch.from_numpy(command)
+    env._commands[0].copy_(command_tensor)
     observation = np.asarray(state.obs.policy[0], dtype=np.float32)
     reset_observation = observation.tolist()
     first_outputs: list[list[float]] = []
@@ -52,12 +54,12 @@ def validate_motrixsim_source_rollout(
         trace.update(action.tobytes(order="C"))
         # The deployment runtime intentionally returns immutable arrays, while the direct frontend keeps
         # the action in mutable episode state for partial resets.
-        state = env.step(action[None, :].copy())
+        state = env.step(torch.from_numpy(action[None, :].copy()))
         completed += 1
         if bool(state.terminated[0]):
             exit_reason = "terminated"
             break
-        env._commands[0] = command
+        env._commands[0].copy_(command_tensor)
         observation = np.asarray(state.obs.policy[0], dtype=np.float32)
         if not np.isfinite(observation).all():
             exit_reason = "invalid_observation"

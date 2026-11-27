@@ -31,7 +31,7 @@ _MANIPULATION_ENVS = [
 ]
 
 
-def _random_actions(env, rng: np.random.Generator) -> np.ndarray:
+def _random_actions(env, rng: np.random.Generator) -> torch.Tensor:
     low, high = env.action_space.low, env.action_space.high
     finite = np.isfinite(low) & np.isfinite(high)
     shape = (env.num_envs, *env.action_space.shape)
@@ -86,9 +86,7 @@ def test_compute_transition_executes_once_and_never_touches_obs(env_name: str) -
 
     state = env.state
     obs_before = state.obs.policy.clone()
-    reward_terms_before = {
-        key: np.copy(value) if isinstance(value, np.ndarray) else value for key, value in state.reward_terms.items()
-    }
+    reward_terms_before = {key: value.clone() for key, value in state.reward_terms.items()}
 
     calls = _spy_execute(env)
     env.compute_transition(state)
@@ -101,11 +99,11 @@ def test_compute_transition_executes_once_and_never_touches_obs(env_name: str) -
     assert transitioned.reward.shape == (num_envs,)
     assert transitioned.terminated.shape == (num_envs,)
     assert transitioned.obs is state.obs
-    np.testing.assert_array_equal(transitioned.obs.policy, obs_before)
+    torch.testing.assert_close(transitioned.obs.policy, obs_before, rtol=0, atol=0)
     # Reward terms may be rebuilt, but pre-existing entries keep their shape.
     for key, value in reward_terms_before.items():
-        if isinstance(value, np.ndarray) and key in transitioned.reward_terms:
-            assert transitioned.reward_terms[key] is value or transitioned.reward_terms[key].shape == value.shape
+        if key in transitioned.reward_terms:
+            assert transitioned.reward_terms[key].shape == value.shape
 
 
 @pytest.mark.parametrize("env_name", _MANIPULATION_ENVS)
@@ -119,9 +117,7 @@ def test_compute_observation_reads_cache_without_executing(env_name: str) -> Non
     state = env.state
     reward_before = state.reward.clone()
     terminated_before = state.terminated.clone()
-    reward_terms_before = {
-        key: np.copy(value) if isinstance(value, np.ndarray) else value for key, value in state.reward_terms.items()
-    }
+    reward_terms_before = {key: value.clone() for key, value in state.reward_terms.items()}
 
     calls = _spy_execute(env)
     env.compute_observation(state)
@@ -129,19 +125,16 @@ def test_compute_observation_reads_cache_without_executing(env_name: str) -> Non
 
     # Observation must be served purely from cache.
     assert calls == []
-    # step() normalizes obs to EnvObs; a raw compute_observation call may return
-    # either the dataclass or the bare policy array.
-    obs = observed.obs.policy if isinstance(observed.obs, EnvObs) else observed.obs
+    obs = observed.obs.policy
     assert obs.shape == (num_envs, *env.observation_spec.policy.space.shape)
-    assert not np.isnan(obs).any()
+    assert not torch.isnan(obs).any()
     # Reward / termination / reward terms must not be modified by observation.
-    np.testing.assert_array_equal(observed.reward, reward_before)
-    np.testing.assert_array_equal(observed.terminated, terminated_before)
+    torch.testing.assert_close(observed.reward, reward_before, rtol=0, atol=0)
+    torch.testing.assert_close(observed.terminated, terminated_before, rtol=0, atol=0)
     assert observed.reward_terms is state.reward_terms
     for key, value in reward_terms_before.items():
         assert key in observed.reward_terms
-        if isinstance(value, np.ndarray):
-            np.testing.assert_array_equal(observed.reward_terms[key], value)
+        torch.testing.assert_close(observed.reward_terms[key], value, rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("env_name", _MANIPULATION_ENVS)
@@ -160,7 +153,7 @@ def test_reset_only_writes_reset_state(env_name: str) -> None:
     assert result is None
     # Reset writes simulator rows (and refreshes their cache) but must not
     # touch the published observation batch.
-    np.testing.assert_array_equal(env.state.obs.policy, obs_before)
+    torch.testing.assert_close(env.state.obs.policy, obs_before, rtol=0, atol=0)
 
 
 def test_rm65_open_cabinet_arm_randomization_fallbacks_use_scalar_config() -> None:
@@ -175,7 +168,27 @@ def test_rm65_open_cabinet_arm_randomization_fallbacks_use_scalar_config() -> No
     env._arm_speed_acc_randomization_enabled = False
     env.initialize()
     env.reset(torch.arange(3, dtype=torch.long))
-    np.testing.assert_array_equal(env._arm_action_delay_steps_per_env, env._arm_action_delay_steps)
-    np.testing.assert_allclose(env._arm_actuator_lag_alpha_per_env, env._arm_actuator_lag_alpha)
-    np.testing.assert_allclose(env._arm_max_step_per_env, env._arm_max_step)
-    np.testing.assert_allclose(env._arm_max_acc_step_per_env, env._arm_max_acc_step)
+    torch.testing.assert_close(
+        env._arm_action_delay_steps_per_env,
+        torch.full_like(env._arm_action_delay_steps_per_env, env._arm_action_delay_steps),
+        rtol=0,
+        atol=0,
+    )
+    torch.testing.assert_close(
+        env._arm_actuator_lag_alpha_per_env,
+        torch.full_like(env._arm_actuator_lag_alpha_per_env, env._arm_actuator_lag_alpha),
+        rtol=1e-7,
+        atol=0,
+    )
+    torch.testing.assert_close(
+        env._arm_max_step_per_env,
+        torch.full_like(env._arm_max_step_per_env, env._arm_max_step),
+        rtol=1e-7,
+        atol=0,
+    )
+    torch.testing.assert_close(
+        env._arm_max_acc_step_per_env,
+        torch.full_like(env._arm_max_acc_step_per_env, env._arm_max_acc_step),
+        rtol=1e-7,
+        atol=0,
+    )

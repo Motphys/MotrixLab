@@ -24,13 +24,13 @@ from motrix_env_core import registry
 _RUNNER = """
 import sys
 
-import numpy as np
+import torch
 
 from motrix_env_core import registry
 
 env = registry.make(sys.argv[1], num_envs=int(sys.argv[2]))
 action_space = env.action_space
-action = np.zeros((env.num_envs, *action_space.shape), dtype=action_space.dtype)
+action = torch.zeros((env.num_envs, *action_space.shape), dtype=torch.float32)
 for _ in range(10):
     env.step(action)
 """
