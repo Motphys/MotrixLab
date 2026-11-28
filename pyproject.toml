@@ -74,6 +74,7 @@ members = [
     "motrix_rl_builtin",
     "motrix_rl_skrl",
     "motrix_rl_rslrl",
+    "motrix_rl_appo",
     "motrix_bench",
     "motrix_rl_supermimic",
 ]
@@ -110,6 +111,7 @@ motrix-rl-builtin = { workspace = true }
 motrix-rl-supermimic = { workspace = true }
 motrix-rl-skrl = { workspace = true }
 motrix-rl-rslrl = { workspace = true }
+motrix-rl-appo = { workspace = true }
 motrix-bench = { workspace = true }
 
 [tool.commitizen]

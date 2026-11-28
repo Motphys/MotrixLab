@@ -1,0 +1,24 @@
+# @package _global_
+# Same environment count, rollout length and network capacity as rslrl.ppo.
+defaults:
+  - /algo_base@algo: motrix.appo
+  - _self_
+task:
+  env: go2-walk-flat
+  rllib: motrix
+  algo: appo
+  train_backend: null
+num_envs: 1024
+play_num_envs: 16
+seed: 1
+checkpoint:
+  interval: 100
+algo:
+  rollout_steps: 24
+  max_iterations: 2000
+  algorithm:
+    execution: cuda_graph
+    fused_optimizer: true
+    learning_rate: 0.0003
+    desired_kl: 0.01
+    entropy_coef: 0.001

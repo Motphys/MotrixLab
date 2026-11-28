@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from motrix_rl_appo.config import AppoCfg
+from motrix_rl_appo.provider import AppoProvider
 from motrix_rl_builtin.fastsac.config import FastSacCfg
 from motrix_rl_builtin.fastsac.provider import FastSacProvider
 from motrix_rl_supermimic.config import SuperMimicCfg
@@ -12,7 +14,10 @@ from motrix_rl import frameworks
 
 @pytest.mark.integration
 def test_builtin_plugin_registers_algorithms():
-    assert frameworks.supported_agents("motrix") == ("fastsac", "supermimic")
+    assert frameworks.supported_agents("motrix") == ("appo", "fastsac", "supermimic")
+    assert frameworks.get_config_type("motrix", "appo") is AppoCfg
+    assert frameworks.supported_train_backends("motrix", "appo") == ("torch",)
+    assert isinstance(frameworks.get_agent_provider("motrix", "appo", "torch"), AppoProvider)
     assert frameworks.get_config_type("motrix", "fastsac") is FastSacCfg
     assert frameworks.supported_train_backends("motrix", "fastsac") == ("torch",)
     assert isinstance(frameworks.get_agent_provider("motrix", "fastsac", "torch"), FastSacProvider)

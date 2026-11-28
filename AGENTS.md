@@ -18,10 +18,11 @@ MotrixLab 是构建在 MotrixSim 仿真后端之上的强化学习框架，提�
 - `motrix_robots`：可复用机器人配置、默认姿态与模型资产；仅依赖 core。框架代码从定义模块导入模型类，例如 `motrix_robots.unitree`
 - `motrix_envs`：内置环境与任务资产
 - `motrix_rl`：RL 控制平面、训练编排与稳定 contracts（runner、run/checkpoint、backend 选择、`motrix_rl.frameworks` discovery、provider/trainer 接口）
-- `motrix_rl_builtin`：内置 Motrix 算法集成插件，统一注册 FastSAC 与 SuperMimic provider
+- `motrix_rl_builtin`：内置 Motrix 算法集成插件，统一注册 FastSAC、SuperMimic 与 APPO provider（公开名分别为 `motrix.fastsac`、`motrix.supermimic`、`motrix.appo`）
 - `motrix_rl_supermimic`：独立的 SuperMimic world-model MBRL 实现与 provider，由 builtin 集成注册
 - `motrix_rl_skrl`：SKRL PPO provider 插件（Torch 必需，额外 JAX runtime 可选）
 - `motrix_rl_rslrl`：RSLRL PPO provider 插件（Torch）
+- `motrix_rl_appo`：独立的 APPO 异步 PPO 实现与 provider（Torch，V-trace / IMPACT），由 builtin 默认依赖并注册为 `motrix.appo`；不是独立 public framework 插件
 - `motrix_deploy`：框架无关的 artifact、运行时契约与部署 CLI
 - `motrix_deploy_mujoco`：SceneCfg 支撑的 MuJoCo 后端插件
 - `motrix_deploy_motrixsim`：SceneCfg 支撑的原生 MotrixSim 部署后端插件
@@ -106,6 +107,7 @@ False 表示仅 sim reset、当前回合继续；它不等于 `terminated`，也
 
 - RL provider 配置使用对应插件包的 `@dataclass` 配置类：SKRL 使用 `motrix_rl_skrl.config.SkrlCfg`，RSLRL 使用 `motrix_rl_rslrl.cfg.RslrlCfg`，FastSAC 使用 `motrix_rl_builtin.fastsac.config.FastSacCfg`。
 - provider 配置的字段结构必须与对应的 `motrix_rl/src/motrix_rl/configs/algo_base/*.yaml` 保持一致；不要使用已经删除的 `@rlcfg` 或旧的嵌套结构。
+- APPO 的 dataclass 配置与训练实现归 `motrix_rl_appo`；builtin 拥有公开 provider 与 ConfigStore `algo_base/motrix.appo` 注册，默认依赖 APPO 实现包，不提供单独的 APPO extra。
 - 超参数在配置对象初始化或明确的配置组装流程中赋值；同一环境的多个变体应通过配置复用，子变体只覆写实际差异。
 - SKRL 和 RSLRL 的 provider 配置结构不同，不要为了统一接口强行增加无用的兼容层；框架通过 provider 的 `config_type` 和 trainer context 选择对应实现。
 

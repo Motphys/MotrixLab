@@ -21,6 +21,8 @@
   在 RL 集成层引入 `rllib/train_backend/algo` 正交维度的架构：配置注册表、`RlFramework`/`AgentProvider`、`TrainerContext` 与通用 runner、算法配置与模型/memory 工厂、run metadata、checkpoint manifest 与 play 自动发现，以及内置 framework 矩阵（skrl / rslrl / motrix）；明确 `motrix_rl` 控制平面与 `motrix_rl.contracts` 契约、三个 provider 插件包的单向依赖和 entry-point discovery 边界。
 - [FastSAC 异构（Collector/Learner 分进程）训练器设计](./fastsac-async-heterogeneous-trainer.md)
   把仿真采样与网络训练拆到两进程、经共享内存交换数据的异构 FastSAC 训练器：统一注册为 `motrix.fastsac`，由 `algo.asynchronous` 选择执行拓扑，并包含 SPSC 有界背压 replay 环、update-to-data 比例治理、seqlock 双缓冲权重/normalizer 快照，以及进程生命周期与 checkpoint 兼容。
+- [APPO 异步 actor–learner](./appo.md)
+  定义 IMPACT/V-trace 目标、chunk/endpoint/timeout 契约、插件集成与 Go2 RSLRL 基准比较。
 - [训练随机性与 Seed 所有权](./randomness-and-seeding.md)
   定义 `ctx.rand` 的默认 Torch 流、训练根 seed 职责、SuperMimic 模型初始化/探索隔离，以及异步训练与 warm resume 的可复现性边界。
 - [训练实时指标（Live Metrics）设计](./live-metrics.md)

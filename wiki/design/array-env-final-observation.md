@@ -2,7 +2,7 @@
 
 ## 摘要
 
-ArrayEnv 在时间截断自动 reset 前捕获当前 transition 的终态观测，通过 `ArrayEnvState.final_obs` 发布稀疏行快照。该结果不绑定 RL provider；ManagerEnv 实现捕获，FastSAC adapter 只负责传递和消费，不修改环境结果。本设计覆盖 Torch 张量前端（DirectEnv/ManagerEnv，见 Torch executor 迁移）与 truncated 行，不扩展纯 terminated 行。
+ArrayEnv 在时间截断自动 reset 前捕获当前 transition 的终态观测，通过 `ArrayEnvState.final_obs` 发布稀疏行快照。该结果不绑定 RL provider；ManagerEnv 与 QuadrupedWalkTask 实现捕获，FastSAC/APPO adapter 只负责传递或消费，不修改环境结果。本设计覆盖 Torch 张量前端（DirectEnv/ManagerEnv，见 Torch executor 迁移）与 truncated 行，不扩展纯 terminated 行。
 
 ## 结果结构与生命周期
 
@@ -19,6 +19,10 @@ ArrayEnv 的默认捕获 hook 返回 None，明确表示当前实现不提供快
 Observation term 应仅读取上下文并写观测输出，不推进 command 或历史；噪声 term 通过 `ctx.rand` 使用当前设备的默认 Torch 随机流。正常 observe、终态 preview 与 task evaluate/command/reset 不做用途隔离。终态捕获不备份或恢复 RNG；额外 observe 消耗共享默认流，可改变同 seed 下后续正常观测噪声以及 command/reset 的随机样本，不要求保持捕获前后的随机序列一致，也不承诺 preview 与正常噪声完全独立或相同，见[随机性与 seed 所有权](./randomness-and-seeding.md)。终态捕获会额外执行一次整批 observe，因此不能用观察函数维护每步只应更新一次的状态。捕获使用独立预绑定 output slot，不写正常 observation 双缓冲；torch 高级索引已生成独立行张量，无需额外 copy。
 
 当前 compiled observe 不支持行子集，因此少量截断仍有整批执行成本。性能优化必须先分别测量 kernel 与 compact row gather 成本，不为了潜在用途新增编译入口。
+
+## Quadruped DirectEnv 捕获
+
+QuadrupedWalkTask 的正常观测与终态捕获复用同一只读构造函数，捕获读取 transition 刷新后的 sim 数据、当前 command/action/phase，按原始 env_ids 返回独立的 policy/value 紧凑行。不调用正常 observation 发布，不覆盖交替缓冲，不推进 command/phase。噪声与正常观测使用同一默认 Torch 流，不备份或恢复 RNG；启用捕获会改变同 seed 后续采样顺序，因此训练效果对照应使用同一捕获实现重新建立基准。其他 DirectEnv 子类仍须显式实现自己的捕获语义。
 
 ## FastSAC 边界
 
