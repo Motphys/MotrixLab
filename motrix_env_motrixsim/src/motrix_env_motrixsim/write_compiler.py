@@ -21,6 +21,7 @@ from motrix_env_core.sim.write import (
     BodyRotationWrite,
     CtrlTargetsWrite,
     GeomFrictionWrite,
+    GeomSizeWrite,
     JointAngularVelocityWrite,
     JointPositionWrite,
     JointQuaternionWrite,
@@ -254,6 +255,19 @@ class MotrixSimWriteCompiler(SimWriteCompiler):
     def compile_geom_friction(self, name: str, write: GeomFrictionWrite) -> None:
         self._targets(name, write.geoms, "geom", _named_geom)
         self._pending.append((name, _CompiledWrite(native=mtx_write.GeomFrictionOverride(list(write.geoms)))))
+
+    def compile_geom_size(self, name: str, write: GeomSizeWrite) -> None:
+        geoms = self._targets(name, write.geoms, "geom", _named_geom)
+        for geom in geoms:
+            if geom.shape not in (
+                mtx.Shape.Sphere,
+                mtx.Shape.Capsule,
+                mtx.Shape.Cylinder,
+                mtx.Shape.Cuboid,
+                mtx.Shape.Ellipsoid,
+            ):
+                raise ValueError(f"GeomSizeWrite {name!r} requires resizable primitives, got geom {geom.name!r}.")
+        self._pending.append((name, _CompiledWrite(native=mtx_write.GeomSizeOverride(list(write.geoms)))))
 
     def _joints(self, name: str, joint_names: tuple[str, ...]):
         if not joint_names:
