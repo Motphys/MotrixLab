@@ -48,12 +48,33 @@ class ActuatorSpec:
     force_range: tuple[float, float] | None
 
 
+class GeomType(str, Enum):
+    """Backend-neutral source geometry types."""
+
+    SPHERE = "sphere"
+    CAPSULE = "capsule"
+    CYLINDER = "cylinder"
+    BOX = "box"
+    ELLIPSOID = "ellipsoid"
+    PLANE = "plane"
+    INFINITE_PLANE = "infinite_plane"
+    MESH = "mesh"
+    HEIGHT_FIELD = "height_field"
+
+
 @dataclass(frozen=True)
 class GeomSpec:
-    """Static per-geom metadata resolved from the simulator model."""
+    """Nominal geometry metadata, unaffected by per-environment overrides.
+
+    Primitive sizes use three components: sphere ``(radius, 0, 0)``, capsule
+    and cylinder ``(radius, half_height, 0)``, box half-extents, and ellipsoid
+    radii. Plane uses two half-extents; mesh/height-field sizes are not
+    runtime-resizable primitive dimensions.
+    """
 
     size: tuple[float, ...] | None
     local_pose: tuple[float, ...] | None
+    geom_type: GeomType
 
 
 @dataclass(frozen=True, slots=True)

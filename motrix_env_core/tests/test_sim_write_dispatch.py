@@ -16,6 +16,7 @@ from motrix_env_core.sim.write import (
     BodyRotationWrite,
     CtrlTargetsWrite,
     GeomFrictionWrite,
+    GeomSizeWrite,
     JointAngularVelocityWrite,
     JointPositionWrite,
     JointQuaternionWrite,
@@ -122,6 +123,9 @@ class _DispatchCompiler(SimWriteCompiler):
         del name, write
         self.dispatched.append("friction")
 
+    def compile_geom_size(self, name: str, write: GeomSizeWrite) -> None:
+        self.dispatched.append("geom_size")
+
 
 def test_sim_write_compiler_dispatches_each_write_to_its_typed_compiler() -> None:
     compiler = _DispatchCompiler()
@@ -144,6 +148,7 @@ def test_sim_write_compiler_dispatches_each_write_to_its_typed_compiler() -> Non
     LinkMassWrite(("body",)).compile_with(compiler, "write")
     LinkComWrite(("body",)).compile_with(compiler, "write")
     GeomFrictionWrite(("geom",)).compile_with(compiler, "write")
+    GeomSizeWrite(("geom",)).compile_with(compiler, "write")
 
     assert compiler.dispatched == [
         "body_dof_position",
@@ -164,6 +169,7 @@ def test_sim_write_compiler_dispatches_each_write_to_its_typed_compiler() -> Non
         "mass",
         "com",
         "friction",
+        "geom_size",
     ]
 
 

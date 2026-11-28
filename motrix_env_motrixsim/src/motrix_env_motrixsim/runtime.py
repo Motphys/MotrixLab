@@ -24,6 +24,7 @@ from motrix_env_core.sim.model import (
     ActuatorType,
     BodyModel,
     GeomSpec,
+    GeomType,
     SimModel,
     SimModelCompiler,
 )
@@ -329,11 +330,25 @@ def _body_joint_position_limits(model: mtx.SceneModel, body_name: str) -> tuple[
     return limits[:, 0].copy(), limits[:, 1].copy()
 
 
+_GEOM_TYPES = (
+    (mtx.Shape.Sphere, GeomType.SPHERE),
+    (mtx.Shape.Capsule, GeomType.CAPSULE),
+    (mtx.Shape.Cylinder, GeomType.CYLINDER),
+    (mtx.Shape.Cuboid, GeomType.BOX),
+    (mtx.Shape.Ellipsoid, GeomType.ELLIPSOID),
+    (mtx.Shape.Plane, GeomType.PLANE),
+    (mtx.Shape.InfinitePlane, GeomType.INFINITE_PLANE),
+    (mtx.Shape.Mesh, GeomType.MESH),
+    (mtx.Shape.HField, GeomType.HEIGHT_FIELD),
+)
+
+
 def _geom_specs(model: mtx.SceneModel, names: tuple[str, ...]) -> dict[str, GeomSpec]:
     specs = {}
     for name in names:
         geom = _named_geom(model, name)
         specs[name] = GeomSpec(
+            geom_type=next(kind for shape, kind in _GEOM_TYPES if geom.shape == shape),
             size=tuple(float(value) for value in np.asarray(geom.size, dtype=np.float32).reshape(-1)),
             local_pose=tuple(float(value) for value in np.asarray(geom.local_pose, dtype=np.float32).reshape(-1)),
         )

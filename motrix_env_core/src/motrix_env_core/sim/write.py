@@ -223,6 +223,27 @@ class GeomFrictionWrite(SimWrite):
         compiler.compile_geom_friction(name, self)
 
 
+@dataclass(frozen=True)
+class GeomSizeWrite(SimWrite):
+    """Absolute primitive sizes in declared order: ``(N, G, 3)``.
+
+    Components follow :class:`motrix_env_core.sim.model.GeomSpec`: radius for
+    spheres, radius and half-height for capsules/cylinders, half-extents for
+    boxes, and radii for ellipsoids. Unused components are zero. Required
+    components must be finite and positive; invalid rows retain their previous
+    override. Meshes, height fields, and planes are not supported targets.
+
+    Updates collision geometry without changing link mass, COM, or inertia.
+    To randomize scale, multiply nominal model sizes by sampled factors before
+    filling the buffer; do not compound scales on previously randomized sizes.
+    """
+
+    geoms: tuple[str, ...]
+
+    def compile_with(self, compiler: SimWriteCompiler, name: str) -> None:
+        compiler.compile_geom_size(name, self)
+
+
 class SimWriteCompiler(abc.ABC):
     """Compile named neutral write declarations into an executable program.
 
@@ -331,6 +352,10 @@ class SimWriteCompiler(abc.ABC):
     @abc.abstractmethod
     def compile_geom_friction(self, name: str, write: GeomFrictionWrite) -> None:
         """Record geom friction overrides."""
+
+    @abc.abstractmethod
+    def compile_geom_size(self, name: str, write: GeomSizeWrite) -> None:
+        """Record primitive geom size overrides."""
 
 
 class WriteProgram(abc.ABC):
