@@ -9,6 +9,8 @@ defaults:
 num_steps_per_env: 24
 # Number of rollout-and-update iterations executed by the RSLRL runner.
 max_iterations: 10000
+# Initialize actor and critic from resume= while starting a fresh training run.
+warm_start: false
 # Map each model role to the environment observation groups it receives.
 obs_groups:
   # Observation groups concatenated and passed to the actor.
@@ -37,6 +39,8 @@ actor:
   noise_std_type: scalar
   # Predict action standard deviation from observations instead of learning a global parameter.
   state_dependent_std: false
+  # Extra constructor options for the selected actor class.
+  model_kwargs: {}
 critic:
   # RSLRL model class used to build the critic network.
   class_name: MLPModel

@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import onnx
 import pytest
@@ -61,6 +61,22 @@ def _run_with_checkpoint(tmp_path: Path, config: TrainConfig, checkpoint: dict) 
     return run
 
 
+def test_default_cartpole_actor_constructs_with_provider_config() -> None:
+    from rsl_rl.algorithms import PPO
+    from rsl_rl.models import MLPModel
+
+    config = _train_config("cartpole/rslrl.ppo", [])
+    runner_cfg = config.algo.to_dict()
+    runner_cfg["multi_gpu"] = None
+    env = SimpleNamespace(num_envs=2, num_actions=1)
+    obs = TensorDict({"policy": torch.zeros(2, 4)}, batch_size=[2])
+
+    algorithm = PPO.construct_algorithm(obs, env, runner_cfg, device="cpu")
+
+    assert isinstance(algorithm.actor, MLPModel)
+    assert algorithm.actor(obs).shape == (env.num_envs, env.num_actions)
+
+
 @pytest.mark.integration
 def test_rslrl_torch_export_uses_framework_normalizer(tmp_path: Path) -> None:
     from rsl_rl.models import MLPModel
@@ -69,7 +85,7 @@ def test_rslrl_torch_export_uses_framework_normalizer(tmp_path: Path) -> None:
         "cartpole/rslrl.ppo",
         ["algo.actor.hidden_dims=[5,4]", "algo.actor.obs_normalization=true"],
     )
-    actor_config = asdict(config.algo.actor)
+    actor_config = config.algo.actor.to_dict()
     actor_config.pop("class_name")
     actor = MLPModel(
         TensorDict({"policy": torch.zeros(1, 3)}, batch_size=[1]),

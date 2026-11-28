@@ -4,11 +4,12 @@
 import os
 
 import numpy as np
+from motrix_robots.franka import PANDA_ASSET_DIR, FrankaPanda
 
 from motrix_env_core import registry
 from motrix_env_core.base import SimCfg
 from motrix_env_core.config import configclass
-from motrix_env_core.config.scene import SceneCfg
+from motrix_env_core.config.scene import MjcfFileCfg, SceneCfg, SceneObjsCfg
 from motrix_env_core.direct.env import DirectEnvCfg
 
 model_file = os.path.dirname(__file__) + "/xmls/mjx_scene.xml"
@@ -65,7 +66,10 @@ class FrankaLiftCubeEnvCfg(DirectEnvCfg):
     """
 
     render_spacing: float = 2.0
-    scene: SceneCfg = SceneCfg(file=model_file)
+    scene: SceneCfg = SceneCfg(
+        file=model_file,
+        objs=SceneObjsCfg(robot=FrankaPanda(model=MjcfFileCfg(file=PANDA_ASSET_DIR / "panda_lift.xml"))),
+    )
     max_episode_seconds: float = 2.5
     sim: SimCfg = SimCfg(dt=0.01)
     move_speed: float = 1.0

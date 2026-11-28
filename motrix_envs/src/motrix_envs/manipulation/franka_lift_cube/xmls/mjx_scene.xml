@@ -1,5 +1,5 @@
 <mujoco model="panda scene">
-  <include file="mjx_panda.xml" />
+  <compiler angle="radian" meshdir="assets" autolimits="true" />
 
   <statistic center="0.3 0 0.4" extent="1" />
 
@@ -43,8 +43,8 @@
     <light diffuse="0.6 0.6 0.6" pos="0 0 1.5" dir="-0.49835488200187683 0.2925136387348175 -0.8161361217498779" directional="true" />
     <geom name="floor" size="0 0 0.05" pos="0 0 -0.75" type="plane" material="motphys-ground" contype="1" />
 
-    <geom mesh="tabletop" material="wood" class="visual" pos="0.3 0 -0.75" quat="1 0 0 1" />
-    <geom mesh="tablelegs" material="chrome" class="visual" pos="0.3 0 -0.75" quat="1 0 0 1" />
+    <geom mesh="tabletop" material="wood" type="mesh" contype="0" conaffinity="0" group="2" pos="0.3 0 -0.75" quat="1 0 0 1" />
+    <geom mesh="tablelegs" material="chrome" type="mesh" contype="0" conaffinity="0" group="2" pos="0.3 0 -0.75" quat="1 0 0 1" />
     <geom name="table" size="0.6 0.37 0.02" type="box" material="Transport" pos="0.30 0 -0.02" />
 
     <body name="free_cube">

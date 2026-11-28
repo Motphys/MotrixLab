@@ -11,6 +11,7 @@ actor and critic configs at the top level.
 """
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from omegaconf import MISSING
 
@@ -29,6 +30,15 @@ class RslRlActorCfg:
     init_noise_std: float = MISSING
     noise_std_type: str = MISSING  # one of: "scalar", "log"
     state_dependent_std: bool = MISSING
+    # Constructor options specific to the selected actor class.
+    model_kwargs: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        config = class_to_dict(self)
+        model_kwargs = config.pop("model_kwargs")
+        if overlap := config.keys() & model_kwargs.keys():
+            raise ValueError(f"Actor model_kwargs cannot override declared fields: {', '.join(sorted(overlap))}")
+        return config | model_kwargs
 
 
 @dataclass
@@ -76,6 +86,7 @@ class RslrlRunnerCfg:
     # Runner settings
     num_steps_per_env: int = MISSING
     max_iterations: int = MISSING
+    warm_start: bool = False
 
     # Observation groups
     obs_groups: dict[str, list[str]] = MISSING
@@ -91,7 +102,10 @@ class RslrlRunnerCfg:
         Returns:
             Dictionary representation matching rsl_rl's expected format.
         """
-        return class_to_dict(self)
+        config = class_to_dict(self)
+        config.pop("warm_start")
+        config["actor"] = self.actor.to_dict()
+        return config
 
 
 @dataclass

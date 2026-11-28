@@ -1,5 +1,5 @@
 <mujoco model="panda scene">
-  <include file="mjx_panda.xml" />
+  <compiler angle="radian" assetdir="assets" autolimits="true" />
   <include file="sektion_cabinet_2.xml" />
 
   <statistic center="0.3 0 0.4" extent="1" />
