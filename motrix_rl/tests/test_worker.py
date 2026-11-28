@@ -5,9 +5,13 @@
 
 import multiprocessing as mp
 import os
+import random
 from dataclasses import dataclass
 
-from motrix_rl.worker import Worker, WorkerHandle, WorkerPlacement
+import numpy as np
+import pytest
+
+from motrix_rl.worker import Worker, WorkerHandle, WorkerPlacement, WorkerRuntime
 
 
 @dataclass
@@ -33,6 +37,72 @@ class _SlottedWorker(Worker):
 
     def run(self) -> None:
         self.result_queue.put(self.value)
+
+
+class _RuntimeProbe(Worker):
+    def __init__(self, results) -> None:
+        self.results = results
+
+    def run(self) -> None:
+        import torch
+
+        self.results.put(
+            (
+                torch.get_num_threads(),
+                torch.initial_seed(),
+                torch.rand(4).tolist(),
+                [random.random() for _ in range(4)],
+                np.random.random(4).tolist(),
+            )
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("seed", [0, 23, 2**40 + 23])
+def test_worker_runtime_is_applied_before_task_and_does_not_change_parent(seed: int) -> None:
+    import torch
+
+    ctx = mp.get_context("spawn")
+    results = ctx.Queue()
+    parent_threads = torch.get_num_threads()
+    parent_rng = torch.get_rng_state().clone()
+    parent_python_rng = random.getstate()
+    parent_numpy_rng = np.random.get_state()
+    handles = []
+    try:
+        for _ in range(2):
+            handles.append(_RuntimeProbe(results).start(ctx, runtime=WorkerRuntime(torch_num_threads=1, seed=seed)))
+        observed = [results.get(timeout=20) for _ in handles]
+        for handle in handles:
+            handle.join(timeout=10)
+            assert handle.exitcode == 0
+        assert observed[0] == observed[1]
+        assert observed[0][:2] == (1, seed)
+        expected = torch.rand(4, generator=torch.Generator().manual_seed(seed)).tolist()
+        assert observed[0][2] == expected
+        python_rng = random.Random(seed)
+        assert observed[0][3] == [python_rng.random() for _ in range(4)]
+        assert observed[0][4] == np.random.RandomState(seed % (2**32)).random(4).tolist()
+        assert torch.get_num_threads() == parent_threads
+        assert torch.equal(torch.get_rng_state(), parent_rng)
+        assert random.getstate() == parent_python_rng
+        numpy_rng = np.random.get_state()
+        assert numpy_rng[0] == parent_numpy_rng[0]
+        np.testing.assert_array_equal(numpy_rng[1], parent_numpy_rng[1])
+        assert numpy_rng[2:] == parent_numpy_rng[2:]
+    finally:
+        for handle in handles:
+            if handle.is_alive:
+                handle.terminate()
+                handle.join(timeout=5)
+            handle.process.close()
+        results.close()
+        results.join_thread()
+
+
+def test_worker_runtime_rejects_nonpositive_thread_budget() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        WorkerRuntime(torch_num_threads=0)
 
 
 def test_worker_start_returns_parent_handle() -> None:

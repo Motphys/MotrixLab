@@ -11,7 +11,7 @@
 # CPU-only hosts fall back to cuda.
 #
 # Built-in FastSAC and SKRL on Torch are always installed. --skrl-jax adds
-# the JAX runtime, and --rslrl adds the RSLRL plugin; multiple flags combine.
+# the JAX runtime and --rslrl adds RSLRL; builtin includes APPO by default.
 
 set -e
 

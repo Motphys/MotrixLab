@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from hydra.core.config_store import ConfigStore
+from motrix_rl_appo.config import AppoCfg
 from motrix_rl_supermimic.config import SuperMimicCfg
 
 from motrix_rl import frameworks
@@ -12,3 +13,4 @@ def register() -> None:
     frameworks.register_framework(MotrixFramework())
     # The implementation package owns the defaults; builtin owns their public name.
     ConfigStore.instance().store(group="algo_base", name="motrix.supermimic", node=SuperMimicCfg())
+    ConfigStore.instance().store(group="algo_base", name="motrix.appo", node=AppoCfg())

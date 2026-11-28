@@ -19,6 +19,23 @@ from motrix_rl.numa import apply_binding, spawn_placement
 
 
 @dataclass(frozen=True)
+class WorkerRuntime:
+    """Optional child initialization, applied before the task runs.
+
+    The caller owns seed derivation and thread budgets. ``seed`` initializes
+    Python, NumPy and Torch default RNGs; NumPy uses its low 32 bits.
+    Unset values leave process defaults untouched.
+    """
+
+    torch_num_threads: int | None = None
+    seed: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.torch_num_threads is not None and self.torch_num_threads < 1:
+            raise ValueError("torch_num_threads must be positive")
+
+
+@dataclass(frozen=True)
 class WorkerPlacement:
     """CPU and NUMA placement requested for a worker process."""
 
@@ -86,13 +103,14 @@ class Worker(ABC):
         *,
         name: str | None = None,
         placement: WorkerPlacement | None = None,
+        runtime: WorkerRuntime | None = None,
     ) -> WorkerHandle:
         """Start this task and return its parent-side lifecycle handle."""
         worker_name = name or type(self).__name__
         worker_placement = placement or WorkerPlacement()
         process = ctx.Process(
             target=_worker_bootstrap,
-            args=(self, worker_placement, worker_name),
+            args=(self, worker_placement, worker_name, runtime or WorkerRuntime()),
             name=worker_name,
         )
         with spawn_placement(worker_placement.numa_node, worker_name):
@@ -100,7 +118,21 @@ class Worker(ABC):
         return WorkerHandle(process, name=worker_name, placement=worker_placement)
 
 
-def _worker_bootstrap(worker: Worker, placement: WorkerPlacement, worker_name: str) -> None:
-    """Apply child placement and invoke the worker task."""
+def _worker_bootstrap(worker: Worker, placement: WorkerPlacement, worker_name: str, runtime: WorkerRuntime) -> None:
+    """Apply placement, runtime settings and seeds, then invoke the worker task."""
     apply_binding(worker_name, placement.numa_node, list(placement.cpus))
+    if runtime.torch_num_threads is not None or runtime.seed is not None:
+        import torch
+
+        if runtime.torch_num_threads is not None:
+            torch.set_num_threads(runtime.torch_num_threads)
+        if runtime.seed is not None:
+            import random
+
+            import numpy as np
+
+            random.seed(runtime.seed)
+            # NumPy's legacy global RNG accepts only unsigned 32-bit seeds.
+            np.random.seed(runtime.seed % (2**32))
+            torch.manual_seed(runtime.seed)
     worker.run()

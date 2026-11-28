@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from motrix_robots.quadruped import QuadrupedRobotCfg
 
-from motrix_env_core.array.env import ArrayEnvState
+from motrix_env_core.array.env import ArrayEnvState, EnvObs, FinalObs
 from motrix_env_core.direct.env import DirectEnv
 from motrix_env_core.mdp.action_space import asymmetric_residual_action_space
 from motrix_env_core.observations import ObservationGroupSpec, ObservationSpec
@@ -457,7 +457,8 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
         self._ctrl_writes.execute()
         return None
 
-    def compute_observation(self, state: ArrayEnvState) -> None:
+    def _build_observation(self) -> EnvObs:
+        """Read refreshed task inputs without publishing or advancing task state."""
         noise_cfg = self.cfg.noise_config
         diff = self.get_dof_pos() - self.default_angles
         noisy_gyro = self._obs_noise(self.get_gyro(), noise_cfg.scale_gyro)
@@ -490,8 +491,18 @@ class QuadrupedWalkTask(DirectEnv[QuadrupedWalkEnvCfg]):
                 f"expected policy[{expected_policy}]; value={tuple(value.shape)}, "
                 f"expected value[{expected_value}]"
             )
-        state.obs.policy.copy_(policy)
-        state.obs.value.copy_(value)
+        return EnvObs({"policy": policy, "value": value})
+
+    def compute_observation(self, state: ArrayEnvState) -> None:
+        observation = self._build_observation()
+        state.obs.policy.copy_(observation.policy)
+        state.obs.value.copy_(observation.value)
+
+    def _capture_final_obs(self, env_ids: torch.Tensor) -> FinalObs:
+        # Use the same pre-reset inputs and default noise stream as normal
+        # observation publication, but never write its alternating buffers.
+        observation = self._build_observation()
+        return FinalObs(env_ids.clone(), EnvObs({name: rows[env_ids] for name, rows in observation.groups.items()}))
 
     def compute_transition(self, state: ArrayEnvState) -> None:
         self.sim_data.execute()

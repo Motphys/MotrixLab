@@ -22,6 +22,12 @@ out += (2 * ctx.rand.uniform_like(out) - 1) * amplitude
 
 构造期 `BuildContext.seed` 保留现有语义：环境未指定 seed 时传入 `1`，供 action 等构造期 generator 使用。它与运行期 `ctx.rand` 的默认流不同，不代表默认 Torch RNG 的隐式播种。
 
+## Worker 进程初始化
+
+通用 [Worker](../../motrix_rl/src/motrix_rl/worker.py) 接受显式 `WorkerRuntime(torch_num_threads=..., seed=...)`，在子进程按 placement→Torch线程设置→Python/NumPy/Torch播种→run 的顺序应用，均发生在 task 创建环境/网络之前。`seed` 统一初始化三者的默认随机流；NumPy 的全局 RNG 只接受无符号32位 seed，因此使用 `seed % 2**32`，Python/Torch 使用原始 seed。未设置的选项不改变进程默认值，不读取 worker 同名字段，也不自动派生 seed；这不为显式创建的 Generator 提供播种或用途隔离。
+
+线程预算和seed派生归调用方。APPO trainer显式请求collector一个Torch线程及已解析的collector seed；collector不重复手写初始化。learner warm-resume RNG仍在trainer恢复，不由worker bootstrap覆写。其他provider不传runtime时行为不变，不将APPO的线程/seed策略强加给所有worker。
+
 ## SuperMimic 的组件随机所有权
 
 SuperMimic 在 provider 层管理训练根 seed，不改变上述 Manager 契约。`resolve_seed(None)` 通过系统熵解析一次根 seed；`derive_seed(root, purpose, worker_id)` 使用固定域标识和 SHA-256 派生 Torch 可用的 63-bit 非负整数，不依赖对象构造顺序或 Python 内置 `hash()`。实现见 [randomness](../../motrix_rl_supermimic/src/motrix_rl_supermimic/randomness.py)。

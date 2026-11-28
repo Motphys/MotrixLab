@@ -1,0 +1,20 @@
+# @package _global_
+defaults:
+  - /algo_base@algo: motrix.appo
+  - _self_
+task:
+  env: cartpole
+  rllib: motrix
+  algo: appo
+  train_backend: null
+num_envs: 2048
+play_num_envs: 16
+seed: 42
+algo:
+  rollout_steps: 16
+  max_iterations: 300
+  actor:
+    hidden_dims: [32, 32]
+    init_noise_std: 1.0
+  critic:
+    hidden_dims: [32, 32]

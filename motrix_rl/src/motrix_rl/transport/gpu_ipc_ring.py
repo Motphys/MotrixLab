@@ -9,9 +9,10 @@ device tensor (``feat = schema.feature_width``): integer and boolean fields
 ride as floats (0/1 exactly representable; larger integers are converted
 back losslessly by the consumer's ``copy_`` only while they stay
 float32-exact — a schema carrying wide counters should use the host ring).
-Fusion lets the collector publish one env-step batch with a **single** H2D
-copy from one pinned staging buffer, and lets the learner ingest with pure
-D2D strided copies — no host transfer stays on the learner's critical path.
+CPU sources use a **single** fused H2D copy from one pinned staging buffer;
+``push`` selects direct D2D packing when all sources are on the slots' device.
+The learner ingests with pure D2D strided copies — no host transfer stays on
+the learner's critical path.
 
 Ownership and handoff
 ~~~~~~~~~~~~~~~~~~~~~
@@ -30,7 +31,7 @@ whose completion is NOT ordered by x86/TSO. A cursor may therefore only be
 advanced once the corresponding device writes have completed, proven by CUDA
 events:
 
-* producer: after the slot's H2D is enqueued, record a per-slot event;
+* producer: after the slot's H2D or D2D writes are enqueued, record a per-slot event;
   ``_write`` advances only up to the boundary of completed events (lazily
   flushed by :meth:`GpuIpcTransitionRing.push` / :meth:`GpuIpcTransitionRing.is_full`).
   The single pinned staging buffer is likewise not reused until the previous
@@ -167,15 +168,29 @@ class GpuIpcTransitionRing:
         return store is not None and not store.can_write_rows(self.num_envs, completed_reads)
 
     def push(self, batch: Mapping[str, torch.Tensor], payload=None) -> bool:
-        """Publish one env-step batch into the next slot. Returns False if full.
+        """Enqueue one batch from CPU staging or directly from this GPU.
 
-        ``batch`` maps every schema field name to one of the collector's CPU
-        tensors (integer / boolean fields may be any numeric dtype; they are
-        stored as floats). One fused H2D lands the whole slot; the cursor
-        publishes lazily once it completes.
+        Sources must all be CPU tensors or all reside on the slots' CUDA device.
+        Mixed devices and other GPUs are rejected. A full ring returns False
+        without modifying slot data. Success means submitted, not completed:
+        GPU sources must remain unchanged until the issued write completes,
+        unless reuse is ordered after these copies on the same CUDA stream.
         """
         if set(batch) != set(self._offsets):
             raise ValueError(f"transition batch fields {sorted(batch)} do not match the schema {list(self._offsets)}")
+        devices = {value.device for value in batch.values()}
+        if devices == {torch.device("cpu")}:
+            device_sources = False
+        elif devices == {self.slots.device}:
+            device_sources = True
+        else:
+            raise ValueError(f"transition sources must all be on CPU or {self.slots.device}, got {devices}")
+        for field in self.schema.fields:
+            expected = self.schema.slot_shape(field, self.num_envs)
+            if tuple(batch[field.name].shape) != expected:
+                raise ValueError(
+                    f"transition source {field.name} shape {tuple(batch[field.name].shape)} does not match {expected}"
+                )
         if self.is_full():
             return False
         store = self.payload_store
@@ -183,26 +198,29 @@ class GpuIpcTransitionRing:
             raise ValueError("slot payload requires a payload store")
         if store is not None and not store.can_write(payload, self.cursors.read_completed_count):
             return False
-        if self._staging_used and not self._staging_event.query():
-            # The previous H2D still reads the staging buffer; it completes in
-            # well under one env step, so this is normally a no-op wait.
-            self._staging_event.synchronize()
-        s = self._staging
-        for name, value in batch.items():
-            begin, end = self._offsets[name]
-            s[:, begin:end].copy_(value.reshape(self.num_envs, -1))
         issued = self._write_issued_count
         slot = issued % self.capacity
+        stream = torch.cuda.current_stream(self.slots.device)
+        if device_sources:
+            for name, value in batch.items():
+                begin, end = self._offsets[name]
+                # copy_ converts bool/integer fields into fused float32 storage.
+                self.slots[slot, :, begin:end].copy_(value.reshape(self.num_envs, -1), non_blocking=True)
+        else:
+            if self._staging_used and not self._staging_event.query():
+                self._staging_event.synchronize()
+            for name, value in batch.items():
+                begin, end = self._offsets[name]
+                self._staging[:, begin:end].copy_(value.reshape(self.num_envs, -1))
+            self.slots[slot].copy_(self._staging, non_blocking=True)
+            self._staging_event.record(stream)
+            self._staging_used = True
         if store is not None:
             store.write(issued, payload)
-        stream = torch.cuda.current_stream(self.slots.device)
-        self.slots[slot].copy_(s, non_blocking=True)
         event = torch.cuda.Event()
         event.record(stream)
         self._write_events.append(_PendingEvent(issued + 1, event))
         self._write_issued_count = issued + 1
-        self._staging_event.record(stream)
-        self._staging_used = True
         return True
 
     # -------------------------------------------------------------- consumer
